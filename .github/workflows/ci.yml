@@ -15,7 +15,7 @@
 # Stage 3: TEST (parallel, gated by Stage 2)
 #   ├─ unit-tests              GoogleTest (make xunit)  [same matrix — proves each
 #   │                          variant's coin/token gating actually compiles+passes]
-#   └─ python-integration      full test suite (full/default variant only)
+#   └─ python-integration      full test suite  [same matrix]
 #
 # Stage 4: PUBLISH (manual trigger, all tests must pass)
 #   └─ publish-emulator   DockerHub push, full/default variant only (workflow_dispatch only)
@@ -63,6 +63,12 @@ env:
   # Empty fails closed on push/manual runs; PR runs use the event base SHA.
   KK_ACCEPTED_WAIVER_SHA: ${{ vars.KK_ACCEPTED_WAIVER_SHA }}
   BASE_IMAGE: kktech/firmware@sha256:7438e53933d47d53157ed6d96d864cb208597e62dce26235ace09d1063427fa2
+  # Pulls of the 650 MB base image from Docker Hub cost ~34s per job. The
+  # same blob served from GHCR to a GitHub-hosted runner is markedly faster
+  # and is not subject to Docker Hub's anonymous pull limits. Populate it
+  # with the mirror-base-image workflow; CI falls back to Docker Hub
+  # automatically when the mirror is absent or unreadable.
+  BASE_IMAGE_MIRROR: ghcr.io/${{ github.repository_owner }}/firmware:sha256-7438e53933d47d53157ed6d96d864cb208597e62dce26235ace09d1063427fa2
   EMU_IMAGE: kkemu-ci
   # One staged-capability inventory for the integration suite and report
   # validator. Both must apply the same explicit 7.15 omissions.
@@ -82,30 +88,52 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Install clang-format-20 (pinned stable)
+      # PyPI wheel instead of the LLVM apt repo. Same upstream binary,
+      # pinned just as tightly, without `apt-get update` against
+      # apt.llvm.org on every run.
+      - name: Install clang-format 20 (pinned stable)
         run: |
-          # apt.llvm.org flakes; this job now gates the whole graph, so retry.
-          for attempt in 1 2 3; do
-            wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add - &&
-            echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list &&
-            sudo apt-get update -qq && sudo apt-get install -y -qq clang-format-20 && break
-            [ "$attempt" = 3 ] && exit 1
-            sleep 20
-          done
-          sudo ln -sf /usr/bin/clang-format-20 /usr/bin/clang-format
+          python3 -m pip install --quiet --upgrade "clang-format==20.1.8"
+          clang-format --version
 
       - name: Check code formatting
         run: |
           echo "Using: $(clang-format --version)"
-          FAILED=0
-          for f in $(find include/keepkey lib/firmware lib/board lib/transport/src \
-                     -name '*.c' -o -name '*.h' 2>/dev/null | grep -v generated | grep -v '.pb.'); do
-            if ! clang-format --style=file --dry-run --Werror "$f" 2>/dev/null; then
-              echo "::warning file=$f::Formatting differs from .clang-format"
-              FAILED=1
-            fi
-          done
-          if [ "$FAILED" = "1" ]; then
+          # xargs -P fans the per-file checks across the runner's cores; each
+          # clang-format invocation is independent, so the only thing needing
+          # coordination is the exit status, which xargs aggregates (123 if
+          # any child failed).
+          #
+          # The pipeline is the `if` condition rather than a bare command
+          # because GitHub runs `run:` blocks under `bash -e` -- a bare
+          # failing pipeline would abort the step immediately and swallow the
+          # remediation message below. Inside an `if`, -e is suspended.
+          #
+          # shellcheck disable=SC2016  # $1 is expanded by the inner sh, not here
+          # lib/transport/src has never existed in this repo -- the transport
+          # sources sit directly in lib/transport/. The path silently
+          # contributed nothing because find's error went to /dev/null.
+          # Dropped, and stderr is no longer suppressed, so a future bad path
+          # is loud instead of quietly narrowing coverage.
+          #
+          # lib/transport itself is deliberately NOT scanned: it holds the
+          # vendored nanopb runtime (pb_common.c, pb_decode.c, pb_encode.c).
+          # pb_decode.c does not satisfy this repo's .clang-format, and
+          # reformatting vendored upstream sources would make future nanopb
+          # updates needlessly painful.
+          #
+          # The name tests are parenthesised so the implicit -print
+          # unambiguously applies to both branches.
+          if ! find include/keepkey lib/firmware lib/board \
+                    \( -name '*.c' -o -name '*.h' \) \
+               | grep -v generated | grep -vF '.pb.' \
+               | xargs -P "$(nproc)" -I{} sh -c '
+                   if ! clang-format --style=file --dry-run --Werror "$1" 2>/dev/null; then
+                     echo "::warning file=$1::Formatting differs from .clang-format"
+                     exit 1
+                   fi
+                 ' _ {}
+          then
             echo ""
             echo "::error::Code formatting check failed. Run: clang-format -i <file> to fix."
             exit 1
@@ -300,6 +328,9 @@ jobs:
 
   build-emulator:
     needs: [lint-format, check-submodules, secret-scan]
+    permissions:
+      contents: read
+      packages: read
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -333,25 +364,41 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
 
-      - name: Cache base image
-        id: cache-base
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+      # continue-on-error because the mirror is optional by design. Without
+      # it a GHCR outage, a revoked package grant, or a token hiccup fails the
+      # job here -- before the Docker Hub fallback this login exists to enable
+      # ever gets a chance to run. A failed login simply means the subsequent
+      # mirror pull is unauthenticated, which takes the fallback path.
+      - name: Log in to GHCR
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4
+        continue-on-error: true
         with:
-          path: /tmp/base-image.tar
-          key: base-image-${{ env.BASE_IMAGE }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull and cache base image
-        if: steps.cache-base.outputs.cache-hit != 'true'
+      - name: Pull base image
         run: |
-          for attempt in 1 2 3; do
-            docker pull ${{ env.BASE_IMAGE }} && break
-            echo "pull attempt $attempt failed"; sleep 15
-          done
-          docker save ${{ env.BASE_IMAGE }} -o /tmp/base-image.tar
+          # RESOLVED_BASE is the digest-pinned GHCR mirror when it can be
+          # pulled, else the same digest from Docker Hub. Every consumer below
+          # (docker build, docker run, compose build) is handed RESOLVED_BASE
+          # rather than re-tagging, which would need an invalid digest-form tag.
+          #
+          # stderr is deliberately not suppressed: the fallback stops a mirror
+          # problem being fatal, but hiding the error makes auth vs missing tag
+          # vs transient network indistinguishable.
+          EXPECTED_DIGEST="${BASE_IMAGE#*@}"
+          MIRROR_IMAGE="${BASE_IMAGE_MIRROR%:*}@$EXPECTED_DIGEST"
+          if docker pull "$MIRROR_IMAGE"; then
+            echo "RESOLVED_BASE=$MIRROR_IMAGE" >> "$GITHUB_ENV"
+            echo "base image: digest-pinned GHCR mirror"
+          else
+            echo "::warning::GHCR mirror unavailable — falling back to Docker Hub. Run the mirror-base-image workflow to populate it."
+            docker pull "${{ env.BASE_IMAGE }}"
+            echo "RESOLVED_BASE=${{ env.BASE_IMAGE }}" >> "$GITHUB_ENV"
+            echo "base image: Docker Hub"
+          fi
 
-      - name: Load base image from cache
-        if: steps.cache-base.outputs.cache-hit == 'true'
-        run: docker load -i /tmp/base-image.tar
 
       - name: Build emulator image (${{ matrix.variant }})
         run: |
@@ -359,6 +406,7 @@ jobs:
           # Dockerfile's digest default is pulled straight from Docker Hub and
           # the GHCR mirror above buys nothing on the heaviest job in the run.
           docker build \
+            --build-arg BASE_IMAGE="${RESOLVED_BASE}" \
             -t ${{ env.EMU_IMAGE }}-${{ matrix.variant }} \
             --build-arg coinsupport="${{ matrix.cmake_flags }}" \
             -f scripts/emulator/Dockerfile \
@@ -376,6 +424,9 @@ jobs:
 
   build-arm-firmware:
     needs: [lint-format, check-submodules, secret-scan]
+    permissions:
+      contents: read
+      packages: read
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -406,25 +457,41 @@ jobs:
           git submodule update --init deps/qrenc/QR-Code-generator
           git submodule update --init deps/sca-hardening/SecAESSTM32
 
-      - name: Cache base image
-        id: cache-base
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+      # continue-on-error because the mirror is optional by design. Without
+      # it a GHCR outage, a revoked package grant, or a token hiccup fails the
+      # job here -- before the Docker Hub fallback this login exists to enable
+      # ever gets a chance to run. A failed login simply means the subsequent
+      # mirror pull is unauthenticated, which takes the fallback path.
+      - name: Log in to GHCR
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4
+        continue-on-error: true
         with:
-          path: /tmp/base-image.tar
-          key: base-image-${{ env.BASE_IMAGE }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull and cache base image
-        if: steps.cache-base.outputs.cache-hit != 'true'
+      - name: Pull base image
         run: |
-          for attempt in 1 2 3; do
-            docker pull ${{ env.BASE_IMAGE }} && break
-            echo "pull attempt $attempt failed"; sleep 15
-          done
-          docker save ${{ env.BASE_IMAGE }} -o /tmp/base-image.tar
+          # RESOLVED_BASE is the digest-pinned GHCR mirror when it can be
+          # pulled, else the same digest from Docker Hub. Every consumer below
+          # (docker build, docker run, compose build) is handed RESOLVED_BASE
+          # rather than re-tagging, which would need an invalid digest-form tag.
+          #
+          # stderr is deliberately not suppressed: the fallback stops a mirror
+          # problem being fatal, but hiding the error makes auth vs missing tag
+          # vs transient network indistinguishable.
+          EXPECTED_DIGEST="${BASE_IMAGE#*@}"
+          MIRROR_IMAGE="${BASE_IMAGE_MIRROR%:*}@$EXPECTED_DIGEST"
+          if docker pull "$MIRROR_IMAGE"; then
+            echo "RESOLVED_BASE=$MIRROR_IMAGE" >> "$GITHUB_ENV"
+            echo "base image: digest-pinned GHCR mirror"
+          else
+            echo "::warning::GHCR mirror unavailable — falling back to Docker Hub. Run the mirror-base-image workflow to populate it."
+            docker pull "${{ env.BASE_IMAGE }}"
+            echo "RESOLVED_BASE=${{ env.BASE_IMAGE }}" >> "$GITHUB_ENV"
+            echo "base image: Docker Hub"
+          fi
 
-      - name: Load base image from cache
-        if: steps.cache-base.outputs.cache-hit == 'true'
-        run: docker load -i /tmp/base-image.tar
 
       - name: Extract firmware version
         id: version
@@ -439,7 +506,7 @@ jobs:
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/root/keepkey-firmware:z \
-            ${{ env.BASE_IMAGE }} /bin/sh -ec "\
+            "${RESOLVED_BASE}" /bin/sh -ec "\
               mkdir /root/build; cd /root/build; \
               cmake -C /root/keepkey-firmware/cmake/caches/device.cmake /root/keepkey-firmware \
                 ${{ matrix.cmake_flags }} \
@@ -622,6 +689,9 @@ jobs:
 
   python-integration-tests:
     needs: [lint-format, check-submodules, secret-scan]
+    permissions:
+      contents: read
+      packages: read
     runs-on: ubuntu-latest
     env:
       KK_DICE_DEBUG_PRIVATE: "1"
@@ -653,25 +723,41 @@ jobs:
           git submodule update --init deps/qrenc/QR-Code-generator
           git submodule update --init deps/sca-hardening/SecAESSTM32
 
-      - name: Cache base image
-        id: cache-base
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+      # continue-on-error because the mirror is optional by design. Without
+      # it a GHCR outage, a revoked package grant, or a token hiccup fails the
+      # job here -- before the Docker Hub fallback this login exists to enable
+      # ever gets a chance to run. A failed login simply means the subsequent
+      # mirror pull is unauthenticated, which takes the fallback path.
+      - name: Log in to GHCR
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4
+        continue-on-error: true
         with:
-          path: /tmp/base-image.tar
-          key: base-image-${{ env.BASE_IMAGE }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull and cache base image
-        if: steps.cache-base.outputs.cache-hit != 'true'
+      - name: Pull base image
         run: |
-          for attempt in 1 2 3; do
-            docker pull ${{ env.BASE_IMAGE }} && break
-            echo "pull attempt $attempt failed"; sleep 15
-          done
-          docker save ${{ env.BASE_IMAGE }} -o /tmp/base-image.tar
+          # RESOLVED_BASE is the digest-pinned GHCR mirror when it can be
+          # pulled, else the same digest from Docker Hub. Every consumer below
+          # (docker build, docker run, compose build) is handed RESOLVED_BASE
+          # rather than re-tagging, which would need an invalid digest-form tag.
+          #
+          # stderr is deliberately not suppressed: the fallback stops a mirror
+          # problem being fatal, but hiding the error makes auth vs missing tag
+          # vs transient network indistinguishable.
+          EXPECTED_DIGEST="${BASE_IMAGE#*@}"
+          MIRROR_IMAGE="${BASE_IMAGE_MIRROR%:*}@$EXPECTED_DIGEST"
+          if docker pull "$MIRROR_IMAGE"; then
+            echo "RESOLVED_BASE=$MIRROR_IMAGE" >> "$GITHUB_ENV"
+            echo "base image: digest-pinned GHCR mirror"
+          else
+            echo "::warning::GHCR mirror unavailable — falling back to Docker Hub. Run the mirror-base-image workflow to populate it."
+            docker pull "${{ env.BASE_IMAGE }}"
+            echo "RESOLVED_BASE=${{ env.BASE_IMAGE }}" >> "$GITHUB_ENV"
+            echo "base image: Docker Hub"
+          fi
 
-      - name: Load base image from cache
-        if: steps.cache-base.outputs.cache-hit == 'true'
-        run: docker load -i /tmp/base-image.tar
 
       # Official ERC-7730 registry, pinned to an exact commit (never a moving
       # branch). 9f37816a is the registry revision whose bounded-include
@@ -699,6 +785,8 @@ jobs:
         env:
           KK_FIRMWARE_VARIANT: ${{ matrix.variant }}
           KK_CI_REHEARSAL: ${{ vars.KK_CI_REHEARSAL }}
+          # docker-compose.yml passes this to every image it builds.
+          BASE_IMAGE: ${{ env.RESOLVED_BASE }}
         run: |
           COMPOSE_ARGS=(-f docker-compose.yml)
           if [ "${{ matrix.variant }}" = "bitcoin-only" ]; then
@@ -710,8 +798,8 @@ jobs:
           PY_RC=0
           BUILD_RC=0
           set +e
-          # Build once, up twice. The base image was loaded from the cache above,
-          # so this never reaches Docker Hub. `|| RC=$?`, never `; RC=$?`: this
+          # Build once, up twice. The base image was resolved above (GHCR
+          # mirror, else Docker Hub) and is passed in as BASE_IMAGE. `|| RC=$?`, never `; RC=$?`: this
           # step runs under bash -e, and the semicolon form aborts before the
           # assignment -- and before the evidence below is extracted.
           docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} build || BUILD_RC=$?
