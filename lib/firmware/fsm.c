@@ -171,8 +171,11 @@ const char* fsm_test_lastFailureMessage(void) {
     return;                                             \
   }
 
-/* Locked storage cannot commit: refuse persistent changes up front so none
- * reports success and vanishes. WipeDevice must stay available. */
+/* Both incompatible-wallet states leave a reset RAM shadow and inhibit
+ * storage_commit(). Refuse all persistent changes before prompting or staging
+ * them: otherwise a seed or setting can report success and vanish on reboot.
+ * The explicit WipeDevice handler must remain available to clear either lock.
+ */
 #define CHECK_STORAGE_WRITABLE                                       \
   if (storage_isFirmwareTooOld()) {                                  \
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,           \
@@ -278,7 +281,8 @@ static const MessagesMap_t MessagesMap[] = {
 
 #include "messagemap.def"
 
-/* Duplicate message IDs fail the build as duplicate case labels. */
+/* MessagesMap is dense (see messages.h), so a duplicated message ID no longer
+ * collides by construction. Duplicate case labels fail the build instead. */
 #undef MSG_IN
 #define MSG_IN(ID, STRUCT_NAME, PROCESS_FUNC) case ID:
 
@@ -302,8 +306,10 @@ static void __attribute__((unused)) fsm_messageIdsAreUnique(MessageType id) {
   }
 }
 
-/* CoinTable (~6 KiB) reuses the request buffer and is excluded; RESP_INIT
- * checks every other writer against this size at compile time. */
+/* CoinTable reuses the decoded request after copying its small input fields;
+ * keeping its 24-entry response here would duplicate nearly 6 KiB of SRAM.
+ * All other registered responses still determine this buffer's exact size.
+ * RESP_INIT checks each ordinary writer against it at compile time. */
 #undef MSG_IN
 #define MSG_IN(ID, STRUCT_NAME, PROCESS_FUNC)
 
@@ -463,8 +469,11 @@ void fsm_init(void) {
 static void abort_signing_engines(void);
 
 static bool reject_stale_continuation(const char* text) {
-  /* Always answer (never strand the host), but do not dispatch: end signing,
-   * keep setup armed, leave the OLED alone. */
+  /* A decoded request always gets a terminal response. Silently dropping an
+   * inactive ACK leaves the host blocked forever, while dispatching it would
+   * let the handler replace an unrelated recovery screen. End signing, keep
+   * any setup ceremony armed, and reject on the wire without changing OLED
+   * state. */
   fsm_abort_signing_workflows();
   fsm_sendFailure(FailureType_Failure_UnexpectedMessage, text);
   return false;
@@ -658,7 +667,8 @@ bool keepkey_before_message_dispatch(MessageType msg_id) {
 
 void keepkey_after_message_dispatch(void) {
   fsm_clearDerivedNode();
-  /* Restore recovery input after an administrative handler redraws. */
+  /* Administrative handlers can change the layout without ending setup.
+   * Restore active recovery input after they unwind, without new progress. */
   recovery_cipher_redraw();
 }
 
@@ -734,8 +744,9 @@ static void abort_signing_engines(void) {
   drop_workflow_progress_if_idle();
 }
 
-/* A preloaded ERC-7730 definition is for the next signing request only;
- * every other request or abort discards it. */
+/* A preloaded ERC-7730 definition is consumed only by the signing request that
+ * follows it. Every other abort -- Initialize, Cancel, ClearSession, autolock,
+ * a rejected frame or any unrelated request -- discards it too. */
 void fsm_abort_signing_workflows(void) {
   abort_signing_engines();
 #if !BITCOIN_ONLY
@@ -782,7 +793,10 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_solana.h"
 #include "fsm_msg_hive.h"
 #else
-// Bitcoin-only: no-op hooks for the always-on abort/reset handlers.
+// Bitcoin-only: the coin engines above are compiled out, but the always-on
+// Initialize/ClearSession/Cancel handlers still call their *_abort() hooks,
+// and factory-reset calls signed_metadata_clear_signers() (EVM clearsign).
+// With no state to reset, no-ops are correct.
 void ethereum_signing_abort(void) {}
 void tendermint_signAbort(void) {}
 void eos_signingAbort(void) {}
