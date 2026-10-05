@@ -910,8 +910,9 @@ static bool signed_metadata_confirm_screens(void) {
     }
   }
 
-  /* User approved the decoded who/what/why. From here the raw-data confirm is
-   * suppressed, so the signature MUST be bound to this metadata's tx hash. */
+  /* User approved the decoded who/what/why. The screens are additive (the
+   * amount and raw-data review still follow), and the signature MUST be bound
+   * to this metadata's tx hash. */
   relied_on_metadata = true;
   return true;
 }
