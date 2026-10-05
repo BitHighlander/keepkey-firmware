@@ -258,14 +258,20 @@ static bool hive_account_name_ok(const char* name) {
   return true;
 }
 
+/* TaPoS references a 16-bit block number. A wider host value is refused,
+ * never silently masked to a different block. */
+static bool hive_ref_block_num_ok(uint32_t ref_block_num) {
+  return ref_block_num <= 0xFFFF;
+}
+
 bool hive_validateTransfer(const HiveSignTx* msg) {
   const char *wire, *display;
   uint8_t precision;
   return msg->has_from && msg->has_to && msg->has_amount &&
-         msg->has_ref_block_num && msg->has_ref_block_prefix &&
-         msg->has_expiration && hive_account_name_ok(msg->from) &&
-         hive_account_name_ok(msg->to) && msg->amount > 0 &&
-         msg->amount <= INT64_MAX &&
+         msg->has_ref_block_num && hive_ref_block_num_ok(msg->ref_block_num) &&
+         msg->has_ref_block_prefix && msg->has_expiration &&
+         hive_account_name_ok(msg->from) && hive_account_name_ok(msg->to) &&
+         msg->amount > 0 && msg->amount <= INT64_MAX &&
          (!msg->has_chain_id || msg->chain_id.size == HIVE_CHAIN_ID_LEN) &&
          (!msg->has_memo ||
           strnlen(msg->memo, sizeof(msg->memo)) <= HIVE_MAX_MEMO_LEN) &&
@@ -274,8 +280,9 @@ bool hive_validateTransfer(const HiveSignTx* msg) {
 
 bool hive_validateAccountCreate(const HiveSignAccountCreate* msg) {
   return msg->has_creator && msg->has_new_account_name &&
-         msg->has_ref_block_num && msg->has_ref_block_prefix &&
-         msg->has_expiration && hive_account_name_ok(msg->creator) &&
+         msg->has_ref_block_num && hive_ref_block_num_ok(msg->ref_block_num) &&
+         msg->has_ref_block_prefix && msg->has_expiration &&
+         hive_account_name_ok(msg->creator) &&
          hive_account_name_ok(msg->new_account_name) &&
          (!msg->has_fee_amount || msg->fee_amount <= INT64_MAX) &&
          (!msg->has_chain_id || msg->chain_id.size == HIVE_CHAIN_ID_LEN);
@@ -283,6 +290,7 @@ bool hive_validateAccountCreate(const HiveSignAccountCreate* msg) {
 
 bool hive_validateAccountUpdate(const HiveSignAccountUpdate* msg) {
   return msg->has_account && msg->has_ref_block_num &&
+         hive_ref_block_num_ok(msg->ref_block_num) &&
          msg->has_ref_block_prefix && msg->has_expiration &&
          hive_account_name_ok(msg->account) &&
          (!msg->has_chain_id || msg->chain_id.size == HIVE_CHAIN_ID_LEN);
