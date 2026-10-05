@@ -155,11 +155,19 @@ typedef struct {
   uint8_t sig_deadline[32]; /* uint256, big-endian */
 } Eip712Permit2;
 
-/* Summary, limits, details, who. spender_name is a ClearSign-vouched name
- * for the spender (NULL if none); alias/fp name the vouching delegate. */
-bool eip712_permit2_review(const Eip712Permit2* p, const char* spender_name,
-                           const char* alias, const char* fp, ReviewEmit emit,
-                           void* ctx);
+/* Summary, limits, details, who. identity is a KeepKey-certified token
+ * identity sent for this request on this chain (NULL if none; used only when
+ * it names p->token and the firmware table does not); spender_name is a
+ * ClearSign-vouched name for the spender (NULL if none); alias/fp name the
+ * vouching delegate. */
+bool eip712_permit2_review(const Eip712Permit2* p, const MetadataToken* identity,
+                           const char* spender_name, const char* alias,
+                           const char* fp, ReviewEmit emit, void* ctx);
+
+/* UNLIMITED: a uint256 at or above 2^255 (ERC-7730's threshold), or exactly
+ * the maximum of a narrower width (Permit2's uint160, whose maximum alone is
+ * the allowance Permit2 never decrements). value is big-endian, len bytes. */
+bool eip712_amount_unlimited(const uint8_t* value, uint16_t len);
 
 /* "2026-05-10 06:19 UTC"; Unix time past year 9999 is shown as a number. */
 void eip712_format_utc(uint64_t t, char* out, size_t len);

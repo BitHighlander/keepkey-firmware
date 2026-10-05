@@ -1046,11 +1046,8 @@ static bool metadata_arg_text(const MetadataArg* arg, uint32_t chain_id,
       return true;
     }
     case ARG_FORMAT_AMOUNT: {
-      bool is_max = arg->value_len == 32;
-      for (uint16_t j = 0; j < arg->value_len && is_max; j++) {
-        if (arg->value[j] != 0xFF) is_max = false;
-      }
-      if (is_max) {
+      /* ERC-7730's threshold: 2^255 and above (a 32-byte top bit). */
+      if (arg->value_len == 32 && (arg->value[0] & 0x80)) {
         snprintf(out, len, "UNLIMITED");
         return true;
       }
@@ -1075,11 +1072,7 @@ static bool metadata_arg_text(const MetadataArg* arg, uint32_t chain_id,
       suffix[1 + symlen] = '\0';
       const uint8_t* amt = arg->value + 2 + symlen;
       uint16_t amt_len = arg->value_len - 2 - symlen;
-      bool is_max = amt_len == 32;
-      for (uint16_t j = 0; j < amt_len && is_max; j++) {
-        if (amt[j] != 0xFF) is_max = false;
-      }
-      if (is_max) {
+      if (amt_len == 32 && (amt[0] & 0x80)) { /* >= 2^255, as ERC-7730 */
         snprintf(out, len, "UNLIMITED%s", suffix);
         return true;
       }
@@ -1170,17 +1163,35 @@ static bool intent_width(void* ctx, bool placeholder, bool value, uint8_t index,
 
 void signed_metadata_take_name(MetadataNameRecord* out) {
   memzero(out, sizeof(*out));
+  const bool name = stored_metadata.version == METADATA_VERSION_NAME;
+  const bool decoder = stored_metadata.version == METADATA_VERSION_DECODER;
   if (metadata_available && metadata_tier == METADATA_TIER_KEEPKEY &&
-      stored_metadata.version == METADATA_VERSION_NAME &&
+      (name || decoder) &&
       stored_metadata.classification == METADATA_VERIFIED) {
     out->valid = true;
     out->chain_id = stored_metadata.chain_id;
     memcpy(out->address, stored_metadata.contract_address, 20);
-    strlcpy(out->name, stored_metadata.vouched_name, sizeof(out->name));
+    strlcpy(out->name,
+            name ? stored_metadata.vouched_name : stored_metadata.title,
+            sizeof(out->name));
     strlcpy(out->alias, delegate_alias, sizeof(out->alias));
     strlcpy(out->fp8, delegate_fp, sizeof(out->fp8));
+    if (decoder) {
+      out->num_tokens = stored_metadata.num_tokens;
+      memcpy(out->tokens, stored_metadata.tokens, sizeof(out->tokens));
+    }
   }
   signed_metadata_clear();
+}
+
+const MetadataToken* signed_metadata_record_token(const MetadataNameRecord* r,
+                                                  uint64_t chain_id,
+                                                  const uint8_t token[20]) {
+  if (!r || !r->valid || r->chain_id != chain_id) return NULL;
+  for (uint8_t i = 0; i < r->num_tokens && i < METADATA_MAX_TOKENS; i++) {
+    if (memcmp(r->tokens[i].address, token, 20) == 0) return &r->tokens[i];
+  }
+  return NULL;
 }
 
 /* Placeholders "{n}" (arg) / "{v}" (msg.value) well-formed and in range,

@@ -226,9 +226,9 @@ bool ethereumFormatUnknownTokenReview(const EthereumSignTx* msg, char* buf,
   bignum256 raw_value;
   bn_from_bytes(msg->data_initial_chunk.bytes + 36, 32, &raw_value);
   const bool approve = ethereum_isStandardERC20Approve(msg);
-  bool unlimited = approve;
-  for (size_t i = 0; i < 32; ++i)
-    unlimited &= msg->data_initial_chunk.bytes[36 + i] == 0xff;
+  /* ERC-7730's threshold: an allowance of 2^255 or more is UNLIMITED. */
+  const bool unlimited =
+      approve && (msg->data_initial_chunk.bytes[36] & 0x80) != 0;
   char amount[96];
   if (unlimited) {
     strlcpy(amount, "an UNLIMITED amount", sizeof(amount));

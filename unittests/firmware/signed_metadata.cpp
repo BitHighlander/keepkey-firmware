@@ -2148,6 +2148,53 @@ TEST_F(SignedMetadataTest, IntentSchemaPermit2ApproveReviewsWhoWhatWhyLimit) {
             METADATA_VERIFIED);
 }
 
+/* ERC-7730's threshold: a token amount of 2^255 or more reads UNLIMITED;
+ * 2^255 - 1 is shown exactly, never as unlimited. */
+TEST_F(SignedMetadataTest, TokenAmountIsUnlimitedFromTwoToThe255) {
+  static const uint8_t PERMIT2[20] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x22, 0xd4,
+                                      0x73, 0x03, 0x0f, 0x11, 0x6d, 0xde, 0xe9,
+                                      0xf6, 0xb4, 0x3a, 0xc7, 0x8b, 0xa3};
+  static const uint8_t SEL_APPROVE[4] = {0x09, 0x5e, 0xa7, 0xb3};
+  IntentSpec s;
+  s.v2 = v2_base_spec();
+  s.v2.selector.assign(SEL_APPROVE, SEL_APPROVE + 4);
+  s.v2.method = "approve";
+  s.v2.args.clear();
+  s.v2.args.push_back(v2_pinned("Spender", PERMIT2, 20));
+  s.v2.args.push_back(v2_token("Allowance", 6, "USDC"));
+  s.roles = {METADATA_ROLE_NONE, METADATA_ROLE_ALLOWANCE};
+  s.value_role = METADATA_ROLE_NONE;
+  s.title = "Uniswap";
+  s.intent = "Let the Uniswap approval contract spend up to {1} for trades you sign";
+  const struct {
+    uint8_t top, rest;
+    const char* limit;
+  } cases[] = {
+      {0x80, 0x00, "Can spend up to\nUNLIMITED USDC"},
+      {0x7f, 0xff,
+       "Can spend up to\n57896044618658097711785492504343953926634992332820282"
+       "019728792003956564.819967 USDC"},
+  };
+  for (const auto& c : cases) {
+    std::vector<uint8_t> blob = sign_body(build_intent_body(s));
+    ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+              METADATA_VERIFIED);
+    std::vector<uint8_t> data(SEL_APPROVE, SEL_APPROVE + 4);
+    put_addr_word(data, PERMIT2);
+    data.push_back(c.top);
+    for (int i = 1; i < 32; i++) data.push_back(c.rest);
+    EthereumSignTx msg;
+    make_v2_msg(&msg, s.v2.contract.data(), data, true, (uint32_t)data.size());
+    ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+    std::vector<Shown> got;
+    ASSERT_TRUE(signed_metadata_build_intent_review(
+        signed_metadata_get(), true, "KeepKey Alpha 716", "A9531B9D",
+        collect_shown, &got));
+    ASSERT_GE(got.size(), 2u);
+    EXPECT_EQ(got[1].body, c.limit);
+  }
+}
+
 TEST_F(SignedMetadataTest, IntentSchemaRelayDepositReviewsWhoWhatWhyLimits) {
   IntentSpec s = relay_intent();
   std::vector<uint8_t> blob = sign_body(build_intent_body(s));
@@ -2554,6 +2601,57 @@ TEST_F(CertifiedMetadataTest, UniswapSwapWithoutEveryTokenIdentityIsRefused) {
   EXPECT_FALSE(signed_metadata_matches_tx(&msg));
   // The claim stays visible: SignTx refuses rather than blind-signing.
   EXPECT_TRUE(signed_metadata_certified_claimed());
+}
+
+/* Ahead of a typed-data request (a Permit2 PermitSingle), a certified 0x07
+ * entry lends the review its token identities and names its own contract;
+ * only on its own chain and only for the tokens it lists. */
+TEST_F(CertifiedMetadataTest, DecoderRecordLendsTokenIdentitiesToTypedData) {
+  const std::vector<uint8_t> router =
+      ur_unhex("6ff5693b99212da76ad316178a184ab56d299b43");
+  const std::vector<UrToken> tokens = {
+      {"cbb7c0000ab88b473b1f5afd9ef808440eed33bf", "cbBTC", 8},
+      {"833589fcd6edb6e08f4c7c32d4f71b54bda02913", "USDC", 6},
+  };
+  ASSERT_EQ(METADATA_VERIFIED,
+            Process(envelope(mint_cert(8453, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+                                       EXPECTED_SLOT3_PUB),
+                             sign_body(build_decoder_body(router, 8453,
+                                                          tokens)))));
+  MetadataNameRecord r;
+  signed_metadata_take_name(&r);
+  ASSERT_TRUE(r.valid);
+  EXPECT_EQ(r.chain_id, 8453u);
+  EXPECT_EQ(memcmp(r.address, router.data(), 20), 0);
+  EXPECT_STREQ(r.name, "Uniswap");
+  EXPECT_STREQ(r.alias, "Test Delegate");
+  ASSERT_EQ(r.num_tokens, 2u);
+
+  const std::vector<uint8_t> cbbtc = ur_unhex(tokens[0].address);
+  const MetadataToken* t = signed_metadata_record_token(&r, 8453, cbbtc.data());
+  ASSERT_NE(t, nullptr);
+  EXPECT_STREQ(t->symbol, "cbBTC");
+  EXPECT_EQ(t->decimals, 8);
+  // Another chain, or a token the entry does not list: no identity.
+  EXPECT_EQ(signed_metadata_record_token(&r, 42161, cbbtc.data()), nullptr);
+  std::vector<uint8_t> other = cbbtc;
+  other[19] ^= 1;
+  EXPECT_EQ(signed_metadata_record_token(&r, 8453, other.data()), nullptr);
+  // Taken once.
+  signed_metadata_take_name(&r);
+  EXPECT_FALSE(r.valid);
+  EXPECT_EQ(signed_metadata_record_token(&r, 8453, cbbtc.data()), nullptr);
+
+  // A name record carries no token identities.
+  ASSERT_EQ(METADATA_VERIFIED,
+            Process(envelope(
+                mint_cert(8453, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+                          EXPECTED_SLOT3_PUB),
+                sign_body(name_body(8453, router.data(), "Uniswap Router",
+                                    METADATA_KEYID_DELEGATE)))));
+  signed_metadata_take_name(&r);
+  ASSERT_TRUE(r.valid);
+  EXPECT_EQ(signed_metadata_record_token(&r, 8453, cbbtc.data()), nullptr);
 }
 
 TEST_F(CertifiedMetadataTest, UniswapDecoderEntryIsCertifiedOrNothing) {

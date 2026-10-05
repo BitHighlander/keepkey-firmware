@@ -101,7 +101,7 @@ typedef enum {
   /* Printable label; alias character rules minus length (no '%'). */
   ARG_FORMAT_STRING = 4,
   /* decimals(1) + symbol_len(1) + symbol(<=10, [A-Za-z0-9]) + amount(1..32
-   * BE); all-0xFF 32-byte amount renders "UNLIMITED <symbol>". */
+   * BE); an amount >= 2^255 renders "UNLIMITED <symbol>". */
   ARG_FORMAT_TOKEN_AMOUNT = 5,
   /* v2/0x05 only: an address that must equal the 20 bytes the schema pins
    * (e.g. a spender), so the template may name that party in words. */
@@ -166,7 +166,9 @@ typedef bool (*ReviewEmit)(void* ctx, const char* title, const char* body,
 /* ReviewEmit on the device: text as one screen, bytes as hex pages. */
 bool signed_metadata_review_emit(void* ctx, const char* title, const char* body,
                                  const uint8_t* bytes, uint16_t bytes_len);
-/* A KeepKey-certified name record, taken by the request it rides ahead of. */
+/* A KeepKey-certified record taken by the typed-data request it rides ahead
+ * of: a 0x06 name, or a 0x07 decoder entry, which names its contract by its
+ * title and carries the token identities its swaps use. */
 typedef struct {
   bool valid;
   uint32_t chain_id;
@@ -174,11 +176,19 @@ typedef struct {
   char name[METADATA_NAME_MAX + 1];
   char alias[METADATA_ALIAS_MAX_LEN + 2]; /* certificate alias, <= 32 */
   char fp8[9];
+  uint8_t num_tokens; /* 0x07 only */
+  MetadataToken tokens[METADATA_MAX_TOKENS];
 } MetadataNameRecord;
 
-/* Copies out the loaded certified name record (if any) and clears all
- * metadata, so a record can only ever name the one request that follows it. */
+/* Copies out the loaded certified name or decoder record (if any) and clears
+ * all metadata, so a record can only ever serve the one request that follows
+ * it. */
 void signed_metadata_take_name(MetadataNameRecord* out);
+/* The record's identity for `token` on `chain_id`, or NULL: a record scoped
+ * to another chain, or naming other tokens, names nothing here. */
+const MetadataToken* signed_metadata_record_token(const MetadataNameRecord* r,
+                                                  uint64_t chain_id,
+                                                  const uint8_t token[20]);
 /* The v0x05 review. certified: summary, limits, details, who. Runtime: a
  * NOT-verified heading plus limits; the caller's raw review follows. */
 /* v0x07 Uniswap review: summary, limits, recipient, permit, fee, contract,
