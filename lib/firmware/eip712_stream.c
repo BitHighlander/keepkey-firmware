@@ -1038,7 +1038,8 @@ static bool deadline_text(const uint8_t v[32], char* out, size_t len) {
   return true;
 }
 
-bool eip712_permit2_review(const Eip712Permit2* p, const MetadataToken* identity,
+bool eip712_permit2_review(const Eip712Permit2* p,
+                           const MetadataToken* identity,
                            const char* spender_name, const char* alias,
                            const char* fp, ReviewEmit emit, void* ctx) {
   if (!p || !p->valid || !emit) return false;
@@ -1083,7 +1084,7 @@ bool eip712_permit2_review(const Eip712Permit2* p, const MetadataToken* identity
   const bool token_vouched = t && t->certified;
   if (spender_name || token_vouched) {
     snprintf(body, sizeof(body), "%s named by %s %s\ncertified by KeepKey",
-             !token_vouched  ? "Spender"
+             !token_vouched ? "Spender"
              : spender_name ? "Spender and token"
                             : "Token",
              alias ? alias : "", fp ? fp : "");

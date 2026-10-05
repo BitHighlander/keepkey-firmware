@@ -160,7 +160,8 @@ typedef struct {
  * it names p->token and the firmware table does not); spender_name is a
  * ClearSign-vouched name for the spender (NULL if none); alias/fp name the
  * vouching delegate. */
-bool eip712_permit2_review(const Eip712Permit2* p, const MetadataToken* identity,
+bool eip712_permit2_review(const Eip712Permit2* p,
+                           const MetadataToken* identity,
                            const char* spender_name, const char* alias,
                            const char* fp, ReviewEmit emit, void* ctx);
 

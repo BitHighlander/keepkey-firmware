@@ -2211,12 +2211,10 @@ static void eip712_pump(void) {
             memcmp(typed_data_name.address, done.permit2.spender, 20) == 0;
         const bool ok = eip712_permit2_review(
             &done.permit2,
-            signed_metadata_record_token(&typed_data_name,
-                                         done.permit2.chain_id,
-                                         done.permit2.token),
-            named ? typed_data_name.name : NULL,
-            typed_data_name.alias, typed_data_name.fp8,
-            signed_metadata_review_emit, NULL);
+            signed_metadata_record_token(
+                &typed_data_name, done.permit2.chain_id, done.permit2.token),
+            named ? typed_data_name.name : NULL, typed_data_name.alias,
+            typed_data_name.fp8, signed_metadata_review_emit, NULL);
         memzero(&typed_data_name, sizeof(typed_data_name));
         if (!ok) {
           fsm_sendFailure(FailureType_Failure_ActionCancelled,
