@@ -186,6 +186,42 @@ TEST_F(BodyFits, ConstantPowerSeedRowsAreCompleteAndPagedAtRowBoundaries) {
   EXPECT_EQ(confirm_constant_power_subpage_take(unsplittable.c_str()), 0u);
 }
 
+// Regression: the BIP-85 child seed packs pages at BODY_WIDTH but draws them on
+// the constant-power canvas, so it must use the paged renderer as reset.c does.
+TEST_F(BodyFits, SeedPagesPackedAtBodyWidthNeedTheConstantPowerPager) {
+  // The page the seed pagers can actually emit and the renderer actually
+  // clips: they pack words until three rows fit at BODY_WIDTH, so a page of
+  // long words is accepted there and then wraps into more rows than the screen
+  // has when it is drawn at CONSTANT_POWER_BODY_WIDTH. Measured, not assumed.
+  // Exactly the first page fsm_msgGetBip85Mnemonic() emits for a 24-word
+  // phrase of "household": "%lu.%s" words, a newline after every second
+  // word, joined with "%s   %s". Every page of that phrase overflows.
+  static const char kWidestPackedPage[] =
+      "   1.household   2.household\n   3.household   4.household\n"
+      "   5.household";
+  EXPECT_TRUE(confirm_body_fits(kWidestPackedPage, BODY_WIDTH))
+      << "the packer measures at BODY_WIDTH, which is how this reaches the "
+         "constant-power renderer as one page";
+  EXPECT_FALSE(confirm_body_fits_constant_power(kWidestPackedPage,
+                                                CONSTANT_POWER_BODY_WIDTH))
+      << "drawn where it is actually drawn, it does not fit";
+
+  // ...and the subpage pager splits it, which is why every seed screen on this
+  // layout (reset.c's backup and the BIP-85 child seed) must use the paged
+  // renderer rather than confirm_constant_power().
+  const size_t take = confirm_constant_power_subpage_take(kWidestPackedPage);
+  EXPECT_GT(take, 0u);
+  EXPECT_LT(take, strlen(kWidestPackedPage))
+      << "a page the renderer clips must take more than one subpage, or paging "
+         "it changes nothing";
+
+  // Control: a short body fits under both probes, so the constant-power probe
+  // is not simply refusing everything.
+  EXPECT_TRUE(confirm_body_fits("   1.abandon", BODY_WIDTH));
+  EXPECT_TRUE(confirm_body_fits_constant_power("   1.abandon",
+                                               CONSTANT_POWER_BODY_WIDTH));
+}
+
 // Regression: calc_str_line() accumulated into a uint8_t while returning
 // uint32_t, so a body carrying 255 newlines wrapped the count back to 0 and
 // confirm_body_fits() reported that it fitted. The 352-byte confirm buffer has
