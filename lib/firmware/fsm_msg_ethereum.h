@@ -1228,8 +1228,14 @@ void fsm_msgEthereumClearSignDefinition(
     const EthereumClearSignDefinition* msg) {
   CHECK_INITIALIZED
   CHECK_PIN
-  CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),
-              _("AdvancedMode required for ERC-7730"));
+  /* A refusal discards any partial preload, like the chunk refusals below. */
+  if (!storage_isPolicyEnabled("AdvancedMode")) {
+    erc7730_catalog_clear_preload();
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _("AdvancedMode required for ERC-7730"));
+    layoutHome();
+    return;
+  }
 
   /* Dispatch has already ended any signing session before this runs. */
   if (msg->definition_id.size != 32 || msg->data.size == 0 ||
