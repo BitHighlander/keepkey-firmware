@@ -180,6 +180,9 @@ typedef struct {
   uint8_t recent_blockhash[SOL_PUBKEY_SIZE];
   uint8_t num_instructions;
   SolanaParsedInstruction instructions[SOL_MAX_INSTRUCTIONS];
+  /* Addresses a v0 message's lookup tables load (writable + readonly); 0 for
+   * legacy and zero-LUT messages. */
+  uint32_t num_loaded_accounts;
 } SolanaParsedTx;
 
 /* Firmware review result for a Solana message */

@@ -893,9 +893,10 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     }
 
     /* KKSOLSW1 runtime LUT description: annotation only (SRS R-1.3); the
-     * blind-sign warning still follows. */
-    if (lut_well_formed && lut_n > 0 && msg->has_lut_signature &&
-        msg->has_lut_signer_key_id &&
+     * blind-sign warning still follows. Only a message whose lookup tables
+     * load accounts has any to describe. */
+    if (lut_well_formed && lut_n > 0 && parsed.num_loaded_accounts > 0 &&
+        msg->has_lut_signature && msg->has_lut_signer_key_id &&
         solana_lut_accounts_trusted(
             msg->raw_tx.bytes, msg->raw_tx.size,
             (const uint8_t (*)[32])lut_keys, lut_n, msg->lut_signer_key_id,

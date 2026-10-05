@@ -743,6 +743,7 @@ static SolanaTxReview solana_parseVersionedTx(const uint8_t* raw,
     pos += n;
     if (pos + readonly_count > raw_len) return SOL_TX_REVIEW_MALFORMED;
     pos += readonly_count;
+    tx->num_loaded_accounts += (uint32_t)writable_count + readonly_count;
   }
 
   if (pos != raw_len) return SOL_TX_REVIEW_MALFORMED;
