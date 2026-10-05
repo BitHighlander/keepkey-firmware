@@ -8,6 +8,7 @@ extern "C" {
 #include "keepkey/firmware/ripple.h"
 #include "keepkey/firmware/tron.h"
 #include "keepkey/firmware/mayachain.h"
+#include "keepkey/firmware/thorchain.h"
 #include "keepkey/firmware/bip85.h"
 #include "keepkey/firmware/signed_metadata.h"
 #include "storage.h"
@@ -405,11 +406,52 @@ TEST_F(ReviewHandlers, MayaDefaultDenomReachesConsentForMissingAndEmptyField) {
     EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
     EXPECT_FALSE(mayachain_signingIsInited());
     EXPECT_EQ(0, kkconfirm_drain());
-    EXPECT_NE(screens.end(),
-              std::find_if(screens.begin(), screens.end(),
-                           [](const std::string& s) {
-                             return s.rfind("Sign cacao on mayachain?", 0) == 0;
-                           }));
+    EXPECT_NE(
+        screens.end(),
+        std::find_if(screens.begin(), screens.end(), [](const std::string& s) {
+          return s.rfind("Sign cacao on mayachain?", 0) == 0;
+        }));
+  }
+}
+
+// The THORChain signing screen names the denom actually sent, never "RUNE"
+// for a non-rune MsgSend.
+TEST_F(ReviewHandlers, ThorchainSignScreenNamesTheSentDenom) {
+  // The default denom keeps the screen it always had.
+  const std::pair<const char*, const char*> cases[] = {{"tcy", "tcy"},
+                                                       {"rune", "RUNE"}};
+  for (const auto& c : cases) {
+    const char* denom = c.first;
+    HDNode node = {};
+    ASSERT_TRUE(storage_getRootNode("secp256k1", true, &node));
+    hdnode_fill_public_key(&node);
+    ThorchainSignTx tx = {};
+    tx.has_chain_id = tx.has_msg_count = true;
+    strcpy(tx.chain_id, "thorchain-1");
+    tx.msg_count = 1;
+    ASSERT_TRUE(thorchain_signTxInit(&node, &tx));
+    ThorchainMsgAck ack = {};
+    ack.has_send = true;
+    ack.send.has_to_address = ack.send.has_amount = ack.send.has_denom = true;
+    ack.send.amount = 1;
+    strcpy(ack.send.denom, denom);
+    strcpy(ack.send.to_address, "thor1am058pdux3hyulcmfgj4m3hhrlfn8nzmpq9u6l");
+    // Accept output and asset, reject the final "Sign ... on ...?" screen.
+    ASSERT_TRUE(kkconfirm_preload(2, 1));
+    fsm_test_clearLastFailure();
+    kkconfirm_capture_start();
+    fsm_msgThorchainMsgAck(&ack);
+    const auto screens = kkconfirm_capture_finish();
+    EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+    EXPECT_FALSE(thorchain_signingIsInited());
+    EXPECT_EQ(0, kkconfirm_drain());
+    const std::string expected =
+        std::string("Sign ") + c.second + " on thorchain-1?";
+    EXPECT_NE(screens.end(), std::find_if(screens.begin(), screens.end(),
+                                          [&](const std::string& s) {
+                                            return s.rfind(expected, 0) == 0;
+                                          }))
+        << denom;
   }
 }
 
