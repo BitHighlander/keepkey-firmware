@@ -184,6 +184,34 @@ TEST(Hive, AllSigningOperationsRejectMalformedExplicitChainIds) {
       });
 }
 
+// TaPoS takes a 16-bit block number; a wider value is refused, not masked.
+TEST(Hive, AllSigningOperationsRefuseAnOutOfRangeRefBlockNum) {
+  HiveSignTx transfer = transfer_request();
+  HiveSignAccountCreate create = {};
+  create.has_creator = create.has_new_account_name = true;
+  strcpy(create.creator, "alice");
+  strcpy(create.new_account_name, "bob");
+  create.has_ref_block_num = create.has_ref_block_prefix =
+      create.has_expiration = true;
+  create.ref_block_prefix = 2;
+  create.expiration = 3;
+  HiveSignAccountUpdate update = {};
+  update.has_account = true;
+  strcpy(update.account, "alice");
+  update.has_ref_block_num = update.has_ref_block_prefix =
+      update.has_expiration = true;
+  update.ref_block_prefix = 2;
+  update.expiration = 3;
+  for (uint32_t ref : {0u, 0xFFFFu, 0x10000u, 0x10001u, 0xFFFFFFFFu}) {
+    SCOPED_TRACE(ref);
+    const bool in_range = ref <= 0xFFFF;
+    transfer.ref_block_num = create.ref_block_num = update.ref_block_num = ref;
+    EXPECT_EQ(in_range, hive_validateTransfer(&transfer));
+    EXPECT_EQ(in_range, hive_validateAccountCreate(&create));
+    EXPECT_EQ(in_range, hive_validateAccountUpdate(&update));
+  }
+}
+
 TEST(Hive, TransferRejectsInvalidAmountAndAccountLabels) {
   HDNode node = {};
   const uint8_t seed[32] = {1};
