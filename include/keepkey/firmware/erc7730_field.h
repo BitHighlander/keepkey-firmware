@@ -42,8 +42,9 @@ bool erc7730_format_date(const uint8_t value[32], bool block_height,
 bool erc7730_format_duration(const uint8_t value[32], char* output,
                              size_t output_size);
 
-/* unit: the value scaled by `decimals` with the signer's base, already
- * escaped, then the raw integer when scaling changed it. */
+/* unit: "unit set by signer", the value scaled by `decimals` with the
+ * signer's base (already escaped), then "raw N" with the raw integer, always,
+ * including when decimals is 0. */
 bool erc7730_format_unit(const uint8_t value[32], uint8_t decimals,
                          const char* base, char* output, size_t output_size);
 
