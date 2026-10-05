@@ -2383,6 +2383,23 @@ TEST(DiceCeremonyPrivacy, AbortAtEveryPhaseWipesAndAllowsOrdinaryRestart) {
   }
 }
 
+// DebugLinkGetState is also serviced inside the PIN, passphrase and confirm
+// waits. The suspended outer handler may already hold its pending response in
+// the shared RESP_INIT arena, so the debug reply must not be built there.
+TEST(Fsm, DebugLinkGetStateLeavesPendingResponseIntact) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  size_t size = 0;
+  uint8_t* arena = fsm_test_responseArena(&size);
+  ASSERT_NE(nullptr, arena);
+  ASSERT_GT(size, 0u);
+  std::memset(arena, 0x5a, size);
+  DebugLinkGetState get = {};
+  fsm_msgDebugLinkGetState(&get);
+  for (size_t i = 0; i < size; ++i) ASSERT_EQ(0x5a, arena[i]) << "offset " << i;
+}
+
 TEST(DiceCeremonyPrivacy, AbortClearsCanvasBeforeDiagnosticsResume) {
   kk_test_board_init();
   fsm_init();
