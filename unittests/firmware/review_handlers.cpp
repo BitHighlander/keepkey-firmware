@@ -373,6 +373,50 @@ TEST_F(ReviewHandlers, ZcashShieldedOnlyRefusesANonEmptyTransparentDigest) {
   EXPECT_EQ(0, kkconfirm_drain());
 }
 
+// A v5 sighash has no Ironwood component, so a supplied ironwood_digest of any
+// size is refused before the summary instead of being dropped.
+TEST_F(ReviewHandlers, ZcashV5RefusesAnIronwoodDigest) {
+  ZcashSignPCZT msg = {};
+  msg.has_n_actions = true;
+  msg.n_actions = 1;
+  msg.has_account = true;
+  msg.has_tx_version = msg.has_version_group_id = msg.has_branch_id =
+      msg.has_lock_time = msg.has_expiry_height = true;
+  msg.tx_version = 5;
+  msg.version_group_id = 0x26a7270a;
+  msg.branch_id = 0xc2d6d0b4;
+  msg.has_header_digest = true;
+  msg.header_digest.size = 32;
+  ASSERT_TRUE(zcash_compute_header_digest(
+      msg.tx_version, msg.version_group_id, msg.branch_id, msg.lock_time,
+      msg.expiry_height, msg.header_digest.bytes));
+  msg.has_orchard_digest = true;
+  msg.orchard_digest.size = 32;
+  msg.has_orchard_flags = msg.has_orchard_value_balance = true;
+  msg.has_orchard_anchor = true;
+  msg.orchard_anchor.size = 32;
+  for (pb_size_t size : {32, 7}) {
+    SCOPED_TRACE(size);
+    msg.has_ironwood_digest = true;
+    msg.ironwood_digest.size = size;
+    ASSERT_TRUE(kkconfirm_preload(0, 1));
+    fsm_test_clearLastFailure();
+    kkconfirm_capture_start();
+    fsm_msgZcashSignPCZT(&msg);
+    EXPECT_TRUE(kkconfirm_capture_finish().empty());
+    EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+    EXPECT_EQ(2, kkconfirm_drain());  // the summary's ack + decision, unused
+  }
+  // Without it the same request reaches the summary.
+  msg.has_ironwood_digest = false;
+  msg.ironwood_digest.size = 0;
+  ASSERT_TRUE(kkconfirm_preload(0, 1));  // reject the summary
+  fsm_test_clearLastFailure();
+  fsm_msgZcashSignPCZT(&msg);
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
 // Handler-level walk of a whole shielded-only session: summary, one streamed
 // output action (the cmx is the device's own known-answer vector, see
 // OrchardNoteCommitment_KnownVectorAndProgress), the recomputed bundle digest,
