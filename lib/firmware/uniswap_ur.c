@@ -461,10 +461,10 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
   size_t i = 0;
   const UrStep* permit = NULL;
   const UrStep* wrap = NULL;
-  /* Before the swap: at most one permit or one wrap. */
-  if (i < plan->n && plan->steps[i].kind == UR_PERMIT2_PERMIT) {
+  /* Before the swap: at most one permit or one wrap (plan->n > 0). */
+  if (plan->steps[0].kind == UR_PERMIT2_PERMIT) {
     permit = &plan->steps[i++];
-  } else if (i < plan->n && plan->steps[i].kind == UR_WRAP_ETH) {
+  } else if (plan->steps[0].kind == UR_WRAP_ETH) {
     wrap = &plan->steps[i++];
   }
   if (i >= plan->n || !is_swap(plan->steps[i].kind)) return false;
