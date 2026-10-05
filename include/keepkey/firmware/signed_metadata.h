@@ -138,8 +138,9 @@ bool signed_metadata_signer_fingerprint(uint8_t key_id,
 bool signed_metadata_matches_tx(const EthereumSignTx* msg);
 bool signed_metadata_confirm(void);
 
-/* True once a verified confirm suppressed the raw-data screen, so signing is
- * gated on the metadata matching the final tx hash. */
+/* True once the user approved the decoded metadata screens, so signing is
+ * gated on the metadata matching the final tx hash. The screens are additive:
+ * the ordinary amount and raw-data review still follows them. */
 bool signed_metadata_relied(void);
 
 /* Called once the sighash exists (send_signature). Fail-closed unless no
