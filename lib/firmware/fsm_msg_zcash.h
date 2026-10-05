@@ -730,21 +730,24 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
     return;
   }
 
-  char amount_str[32];
+  /* The summary shows no amount. total_amount is host-supplied and nothing
+   * the device signs commits to it, so it must never be displayed as a fact;
+   * every value that is signed is shown on its own verified screen (Orchard
+   * outputs, transparent outputs). The fee shown here is the host's claim and
+   * is checked against the device-computed fee, then confirmed again, before
+   * any signature is released. */
   char fee_str[32];
-  uint64_t total = msg->has_total_amount ? msg->total_amount : 0;
   uint64_t fee = msg->has_fee ? msg->fee : 0;
 
   /* 1 ZEC = 100,000,000 zatoshis */
-  zcash_format_amount(total, amount_str, sizeof(amount_str));
   zcash_format_amount(fee, fee_str, sizeof(fee_str));
 
   if (n_tinputs > 0) {
     if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Zcash Shield",
                  "Shield transparent ZEC?\n"
-                 "Amount: %s\nFee: %s\nInputs: %lu\nOutputs: %lu\nActions: %lu",
-                 amount_str, fee_str, (unsigned long)n_tinputs,
-                 (unsigned long)n_toutputs, (unsigned long)msg->n_actions)) {
+                 "Fee: %s\nInputs: %lu\nOutputs: %lu\nActions: %lu",
+                 fee_str, (unsigned long)n_tinputs, (unsigned long)n_toutputs,
+                 (unsigned long)msg->n_actions)) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("Signing cancelled"));
       layoutHome();
@@ -753,8 +756,8 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
   } else if (n_toutputs > 0) {
     if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Zcash Shielded",
                  "Sign transaction with transparent outputs?\n"
-                 "Amount: %s\nFee: %s\nOutputs: %lu\nActions: %lu",
-                 amount_str, fee_str, (unsigned long)n_toutputs,
+                 "Fee: %s\nOutputs: %lu\nActions: %lu",
+                 fee_str, (unsigned long)n_toutputs,
                  (unsigned long)msg->n_actions)) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("Signing cancelled"));
@@ -764,8 +767,8 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
   } else {
     if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Zcash Shielded",
                  "Sign shielded transaction?\n"
-                 "Amount: %s\nFee: %s\nActions: %lu",
-                 amount_str, fee_str, (unsigned long)msg->n_actions)) {
+                 "Fee: %s\nActions: %lu",
+                 fee_str, (unsigned long)msg->n_actions)) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       _("Signing cancelled"));
       layoutHome();
