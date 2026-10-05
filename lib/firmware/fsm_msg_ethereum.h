@@ -1294,9 +1294,15 @@ static void fail_erc7730_domain(void) {
 
 void fsm_msgEthereumClearSignDefinitionChunk(
     const EthereumClearSignDefinitionChunk* msg) {
-  CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),
-              _("AdvancedMode required for ERC-7730"));
   Erc7730Workflow* workflow = erc7730_workflow_state();
+  if (!storage_isPolicyEnabled("AdvancedMode")) {
+    /* Refuse as the SignTx-time gate does: end the workflow, its typed-data
+     * stream and the preload, never leave them armed behind a Failure. */
+    erc7730_catalog_clear_preload();
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("AdvancedMode required for ERC-7730"));
+    return;
+  }
   if (!erc7730_workflow_active(workflow)) {
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
                     _("No ERC-7730 definition requested"));

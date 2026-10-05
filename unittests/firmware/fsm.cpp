@@ -1158,6 +1158,31 @@ TEST(Fsm, TypedDataContinuationAndSessionBoundariesAreExplicit) {
       MessageType_MessageType_EthereumClearSignDefinitionChunk));
 }
 
+// A definition chunk refused for AdvancedMode ends the certified workflow
+// (and the typed-data stream it belongs to) instead of leaving it armed.
+TEST(Fsm, Erc7730ChunkRefusedWithoutAdvancedModeEndsTheWorkflow) {
+  kk_test_board_init();
+  fsm_init();
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+  for (auto phase : {ERC7730_WORKFLOW_REPLAY, ERC7730_WORKFLOW_SELECT,
+                     ERC7730_WORKFLOW_FETCH}) {
+    EthereumSignTypedData start{};
+    std::strcpy(start.primary_type, "Mail");
+    ASSERT_TRUE(eip712_stream_begin(&start, false));
+    auto* workflow = erc7730_workflow_state();
+    workflow->phase = phase;
+    workflow->typed_data = true;
+    EthereumClearSignDefinitionChunk chunk{};
+    fsm_test_clearLastFailure();
+    fsm_msgEthereumClearSignDefinitionChunk(&chunk);
+    EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+    EXPECT_EQ(ERC7730_WORKFLOW_IDLE, workflow->phase) << phase;
+    EXPECT_EQ(EIP712_IDLE, eip712_stream_waiting()) << phase;
+    EXPECT_FALSE(keepkey_before_message_dispatch(
+        MessageType_MessageType_EthereumClearSignDefinitionChunk));
+  }
+}
+
 TEST_F(AutoLockProgress, EosDataProgressRenewsButEmptyChunksDoNot) {
   signing_abort();
   storage_reset();
