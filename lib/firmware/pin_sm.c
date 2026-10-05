@@ -271,10 +271,7 @@ bool pin_protect(const char* prompt) {
   }
 
   storage_resetPinFails();
-  /* A correct PIN, entered against this prompt's scrambled matrix, proves
-   * the user is at the device. Renew the auto-lock deadline here, or the
-   * next main-loop tick re-locks a session the user just unlocked. */
-  reset_idle_time();
+  note_pin_accepted();
   ret = true;
 
 done:

@@ -109,6 +109,26 @@ TEST_F(Block13ResetProgress, InitialRequestRenewsThenPollingExpires) {
   EXPECT_FALSE(storage_isInitialized());
 }
 
+// Host PIN entry after an idle lock: the request leaves home, the reply
+// returns to it, and no button is pressed. The unlock must survive the next
+// tick (hardware 2026-10-03: every host unlock after 10 idle minutes relocked
+// ~3.5 s later and the host asked for the PIN forever).
+TEST_F(Block13ResetProgress, AcceptedPinAfterIdleLockHoldsThroughNextTick) {
+  auto unlockAfterIdleLock = [](bool pinAccepted) {
+    reset_idle_time();
+    increment_idle_time(kDeadline);
+    toggle_screensaver();
+    EXPECT_EQ(SCREENSAVER, home_get_state());
+    if (pinAccepted) note_pin_accepted();
+    leave_home();
+    layoutHome();
+    toggle_screensaver();
+    return home_get_state();
+  };
+  EXPECT_EQ(SCREENSAVER, unlockAfterIdleLock(false));  // control: the bug
+  EXPECT_NE(SCREENSAVER, unlockAfterIdleLock(true));
+}
+
 TEST_F(Block13ResetProgress, EntropyReplyAdvancesOnceIncludingAbsentAndEmpty) {
   // The protocol permits no host contribution. All three replies advance to
   // backup review once; they are not repeatable empty-chunk keepalives.
