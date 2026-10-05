@@ -335,9 +335,13 @@ TEST(RngHealth, TrippingBytesAreWipedNotReturned) {
 
 static size_t observed_draw_bytes;
 static bool fault_on_draw;
+// Nonzero: fault the draw that brings observed_draw_bytes to this total.
+static size_t fault_at_draw_bytes;
 extern "C" void rng_health_test_draw_completed(size_t len) {
   observed_draw_bytes += len;
-  if (fault_on_draw) rng_test_observe_transient_error();
+  if (fault_on_draw ||
+      (fault_at_draw_bytes != 0 && observed_draw_bytes >= fault_at_draw_bytes))
+    rng_test_observe_transient_error();
 }
 
 class RngBootGate : public ::testing::Test {
@@ -347,9 +351,11 @@ class RngBootGate : public ::testing::Test {
     rng_health_reset_for_test();
     observed_draw_bytes = 0;
     fault_on_draw = false;
+    fault_at_draw_bytes = 0;
   }
   void TearDown() override {
     fault_on_draw = false;
+    fault_at_draw_bytes = 0;
     rng_test_power_on_reset();
     rng_health_force_verdict(true);
   }
@@ -379,6 +385,20 @@ TEST_F(RngBootGate, FaultDuringCheckedDrawWipesOutput) {
   const uint8_t zeros[64] = {};
   EXPECT_EQ(0, memcmp(buf, zeros, sizeof(buf)));
   EXPECT_EQ(sizeof(buf), observed_draw_bytes);
+}
+
+// A permutation that faults partway through: the first checked draw succeeds
+// and its swap lands, the second draw faults. The already-shuffled buffer
+// must be wiped whole, not left as a partial secret mapping.
+TEST_F(RngBootGate, FaultMidPermutationWipesPartialShuffle) {
+  rng_health_force_verdict(true);
+  fault_at_draw_bytes = 2 * sizeof(uint32_t);
+  char value[] = "123456789";
+  EXPECT_FALSE(random_permute_char_checked(value, sizeof(value) - 1));
+  EXPECT_EQ(fault_at_draw_bytes, observed_draw_bytes)
+      << "the fault did not land after a completed swap";
+  const char zeros[sizeof(value) - 1] = {0};
+  EXPECT_EQ(0, memcmp(value, zeros, sizeof(zeros)));
 }
 
 // The PIN matrix call site, not just the helper: a failed verdict must halt
