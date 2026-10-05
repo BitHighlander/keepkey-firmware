@@ -668,6 +668,15 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t* raw, size_t raw_len,
   return SOL_TX_REVIEW_VERIFIED;
 }
 
+/* Solana's message sanitize rules for the header: a writable signer (the fee
+ * payer) exists, and the signer and read-only unsigned ranges fit inside the
+ * static keys without overlapping. */
+static bool solana_header_ok(const SolanaParsedTx* tx) {
+  return tx->num_readonly_signed < tx->num_required_sigs &&
+         (uint16_t)tx->num_required_sigs + tx->num_readonly_unsigned <=
+             tx->num_accounts;
+}
+
 static SolanaTxReview solana_parseVersionedTx(const uint8_t* raw,
                                               size_t raw_len,
                                               SolanaParsedTx* tx) {
@@ -737,6 +746,8 @@ static SolanaTxReview solana_parseVersionedTx(const uint8_t* raw,
   }
 
   if (pos != raw_len) return SOL_TX_REVIEW_MALFORMED;
+  /* Zero-LUT v0 messages can verify, so their header must be well formed. */
+  if (!solana_header_ok(tx)) return SOL_TX_REVIEW_MALFORMED;
 
   /* A zero-LUT v0 message verifies like legacy. */
   if (tx->num_instructions == 0 || has_unknown || force_opaque) {

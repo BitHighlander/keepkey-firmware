@@ -782,6 +782,55 @@ TEST(Solana, VersionedMessageNoLookupTablesIsVerified) {
   EXPECT_EQ(memcmp(tx.instructions[0].to, expected_to, 32), 0);
 }
 
+// A zero-LUT v0 message can verify, so its header must pass Solana's own
+// sanitize rules first: a writable fee payer, and signer plus read-only
+// unsigned ranges inside the three static keys.
+TEST(Solana, VersionedMessageWithInvalidHeaderIsMalformed) {
+  struct Header {
+    uint8_t sigs, ro_signed, ro_unsigned;
+    SolanaTxReview review;
+  };
+  const Header headers[] = {
+      {1, 0, 1, SOL_TX_REVIEW_VERIFIED},  /* control */
+      {1, 0, 2, SOL_TX_REVIEW_VERIFIED},  /* 1 + 2 == 3 static keys */
+      {0, 0, 1, SOL_TX_REVIEW_MALFORMED}, /* no signer */
+      {1, 1, 1, SOL_TX_REVIEW_MALFORMED}, /* no writable signer */
+      {4, 0, 0, SOL_TX_REVIEW_MALFORMED}, /* more signers than keys */
+      {1, 0, 3, SOL_TX_REVIEW_MALFORMED}, /* ranges overlap */
+  };
+  for (const Header& h : headers) {
+    SCOPED_TRACE(testing::Message() << int(h.sigs) << "," << int(h.ro_signed)
+                                    << "," << int(h.ro_unsigned));
+    uint8_t raw[256];
+    size_t pos = 0;
+    raw[pos++] = 0x80; /* v0 prefix */
+    raw[pos++] = h.sigs;
+    raw[pos++] = h.ro_signed;
+    raw[pos++] = h.ro_unsigned;
+    raw[pos++] = 3; /* static accounts */
+    memset(raw + pos, 0x11, 32);
+    pos += 32;
+    memset(raw + pos, 0x22, 32);
+    pos += 32;
+    memset(raw + pos, 0x00, 32); /* system program */
+    pos += 32;
+    memset(raw + pos, 0xBB, 32); /* blockhash */
+    pos += 32;
+    raw[pos++] = 1; /* instructions */
+    raw[pos++] = 2; /* program = system */
+    raw[pos++] = 2;
+    raw[pos++] = 0;
+    raw[pos++] = 1;
+    raw[pos++] = 12;
+    const uint8_t transfer[12] = {2, 0, 0, 0, 0x00, 0xCA, 0x9A, 0x3B};
+    memcpy(raw + pos, transfer, sizeof(transfer));
+    pos += sizeof(transfer);
+    raw[pos++] = 0; /* zero lookup tables */
+    SolanaParsedTx tx;
+    EXPECT_EQ(solana_inspectTx(raw, pos, &tx), h.review);
+  }
+}
+
 TEST(Solana, X402ZeroLookupV0UsdcPaymentIsVerified) {
   /* Self-contained x402 shape: sponsor fee payer + user authority, compute
    * limit, compute price, SPL TransferChecked, memo, and zero ALT entries. */
