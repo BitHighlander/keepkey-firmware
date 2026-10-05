@@ -332,6 +332,12 @@ typedef union {
 #include "messagemap.def"
 
 static uint8_t msg_resp[sizeof(FsmResponse)] __attribute__((aligned(8)));
+#if DEBUG_LINK
+uint8_t* fsm_test_responseArena(size_t* size) {
+  *size = sizeof(msg_resp);
+  return msg_resp;
+}
+#endif
 extern bool reset_msg_stack;
 
 static const CoinType* fsm_getCoin(bool has_name, const char* name) {

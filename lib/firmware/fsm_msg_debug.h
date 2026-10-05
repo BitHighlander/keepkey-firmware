@@ -1,9 +1,15 @@
 #include "keepkey/board/keepkey_display.h"
 
 #if DEBUG_LINK
+/* Own storage, not msg_resp: this handler also runs nested inside the PIN,
+ * passphrase and confirm waits, while the suspended outer handler may already
+ * hold its pending response in msg_resp. */
+static DebugLinkState debug_link_state;
+
 void fsm_msgDebugLinkGetState(DebugLinkGetState* msg) {
   (void)msg;
-  RESP_INIT(DebugLinkState);
+  DebugLinkState* resp = &debug_link_state;
+  memset(resp, 0, sizeof(*resp));
 
   /* Empty state during dice/BIP-85 ceremonies: the canvas shows secrets. */
   if (reset_debug_is_private() || bip85_debug_is_private()) {
@@ -97,6 +103,7 @@ void fsm_msgDebugLinkGetState(DebugLinkGetState* msg) {
   }
 
   msg_debug_write(MessageType_MessageType_DebugLinkState, resp);
+  memzero(resp, sizeof(*resp));
 }
 
 void fsm_msgDebugLinkStop(DebugLinkStop* msg) { (void)msg; }
