@@ -225,3 +225,34 @@ TEST(Confirmation, BackupSubpagesConsumeTheirOwnAcknowledgements) {
       ButtonRequestType_ButtonRequest_ConfirmWord, "Backup", body));
   EXPECT_EQ(0, kkconfirm_drain());
 }
+
+// A client of the emulator's debug "usb" port. The emulator answers PING with
+// PONG and from then on sends debug-channel output to this socket.
+static int kkconfirm_debug_fd = -1;
+bool kkconfirm_openDebugPeer(void) {
+  if (!kkconfirm_preload(0, 0)) return false;  // one-time usbInit()
+  if (kkconfirm_debug_fd < 0)
+    kkconfirm_debug_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (kkconfirm_debug_fd < 0) return false;
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(11045);  // emulator debug "usb" port
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  static const char ping[] = {'P', 'I', 'N', 'G', 'P', 'I', 'N', 'G'};
+  if (sendto(kkconfirm_debug_fd, ping, sizeof(ping), 0,
+             (struct sockaddr*)&addr, sizeof(addr)) != (ssize_t)sizeof(ping))
+    return false;
+  if (kkconfirm_drain() != 0) return false;  // polls the ports
+  uint8_t pong[64] = {};
+  return recv(kkconfirm_debug_fd, pong, sizeof(pong), MSG_DONTWAIT) == 8 &&
+         memcmp(pong, "PONGPONG", 8) == 0;
+}
+
+bool kkconfirm_readDebugFrame(uint8_t frame[64]) {
+  for (int idle_us = 0; idle_us < KKCONFIRM_DRAIN_GRACE_US; idle_us += 1000) {
+    if (recv(kkconfirm_debug_fd, frame, 64, MSG_DONTWAIT) == 64) return true;
+    usleep(1000);
+  }
+  return false;
+}
