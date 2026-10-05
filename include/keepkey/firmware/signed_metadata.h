@@ -266,10 +266,10 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg);
 bool signed_metadata_confirm(void);
 
 /* A certified Uniswap call longer than the first chunk (token -> ETH swaps
- * are 1,028-1,294 B on Base; split routes up to 1,402 B). matches_tx() holds the first chunk and returns
- * false with ur_pending() true; feed() appends each later chunk and, at the
- * last byte, decodes the whole call: true then means it matched. The caller
- * shows signed_metadata_confirm() only after that. */
+ * are 1,028-1,294 B on Base; split routes up to 1,402 B). matches_tx() holds
+ * the first chunk and returns false with ur_pending() true; feed() appends each
+ * later chunk and, at the last byte, decodes the whole call: true then means it
+ * matched. The caller shows signed_metadata_confirm() only after that. */
 #define SIGNED_METADATA_UR_MAX_CALLDATA 1472
 bool signed_metadata_ur_pending(void);
 bool signed_metadata_ur_feed(const uint8_t* bytes, uint32_t len);

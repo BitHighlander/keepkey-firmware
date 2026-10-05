@@ -136,7 +136,8 @@ static bool decode_v2(Span in, bool exact_in, UrStep* st) {
   }
   uint8_t ignored[20];
   for (uint64_t i = 0; i < n; i++) {
-    uint8_t* dst = i == 0 ? st->token_in : (i == n - 1 ? st->token_out : ignored);
+    uint8_t* dst =
+        i == 0 ? st->token_in : (i == n - 1 ? st->token_out : ignored);
     if (!address_at(in, (size_t)off + 32 + 32 * (size_t)i, dst)) return false;
   }
   st->kind = exact_in ? UR_V2_SWAP_EXACT_IN : UR_V2_SWAP_EXACT_OUT;
@@ -179,7 +180,7 @@ static bool decode_step(uint8_t cmd, Span in, UrStep* st) {
     case CMD_SWEEP:
     case CMD_PAY_PORTION:
     case CMD_TRANSFER:
-      st->kind = cmd == CMD_SWEEP          ? UR_SWEEP
+      st->kind = cmd == CMD_SWEEP         ? UR_SWEEP
                  : cmd == CMD_PAY_PORTION ? UR_PAY_PORTION
                                           : UR_TRANSFER;
       return address_at(in, 0, st->token_in) &&
@@ -294,8 +295,8 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
   UrStep split;
   if (i < plan->n && is_swap(plan->steps[i].kind)) {
     const UrStep* b = &plan->steps[i++];
-    const bool in_a = swap->kind == UR_V3_SWAP_EXACT_IN ||
-                      swap->kind == UR_V2_SWAP_EXACT_IN;
+    const bool in_a =
+        swap->kind == UR_V3_SWAP_EXACT_IN || swap->kind == UR_V2_SWAP_EXACT_IN;
     const bool in_b =
         b->kind == UR_V3_SWAP_EXACT_IN || b->kind == UR_V2_SWAP_EXACT_IN;
     split = *swap;
@@ -324,8 +325,8 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
   const UrStep* final = tail[0];
   const UrStep* cleanup = tail[1];
 
-  out->exact_in = swap->kind == UR_V3_SWAP_EXACT_IN ||
-                  swap->kind == UR_V2_SWAP_EXACT_IN;
+  out->exact_in =
+      swap->kind == UR_V3_SWAP_EXACT_IN || swap->kind == UR_V2_SWAP_EXACT_IN;
   memcpy(out->token_in, swap->token_in, 20);
   memcpy(out->token_out, swap->token_out, 20);
 
@@ -401,8 +402,7 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
   }
   /* Apps put the floor on the final step and leave the swap's limit at 0:
    * the user is guaranteed the larger of the two. */
-  if (out->exact_in && !fee &&
-      memcmp(final->amount, out->amount_out, 32) > 0) {
+  if (out->exact_in && !fee && memcmp(final->amount, out->amount_out, 32) > 0) {
     memcpy(out->amount_out, final->amount, 32);
   }
   out->out_is_eth = final->kind == UR_UNWRAP_WETH;

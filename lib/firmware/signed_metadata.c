@@ -989,8 +989,8 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
      * call past the first chunk stays pending until its last byte. */
     const uint32_t initsz = msg->data_initial_chunk.size;
     const uint32_t total = msg->has_data_length ? msg->data_length : initsz;
-    if (metadata_tier != METADATA_TIER_KEEPKEY ||
-        total > sizeof(ur_calldata) || !store_tx_value(&stored_metadata, msg)) {
+    if (metadata_tier != METADATA_TIER_KEEPKEY || total > sizeof(ur_calldata) ||
+        !store_tx_value(&stored_metadata, msg)) {
       return false;
     }
     ur_total = total; /* feed() relies on ur_total <= sizeof(ur_calldata) */
@@ -1369,8 +1369,8 @@ bool signed_metadata_build_ur_review(const SignedMetadata* md,
       return false;
     }
     ur_date_text(u->permit_expiration, date, sizeof(date));
-    snprintf(body, sizeof(body), "This router may spend up to %s until %s",
-             amt, date);
+    snprintf(body, sizeof(body), "This router may spend up to %s until %s", amt,
+             date);
     if (!emit(ctx, "Allowance", body, NULL, 0)) return false;
   }
   if (u->has_fee) {
