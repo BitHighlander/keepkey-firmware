@@ -2,6 +2,7 @@ extern "C" {
 #include "keepkey/board/messages.h"
 #include "keepkey/board/usb.h"
 #include "keepkey/firmware/fsm.h"
+#include "keepkey/firmware/pin_sm.h"
 #include "messages.pb.h"
 #include "pb_decode.h"
 }
@@ -9,6 +10,7 @@ extern "C" {
 #include <arpa/inet.h>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -255,4 +257,30 @@ bool kkconfirm_readDebugFrame(uint8_t frame[64]) {
     usleep(1000);
   }
   return false;
+}
+
+// Answers the device's next PinMatrixRequest as a host does, from its own
+// thread while the caller blocks in pin_protect(): once the request frame
+// arrives the scrambled matrix is final, so send the positions of `pin` in it.
+std::thread kkconfirm_answerPinMatrix(const std::string& pin) {
+  // Bind the emulator's main port to this client before the wait starts.
+  kkconfirm_preload(0, 0);
+  kkconfirm_drain();
+  return std::thread([pin] {
+    PinMatrixRequest request = {};
+    bool requested = false;
+    for (int i = 0; i < 25 && !requested; ++i) {
+      requested = kkconfirm_readResponse(MessageType_MessageType_PinMatrixRequest,
+                                         PinMatrixRequest_fields, &request);
+    }
+    const std::string matrix = get_pin_matrix();
+    std::string positions;
+    for (char digit : pin) {
+      positions += static_cast<char>('1' + matrix.find(digit));
+    }
+    std::vector<uint8_t> ack = {0x0a, static_cast<uint8_t>(positions.size())};
+    ack.insert(ack.end(), positions.begin(), positions.end());
+    kkconfirm_sendTiny(MessageType_MessageType_PinMatrixAck, ack.data(),
+                       static_cast<uint8_t>(ack.size()));
+  });
 }
