@@ -5,6 +5,7 @@ extern "C" {
 #include "keepkey/board/usb.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/home_sm.h"
+#include "keepkey/firmware/pin_sm.h"
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/rand/rng_health.h"
@@ -14,11 +15,13 @@ extern "C" {
 #include <algorithm>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
 void kk_test_board_init(void);
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
+std::thread kkconfirm_answerPinMatrix(const std::string& pin);
 
 namespace {
 constexpr uint32_t kDeadline = STORAGE_MIN_SCREENSAVER_TIMEOUT;
@@ -112,15 +115,21 @@ TEST_F(Block13ResetProgress, InitialRequestRenewsThenPollingExpires) {
 // Host PIN entry after an idle lock: the request leaves home, the reply
 // returns to it, and no button is pressed. The unlock must survive the next
 // tick (hardware 2026-10-03: every host unlock after 10 idle minutes relocked
-// ~3.5 s later and the host asked for the PIN forever).
+// ~3.5 s later and the host asked for the PIN forever). The PIN goes through
+// pin_protect(), so dropping its renewal call fails this test.
 TEST_F(Block13ResetProgress, AcceptedPinAfterIdleLockHoldsThroughNextTick) {
+  storage_setPin("1234");
   auto unlockAfterIdleLock = [](bool pinAccepted) {
     reset_idle_time();
     increment_idle_time(kDeadline);
     toggle_screensaver();
     EXPECT_EQ(SCREENSAVER, home_get_state());
-    if (pinAccepted) note_pin_accepted();
     leave_home();
+    if (pinAccepted) {
+      std::thread host = kkconfirm_answerPinMatrix("1234");
+      EXPECT_TRUE(pin_protect("Enter PIN"));
+      host.join();
+    }
     layoutHome();
     toggle_screensaver();
     return home_get_state();
