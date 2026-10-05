@@ -156,7 +156,8 @@ typedef struct {
   uint8_t mint[SOL_PUBKEY_SIZE];
   bool has_mint;
   uint8_t extra_u8;
-  /* Points into solana_inspectTx's buffer; valid only while it is. */
+  /* Exact instruction bytes retained for variable-length verified fields
+   * such as Memo. The parser bounds this slice inside the signed message. */
   const uint8_t* data;
   uint16_t data_len;
   /* Same lifetime as `data`. */
