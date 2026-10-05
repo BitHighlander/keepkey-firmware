@@ -1017,6 +1017,17 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     data_needs_confirm = false;
   }
 
+  /* D-007: a KeepKey-certified ERC-7730 review of this calldata replaces the
+   * raw-data review. This pass re-hashes every byte against the reviewed
+   * digest and send_signature() refuses unless it matched; the amount and
+   * fee screens stay. */
+  const Erc7730Workflow* certified = erc7730_workflow_state();
+  if (data_needs_confirm && certified->signing_pass && !certified->typed_data &&
+      certified->phase == ERC7730_WORKFLOW_CALLDATA &&
+      erc7730_workflow_certified(certified)) {
+    data_needs_confirm = false;
+  }
+
   /* SRS R-1.4: a certified claim is honoured completely or refused, never
    * downgraded. Checked before any screen, so a failed claim never shows
    * "Verified by KeepKey". */

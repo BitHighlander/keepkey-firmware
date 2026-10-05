@@ -4,7 +4,6 @@
 
 #include "keepkey/firmware/clearsign_root.h"
 #include "keepkey/firmware/erc7730_capabilities.h"
-#include "keepkey/firmware/storage.h"
 #include "trezor/crypto/memzero.h"
 
 #define ERC7730_ENVELOPE_FIXED_SIZE (4u + 1u + 1u + 4u + 1u + 2u + 64u + 1u)
@@ -87,8 +86,9 @@ static bool verify_runtime_delegate(
   return true;
 }
 
-/* Root-certified tier: provenance only; AdvancedMode and the raw-data review
- * are unchanged. */
+/* Root-certified tier (D-007): a verified KeepKey certificate for this chain,
+ * with MAY_SUPPRESS_RAW, signs without AdvancedMode and replaces the raw-data
+ * review. Every other tier still needs AdvancedMode. */
 _Static_assert(ERC7730_DELEGATE_RECORD_LEN == CLEARSIGN_CERT_LEN &&
                    ERC7730_DELEGATE_ALIAS_LEN == CLEARSIGN_ALIAS_LEN &&
                    ERC7730_DELEGATE_OFF_PUBKEY == CLEARSIGN_CERT_OFF_PUBKEY,
@@ -98,8 +98,7 @@ static bool verify_certified_delegate(
     const Erc7730CatalogVerifier* v, uint32_t expected_scope,
     char out_alias[ERC7730_DELEGATE_ALIAS_LEN + 1],
     char out_fingerprint[METADATA_FINGERPRINT_LEN]) {
-  if (!storage_isPolicyEnabled("AdvancedMode") ||
-      !clearsign_root_verify_erc7730_catalog(
+  if (!clearsign_root_verify_erc7730_catalog(
           v->cert, sizeof(v->cert), expected_scope, v->merkle, v->signature,
           sizeof(v->signature), out_alias))
     return false;

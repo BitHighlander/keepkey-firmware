@@ -305,7 +305,8 @@ static Erc7730UiResult confirm_erc7730_source_and_intent(
   const bool inner = workflow->depth != 0;
   if (!workflow->identity_confirmed) {
     /* Root-certified, and for an inner call its outer definition was too.
-     * Provenance only: AdvancedMode and the raw-data review are unchanged. */
+     * Shown on every tier: it names who vouches for the screens that follow
+     * (D-007: certified needs no AdvancedMode, so this is what it rests on). */
     if (erc7730_workflow_tier(workflow) == METADATA_TIER_KEEPKEY) {
       if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                    "Verified by KeepKey", "%s (%s)\ndescribes %s.",
@@ -1117,7 +1118,9 @@ void fsm_msgEthereumSignTx(EthereumSignTx* msg) {
    * derivation; a mismatch is an error, never a fallback to blind signing. */
   Erc7730CatalogIdentity definition;
   if (erc7730_catalog_preloaded(&definition)) {
-    if (!storage_isPolicyEnabled("AdvancedMode")) {
+    /* D-007: KeepKey-certified needs no AdvancedMode; any other tier does. */
+    if (definition.tier != METADATA_TIER_KEEPKEY &&
+        !storage_isPolicyEnabled("AdvancedMode")) {
       memzero(&definition, sizeof(definition));
       erc7730_catalog_clear_preload();
       fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -1203,20 +1206,29 @@ void fsm_msgEthereumTxAck(EthereumTxAck* msg) {
   memzero(&tx, sizeof(tx));
 }
 
+/* D-007: without AdvancedMode only a definition that verifies as
+ * KeepKey-certified is accepted. Any other outcome refuses as 7.15 did, on
+ * the AdvancedMode path. */
+static void refuse_erc7730_definition(const char* reason) {
+  erc7730_catalog_clear_preload();
+  if (storage_isPolicyEnabled("AdvancedMode")) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError, reason);
+  } else {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _("AdvancedMode required for ERC-7730"));
+  }
+  layoutHome();
+}
+
 void fsm_msgEthereumClearSignDefinition(
     const EthereumClearSignDefinition* msg) {
   CHECK_INITIALIZED
   CHECK_PIN
-  CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),
-              _("AdvancedMode required for ERC-7730"));
 
   /* Dispatch has already ended any signing session before this runs. */
   if (msg->definition_id.size != 32 || msg->data.size == 0 ||
       msg->data.size > ERC7730_TRANSPORT_CHUNK_MAX) {
-    erc7730_catalog_clear_preload();
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid ERC-7730 definition chunk"));
-    layoutHome();
+    refuse_erc7730_definition(_("Invalid ERC-7730 definition chunk"));
     return;
   }
 
@@ -1225,11 +1237,15 @@ void fsm_msgEthereumClearSignDefinition(
   const Erc7730CatalogResult result = erc7730_catalog_preload_chunk(
       msg->definition_id.bytes, msg->offset, msg->total_length, msg->data.bytes,
       msg->data.size, &next_offset, &complete);
-  if (result != ERC7730_CATALOG_MORE && result != ERC7730_CATALOG_COMPLETE) {
-    erc7730_catalog_clear_preload();
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid certified ERC-7730 definition"));
-    layoutHome();
+  Erc7730CatalogIdentity accepted;
+  const bool certified = result == ERC7730_CATALOG_COMPLETE &&
+                         erc7730_catalog_preloaded(&accepted) &&
+                         accepted.tier == METADATA_TIER_KEEPKEY;
+  memzero(&accepted, sizeof(accepted));
+  if ((result != ERC7730_CATALOG_MORE && result != ERC7730_CATALOG_COMPLETE) ||
+      (result == ERC7730_CATALOG_COMPLETE && !certified &&
+       !storage_isPolicyEnabled("AdvancedMode"))) {
+    refuse_erc7730_definition(_("Invalid certified ERC-7730 definition"));
     return;
   }
 
@@ -1273,9 +1289,10 @@ static void fail_erc7730_domain(void) {
 
 void fsm_msgEthereumClearSignDefinitionChunk(
     const EthereumClearSignDefinitionChunk* msg) {
-  CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),
-              _("AdvancedMode required for ERC-7730"));
   Erc7730Workflow* workflow = erc7730_workflow_state();
+  CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode") ||
+                  erc7730_workflow_certified(workflow),
+              _("AdvancedMode required for ERC-7730"));
   if (!erc7730_workflow_active(workflow)) {
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
                     _("No ERC-7730 definition requested"));
@@ -1301,6 +1318,18 @@ void fsm_msgEthereumClearSignDefinitionChunk(
     if (!complete) {
       send_erc7730_fetch_request();
       return;
+    }
+    if (fetch_depth == 1 && !storage_isPolicyEnabled("AdvancedMode")) {
+      /* A certified outer call does not lift AdvancedMode for its inner one. */
+      Erc7730CatalogIdentity inner;
+      const bool certified = erc7730_catalog_preloaded(&inner) &&
+                             inner.tier == METADATA_TIER_KEEPKEY;
+      memzero(&inner, sizeof(inner));
+      if (!certified) {
+        fail_erc7730_field(workflow, FailureType_Failure_Other,
+                           _("AdvancedMode required for ERC-7730"));
+        return;
+      }
     }
     if (fetch_depth == 1) {
       /* Bound before any inner screen; then the call's context, which the
@@ -2330,7 +2359,8 @@ void fsm_msgEthereumSignTypedData(const EthereumSignTypedData* msg) {
 
   Erc7730CatalogIdentity definition;
   const bool certified = erc7730_catalog_preloaded(&definition);
-  if (certified && !storage_isPolicyEnabled("AdvancedMode")) {
+  if (certified && definition.tier != METADATA_TIER_KEEPKEY &&
+      !storage_isPolicyEnabled("AdvancedMode")) {
     memzero(&definition, sizeof(definition));
     erc7730_catalog_clear_preload();
     fsm_sendFailure(FailureType_Failure_SyntaxError,

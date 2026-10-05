@@ -138,6 +138,7 @@ typedef struct {
   uint8_t depth;
   uint8_t fetch_depth; /* 1 fetching the inner definition, 0 the outer */
   uint8_t outer_tier;  /* the outer definition's tier while depth is 1 */
+  uint8_t review_tier; /* the lowest tier of every definition loaded */
   bool outer_identity_confirmed;
   bool outer_intent_confirmed;
   bool resuming; /* the outer program restarts after its inner call */
@@ -227,6 +228,8 @@ const Erc7730CatalogIdentity* erc7730_workflow_identity(
 /* The tier the provenance screen shows. An inner definition is never shown
  * as more trusted than the outer definition that led to it. */
 uint8_t erc7730_workflow_tier(const Erc7730Workflow* workflow);
+/* Every definition this review loaded is KeepKey-certified (D-007). */
+bool erc7730_workflow_certified(const Erc7730Workflow* workflow);
 bool erc7730_workflow_preserve_selected_string(Erc7730Workflow* workflow,
                                                bool intent);
 bool erc7730_workflow_format_captured_raw(const Erc7730Workflow* workflow,
