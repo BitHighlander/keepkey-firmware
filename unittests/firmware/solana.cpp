@@ -576,6 +576,12 @@ TEST(Solana, UnknownProgram) {
   EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
 }
 
+TEST(Solana, NullTransactionIsMalformed) {
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(nullptr, 64, &tx), SOL_TX_REVIEW_MALFORMED);
+  EXPECT_FALSE(solana_parseTx(nullptr, 64, &tx));
+}
+
 TEST(Solana, ParseTxTooShort) {
   uint8_t raw[2] = {0, 0};
   SolanaParsedTx tx;

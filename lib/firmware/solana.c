@@ -770,7 +770,7 @@ static void solana_message_slice(const uint8_t* raw, size_t raw_len,
 
 SolanaTxReview solana_inspectTx(const uint8_t* raw, size_t raw_len,
                                 SolanaParsedTx* tx) {
-  if (raw_len == 0) {
+  if (!raw || raw_len == 0) {
     memset(tx, 0, sizeof(*tx));
     return SOL_TX_REVIEW_MALFORMED;
   }
