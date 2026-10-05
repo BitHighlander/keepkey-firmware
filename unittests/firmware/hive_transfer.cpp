@@ -467,3 +467,17 @@ TEST(Hive, PublicKeyHandlersRejectNonHivePathsAndAliasedAccounts) {
   storage_reset();
   emulator_flash_base = previous;
 }
+
+// hive_deriveRawKey derives only a SLIP-0048 Hive role key: an unknown role or
+// an unhardened account index is refused, never derived.
+TEST(Hive, DeriveRawKeyRefusesNonHivePaths) {
+  HDNode root = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_EQ(1, hdnode_from_seed(seed, sizeof(seed), SECP256K1_NAME, &root));
+  uint8_t key[33] = {};
+  EXPECT_TRUE(hive_deriveRawKey(&root, HIVE_ROLE_ACTIVE, 0x80000000u, key));
+  for (uint32_t role : {0x80000002u, 0x80000005u, 1u}) {
+    EXPECT_FALSE(hive_deriveRawKey(&root, role, 0x80000000u, key)) << role;
+  }
+  EXPECT_FALSE(hive_deriveRawKey(&root, HIVE_ROLE_OWNER, 0u, key));
+}

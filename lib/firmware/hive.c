@@ -36,6 +36,13 @@ bool hive_getPublicKey(const uint8_t public_key[33], char* out,
 
 bool hive_deriveRawKey(const HDNode* root, uint32_t role_hardened,
                        uint32_t account_index_hardened, uint8_t out[33]) {
+  /* The contract is a Hive role key: refuse any other role or a
+   * non-hardened account index rather than derive an unrelated path. */
+  if (role_hardened != HIVE_ROLE_OWNER && role_hardened != HIVE_ROLE_ACTIVE &&
+      role_hardened != HIVE_ROLE_MEMO && role_hardened != HIVE_ROLE_POSTING) {
+    return false;
+  }
+  if ((account_index_hardened & 0x80000000u) == 0) return false;
   HDNode node;
   memcpy(&node, root, sizeof(HDNode));
   if (!hdnode_private_ckd(&node, HIVE_SLIP48_PURPOSE)) goto fail;
