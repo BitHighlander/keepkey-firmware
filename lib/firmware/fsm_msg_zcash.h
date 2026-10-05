@@ -670,6 +670,15 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
     return;
   }
 
+  /* Before v6 there is no Ironwood component in the sighash: refuse, never
+   * silently drop, a supplied digest. */
+  if (msg->has_ironwood_digest && msg->tx_version != 6) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Ironwood digest requires a v6 transaction"));
+    layoutHome();
+    return;
+  }
+
   ZcashPCZTSigningRequestMeta signing_meta = {0};
   signing_meta.has_header_digest = msg->has_header_digest;
   signing_meta.header_digest_size = msg->header_digest.size;
