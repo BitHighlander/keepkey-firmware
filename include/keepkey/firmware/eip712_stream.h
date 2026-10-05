@@ -45,8 +45,9 @@
  * 11 + n + 6, so 24 slots take seven items. */
 #define EIP712_MAX_SLOTS 24
 
-/* Widest single leaf the device will absorb. A dynamic `bytes` or `string` is
- * hashed, not stored, so this bounds one chunk rather than the whole value. */
+/* Widest single leaf the device will absorb. Each EthereumTypedDataValueAck
+ * carries one complete value, so this bounds a whole dynamic `bytes` or
+ * `string` value (it is hashed, not kept). */
 #define EIP712_MAX_LEAF 1024
 
 /* Distinct struct types one primary type may reference, including itself.
