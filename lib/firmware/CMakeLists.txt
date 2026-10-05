@@ -89,8 +89,10 @@ set(UNISWAP_TOKENS ${CMAKE_BINARY_DIR}/include/keepkey/firmware/uniswap_tokens)
 add_custom_target(ethereum_tokens.def
   BYPRODUCTS ${ETHEREUM_TOKENS}.def ${UNISWAP_TOKENS}.def
   COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/include/keepkey/firmware
-  COMMAND python3 ${CMAKE_SOURCE_DIR}/deps/python-keepkey/keepkeylib/eth/ethereum_tokens.py ${ETHEREUM_TOKENS}.def
-  COMMAND python3 ${CMAKE_SOURCE_DIR}/deps/python-keepkey/keepkeylib/eth/uniswap_tokens.py ${UNISWAP_TOKENS}.def
+  # 7.16 token table: priority symbols only (DECISIONS.md D-014). Without the
+  # flag the generators emit the 7.15 table.
+  COMMAND python3 ${CMAKE_SOURCE_DIR}/deps/python-keepkey/keepkeylib/eth/ethereum_tokens.py ${ETHEREUM_TOKENS}.def --profile priority-only
+  COMMAND python3 ${CMAKE_SOURCE_DIR}/deps/python-keepkey/keepkeylib/eth/uniswap_tokens.py ${UNISWAP_TOKENS}.def --profile priority-only
   COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/verify-token-def.py
           ${ETHEREUM_TOKENS}.def ${UNISWAP_TOKENS}.def
   COMMENT "Generating and verifying firmware token tables")
