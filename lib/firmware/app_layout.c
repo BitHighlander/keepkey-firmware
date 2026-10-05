@@ -756,7 +756,8 @@ void layout_cipher(const char* current_word, const char* cipher,
   call_leaving_handler();
   layout_clear();
 
-  /* x < 76: the cipher animation clears x >= CIPHER_START_X. */
+  /* Draw previous word info at top-left -- must be x < 76 to avoid
+   * being wiped by cipher animation which clears x >= CIPHER_START_X */
   if (prev_word_info && prev_word_info[0]) {
     sp.y = 2;
     sp.x = 4;
@@ -782,7 +783,8 @@ void layout_cipher(const char* current_word, const char* cipher,
   if (animate_cipher) {
     layout_add_animation(&layout_animate_cipher, (void*)cipher, duration);
   } else {
-    /* No replay: repeated requests could keep letters off the display. */
+    /* Restore an obscured mapping immediately. Replaying its introduction
+     * lets repeated host requests keep its last letters off the display. */
     layout_animate_cipher((void*)cipher, duration, duration);
   }
   display_refresh();
