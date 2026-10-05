@@ -982,6 +982,26 @@ bool solana_parseTx(const uint8_t* raw, size_t raw_len, SolanaParsedTx* tx) {
 /*  Formatting                                                         */
 /* ------------------------------------------------------------------ */
 
+/* The runtime requests 200,000 CUs per non-builtin instruction and, under
+ * SIMD-0170, 3,000 per builtin; ComputeBudget instructions are builtins and
+ * were free before it. Counting every non-ComputeBudget instruction at 200,000
+ * and every ComputeBudget one at 3,000 is >= the request under either rule (a
+ * builtin counted at 200,000 only widens the margin), so the fee shown stays
+ * an upper bound without quoting the 1.4M cap the transaction cannot reach.
+ * num_instructions is a uint8_t, so this cannot overflow. */
+uint64_t solana_defaultComputeUnitLimit(const SolanaParsedTx* tx) {
+  uint64_t limit = 0;
+  for (uint8_t i = 0; i < tx->num_instructions; i++) {
+    const SolanaInstrType t = tx->instructions[i].type;
+    const bool budget = t == SOL_INSTR_COMPUTE_BUDGET_HEAP_FRAME ||
+                        t == SOL_INSTR_COMPUTE_BUDGET_UNIT_LIMIT ||
+                        t == SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE ||
+                        t == SOL_INSTR_COMPUTE_BUDGET_LOADED_ACCOUNTS_SIZE;
+    limit += budget ? 3000u : 200000u;
+  }
+  return limit;
+}
+
 bool solana_priority_fee_lamports(uint64_t price, uint64_t limit,
                                   uint64_t* out) {
   /* ceil(price * limit / 1e6), every step overflow-checked; false (never

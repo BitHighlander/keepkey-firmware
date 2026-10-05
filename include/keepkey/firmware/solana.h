@@ -319,6 +319,10 @@ const char* solana_displaySymbol(const SolanaTokenInfo* ti,
 /* Solana per-transaction compute-unit cap; also bounds an explicit limit. */
 #define SOL_MAX_COMPUTE_UNITS 1400000u
 
+/* Compute-unit limit the runtime requests when SetComputeUnitLimit is absent
+ * (an upper bound; the fee helper caps it at SOL_MAX_COMPUTE_UNITS). */
+uint64_t solana_defaultComputeUnitLimit(const SolanaParsedTx* tx);
+
 /* ceil(price * min(limit, SOL_MAX_COMPUTE_UNITS) / 1e6) lamports; false on
  * > UINT64_MAX (refuse). */
 bool solana_priority_fee_lamports(uint64_t price, uint64_t limit,
