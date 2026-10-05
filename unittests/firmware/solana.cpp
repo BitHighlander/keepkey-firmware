@@ -436,6 +436,30 @@ TEST(Solana, PriorityFeeCalculationIsRoundedAndOverflowSafe) {
   EXPECT_EQ(fee, 2ULL); /* ceil(1.4) */
 }
 
+// Without SetComputeUnitLimit the fee is charged on the runtime's default
+// request, not the 1.4M cap: [SetComputeUnitPrice, Transfer] is 203,000 CUs.
+TEST(Solana, PriorityFeeWithoutExplicitLimitUsesDerivedDefault) {
+  SolanaParsedTx tx = {};
+  tx.num_instructions = 2;
+  tx.instructions[0].type = SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE;
+  tx.instructions[1].type = SOL_INSTR_SYSTEM_TRANSFER;
+  EXPECT_EQ(203000u, solana_defaultComputeUnitLimit(&tx));
+  uint64_t fee = 0;
+  ASSERT_TRUE(solana_priority_fee_lamports(
+      1000000, solana_defaultComputeUnitLimit(&tx), &fee));
+  EXPECT_EQ(203000u, fee);
+
+  // Many instructions still stop at the per-transaction cap.
+  tx.num_instructions = SOL_MAX_INSTRUCTIONS;
+  for (uint8_t i = 1; i < tx.num_instructions; i++) {
+    tx.instructions[i].type = SOL_INSTR_SYSTEM_TRANSFER;
+  }
+  ASSERT_GT(solana_defaultComputeUnitLimit(&tx), SOL_MAX_COMPUTE_UNITS);
+  ASSERT_TRUE(solana_priority_fee_lamports(
+      1000000, solana_defaultComputeUnitLimit(&tx), &fee));
+  EXPECT_EQ(1400000u, fee);
+}
+
 TEST(Solana, ParseAssociatedTokenAccountCreate) {
   uint8_t raw[512];
   size_t pos = 0;

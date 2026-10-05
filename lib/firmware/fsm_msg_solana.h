@@ -50,7 +50,7 @@ static bool solana_confirm_account(const char* title, const char* label,
 
 /* Priority fee (ceil(cu_price * cu_limit / 1e6) lamports) is charged even on
  * failure, and CU fields show no units, so disclose the MAXIMUM fee in SOL
- * (1.4M-CU cap when no limit is set; never an understatement). */
+ * (the derived default limit when none is set; never an understatement). */
 static bool solana_confirm_priority_fee(const SolanaParsedTx* tx,
                                         const uint8_t* fee_payer) {
   uint64_t price = 0;
@@ -70,7 +70,8 @@ static bool solana_confirm_priority_fee(const SolanaParsedTx* tx,
   if (!have_price || price == 0) {
     return true; /* no priority fee to disclose */
   }
-  const uint64_t limit = have_limit ? cu_limit : SOL_MAX_COMPUTE_UNITS;
+  const uint64_t limit =
+      have_limit ? cu_limit : solana_defaultComputeUnitLimit(tx);
 
   /* false => fee exceeds u64 lamports: refuse, never show a wrapped value */
   uint64_t lamports = 0;
