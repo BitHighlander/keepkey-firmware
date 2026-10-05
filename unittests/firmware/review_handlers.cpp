@@ -219,6 +219,44 @@ TEST_F(ReviewHandlers, Bip85DerivationMatchesIndependentBip32Oracle) {
   for (char byte : mnemonic_scratch_word) EXPECT_EQ(0, byte);
 }
 
+// The consent screen for a runtime clear-sign signer must render the identity
+// the way every later per-transaction identity screen will. A ZCASH_PRIVACY
+// build stores no session icons, so it must not draw the host icon at
+// consent either. Observable through the body width: an alias that fits one
+// screen at BODY_WIDTH but not beside an icon pages only when the icon is
+// drawn.
+TEST_F(ReviewHandlers, ClearsignSignerConsentDrawsTheIconOnlyWhereItIsKept) {
+  static const uint8_t kIcon[] = {0x04, 0xFF};  // 2x2, one run of four
+  const char fingerprint[] = "0123456789abcdef";
+  std::string alias;
+  for (size_t n = 1; n <= METADATA_ALIAS_MAX_LEN; ++n) {
+    const std::string candidate(n, 'W');
+    char body[160];
+    snprintf(body, sizeof(body),
+             "Trust '%s' (%s) for this session to describe transactions? NOT "
+             "verified by KeepKey.",
+             candidate.c_str(), fingerprint);
+    if (confirm_body_fits(body, BODY_WIDTH) &&
+        !confirm_body_fits(body, BODY_WIDTH_WITH_ICON)) {
+      alias = candidate;
+      break;
+    }
+  }
+  ASSERT_FALSE(alias.empty()) << "no alias separates the two body widths";
+
+  ASSERT_TRUE(kkconfirm_preload(4, 0));
+  kkconfirm_capture_start();
+  EXPECT_TRUE(signed_metadata_confirm_load(alias.c_str(), fingerprint, kIcon, 2,
+                                           2, sizeof(kIcon)));
+  const auto screens = kkconfirm_capture_finish();
+  (void)kkconfirm_drain();
+#if ZCASH_PRIVACY
+  EXPECT_EQ(1u, screens.size()) << "icon drawn at consent but never again";
+#else
+  EXPECT_GT(screens.size(), 1u) << "icon kept for the session but not shown";
+#endif
+}
+
 // Handler-level regression for the BIP-85 pager. Index 84 of this seed is a
 // 24-word child whose last page, packed at BODY_WIDTH, needs more rows than
 // the constant-power canvas has (measured; 35 of the first 2000 24-word
