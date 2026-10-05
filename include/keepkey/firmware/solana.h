@@ -182,6 +182,9 @@ typedef struct {
   SolanaParsedInstruction instructions[SOL_MAX_INSTRUCTIONS];
   /* v0 message carries an address-table section (KKSOLSC1 refuses it). */
   bool has_lookup_tables;
+  /* Addresses a v0 message's lookup tables load (writable + readonly); 0 for
+   * legacy and zero-LUT messages. */
+  uint32_t num_loaded_accounts;
 } SolanaParsedTx;
 
 /* Firmware review result for a Solana message */
