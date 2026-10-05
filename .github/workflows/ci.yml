@@ -452,7 +452,9 @@ jobs:
       - name: Pallas public/secret API boundary
         # Source-boundary gate for the Zcash Orchard split (not a timing or
         # constant-time proof). Needs deps/crypto initialised above.
-        run: python3 tools/check_pallas_api_boundary.py
+        run: |
+          python3 tools/check_pallas_api_boundary.py
+          PYTHONPATH=tools python3 -B -m unittest tools/test_check_pallas_api_boundary.py
 
       # continue-on-error because the mirror is optional by design. Without
       # it a GHCR outage, a revoked package grant, or a token hiccup fails the

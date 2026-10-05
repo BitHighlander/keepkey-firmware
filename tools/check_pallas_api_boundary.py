@@ -13,6 +13,14 @@ def source(path):
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+# The gate reads source text, not the compiled translation unit, so it cannot
+# tell which branch of a preprocessor conditional is built. It therefore only
+# accepts checked function bodies that contain none: every token it requires or
+# forbids is then compiled whenever the function is.
+CONDITIONAL = re.compile(r"^[ \t]*#[ \t]*(?:if|ifdef|ifndef|elif|else|endif)\b",
+                         re.M)
+
+
 def function_body(text, name):
     text = code_only(text)
     match = re.search(r"\b" + re.escape(name) + r"\s*\([^;]*?\)\s*\{", text, re.S)
@@ -26,7 +34,12 @@ def function_body(text, name):
         elif text[index] == "}":
             depth -= 1
             if depth == 0:
-                return text[start + 1:index]
+                body = text[start + 1:index]
+                if CONDITIONAL.search(body):
+                    raise AssertionError(
+                        name + " has preprocessor conditionals; this gate "
+                        "checks unconditional code only")
+                return body
     raise AssertionError("unterminated function: " + name)
 
 
