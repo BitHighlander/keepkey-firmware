@@ -78,7 +78,8 @@ add_executable(firmware-unit ${sources})
 # Real Base Universal Router calls for the streaming decoder's differential
 # test (scripts/uniswap/gen_ur_vectors.py pack).
 target_compile_definitions(firmware-unit PRIVATE
-    UR_SAMPLE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/uniswap_ur_sample.bin")
+    UR_SAMPLE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/uniswap_ur_sample.bin"
+    UR_EXPECTED_PATH="${CMAKE_CURRENT_SOURCE_DIR}/uniswap_ur_expected.txt")
 target_link_libraries(firmware-unit
     gmock_main
     kkfirmware

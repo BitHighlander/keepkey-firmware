@@ -32,12 +32,12 @@ def v4(inp):
     return [ACT.get(a,hex(a)) for a in acts], hooks
 stats = collections.Counter(); shapes = collections.Counter(); urshapes = collections.Counter(); lens = []; nonzero_hooks = 0
 def calls(src):
-    if src.endswith('.bin'):                         # hash(32) status(1) len(4) calldata
+    if src.endswith('.bin'):                         # hash(32) status(1) value(32) len(4) calldata
         b = open(src,'rb').read(); i = 0
         while i < len(b):
-            n = int.from_bytes(b[i+33:i+37],'big')
-            yield {'hash':'0x'+b[i:i+32].hex(), 'status':'ok' if b[i+32] else 'error', 'raw_input':'0x'+b[i+37:i+37+n].hex()}
-            i += 37 + n
+            n = int.from_bytes(b[i+65:i+69],'big')
+            yield {'hash':'0x'+b[i:i+32].hex(), 'status':'ok' if b[i+32] else 'error', 'raw_input':'0x'+b[i+69:i+69+n].hex()}
+            i += 69 + n
     else:
         for f in sorted(glob.glob(src+'/*.json')): yield from json.load(open(f)).get('items',[])
 if True:

@@ -1390,6 +1390,21 @@ bool signed_metadata_build_ur_review(const SignedMetadata* md,
              fee_to);
     if (!emit(ctx, "Fee", body, NULL, 0)) return false;
   }
+  /* V4 pools whose hook contract runs during the swap: every one is shown.
+   * The limits above hold whatever a hook does (the router checks them
+   * after the swap). */
+  for (uint8_t i = 0; i < u->n_hooks && i < UR_MAX_HOOKS; i++) {
+    char hook[43] = "0x", title[24];
+    ethereum_address_checksum(u->hooks[i], hook + 2, false, md->chain_id);
+    if (u->n_hooks > 1) {
+      snprintf(title, sizeof(title), "Pool hook %u/%u", (unsigned)(i + 1),
+               (unsigned)u->n_hooks);
+    } else {
+      snprintf(title, sizeof(title), "Pool hook");
+    }
+    snprintf(body, sizeof(body), "The swap runs this hook contract\n%s", hook);
+    if (!emit(ctx, title, body, NULL, 0)) return false;
+  }
   char router[43] = "0x";
   ethereum_address_checksum(md->contract_address, router + 2, false,
                             md->chain_id);

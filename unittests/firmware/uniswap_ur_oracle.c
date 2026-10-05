@@ -1,11 +1,11 @@
 /*
  * This file is part of the KeepKey project.
  *
- * TEST ORACLE ONLY, never linked into firmware. The buffered Universal Router
- * decoder that 7.16 shipped before the streaming one (lib/firmware/
- * uniswap_ur.c at 162bc884f, ur_decode() and its helpers, unchanged but for
- * the name). It needs the whole call in memory; the differential test in
- * uniswap_ur.cpp feeds the same calls to both and requires the same plan.
+ * TEST ORACLE ONLY, never linked into firmware. lib/firmware/uniswap_ur.c as
+ * it was at 162bc884f: the buffered decoder (ur_decode) and the V2/V3
+ * summarizer (ur_summarize), unchanged but for names. The differential tests
+ * in uniswap_ur.cpp require the streaming decoder and the current summarizer
+ * to agree with them wherever these accept.
  */
 
 #include "uniswap_ur_oracle.h"
@@ -110,7 +110,7 @@ static bool v3_path_ends(Span path, uint8_t first[20], uint8_t last[20]) {
   return true;
 }
 
-static bool decode_v3(Span in, bool exact_in, UrStep* st) {
+static bool decode_v3(Span in, bool exact_in, UroStep* st) {
   Span path;
   uint8_t first[20], last[20];
   if (!address_at(in, 0, st->recipient) || !u256_at(in, 32, st->amount) ||
@@ -122,11 +122,11 @@ static bool decode_v3(Span in, bool exact_in, UrStep* st) {
   /* Exact-output paths are encoded output-first. */
   memcpy(st->token_in, exact_in ? first : last, 20);
   memcpy(st->token_out, exact_in ? last : first, 20);
-  st->kind = exact_in ? UR_V3_SWAP_EXACT_IN : UR_V3_SWAP_EXACT_OUT;
+  st->kind = exact_in ? URO_V3_SWAP_EXACT_IN : URO_V3_SWAP_EXACT_OUT;
   return true;
 }
 
-static bool decode_v2(Span in, bool exact_in, UrStep* st) {
+static bool decode_v2(Span in, bool exact_in, UroStep* st) {
   uint64_t off, n;
   if (!address_at(in, 0, st->recipient) || !u256_at(in, 32, st->amount) ||
       !u256_at(in, 64, st->limit) || !uint_at(in, 96, 4, &off) ||
@@ -139,13 +139,13 @@ static bool decode_v2(Span in, bool exact_in, UrStep* st) {
     uint8_t* dst = i == 0 ? st->token_in : (i == n - 1 ? st->token_out : ignored);
     if (!address_at(in, (size_t)off + 32 + 32 * (size_t)i, dst)) return false;
   }
-  st->kind = exact_in ? UR_V2_SWAP_EXACT_IN : UR_V2_SWAP_EXACT_OUT;
+  st->kind = exact_in ? URO_V2_SWAP_EXACT_IN : URO_V2_SWAP_EXACT_OUT;
   return true;
 }
 
 /* PermitSingle{details{token, amount, expiration, nonce}, spender,
  * sigDeadline} then bytes signature. */
-static bool decode_permit(Span in, UrStep* st) {
+static bool decode_permit(Span in, UroStep* st) {
   uint64_t nonce;
   uint8_t sig_deadline[32];
   Span sig;
@@ -155,11 +155,11 @@ static bool decode_permit(Span in, UrStep* st) {
       !bytes_at(in, 192, &sig)) {
     return false;
   }
-  st->kind = UR_PERMIT2_PERMIT;
+  st->kind = URO_PERMIT2_PERMIT;
   return true;
 }
 
-static bool decode_step(uint8_t cmd, Span in, UrStep* st) {
+static bool decode_step(uint8_t cmd, Span in, UroStep* st) {
   memset(st, 0, sizeof(*st));
   switch (cmd) {
     case CMD_V3_SWAP_EXACT_IN:
@@ -174,14 +174,14 @@ static bool decode_step(uint8_t cmd, Span in, UrStep* st) {
       return decode_permit(in, st);
     case CMD_WRAP_ETH:
     case CMD_UNWRAP_WETH:
-      st->kind = cmd == CMD_WRAP_ETH ? UR_WRAP_ETH : UR_UNWRAP_WETH;
+      st->kind = cmd == CMD_WRAP_ETH ? URO_WRAP_ETH : URO_UNWRAP_WETH;
       return address_at(in, 0, st->recipient) && u256_at(in, 32, st->amount);
     case CMD_SWEEP:
     case CMD_PAY_PORTION:
     case CMD_TRANSFER:
-      st->kind = cmd == CMD_SWEEP          ? UR_SWEEP
-                 : cmd == CMD_PAY_PORTION ? UR_PAY_PORTION
-                                          : UR_TRANSFER;
+      st->kind = cmd == CMD_SWEEP          ? URO_SWEEP
+                 : cmd == CMD_PAY_PORTION ? URO_PAY_PORTION
+                                          : URO_TRANSFER;
       return address_at(in, 0, st->token_in) &&
              address_at(in, 32, st->recipient) && u256_at(in, 64, st->amount);
     default:
@@ -189,7 +189,7 @@ static bool decode_step(uint8_t cmd, Span in, UrStep* st) {
   }
 }
 
-bool ur_oracle_decode(const uint8_t* calldata, size_t len, UrPlan* out) {
+bool ur_oracle_decode(const uint8_t* calldata, size_t len, UroPlan* out) {
   static const uint8_t SEL_DEADLINE[4] = {0x35, 0x93, 0x56, 0x4c};
   static const uint8_t SEL_NO_DEADLINE[4] = {0x24, 0x85, 0x6b, 0xc3};
   memset(out, 0, sizeof(*out));
@@ -207,7 +207,7 @@ bool ur_oracle_decode(const uint8_t* calldata, size_t len, UrPlan* out) {
       !uint_at(body, (size_t)inputs_off, 4, &n)) {
     return false;
   }
-  if (cmds.len == 0 || cmds.len > UR_MAX_STEPS || n != cmds.len) return false;
+  if (cmds.len == 0 || cmds.len > URO_MAX_STEPS || n != cmds.len) return false;
   /* bytes[] element heads are relative to the first head word. */
   Span heads;
   size_t heads_start = (size_t)inputs_off + 32;
@@ -224,5 +224,199 @@ bool ur_oracle_decode(const uint8_t* calldata, size_t len, UrPlan* out) {
     }
   }
   out->n = (uint8_t)cmds.len;
+  return true;
+}
+
+static bool ur_recipient_is_constant(const uint8_t recipient[20], uint8_t which) {
+  for (int i = 0; i < 19; i++) {
+    if (recipient[i] != 0) return false;
+  }
+  return recipient[19] == which;
+}
+
+/* ActionConstants.CONTRACT_BALANCE: "everything the router holds". */
+static bool is_contract_balance(const uint8_t a[32]) {
+  if (a[0] != 0x80) return false;
+  for (int i = 1; i < 32; i++) {
+    if (a[i] != 0) return false;
+  }
+  return true;
+}
+
+static bool is_zero32(const uint8_t a[32]) {
+  for (int i = 0; i < 32; i++) {
+    if (a[i] != 0) return false;
+  }
+  return true;
+}
+
+/* The router itself, by placeholder or by its own address: either way it
+ * holds the funds for a later step. Apps encode both. */
+static bool is_router(const uint8_t r[20], const uint8_t router[20]) {
+  return ur_recipient_is_constant(r, URO_RECIPIENT_ADDRESS_THIS) ||
+         memcmp(r, router, 20) == 0;
+}
+
+/* a += b, big-endian; false on overflow. */
+static bool add32(uint8_t a[32], const uint8_t b[32]) {
+  unsigned carry = 0;
+  for (int i = 31; i >= 0; i--) {
+    carry += (unsigned)a[i] + b[i];
+    a[i] = (uint8_t)carry;
+    carry >>= 8;
+  }
+  return carry == 0;
+}
+
+static bool is_swap(UroKind k) {
+  return k == URO_V3_SWAP_EXACT_IN || k == URO_V3_SWAP_EXACT_OUT ||
+         k == URO_V2_SWAP_EXACT_IN || k == URO_V2_SWAP_EXACT_OUT;
+}
+
+bool ur_oracle_summarize(const UroPlan* plan, const uint8_t router[20],
+                         const uint8_t value[32], UroSummary* out) {
+  memset(out, 0, sizeof(*out));
+  if (!plan || plan->n == 0) return false;
+  size_t i = 0;
+  const UroStep* permit = NULL;
+  const UroStep* wrap = NULL;
+  /* Before the swap: at most one permit or one wrap. */
+  if (i < plan->n && plan->steps[i].kind == URO_PERMIT2_PERMIT) {
+    permit = &plan->steps[i++];
+  } else if (i < plan->n && plan->steps[i].kind == URO_WRAP_ETH) {
+    wrap = &plan->steps[i++];
+  }
+  if (i >= plan->n || !is_swap(plan->steps[i].kind)) return false;
+  const UroStep* swap = &plan->steps[i++];
+  /* A split route: a second exact-in swap of the same pair, paid and
+   * delivered the same way. Its totals are what the user spends and is
+   * guaranteed (each swap enforces its own minimum). */
+  UroStep split;
+  if (i < plan->n && is_swap(plan->steps[i].kind)) {
+    const UroStep* b = &plan->steps[i++];
+    const bool in_a = swap->kind == URO_V3_SWAP_EXACT_IN ||
+                      swap->kind == URO_V2_SWAP_EXACT_IN;
+    const bool in_b =
+        b->kind == URO_V3_SWAP_EXACT_IN || b->kind == URO_V2_SWAP_EXACT_IN;
+    split = *swap;
+    if (!in_a || !in_b || memcmp(b->token_in, swap->token_in, 20) != 0 ||
+        memcmp(b->token_out, swap->token_out, 20) != 0 ||
+        memcmp(b->recipient, swap->recipient, 20) != 0 ||
+        b->payer_is_user != swap->payer_is_user ||
+        is_contract_balance(swap->amount) || is_contract_balance(b->amount) ||
+        !add32(split.amount, b->amount) || !add32(split.limit, b->limit)) {
+      return false;
+    }
+    swap = &split;
+  }
+  const UroStep* fee = NULL;
+  const UroStep* tail[2] = {NULL, NULL}; /* final, then clean-up */
+  if (i < plan->n && plan->steps[i].kind == URO_PAY_PORTION) {
+    fee = &plan->steps[i++];
+  }
+  for (int t = 0; t < 2 && i < plan->n &&
+                  (plan->steps[i].kind == URO_SWEEP ||
+                   plan->steps[i].kind == URO_UNWRAP_WETH);
+       t++) {
+    tail[t] = &plan->steps[i++];
+  }
+  if (i != plan->n) return false;
+  const UroStep* final = tail[0];
+  const UroStep* cleanup = tail[1];
+
+  out->exact_in = swap->kind == URO_V3_SWAP_EXACT_IN ||
+                  swap->kind == URO_V2_SWAP_EXACT_IN;
+  memcpy(out->token_in, swap->token_in, 20);
+  memcpy(out->token_out, swap->token_out, 20);
+
+  /* Input side. */
+  if (wrap) {
+    /* ETH in: the router wraps msg.value and pays from its own balance.
+     * Exact in spends all of it; exact out spends at most its limit, which
+     * may not exceed what was sent (the rest is refunded, below). */
+    if (swap->payer_is_user || is_zero32(value) ||
+        !is_router(wrap->recipient, router) ||
+        (memcmp(wrap->amount, value, 32) != 0 &&
+         !is_contract_balance(wrap->amount)) ||
+        (out->exact_in && memcmp(swap->amount, value, 32) != 0 &&
+         !is_contract_balance(swap->amount)) ||
+        (!out->exact_in && memcmp(swap->limit, value, 32) > 0)) {
+      return false;
+    }
+    out->in_is_eth = true;
+    memcpy(out->amount_in, value, 32);
+  } else {
+    /* Token in, pulled from the user through Permit2. */
+    if (!is_zero32(value) || !swap->payer_is_user ||
+        is_contract_balance(swap->amount)) {
+      return false;
+    }
+    memcpy(out->amount_in, out->exact_in ? swap->amount : swap->limit, 32);
+  }
+  if (permit) {
+    if (memcmp(permit->token_out /* spender */, router, 20) != 0 ||
+        memcmp(permit->token_in, swap->token_in, 20) != 0) {
+      return false;
+    }
+    out->has_permit = true;
+    memcpy(out->permit_token, permit->token_in, 20);
+    memcpy(out->permit_amount, permit->amount, 32);
+    out->permit_expiration = permit->expiration;
+  }
+
+  /* Output side. */
+  memcpy(out->amount_out, out->exact_in ? swap->limit : swap->amount, 32);
+  const UroStep* deliver = swap;
+  if (!is_router(swap->recipient, router)) {
+    /* Delivered by the swap itself: what follows is clean-up. */
+    if (fee || cleanup) return false;
+    cleanup = final;
+    goto delivered;
+  }
+  /* Held by the router: a final step must deliver it, after any fee. */
+  if (!final || is_contract_balance(final->amount)) return false;
+  if (final->kind == URO_SWEEP &&
+      memcmp(final->token_in, swap->token_out, 20) != 0) {
+    return false;
+  }
+  if (fee) {
+    uint64_t bips = 0;
+    for (int k = 24; k < 32; k++) bips = (bips << 8) | fee->amount[k];
+    for (int k = 0; k < 24; k++) {
+      if (fee->amount[k] != 0) return false;
+    }
+    if (bips == 0 || bips > 10000 ||
+        memcmp(fee->token_in, swap->token_out, 20) != 0 ||
+        is_router(fee->recipient, router)) {
+      return false;
+    }
+    out->has_fee = true;
+    out->fee_bips = (uint16_t)bips;
+    memcpy(out->fee_recipient, fee->recipient, 20);
+    /* The user's floor is what the final step guarantees after the fee. */
+    if (out->exact_in) memcpy(out->amount_out, final->amount, 32);
+  }
+  if (is_router(final->recipient, router)) {
+    return false;
+  }
+  /* Apps put the floor on the final step and leave the swap's limit at 0:
+   * the user is guaranteed the larger of the two. */
+  if (out->exact_in && !fee &&
+      memcmp(final->amount, out->amount_out, 32) > 0) {
+    memcpy(out->amount_out, final->amount, 32);
+  }
+  out->out_is_eth = final->kind == URO_UNWRAP_WETH;
+  deliver = final;
+delivered:
+  /* Apps add one clean-up step returning leftover ETH (unwrapped, or swept
+   * as address 0). Allowed only to the recipient the review names. */
+  if (cleanup && (memcmp(cleanup->recipient, deliver->recipient, 20) != 0 ||
+                  (cleanup->kind == URO_SWEEP &&
+                   !ur_recipient_is_constant(cleanup->token_in, 0)))) {
+    return false;
+  }
+  out->recipient_is_sender =
+      ur_recipient_is_constant(deliver->recipient, URO_RECIPIENT_MSG_SENDER);
+  memcpy(out->recipient, deliver->recipient, 20);
   return true;
 }

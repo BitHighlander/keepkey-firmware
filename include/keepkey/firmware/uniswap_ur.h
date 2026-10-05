@@ -13,8 +13,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* The longest shape ur_summarize accepts: permit|wrap, swap, fee, final. */
-#define UR_MAX_STEPS 4
+/* Plan steps per call (a V4 swap with a fee is two). 997 of the 1,000 calls
+ * in the D-021 sample need at most 6. */
+#define UR_MAX_STEPS 6
+/* Distinct non-zero V4 hook contracts per call; each is shown. */
+#define UR_MAX_HOOKS 3
+/* PathKeys per V4 swap. */
+#define UR_V4_MAX_PATH 4
 
 typedef enum {
   UR_V3_SWAP_EXACT_IN,
@@ -27,6 +32,13 @@ typedef enum {
   UR_SWEEP,
   UR_PAY_PORTION,
   UR_TRANSFER,
+  /* One V4_SWAP command (actions SWAP_EXACT_IN/OUT, SETTLE, TAKE): the same
+   * fields as a V3 swap. token_in/token_out 0 is native ETH. */
+  UR_V4_SWAP_EXACT_IN,
+  UR_V4_SWAP_EXACT_OUT,
+  /* The V4 swap's TAKE_PORTION, right after it: token_in is the currency,
+   * recipient the fee recipient, amount the bips. */
+  UR_V4_TAKE_PORTION,
 } UrKind;
 
 /* Recipient constants the router substitutes (Constants.sol). */
@@ -58,6 +70,9 @@ typedef struct {
   UrStep steps[UR_MAX_STEPS];
   bool has_deadline;
   uint64_t deadline;
+  /* Every distinct non-zero V4 pool hook in the call, in path order. */
+  uint8_t n_hooks;
+  uint8_t hooks[UR_MAX_HOOKS][20];
 } UrPlan;
 
 /* Streaming decode of execute(bytes,bytes[],uint256) and execute(bytes,bytes[])
@@ -89,7 +104,27 @@ typedef struct {
   uint8_t step;  /* current input */
   uint8_t ncmds;
   uint8_t cmds[UR_MAX_STEPS];
+  uint8_t nsteps; /* plan steps written (a V4 fee adds one) */
+  uint8_t pstep;  /* the current input's plan step */
   bool failed;
+  /* V4_SWAP: abi.encode(bytes actions, bytes[] params), one level down. */
+  struct {
+    uint32_t heads; /* params: the first element head (or the params offset) */
+    uint32_t elem[4]; /* param offsets, relative to `heads` */
+    uint32_t base;    /* the current param's payload */
+    uint32_t len;
+    uint32_t sw;                 /* swap struct, relative to `base` */
+    uint32_t path;               /* swap path: the first PathKey head */
+    uint32_t pk[UR_V4_MAX_PATH]; /* PathKey offsets, relative to `path` */
+    uint32_t pkb;                /* the current PathKey, relative to `base` */
+    uint8_t nacts;
+    uint8_t acts[4];
+    uint8_t act; /* current action */
+    uint8_t npath;
+    uint8_t settle_cur[20];
+    uint8_t take_cur[20];
+    bool swap_done;
+  } v4;
 } UrStream;
 
 /* Starts a decode of a `total`-byte call into `out` (cleared now). */
@@ -130,14 +165,23 @@ typedef struct {
   bool has_fee;
   uint16_t fee_bips;
   uint8_t fee_recipient[20];
+  /* V4 pool hooks the swap runs through; each is shown. */
+  uint8_t n_hooks;
+  uint8_t hooks[UR_MAX_HOOKS][20];
 } UrSummary;
 
-/* Accepts only [PERMIT2_PERMIT | WRAP_ETH] -> one swap (or a split of two
- * exact-in swaps of the same pair) -> [PAY_PORTION] ->
- * [SWEEP | UNWRAP_WETH] -> [clean-up: ETH back to the same recipient].
- * `router` is the contract being called (a permit must
- * name it as spender); `value` is msg.value, big-endian. False for any other
- * shape, so nothing partial is ever shown. */
+/* Reads the plan as token flow through the router and accepts it only if it
+ * says, honestly, one thing: the user pays with one asset (msg.value, or one
+ * token the swaps marked payerIsUser pull, after an optional Permit2 permit
+ * naming this router), and one asset reaches one recipient (directly from
+ * swaps, or by SWEEP / UNWRAP_WETH of what the router holds; leftover ETH
+ * may go back to the same recipient). Swaps paid by the router (splits,
+ * multi-hop through V2/V3/V4 pools) are free to the user. amount_in is the
+ * sum the user pays (msg.value with ETH), amount_out the sum of the
+ * minimums every delivery enforces; all swaps exact-in, or all exact-out.
+ * At most one fee (PAY_PORTION, or a V4 swap's TAKE_PORTION). `router` is
+ * the contract being called; `value` is msg.value, big-endian. False for
+ * anything else, so nothing partial is ever shown. */
 bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
                   const uint8_t value[32], UrSummary* out);
 
