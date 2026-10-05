@@ -25,8 +25,9 @@
 
 static int process_ethereum_xfer(const CoinType* coin, EthereumSignTx* msg,
                                  bool* needs_confirm) {
-  /* Only a complete canonical ERC20 transfer; check the declared total so a
-   * streamed suffix cannot change the classification after review. */
+  /* Account routing accepts only a complete canonical ERC20 transfer. Check
+   * the declared total too, so streaming a suffix cannot change the signing
+   * classifier after the account confirmation has replaced output review. */
   if ((msg->data_length != 0 || msg->data_initial_chunk.size != 0) &&
       (msg->data_length != 68 || !ethereum_isStandardERC20Transfer(msg)))
     return TXOUT_COMPILE_ERROR;
@@ -1706,8 +1707,12 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
   }
   CHECK_PIN
 
-  /* Never mid-signing: processing clears the tx<->metadata binding, letting a
-   * host approve a benign decode then stream other calldata. Abort instead. */
+  /* Metadata must arrive before signing starts. signed_metadata_process()
+   * clears the binding on entry, so accepting metadata mid-signing would
+   * drop the tx<->metadata binding without aborting: a host could approve a
+   * benign decode (suppressing the blind-sign gate), then inject metadata to
+   * clear the binding and stream attacker-chosen calldata for the rest.
+   * Refuse and abort any in-progress signing session. */
   if (ethereum_signing_isInProgress()) {
     ethereum_signing_abort();
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
@@ -1716,7 +1721,10 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
     return;
   }
 
-  /* Range-check before narrowing: (uint8_t)256 would alias slot 0. */
+  /* Range-check the uint32 wire value against the slot count BEFORE it is
+   * narrowed to the uint8 slot index below: (uint8_t)256 would alias slot 0.
+   * A slot that cannot exist is a malformed request, not an "Invalid"
+   * classification. */
   CHECK_PARAM(!msg->has_key_id || msg->key_id < METADATA_MAX_KEYS,
               _("clearsign metadata key_id out of range"));
 
@@ -1750,7 +1758,13 @@ void fsm_msgLoadClearsignSigner(const LoadClearsignSigner* msg) {
   CHECK_INITIALIZED
   CHECK_PIN
 
-  /* As in fsm_msgEthereumTxMetadata: storing a signer clears the binding. */
+  /* Same reasoning as fsm_msgEthereumTxMetadata above, and the same fix.
+   * Storing a signer ends in signed_metadata_clear(), which drops the
+   * tx<->metadata binding along with relied_on_metadata -- so loading a
+   * signer mid-signing let a host approve a benign decode and then stream
+   * different calldata, with signed_metadata_enforce() seeing relied=false
+   * and passing. The guard was on the metadata message but not on its
+   * sibling. */
   if (ethereum_signing_isInProgress()) {
     ethereum_signing_abort();
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
@@ -1771,22 +1785,35 @@ void fsm_msgLoadClearsignSigner(const LoadClearsignSigner* msg) {
                                    msg->pubkey.size, msg->alias),
       _("Invalid clearsign signer"));
 
-  /* Optional 1bpp mono RLE icon; bad dims are rejected, not dropped. */
+  /* Optional identity icon (1bpp mono RLE). The proto caps icon at 384 bytes;
+   * bound the dims too so the render path never scans a bogus geometry. An icon
+   * with zero/oversized dims is rejected rather than silently dropped so a
+   * malformed upload is visible, not a mystery text-only identity. */
   const uint8_t* icon = NULL;
   uint16_t icon_len = 0;
   uint8_t icon_w = 0, icon_h = 0;
   if (msg->has_icon && msg->icon.size > 0) {
     CHECK_PARAM(msg->icon.size <= METADATA_ICON_MAX, _("icon too large"));
-    /* Trust boundary: width <= the icon column, or the icon (drawn after the
-     * text) would paint over the alias, fingerprint and "NOT verified"
-     * warning. */
+    /* Width is capped at the confirm screen's icon column
+     * (LEFT_MARGIN_WITH_ICON = 40), NOT at the 64px height. Title/body text
+     * begins at x=40 and the icon is drawn AFTER the text, so a wider
+     * host-supplied icon would paint over the alias, fingerprint and the
+     * "NOT verified by KeepKey" warning — on the very screen that exists to
+     * carry that warning. This is the trust boundary for icons arriving on the
+     * wire; signed_metadata_signer_icon() rechecks the session copy at use. */
     CHECK_PARAM(msg->has_icon_width && msg->has_icon_height &&
                     msg->icon_width > 0 &&
                     msg->icon_width <= LEFT_MARGIN_WITH_ICON &&
                     msg->icon_height > 0 && msg->icon_height <= 64,
                 _("icon dimensions out of range"));
-    /* Validate RLE here: the draw path's failure is discarded, so the user
-     * would consent to an identity whose logo silently does not exist. */
+    /* Reject a malformed RLE stream HERE rather than discovering it at draw
+     * time. The render path returns a bool that layout_add_icon() discards, so
+     * an undecodable icon would otherwise show no logo while still returning
+     * Success — the user would consent to an identity
+     * whose logo silently does not exist. Validation is exact (every packet
+     * well-formed, no run straddling the image, whole input consumed) and
+     * side-effect-free.
+     */
     CHECK_PARAM(draw_bitmap_mono_rle_valid(
                     msg->icon.bytes, (uint32_t)msg->icon.size,
                     (uint16_t)msg->icon_width, (uint16_t)msg->icon_height),
@@ -1799,7 +1826,9 @@ void fsm_msgLoadClearsignSigner(const LoadClearsignSigner* msg) {
   bool persist = msg->has_persist && msg->persist;
   CHECK_PARAM(!persist, _("Persistent clearsign signers are disabled"));
 
-  /* Mandatory consent: the trust model hangs on this screen. */
+  /* Mandatory on-device consent — leads with the identity's logo (if any) +
+   * alias + fingerprint. The whole trust model hangs on this confirm; the same
+   * fingerprint reappears on every per-tx identity screen. */
   char fingerprint[METADATA_FINGERPRINT_LEN];
   signed_metadata_pubkey_fingerprint(msg->pubkey.bytes, fingerprint);
   if (!signed_metadata_confirm_load(msg->alias, fingerprint, icon, icon_w,
@@ -2129,8 +2158,13 @@ void fsm_msgEthereum712TypesValues(Ethereum712TypesValues* msg) {
   layoutHome();
 }
 
-/* Structured EIP-712: eip712_stream.c describes the next request; this one
- * pump emits it for all three handlers. */
+/* ── Structured EIP-712 ──────────────────────────────────────────────
+ *
+ * The walk in eip712_stream.c never writes a message. It describes what it
+ * wants next and these three handlers emit it, because msg_resp and the HD
+ * node live here. One pump serves all three so the wire behaviour has exactly
+ * one definition.
+ */
 static void eip712_pump(void) {
   const Eip712Next* next = eip712_stream_next();
 
@@ -2217,8 +2251,13 @@ static void eip712_pump(void) {
       uint8_t sighash[32];
       keccak_256(preimage, done.domain_only ? 34 : sizeof(preimage), sighash);
 
-      /* Holds a private key: every exit scrubs it (F059). Neither node nor
-       * msg_resp survives the confirm; the key is re-derived after approval. */
+      /* Not const: node is the shared fsm_derived_node scratch and holds a
+       * private key, so every exit below scrubs it (same rule as
+       * process_ethereum_xfer(); 7.15 audit F059). Neither the node nor the
+       * msg_resp arena is held across the confirmation below: a DebugLink
+       * request answered during it reuses the arena, and dispatch clears the
+       * derived node. The address is kept in a local and the key is derived
+       * again only after approval. */
       HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, done.address_n,
                                         done.address_n_count, NULL);
       if (!node) return;
@@ -2303,8 +2342,10 @@ void fsm_msgEthereumSignTypedData(const EthereumSignTypedData* msg) {
   CHECK_INITIALIZED
   CHECK_PIN
 
-  /* Every leaf is validated, shown and hashed from the same bytes, so
-   * AdvancedMode is not consulted. */
+  /* This is the canonical device-driven stream, not the withdrawn whole-JSON
+   * parser and not the blind typed-hash endpoint. Every leaf is validated,
+   * rendered and hashed from the same bytes, so AdvancedMode is neither needed
+   * nor consulted. */
   if (!ethereum_streamed_eip712_enabled()) {
     fsm_sendFailure(FailureType_Failure_Other,
                     _("Structured EIP-712 is unavailable"));
