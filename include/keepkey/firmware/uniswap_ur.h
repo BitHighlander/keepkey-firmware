@@ -143,7 +143,6 @@ bool ur_decode(const uint8_t* calldata, size_t len, UrPlan* out);
 /* True for the router's MSG_SENDER / ADDRESS_THIS placeholders. */
 bool ur_recipient_is_constant(const uint8_t recipient[20], uint8_t which);
 
-
 /* What the user is asked to approve: one swap, how it is paid, where the
  * output goes, and any Permit2 allowance or fee riding along. */
 typedef struct {
