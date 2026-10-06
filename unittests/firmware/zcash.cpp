@@ -1614,12 +1614,8 @@ TEST(Zcash, ComputeShieldedSighash_KnownVector) {
                                              orchard, branch_id, sighash));
 
   /*
-   * Independently verified: BLAKE2b-256 with personalization
-   * "ZcashTxHash_\x21\x96\x51\x37" over 128 zero bytes.
-   *
-   * This is a self-consistency check — the value was computed by
-   * running the same BLAKE2b-256 offline. If the sighash function
-   * changes its algorithm, this test will catch it.
+   * BLAKE2b-256 with personalization "ZcashTxHash_\x21\x96\x51\x37" over
+   * 128 zero bytes, computed offline: a change detector, not a spec vector.
    */
   uint8_t expected[32];
   BLAKE2B_CTX ctx;

@@ -1155,13 +1155,15 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
 
   const uint8_t* sighash = zcash_signing.sighash;
 
-  /* Dummy spends are already signed by finalize_io() with their ephemeral
-   * key; sign only real spends, in action order. Every action is verified. */
+  /* The host's PCZT IO finalizer already signed dummy spends with their
+   * ephemeral keys; sign only real spends, in action order. Every action is
+   * still verified. */
   if (msg->is_spend) {
-    /* T comes from the CHECKED RNG: a repeated nonce r = H*(T || rk || M)
-     * discloses ask, so a degraded source (boot verdict or SP 800-90B RCT/APT
-     * trip) yields NO signature. 80 bytes per the Zcash spec so H* is uniform
-     * over the scalar field. The signer also refuses an all-zero T. */
+    /* T must be unpredictable: rk and M are public, so a guessable T makes
+     * r = H*(T || rk || M) computable and one signature discloses ask. Draw it
+     * from the checked RNG and refuse on a failed verdict. 80 bytes per the
+     * Zcash spec so H* is uniform over the scalar field; the signer also
+     * refuses an all-zero T. */
     uint8_t zcash_T[80];
     if (!rng_health_check() ||
         !random_buffer_checked(zcash_T, sizeof(zcash_T))) {
