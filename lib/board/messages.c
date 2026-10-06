@@ -374,6 +374,9 @@ static CONFIDENTIAL uint8_t msg_tiny[MSG_TINY_BFR_SZ];
 static uint16_t msg_tiny_id = MSG_TINY_TYPE_ERROR; /* Default to error type */
 
 void msg_reject_short_tiny_packet(void) {
+  /* A short packet ends every receive in progress: drop any partly
+   * reassembled message too, so the next request is not read as its tail. */
+  frame_arena_rx_reset();
   if (msg_tiny_flag) {
     reject_tiny_message(FailureType_Failure_UnexpectedMessage,
                         "Malformed tiny packet");

@@ -100,6 +100,32 @@ TEST(USBRX, ErrorHandling) {
   ASSERT_EQ(message, "Unknown message");
 }
 
+// A short USB packet ends the receive in progress, so a frame that would have
+// continued a partial message is read as a new (malformed) message instead.
+TEST(USBRX, ShortPacketDropsAPartialMessage) {
+  fsm_init();
+  setup();
+
+  char msg[64];
+  TrezorFrame *frame = (TrezorFrame *)msg;
+  memset(msg, 0, sizeof(msg));
+  frame->usb_header.hid_type = '?';
+  frame->header.pre1 = '#';
+  frame->header.pre2 = '#';
+  frame->header.id = __builtin_bswap16(MessageType_MessageType_Initialize);
+  frame->header.len = __builtin_bswap32(200);  // needs more frames
+  usb_rx_helper(&msg, sizeof(msg), NORMAL_MSG);
+  ASSERT_EQ(failure_count, 0);
+
+  msg_reject_short_tiny_packet();
+
+  frame->header.pre1 = '0';  // a continuation frame
+  frame->header.pre2 = '0';
+  usb_rx_helper(&msg, sizeof(msg), NORMAL_MSG);
+  EXPECT_EQ(failure_count, 1);
+  EXPECT_EQ(message, "Malformed packet");
+}
+
 #include "test_board.h"
 
 #include <arpa/inet.h>

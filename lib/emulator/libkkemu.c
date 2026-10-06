@@ -64,8 +64,10 @@ static _Atomic int g_poll_running = 0;
 #define POLL_RUNNING() atomic_load_explicit(&g_poll_running, memory_order_acquire)
 #define POLL_SET(v) atomic_store_explicit(&g_poll_running, (v), memory_order_release)
 
-/* Host owns g_fw_lock; unlock keys on this, not on g_poll_running. */
-static int g_host_holds_lock = 0;
+/* This host thread owns g_fw_lock; unlock keys on this, not on
+ * g_poll_running. Per thread, so a thread that got the no-poll-thread success
+ * from kkemu_trylock() cannot release a lock another thread still holds. */
+static _Thread_local int g_host_holds_lock = 0;
 
 /* ── Ring buffers (replace UDP sockets) ─────────────────────────────── */
 
