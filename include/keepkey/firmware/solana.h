@@ -199,7 +199,10 @@ typedef struct {
  * displayed account index exists; no lookup table; every OTHER instruction is
  * one firmware already recognises.
  *
- * Canonical payload (all integers big-endian, text printable ASCII, no '%'):
+ * Canonical payload (every numeric field is one byte; text printable ASCII,
+ * no '%'). The 8-byte instruction arguments it describes (U64, LAMPORTS,
+ * TOKEN_AMOUNT, DURATION) are read little-endian, as Solana programs encode
+ * them:
  *   magic          8   "KKSOLSC1"
  *   version        1   1 or 2
  *   program_id    32
