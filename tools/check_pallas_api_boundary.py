@@ -134,7 +134,12 @@ def require(body, token, where):
 
 def forbid(body, token, where):
     guard(token)
-    if token in body:
+    if token.endswith("("):
+        # A call: any whitespace may sit between the name and its "(".
+        found = re.search(r"\b" + re.escape(token[:-1]) + r"\s*\(", body)
+    else:
+        found = token in body
+    if found:
         raise AssertionError("{} must not call {}".format(where, token))
 
 
@@ -330,9 +335,13 @@ def main():
     # No file the gate reads, nor the Pallas headers, may #define a checked
     # identifier: an alias would satisfy require() while compiling to another
     # call.
-    crypto = ROOT / "deps/crypto/trezor-firmware/crypto"
-    headers = {h.name: h.read_text(encoding="utf-8")
-               for h in sorted(crypto.glob("*pallas*.h"))}
+    # Every header these sources can reach inside the tree: the crypto
+    # library's and the firmware's own.
+    header_roots = [ROOT / "deps/crypto/trezor-firmware/crypto",
+                    ROOT / "include", ROOT / "lib"]
+    headers = {str(h.relative_to(ROOT)): h.read_text(encoding="utf-8",
+                                                     errors="replace")
+               for base in header_roots for h in sorted(base.rglob("*.h"))}
     checked = dict(headers, **{
         "pallas.c": pallas, "pallas_sinsemilla.c": sinsemilla,
         "redpallas.c": redpallas, "zcash.c": zcash,

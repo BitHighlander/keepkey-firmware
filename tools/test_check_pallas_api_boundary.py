@@ -2,7 +2,7 @@
 
 import unittest
 
-from check_pallas_api_boundary import PALLAS_CT_INCLUDE, function_body, require
+from check_pallas_api_boundary import PALLAS_CT_INCLUDE, forbid, function_body, require
 
 
 class ConditionalCompilation(unittest.TestCase):
@@ -36,6 +36,13 @@ class ConditionalCompilation(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 function_body("void f(void) {\n%s\n  pallas_ct_add(x);\n}\n"
                               % directive, "f")
+
+    def test_spaced_call_cannot_evade_forbid(self):
+        for call in ("pallas_add_mod_q(x)", "pallas_add_mod_q (x)",
+                     "pallas_add_mod_q\n  (x)"):
+            with self.assertRaises(AssertionError):
+                forbid(call, "pallas_add_mod_q(", "f")
+        forbid("pallas_ct_add_mod_q(x)", "pallas_add_mod_q(", "f")
 
     def test_include_of_the_ct_header_is_found_in_every_spelling(self):
         for line in ('#include "pallas_ct.h"', "#include <pallas_ct.h>",
