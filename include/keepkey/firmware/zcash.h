@@ -94,9 +94,9 @@ typedef struct {
 #define ZCASH_ORCHARD_RAW_RECEIVER_SIZE 43
 #define ZCASH_ORCHARD_UNIFIED_ADDRESS_SIZE 128
 
-/* Rejects host-supplied per-action sighashes: firmware must assemble the
- * ZIP-244 sighash itself and verify the Orchard digest against streamed
- * actions before signing. */
+/* Validates the initial ZcashSignPCZT metadata: digest presence and sizes,
+ * header fields, transparent and Orchard metadata, and no Sapling component.
+ * Per-action sighashes are refused later, in fsm_msgZcashPCZTAction(). */
 ZcashPCZTSigningRequestStatus zcash_pczt_signing_request_status(
     const ZcashPCZTSigningRequestMeta* meta);
 

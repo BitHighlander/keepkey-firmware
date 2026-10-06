@@ -1068,12 +1068,13 @@ ZcashPCZTSigningRequestStatus zcash_pczt_signing_request_status(
   return ZCASH_PCZT_SIGNING_REQUEST_OK;
 }
 
-/* ZIP-32 6.1 seed fingerprint. Rejects trivial (all-0x00/0xFF) seeds and
- * lengths outside [32, 252]. */
+/* An optional requested seed fingerprint must be exactly 32 bytes. */
 bool zcash_seed_fingerprint_request_valid(bool present, size_t size) {
   return !present || size == 32;
 }
 
+/* ZIP-32 6.1 seed fingerprint. Rejects trivial (all-0x00/0xFF) seeds and
+ * lengths outside [32, 252]. */
 bool zcash_calculate_seed_fingerprint(const uint8_t* seed, uint32_t seed_len,
                                       uint8_t fingerprint_out[32]) {
   if (!seed || !fingerprint_out) return false;
