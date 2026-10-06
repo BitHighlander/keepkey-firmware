@@ -172,6 +172,7 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
       Features_Capability_CAPABILITY_MAYA_SINGLE_MESSAGE,
       Features_Capability_CAPABILITY_TENDERMINT_PROGRESS,
       Features_Capability_CAPABILITY_TRON_TRC20_REVIEW,
+      Features_Capability_CAPABILITY_SOLANA_LUT_ATTESTATION,
 #endif
   };
   _Static_assert(sizeof(capabilities) <= sizeof(resp->capabilities),
