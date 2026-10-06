@@ -11,6 +11,9 @@ extern "C" {
 }
 
 #include "gtest/gtest.h"
+
+#include <cstdio>
+#include <cstring>
 #include <cstring>
 
 /* ── Pallas curve constants ──────────────────────────────────────── */
@@ -491,6 +494,32 @@ static const char ORCHARD_ONLY_UA_TESTNET_1[] =
     "ar4lm8muxu352nmuqt2c5n92w4ngf44qwtjl0p";
 
 /* ── ZIP-32 Derivation Tests ─────────────────────────────────────── */
+
+// Pallas base-field modulus, from its published value (not the library).
+static void pallas_modulus_le(uint8_t out[32]) {
+  const char* hex =
+      "40000000000000000000000000000000224698fc094cf91b992d30ed00000001";
+  for (int i = 0; i < 32; i++) {
+    unsigned byte;
+    sscanf(hex + 2 * i, "%2x", &byte);
+    out[31 - i] = (uint8_t)byte;
+  }
+}
+
+TEST(Zcash, OrchardNullifierMustBeBelowTheFieldModulus) {
+  uint8_t value[32] = {0};
+  EXPECT_TRUE(zcash_orchard_nullifier_canonical(value));  // zero
+
+  pallas_modulus_le(value);
+  EXPECT_FALSE(zcash_orchard_nullifier_canonical(value))
+      << "the modulus itself has bit 255 clear but is not canonical";
+  value[0] -= 1;  // modulus - 1 (low byte is 0x01)
+  EXPECT_TRUE(zcash_orchard_nullifier_canonical(value));
+
+  memset(value, 0, sizeof(value));
+  value[31] = 0x80;
+  EXPECT_FALSE(zcash_orchard_nullifier_canonical(value));
+}
 
 TEST(Zcash, DeriveOrchardKeys_ReferenceVector_Account0) {
   /*

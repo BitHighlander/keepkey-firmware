@@ -1068,6 +1068,14 @@ ZcashPCZTSigningRequestStatus zcash_pczt_signing_request_status(
   return ZCASH_PCZT_SIGNING_REQUEST_OK;
 }
 
+bool zcash_orchard_nullifier_canonical(const uint8_t nullifier[32]) {
+  bignum256 value;
+  bn_read_le(nullifier, &value);
+  bool canonical = bn_is_less(&value, &pallas_prime);
+  memzero(&value, sizeof(value));
+  return canonical;
+}
+
 /* An optional requested seed fingerprint must be exactly 32 bytes. */
 bool zcash_seed_fingerprint_request_valid(bool present, size_t size) {
   return !present || size == 32;

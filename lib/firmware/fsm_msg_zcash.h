@@ -242,9 +242,9 @@ static bool zcash_verify_and_confirm_orchard_output(
     return false;
   }
 
-  /* rho is I2LEBSP_255: reject bit 255 rather than mask it, or two wire
-   * values would map to one commitment. */
-  if (msg->nullifier.bytes[31] & 0x80) {
+  /* rho is a base-field element: reject a non-canonical encoding rather than
+   * reduce it, or two wire values would map to one commitment. */
+  if (!zcash_orchard_nullifier_canonical(msg->nullifier.bytes)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Orchard nullifier is not canonical"));
     return false;

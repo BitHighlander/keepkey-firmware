@@ -234,6 +234,10 @@ bool zcash_calculate_seed_fingerprint(const uint8_t* seed, uint32_t seed_len,
 /* Optional asserted fingerprint: absent, or exactly 32 bytes. */
 bool zcash_seed_fingerprint_request_valid(bool present, size_t size);
 
+/* An Orchard nullifier (rho) is a Pallas base-field element: its 32-byte
+ * little-endian encoding is canonical only below the field modulus. */
+bool zcash_orchard_nullifier_canonical(const uint8_t nullifier[32]);
+
 /* Storage-scoped wrappers (in storage.c) are the only sanctioned production
  * path to seed-derived Zcash material: the raw seed never leaves storage.c.
  * The bare derivations above are for unit-test vectors. */
