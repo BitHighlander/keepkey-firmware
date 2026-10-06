@@ -140,6 +140,24 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
   resp->has_auto_lock_delay_ms = auto_lock_delay ? true : false;
   resp->auto_lock_delay_ms = auto_lock_delay;
 
+  /* Behaviours this build implements (Features.capabilities). Each release
+     block appends what it adds, so a host or a test can tell apart builds
+     that report the same version. List only what this build really does. */
+  static const Features_Capability capabilities[] = {
+      Features_Capability_CAPABILITY_ENTROPY_AUDIT_BUDGET,
+      Features_Capability_CAPABILITY_PROMPT_WORKFLOW_UNWIND,
+      Features_Capability_CAPABILITY_PROTECTED_PING_PRESENCE,
+      Features_Capability_CAPABILITY_SAFE_RESET_CEREMONY,
+#if !BITCOIN_ONLY
+      Features_Capability_CAPABILITY_LEGACY_EVM_ROUTER_SIGNING,
+      Features_Capability_CAPABILITY_THOR_DEPOSIT_REVIEW,
+#endif
+  };
+  _Static_assert(sizeof(capabilities) <= sizeof(resp->capabilities),
+                 "raise Features.capabilities max_count in messages.options");
+  resp->capabilities_count = sizeof(capabilities) / sizeof(capabilities[0]);
+  memcpy(resp->capabilities, capabilities, sizeof(capabilities));
+
   msg_write(MessageType_MessageType_Features, resp);
 }
 

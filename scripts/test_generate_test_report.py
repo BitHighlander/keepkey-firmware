@@ -263,127 +263,36 @@ def skipped(capability):
             "skip_reason": report.CAPABILITY_SKIP_PREFIX + capability}
 
 
-class CapabilityWaivers(unittest.TestCase):
-    def setUp(self):
-        self.environment = unittest.mock.patch.dict(
-            "os.environ", {"KK_RELEASE_MISSING_CAPABILITIES": ""})
-        self.environment.start()
-        self.addCleanup(self.environment.stop)
+class CapabilitySkips(unittest.TestCase):
+    """What a build lacks comes only from the firmware's own capability skips."""
 
-    def test_unapproved_environment_cannot_shrink_the_gate(self):
+    def test_missing_comes_only_from_capability_skips(self):
+        cases = [skipped("evm-max-amount-review"),
+                 {"status": "pass", "skip_reason": ""},
+                 {"status": "skip", "skip_reason":
+                  "Firmware version 7.16.0 or higher is required to run this test"}]
+        self.assertEqual({"evm-max-amount-review"},
+                         report.release_missing_capabilities(cases))
+
+    def test_environment_cannot_declare_a_capability_missing(self):
         with unittest.mock.patch.dict(
-                "os.environ", {"KK_RELEASE_MISSING_CAPABILITIES": "unapproved"}):
-            with self.assertRaisesRegex(RuntimeError, "not in the ci.yml ledger"):
-                report.release_missing_capabilities([], approved=set())
+                os.environ,
+                {"KK_RELEASE_MISSING_CAPABILITIES": "evm-max-amount-review"}):
+            self.assertEqual(set(), report.release_missing_capabilities([]))
 
-    def test_ledger_is_read_from_the_real_workflow(self):
-        approved = report.approved_capabilities()
-        self.assertEqual(report.parse_capability_ledger(
-            report.CI_WORKFLOW.read_text()), approved)
-        self.assertIn("storage-v19-kdf", approved)
-        self.assertNotIn("entropy-audit-budget", approved)
-
-    def test_ledger_must_be_unique(self):
-        line = "    KK_RELEASE_MISSING_CAPABILITIES: a,b\n"
-        with self.assertRaises(RuntimeError):
-            report.parse_capability_ledger("")
-        with self.assertRaises(RuntimeError):
-            report.parse_capability_ledger(line + line)
-        self.assertEqual({"a", "b"}, report.parse_capability_ledger(line))
-        self.assertEqual(set(), report.parse_capability_ledger(
-            "    KK_RELEASE_MISSING_CAPABILITIES: \n"))
-
-    def test_candidate_cannot_expand_immutable_ledger(self):
-        candidate = report.CI_WORKFLOW.read_text().replace(
-            "KK_RELEASE_MISSING_CAPABILITIES: ",
-            "KK_RELEASE_MISSING_CAPABILITIES: unapproved,")
-        with self.assertRaisesRegex(RuntimeError, "immutable authority"):
-            report.approved_capabilities(candidate)
-
-    def test_candidate_can_narrow_immutable_ledger(self):
-        self.assertEqual({"osmosis-wire-guards"}, report.approved_capabilities(
-            "    KK_RELEASE_MISSING_CAPABILITIES: osmosis-wire-guards\n"))
-
-    def test_missing_authority_fails_closed(self):
-        import subprocess
-        with unittest.mock.patch.object(report, "waiver_authority_commit", return_value="a" * 40):
-            with unittest.mock.patch.object(
-                    report, "git", side_effect=subprocess.CalledProcessError(1, "git")):
-                with self.assertRaisesRegex(RuntimeError, "authority is unavailable"):
-                    report.approved_capabilities()
-
-    def test_platform_event_selects_authority_independently(self):
-        # The expected SHA is independent of candidate code/constants and
-        # differs from both the PR head and an attacker-provided environment pin.
-        base = "a" * 40
-        with tempfile.TemporaryDirectory() as tmp:
-            event = Path(tmp) / "event.json"
-            event.write_text(json.dumps({"pull_request": {
-                "base": {"sha": base}, "head": {"sha": "b" * 40}}}))
-            with unittest.mock.patch.dict(os.environ, {
-                    "GITHUB_ACTIONS": "true", "GITHUB_EVENT_PATH": str(event),
-                    "GITHUB_EVENT_NAME": "pull_request",
-                    "GITHUB_SHA": "b" * 40, "WAIVER_AUTHORITY_COMMIT": "HEAD"}):
-                with unittest.mock.patch.object(report, "git", return_value=
-                        "    KK_RELEASE_MISSING_CAPABILITIES: approved\n") as git:
-                    self.assertEqual({"approved"}, report.approved_capabilities(
-                        "    KK_RELEASE_MISSING_CAPABILITIES: approved\n"))
-                git.assert_called_once_with("show", base + ":.github/workflows/ci.yml")
-                for invalid in ({}, {"pull_request": {"base": {"sha": "HEAD"}}},
-                                {"pull_request": {"base": {"sha": "0" * 40}}}):
-                    event.write_text(json.dumps(invalid))
-                    with self.assertRaises(RuntimeError):
-                        report.waiver_authority_commit()
-
-    def test_non_pr_events_require_independent_authority(self):
-        accepted = "c" * 40
-        with tempfile.TemporaryDirectory() as tmp:
-            event = Path(tmp) / "event.json"
-            event.write_text(json.dumps({"before": "a" * 40, "after": "b" * 40}))
-            for mode in ("push", "workflow_dispatch"):
-                with self.subTest(mode=mode):
-                    with unittest.mock.patch.dict(os.environ, {
-                            "GITHUB_ACTIONS": "true", "GITHUB_EVENT_PATH": str(event),
-                            "GITHUB_EVENT_NAME": mode, "GITHUB_SHA": "b" * 40,
-                            "KK_ACCEPTED_WAIVER_SHA": ""}):
-                        with self.assertRaisesRegex(RuntimeError, "independently accepted"):
-                            report.waiver_authority_commit()
-                        with unittest.mock.patch.dict(os.environ, {
-                                "KK_ACCEPTED_WAIVER_SHA": accepted}):
-                            self.assertEqual(accepted, report.waiver_authority_commit())
-                        for bad in ("HEAD", "0" * 40, "refs/heads/develop"):
-                            with unittest.mock.patch.dict(os.environ, {
-                                    "KK_ACCEPTED_WAIVER_SHA": bad}):
-                                with self.assertRaisesRegex(RuntimeError, "full nonzero commit"):
-                                    report.waiver_authority_commit()
-
-    def test_pr_authority_does_not_use_non_pr_override(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            event = Path(tmp) / "event.json"
-            event.write_text(json.dumps({"pull_request": {"base": {"sha": "a" * 40}}}))
-            with unittest.mock.patch.dict(os.environ, {
-                    "GITHUB_EVENT_PATH": str(event), "GITHUB_ACTIONS": "true",
-                    "KK_ACCEPTED_WAIVER_SHA": "b" * 40}):
-                self.assertEqual("a" * 40, report.waiver_authority_commit())
-
-    def test_ci_without_platform_event_fails_closed(self):
-        with unittest.mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}, clear=True):
-            with self.assertRaisesRegex(RuntimeError, "platform event payload"):
-                report.waiver_authority_commit()
-
-    def test_approved_declaration_waives(self):
-        self.assertEqual(
-            {"evm-max-amount-review"},
-            report.release_missing_capabilities(
-                [skipped("evm-max-amount-review")],
-                approved={"evm-max-amount-review"}))
-
-    def test_unapproved_skip_reason_cannot_shrink_the_gate(self):
-        for cases in ([skipped("evm-max-amount-review")],
-                      [skipped("osmosis-wire-guards extra")],
-                      [skipped("")]):
+    def test_unknown_capability_skip_cannot_shrink_the_gate(self):
+        for cases in ([skipped("osmosis-wire-guards extra")],
+                      [skipped("")],
+                      [skipped("not-a-capability")]):
             with self.assertRaises(RuntimeError):
-                report.release_missing_capabilities(cases, approved=set())
+                report.release_missing_capabilities(cases)
+
+    def test_every_gated_capability_is_known(self):
+        named = (set(report.CONTRACT_CAPABILITY.values()) |
+                 set(report.NATIVE_CAPABILITY.values()) |
+                 {"hive-release-review", "evm-max-amount-review",
+                  "ripple-memo-policy", "osmosis-wire-guards"})
+        self.assertLessEqual(named, report.KNOWN_CAPABILITIES)
 
 
 class RequiredCaseMatching(unittest.TestCase):

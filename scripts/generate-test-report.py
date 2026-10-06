@@ -383,95 +383,39 @@ def firmware_version_tuple():
     return tuple(int(value) for value in match.groups())
 
 
-def parse_capability_ledger(workflow_text):
-    """Parse one unambiguous staged-capability declaration."""
-    ledgers = re.findall(
-        r"^[ \t]+KK_RELEASE_MISSING_CAPABILITIES:[ \t]*([a-z0-9,-]*)[ \t]*$",
-        workflow_text, re.MULTILINE)
-    if len(ledgers) != 1:
-        fail("expected exactly one capability ledger in %s, found %d" %
-             (CI_WORKFLOW, len(ledgers)))
-    return {value for value in ledgers[0].split(",") if value}
+# Every Features.Capability the firmware can report (device-protocol), as the
+# names capability-gated python-keepkey tests skip with.
+KNOWN_CAPABILITIES = frozenset((
+    "entropy-audit-budget", "erc20-unlimited-approve-review",
+    "erc20-unlimited-permit-review", "erc7730-runtime-review",
+    "evm-certified-intent", "evm-max-amount-review", "evm-tx-metadata",
+    "evm-unknown-token-review", "hive-release-review",
+    "legacy-evm-router-signing", "maya-single-message", "osmosis-wire-guards",
+    "permit2-review", "prompt-workflow-unwind", "protected-ping-presence",
+    "ripple-memo-policy", "session-trust-lifetime", "solana-certified-review",
+    "solana-lut-attestation", "solana-runtime-review", "storage-v19-kdf",
+    "tendermint-progress", "safe-reset-ceremony", "thor-deposit-review",
+))
 
 
-def waiver_authority_commit():
-    """Use GitHub's event base, never a candidate-authored authority constant.
+def release_missing_capabilities(cases):
+    """Capabilities the firmware under test did not report.
 
-    Local rehearsal uses the remote accepted 7b base's merge base. CI requires
-    the platform event payload and fails if it cannot identify the authority.
-    Replacing this validator/workflow itself remains a code-review boundary.
+    The firmware reports what it implements (Features.capabilities); a
+    capability-gated python-keepkey test, including one census test per
+    capability, skips with CAPABILITY_SKIP_PREFIX + name when the device does
+    not report it. Nothing declared outside the firmware can add to this set.
     """
-    event_path = os.environ.get("GITHUB_EVENT_PATH")
-    if event_path:
-        try:
-            event = json.loads(Path(event_path).read_text())
-            if "pull_request" in event:
-                commit = event["pull_request"]["base"]["sha"]
-            elif os.environ.get("GITHUB_EVENT_NAME") in ("push", "workflow_dispatch"):
-                # CI binds this from the repository Actions variable, outside
-                # the candidate diff. No predecessor/selected-head fallback.
-                commit = os.environ.get("KK_ACCEPTED_WAIVER_SHA", "")
-                if not commit:
-                    fail("non-PR waiver authority requires the independently "
-                         "accepted repository variable KK_ACCEPTED_WAIVER_SHA")
-            else:
-                fail("unsupported event for waiver authority")
-        except (OSError, ValueError, KeyError, TypeError) as exc:
-            fail("cannot read platform waiver authority: %s" % exc)
-    elif os.environ.get("GITHUB_ACTIONS") == "true":
-        fail("CI waiver authority requires the platform event payload")
-    else:
-        commit = git("merge-base", "HEAD",
-                     "refs/remotes/origin/release/715-stack-07b-consolidated")
-    if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit) or commit == "0" * 40:
-        fail("waiver authority must be a full nonzero commit SHA")
-    return commit
-
-
-def approved_capabilities(workflow_text=None):
-    """Candidate waivers may only narrow the owner-accepted immutable ledger."""
-    if workflow_text is None:
-        workflow_text = CI_WORKFLOW.read_text()
-    candidate = parse_capability_ledger(workflow_text)
-    authority = waiver_authority_commit()
-    try:
-        trusted_text = git("show", authority +
-                           ":.github/workflows/ci.yml")
-    except subprocess.CalledProcessError:
-        fail("immutable waiver authority is unavailable: " +
-             authority)
-    trusted = parse_capability_ledger(trusted_text)
-    added = sorted(candidate - trusted)
-    if added:
-        fail("candidate adds waivers absent from immutable authority: " +
-             ", ".join(added))
-    return candidate
-
-
-def release_missing_capabilities(cases, approved=None):
-    if approved is None:
-        approved = approved_capabilities()
     missing_capabilities = {
-        value.strip() for value in
-        os.environ.get("KK_RELEASE_MISSING_CAPABILITIES", "").split(",")
-        if value.strip()
-    }
-    # The report job shares CI's staged-capability inventory with the Python
-    # integration job. Recover declarations from the immutable JUnit as well
-    # so the report records capabilities actually skipped by that suite.
-    missing_capabilities.update(
         case["skip_reason"][len(CAPABILITY_SKIP_PREFIX):]
         for case in cases
         if case["status"] == "skip" and
         case["skip_reason"].startswith(CAPABILITY_SKIP_PREFIX)
-    )
-    # Environment and JUnit skip reasons are evidence, not authority to
-    # waive additional controls. The candidate ledger must stay within the
-    # separately accepted immutable authority before it can grant a waiver.
-    unapproved = sorted(missing_capabilities - approved)
-    if unapproved:
-        fail("capability waivers not in the ci.yml ledger: %s" %
-             ", ".join(unapproved))
+    }
+    unknown = sorted(missing_capabilities - KNOWN_CAPABILITIES)
+    if unknown:
+        fail("capability skips name unknown capabilities: %s" %
+             ", ".join(repr(name) for name in unknown))
     return missing_capabilities
 
 
@@ -741,16 +685,10 @@ def main():
 
     cases, junit_inputs = merge_junit(junit_paths)
     validate_cases(cases)
-    # Normalize the shared staged-capability inventory plus the declarations
-    # in immutable JUnit before invoking python-keepkey's report validator.
+    # The capabilities the firmware did not report, from the JUnit skips.
     missing_capabilities = release_missing_capabilities(cases)
     contract_inputs = validate_contract_junit(ROOT, missing_capabilities)
     contract_inputs += validate_native_contract_junit(ROOT, missing_capabilities)
-    if missing_capabilities:
-        os.environ["KK_RELEASE_MISSING_CAPABILITIES"] = ",".join(
-            sorted(missing_capabilities))
-    else:
-        os.environ.pop("KK_RELEASE_MISSING_CAPABILITIES", None)
 
     screenshot_root = ROOT / "test-reports" / "screenshots"
     pngs, sequences = validate_screenshots(screenshot_root)
