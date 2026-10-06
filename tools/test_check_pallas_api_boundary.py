@@ -2,7 +2,7 @@
 
 import unittest
 
-from check_pallas_api_boundary import function_body, require
+from check_pallas_api_boundary import PALLAS_CT_INCLUDE, function_body, require
 
 
 class ConditionalCompilation(unittest.TestCase):
@@ -26,11 +26,24 @@ class ConditionalCompilation(unittest.TestCase):
                     function_body(source, "f")
 
     def test_non_conditional_directive_is_allowed(self):
-        body = function_body("void f(void) {\n#define N 2\n  g(N);\n}\n", "f")
-        require(body, "g(N)", "f")
+        body = function_body("void f(void) {\n#pragma once\n  g(2);\n}\n", "f")
+        require(body, "g(", "f")
 
+    def test_macro_definition_in_a_body_is_refused(self):
+        # An alias could satisfy require() while compiling to another call.
+        for directive in ("#define pallas_ct_add pallas_add",
+                          "#undef pallas_ct_add"):
+            with self.assertRaises(AssertionError):
+                function_body("void f(void) {\n%s\n  pallas_ct_add(x);\n}\n"
+                              % directive, "f")
 
-class DefinitionAnchoring(unittest.TestCase):
+    def test_include_of_the_ct_header_is_found_in_every_spelling(self):
+        for line in ('#include "pallas_ct.h"', "#include <pallas_ct.h>",
+                     '#include "trezor/crypto/pallas_ct.h"',
+                     "  #  include <crypto/pallas_ct.h>"):
+            self.assertTrue(PALLAS_CT_INCLUDE.search(line + "\n"), line)
+        self.assertFalse(PALLAS_CT_INCLUDE.search('#include "pallas.h"\n'))
+
     def test_caller_cannot_stand_in_for_the_definition(self):
         source = ("void caller(void) {\n  if (sign(x)) {\n    pallas_ct_add_mod_q();\n"
                   "  }\n}\n\nstatic bool sign(int x) {\n  pallas_add_mod_q();\n}\n")

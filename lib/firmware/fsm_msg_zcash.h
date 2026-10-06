@@ -494,9 +494,12 @@ static bool zcash_finalize_transparent_digest(void) {
   return true;
 }
 
-static bool zcash_sign_transparent_inputs(bool* cancelled) {
-  if (!zcash_signing.transparent_digest_verified) return false;
+/* *reported is set when a helper (fsm_getCoin/fsm_getDerivedNode) has already
+ * sent the terminal Failure, so the caller must not send another. */
+static bool zcash_sign_transparent_inputs(bool* cancelled, bool* reported) {
   if (cancelled) *cancelled = false;
+  if (reported) *reported = false;
+  if (!zcash_signing.transparent_digest_verified) return false;
 
   bool ok = false;
   ZcashTransparentInputDigestInfo inputs[ZCASH_MAX_TRANSPARENT_INPUTS] = {0};
@@ -504,7 +507,10 @@ static bool zcash_sign_transparent_inputs(bool* cancelled) {
   if (!zcash_build_transparent_digest_info(inputs, outputs)) goto cleanup;
 
   const CoinType* coin = fsm_getCoin(true, "Zcash");
-  if (!coin) goto cleanup;
+  if (!coin) {
+    if (reported) *reported = true;
+    goto cleanup;
+  }
 
   memset(&zcash_signing.pending_transparent, 0, sizeof(ZcashTransparentSigned));
   zcash_signing.pending_transparent.signatures_count =
@@ -527,7 +533,10 @@ static bool zcash_sign_transparent_inputs(bool* cancelled) {
 
     HDNode* node = fsm_getDerivedNode(coin->curve_name, stored->address_n,
                                       stored->address_n_count, NULL);
-    if (!node) goto cleanup;
+    if (!node) {
+      if (reported) *reported = true;
+      goto cleanup;
+    }
 
     /* ZIP-244/229: bind the transparent ECDSA signature to every transaction
      * component, including Ironwood for transaction v6. */
@@ -1507,7 +1516,12 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
   }
 
   bool cancelled = false;
-  if (!zcash_sign_transparent_inputs(&cancelled)) {
+  bool reported = false;
+  if (!zcash_sign_transparent_inputs(&cancelled, &reported)) {
+    if (reported) {
+      zcash_signing_abort();  // the helper already answered the host
+      return;
+    }
     zcash_fail(cancelled ? FailureType_Failure_ActionCancelled
                          : FailureType_Failure_Other,
                cancelled ? _("Signing cancelled")

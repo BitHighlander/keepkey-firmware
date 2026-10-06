@@ -21,6 +21,24 @@ CONDITIONAL = re.compile(r"^[ \t]*#[ \t]*(?:if|ifdef|ifndef|elif|else|endif)\b",
                          re.M)
 
 
+# A macro defined or undefined inside a checked body could alias a required
+# token to a forbidden one, so bodies may hold none.
+MACRO = re.compile(r"^[ \t]*#[ \t]*(?:define|undef)\b", re.M)
+
+# Identifiers named by require()/forbid(); none may be #defined anywhere the
+# gate reads, or `#define pallas_ct_x pallas_x` would satisfy require().
+GUARDED = set()
+
+PALLAS_CT_INCLUDE = re.compile(
+    r'^[ \t]*#[ \t]*include[ \t]*[<"](?:[^>"\n]*/)?pallas_ct\.h[>"]', re.M)
+
+
+def guard(token):
+    match = re.match(r"[A-Za-z_]\w*", token)
+    if match:
+        GUARDED.add(match.group(0))
+
+
 # Conditionals a checked definition may sit under: on in every production
 # image that contains the checked code. Anything else (#if 0, a debug-only
 # guard, an #else branch) is refused rather than evaluated.
@@ -74,6 +92,10 @@ def function_body(text, name):
                     raise AssertionError(
                         name + " has preprocessor conditionals; this gate "
                         "checks unconditional code only")
+                if MACRO.search(body):
+                    raise AssertionError(
+                        name + " defines or undefines a macro; one could "
+                        "alias a checked token")
                 return body
     raise AssertionError("unterminated function: " + name)
 
@@ -105,11 +127,13 @@ def code_only(text):
 
 
 def require(body, token, where):
+    guard(token)
     if token not in body:
         raise AssertionError("{} must call {}".format(where, token))
 
 
 def forbid(body, token, where):
+    guard(token)
     if token in body:
         raise AssertionError("{} must not call {}".format(where, token))
 
@@ -123,7 +147,9 @@ def main():
     storage = source("lib/firmware/storage.c")
 
     # Public transaction data needs the fast compatibility implementation.
-    forbid(pallas, '"pallas_ct.h"', "pallas.c public compatibility path")
+    if PALLAS_CT_INCLUDE.search(pallas):
+        raise AssertionError(
+            "pallas.c public compatibility path must not include pallas_ct.h")
     hash_to_point = code_only(function_body(
         sinsemilla, "pallas_sinsemilla_hash_to_point_progress"))
     require(hash_to_point, "sinsemilla_incomplete_add",
@@ -300,6 +326,23 @@ def main():
     transmission = code_only(function_body(zcash, "zcash_orchard_derive_transmission_key"))
     require(transmission, "pallas_ct_point_mult", "Orchard transmission-key derivation")
     forbid(transmission, "pallas_point_mult(", "Orchard transmission-key derivation")
+
+    # No file the gate reads, nor the Pallas headers, may #define a checked
+    # identifier: an alias would satisfy require() while compiling to another
+    # call.
+    crypto = ROOT / "deps/crypto/trezor-firmware/crypto"
+    headers = {h.name: h.read_text(encoding="utf-8")
+               for h in sorted(crypto.glob("*pallas*.h"))}
+    checked = dict(headers, **{
+        "pallas.c": pallas, "pallas_sinsemilla.c": sinsemilla,
+        "redpallas.c": redpallas, "zcash.c": zcash,
+        "fsm_msg_zcash.h": zcash_fsm, "storage.c": storage})
+    for where, text in sorted(checked.items()):
+        for match in re.finditer(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)",
+                                 code_only(text), re.M):
+            if match.group(1) in GUARDED:
+                raise AssertionError("{} #defines checked identifier {}".format(
+                    where, match.group(1)))
 
     print("Pallas API boundary: public Sinsemilla fast path and secret CT path verified")
     return 0
