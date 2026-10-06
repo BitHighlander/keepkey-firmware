@@ -8,12 +8,10 @@
  * slot 3 with alias "CI Test"; all vectors are signed in-process with the
  * matching private key (f6d19e15...068a260) and embed key_id=3.
  *
- * No OLED/button I/O is exercised: signed_metadata_process() and
- * signed_metadata_matches_tx() never draw, and signed_metadata_confirm() is
- * only called on its no-I/O early-return guards. The relied-path enforce truth
- * table is tested through the pure, exported signed_metadata_enforce_decision()
- * (see SECTION 2), since relied_on_metadata is only set inside confirm()'s
- * interactive tail.
+ * signed_metadata_process() and signed_metadata_matches_tx() never draw;
+ * screens in signed_metadata_confirm() are driven through kkconfirm_preload().
+ * The relied-path enforce truth table is tested through the pure, exported
+ * signed_metadata_enforce_decision() (see SECTION 2).
  */
 
 extern "C" {

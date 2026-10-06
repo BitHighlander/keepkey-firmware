@@ -32,8 +32,8 @@
 
 #include "messages-ethereum.pb.h"
 
-/* Longest Solidity type string we will render: "uint256[10][10][10][10]" and
- * friends, plus a struct name at EthereumTypedDataStructRequest.name's 80. */
+/* Longest type string we render: a struct name (< EIP712_MAX_STRUCT_NAME) or
+ * an elementary type, plus array suffixes such as "[10][10][10][10]". */
 #define EIP712_MAX_TYPE_NAME 112
 
 /* Nesting bound and C-stack recursion bound; checked BEFORE descending. */

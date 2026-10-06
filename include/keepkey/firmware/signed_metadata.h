@@ -16,7 +16,7 @@ typedef struct _EthereumSignTx EthereumSignTx;
 #define METADATA_MAX_TOKEN_SYMBOL_LEN 10
 #define METADATA_MAX_KEYS 4
 #define METADATA_ALIAS_MAX_LEN 31
-/* Must equal LoadClearsignSigner.icon max_size and CLEARSIGN_ICON_MAX. */
+/* Must equal LoadClearsignSigner.icon max_size (messages-ethereum.options). */
 #define METADATA_ICON_MAX 384
 /* hex(sha256(pubkey)[0:8]) + NUL. 64 bits: a 32-bit prefix collision can be
  * ground in hours, passing a different key for the approved one. */
@@ -76,8 +76,8 @@ bool signed_metadata_available(void);
  * reset on every call so it is never stale. Required by v2 enforce. */
 bool signed_metadata_schema_decoded(void);
 
-/* v2 schema + native value: v2 cannot bind value, so the caller MUST still
- * show the amount/recipient screen. */
+/* Whether the v2 tx carries native value the schema cannot bind.
+ * Informational: the ordinary amount screen always runs after metadata. */
 bool signed_metadata_schema_moves_value(void);
 
 void signed_metadata_clear(void);

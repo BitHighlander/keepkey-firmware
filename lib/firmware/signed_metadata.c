@@ -22,9 +22,9 @@
 static bool metadata_available = false;
 static bool relied_on_metadata = false;
 static bool metadata_signer_loaded = false;
-/* moves_value: tx carries native value; the amount screen must NOT be
- * suppressed. decoded: v2 args came from this tx's calldata; enforce REQUIRES
- * it (v2 has no tx_hash). */
+/* moves_value: the tx carries native value v2 cannot bind (informational).
+ * decoded: v2 args came from this tx's calldata; enforce requires it, since
+ * v2 has no tx_hash. */
 static bool metadata_schema_moves_value = false;
 static bool metadata_schema_decoded = false;
 static SignedMetadata stored_metadata;
@@ -714,8 +714,8 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
   }
 
   if (stored_metadata.version == METADATA_VERSION_SCHEMA) {
-    /* v2 never commits to msg->value: flag nonzero value so ethereum.c keeps
-     * the amount screen and a payable call cannot move unseen ETH. */
+    /* v2 does not commit to msg->value; record nonzero value. The amount
+     * screen runs regardless, because metadata is additive. */
     metadata_schema_moves_value = false;
     for (uint32_t i = 0; i < msg->value.size; i++) {
       if (msg->value.bytes[i] != 0) {

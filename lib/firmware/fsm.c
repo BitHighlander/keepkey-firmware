@@ -490,12 +490,11 @@ static bool fsm_dispatchGate(MessageType msg_id) {
       return true;
 #if !BITCOIN_ONLY
     case MessageType_MessageType_EthereumTxMetadata:
-      /* Metadata must arrive before signing starts. signed_metadata_process()
-       * clears the binding on entry, so metadata accepted mid-signing would
-       * drop the tx<->metadata binding: a host could approve a benign decode
-       * (suppressing the blind-sign gate), then clear the binding and stream
-       * attacker-chosen calldata. The default path below would end the signer
-       * and then accept the metadata, so refuse it here instead. */
+      /* Metadata must arrive before signing starts: signed_metadata_process()
+       * clears the tx<->metadata binding, so accepting it mid-signing would
+       * let a host approve one decode and then sign different calldata
+       * without the enforce check. The default path below would end the
+       * signer and then accept the metadata, so refuse it here instead. */
       if (ethereum_signing_isInProgress())
         return reject_stale_continuation("Metadata not allowed during signing");
       fsm_abort_signing_workflows();
