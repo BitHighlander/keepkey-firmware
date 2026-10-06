@@ -343,10 +343,7 @@ static void hive_account_cancel(HDNode* node, uint8_t keys[4][33]) {
 }
 
 // ── HiveSignAccountCreate ─────────────────────────────────────────────────
-// Signs a Graphene account_create operation.
-// Device derives all four role keys internally; host-supplied key strings
-// are informational only (displayed for confirmation) and never used for
-// the actual transaction. KeepKey is the sole root of trust from genesis.
+// Role keys are device-derived; host-supplied key strings are never signed.
 
 void fsm_msgHiveSignAccountCreate(const HiveSignAccountCreate* msg) {
   CHECK_INITIALIZED
