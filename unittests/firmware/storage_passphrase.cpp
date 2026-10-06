@@ -42,8 +42,6 @@ extern "C" bool emulator_flash_write_completed(Allocation group,
   return true;
 }
 
-void kk_test_board_init(void);
-
 namespace {
 const char kMnemonic[] = "all all all all all all all all all all all all";
 const char kHidden[] = "hidden wallet";
