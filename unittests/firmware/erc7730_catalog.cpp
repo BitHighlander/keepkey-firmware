@@ -1317,7 +1317,8 @@ std::vector<uint8_t> tokenProgram(const std::vector<uint8_t>& formatter,
 
 }  // namespace
 
-// tokenAmount, addressName, container and literal values. Every
+// Arguments of tokenAmount and addressName, from container and literal
+// values. Every
 // argument is type-checked at preload against the class the runtime needs, so
 // a mistyped program is refused before the first screen. Each refusal below
 // has an accepted neighbour differing only in the offending byte.

@@ -200,7 +200,9 @@ bool erc7730_format_unit(const uint8_t value[32], uint8_t decimals,
   if (!value || !base || !output || output_size == 0) return false;
   bignum256 amount;
   bn_read_be(value, &amount);
-  char scaled[344], raw[80]; /* <= 78 digits, '.', 254 zeros; then the base */
+  /* scaled: up to 78 digits, '.', and up to 254 leading zeros (any uint8
+   * decimals); the length check below also reserves room for " base". */
+  char scaled[344], raw[80];
   bool ok = bn_format(&amount, NULL, NULL, decimals, 0, false, scaled,
                       sizeof(scaled)) != 0 &&
             strlen(scaled) + 1u + strlen(base) < sizeof(scaled) &&

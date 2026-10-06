@@ -14,6 +14,11 @@
 #define ERC7730_CATALOG_MAX_PROOF_DEPTH 16u
 #define ERC7730_PROGRAM_HEADER_SIZE 179u
 #define ERC7730_PROGRAM_MAX_SECTIONS 9u
+/* Delegate record: [0] version 1 and [2..5] scope == chain id are checked but
+ * not signed; [10..41] alias is format-checked only (the user-approved alias
+ * is shown); [42..74] pubkey must equal a loaded runtime signer; other bytes
+ * are ignored. The envelope signature covers only the purpose tag and Merkle
+ * root. */
 #define ERC7730_DELEGATE_RECORD_LEN 139u
 #define ERC7730_DELEGATE_ALIAS_LEN 32u
 #define ERC7730_DELEGATE_OFF_VERSION 0u
@@ -28,12 +33,6 @@
  * Enforced on the header: issuance_epoch >= this AND >= revocation_epoch.
  * provider_id and revocation_epoch are otherwise NOT enforced. */
 #define ERC7730_MIN_ISSUANCE_EPOCH 0u
-
-/* Delegate record: [0] version 1, [2..5] scope == chain id (both checked,
- * NOT signed); [10..41] alias (format only; the user-approved alias is
- * shown); [42..74] pubkey, must equal a loaded runtime signer. All other
- * bytes are ignored (no ClearSign root to check them). The envelope signature
- * covers only the purpose tag and Merkle root, no certificate byte. */
 
 static inline uint16_t read_be16(const uint8_t* p) {
   return (uint16_t)(((uint16_t)p[0] << 8) | p[1]);
