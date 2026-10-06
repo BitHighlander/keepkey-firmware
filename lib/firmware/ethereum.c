@@ -422,11 +422,13 @@ static void send_signature(void) {
 
   keccak_Final(&keccak_ctx, hash);
 
-  /* Insight clear-signing binding. If a verified metadata blob suppressed the
-   * raw-data confirmation, the actual signed digest MUST equal the tx hash the
-   * metadata committed to. This is the first point that digest exists, so the
-   * check reuses it rather than re-deriving the RLP pre-image. Fail closed —
-   * never emit a signature the displayed decoded screen did not cover. */
+  /* Insight clear-signing binding. Metadata is additive: the raw-data review
+   * still happens, and approved decoded screens are shown on top of it. When
+   * the user approved such screens, the actual signed digest MUST equal the tx
+   * hash the metadata committed to. This is the first point that digest
+   * exists, so the check reuses it rather than re-deriving the RLP pre-image.
+   * Fail closed -- never sign what the approved decoded screens did not
+   * cover. */
   if (!signed_metadata_enforce(hash)) {
     fsm_sendFailure(FailureType_Failure_Other,
                     "Metadata does not match signed transaction");

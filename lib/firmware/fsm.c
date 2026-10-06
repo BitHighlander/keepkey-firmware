@@ -500,6 +500,14 @@ static bool fsm_dispatchGate(MessageType msg_id) {
         return reject_stale_continuation("Metadata not allowed during signing");
       fsm_abort_signing_workflows();
       return true;
+    case MessageType_MessageType_LoadClearsignSigner:
+      /* Storing a signer clears the same binding (signed_metadata_clear()),
+       * so it is refused mid-signing for the same reason. */
+      if (ethereum_signing_isInProgress())
+        return reject_stale_continuation(
+            "Signer load not allowed during signing");
+      fsm_abort_signing_workflows();
+      return true;
     case MessageType_MessageType_EthereumTxAck:
       if (!ethereum_signing_isInProgress())
         return reject_stale_continuation("Signing not in progress");
