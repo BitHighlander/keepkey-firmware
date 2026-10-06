@@ -65,8 +65,14 @@ def enclosing_conditionals(text):
     return [tuple(entry) for entry in stack]
 
 
+def splice(text):
+    """Join backslash-newline continuations first, as the compiler does, so a
+    directive split as '#i\\' + newline + 'f 0' is still seen."""
+    return re.sub(r"\\\r?\n", "", text)
+
+
 def function_body(text, name):
-    text = code_only(text)
+    text = code_only(splice(text))
     # A definition: the name starts a line or follows its return type there,
     # and the parameter list holds no ';' or brace. An indented caller such
     # as `if (name(x)) {` can therefore never stand in for the definition.
@@ -126,9 +132,22 @@ def code_only(text):
     return "".join(out)
 
 
+def token_pattern(token):
+    """A token as a regex: identifier edges must be word boundaries, so
+    'pallas_ct_add_mod_q' is not satisfied by 'pallas_ct_add_mod_q_result',
+    and '(' may follow any whitespace. A trailing '_' marks a prefix."""
+    pattern = re.escape(token).replace(r"\(", r"\s*\(")
+    if re.match(r"\w", token):
+        pattern = r"\b" + pattern
+    # A token ending in '_' (e.g. 'pallas_ct_') is a deliberate prefix.
+    if re.search(r"[A-Za-z0-9]$", token):
+        pattern += r"\b"
+    return re.compile(pattern)
+
+
 def require(body, token, where):
     guard(token)
-    if token not in body:
+    if not token_pattern(token).search(body):
         raise AssertionError("{} must call {}".format(where, token))
 
 
@@ -348,7 +367,7 @@ def main():
         "fsm_msg_zcash.h": zcash_fsm, "storage.c": storage})
     for where, text in sorted(checked.items()):
         for match in re.finditer(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)",
-                                 code_only(text), re.M):
+                                 code_only(splice(text)), re.M):
             if match.group(1) in GUARDED:
                 raise AssertionError("{} #defines checked identifier {}".format(
                     where, match.group(1)))

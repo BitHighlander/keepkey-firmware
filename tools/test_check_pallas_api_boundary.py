@@ -37,6 +37,21 @@ class ConditionalCompilation(unittest.TestCase):
                 function_body("void f(void) {\n%s\n  pallas_ct_add(x);\n}\n"
                               % directive, "f")
 
+    def test_line_continuation_cannot_hide_a_guard(self):
+        source = ("#i\\\nf 0\nvoid f(void) {\n  pallas_ct_add(x);\n}\n"
+                  "#endif\n")
+        with self.assertRaises(AssertionError):
+            function_body(source, "f")
+
+    def test_require_needs_the_whole_identifier(self):
+        with self.assertRaises(AssertionError):
+            require("pallas_ct_add_mod_q_result = 0;", "pallas_ct_add_mod_q", "f")
+        with self.assertRaises(AssertionError):
+            require("my_pallas_ct_add_mod_q(x);", "pallas_ct_add_mod_q", "f")
+        require("pallas_ct_add_mod_q (x);", "pallas_ct_add_mod_q", "f")
+        require("memzero (&ctx, 1);", "memzero(&ctx", "f")
+        require("pallas_ct_point_mult(x);", "pallas_ct_", "f")  # prefix
+
     def test_spaced_call_cannot_evade_forbid(self):
         for call in ("pallas_add_mod_q(x)", "pallas_add_mod_q (x)",
                      "pallas_add_mod_q\n  (x)"):
