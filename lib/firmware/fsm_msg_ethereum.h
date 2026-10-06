@@ -150,19 +150,8 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
   }
   CHECK_PIN
 
-  /* Metadata must arrive before signing starts. signed_metadata_process()
-   * clears the binding on entry, so accepting metadata mid-signing would
-   * drop the tx<->metadata binding without aborting: a host could approve a
-   * benign decode (suppressing the blind-sign gate), then inject metadata to
-   * clear the binding and stream attacker-chosen calldata for the rest.
-   * Refuse and abort any in-progress signing session. */
-  if (ethereum_signing_isInProgress()) {
-    ethereum_signing_abort();
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
-                    _("Metadata not allowed during signing"));
-    layoutHome();
-    return;
-  }
+  /* Metadata during signing never reaches here: the dispatch hook refuses
+   * it (see keepkey_before_message_dispatch()). */
 
   /* Range-check the uint32 wire value against the slot count BEFORE it is
    * narrowed to the uint8 slot index below: (uint8_t)256 would alias slot 0.
