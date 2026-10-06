@@ -59,8 +59,6 @@ permissions:
   contents: read
 
 env:
-  # Only administrators set this independently accepted non-PR authority.
-  # Empty fails closed on push/manual runs; PR runs use the event base SHA.
   BASE_IMAGE: kktech/firmware@sha256:7438e53933d47d53157ed6d96d864cb208597e62dce26235ace09d1063427fa2
   # Pulls of the 650 MB base image from Docker Hub cost ~34s per job. The
   # same blob served from GHCR to a GitHub-hosted runner is markedly faster
@@ -69,8 +67,6 @@ env:
   # automatically when the mirror is absent or unreadable.
   BASE_IMAGE_MIRROR: ghcr.io/${{ github.repository_owner }}/firmware:sha256-7438e53933d47d53157ed6d96d864cb208597e62dce26235ace09d1063427fa2
   EMU_IMAGE: kkemu-ci
-  # One staged-capability inventory for the integration suite and report
-  # validator. Both must apply the same explicit 7.15 omissions.
 
 jobs:
   # ═══════════════════════════════════════════════════════════
@@ -274,7 +270,6 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          # Includes the immutable, owner-accepted waiver authority commit.
           fetch-depth: 0
 
       - name: Validate release report evidence gates
@@ -335,9 +330,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Pin the full leg to the shipped multi-coin configuration. The CMake
-          # The regular 7.15 product includes every supported chain, including
-          # Zcash Orchard. Only the bitcoin-only product removes other chains.
+          # full = the shipped multi-chain product; bitcoin-only removes every
+          # other chain.
           - variant: full
             label: ""
             cmake_flags: ""
@@ -1114,7 +1108,6 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          # Includes the immutable, owner-accepted waiver authority commit.
           fetch-depth: 0
 
       - name: Download unit test results

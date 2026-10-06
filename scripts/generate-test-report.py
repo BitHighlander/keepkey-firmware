@@ -480,9 +480,9 @@ def read_junit_cases(path):
 def validate_contract_junit(root, missing_capabilities=frozenset()):
     """Require every dedicated contract JUnit with exact per-case statuses.
 
-    A case in CONTRACT_CAPABILITY expected to pass may instead skip for its own
-    capability (clearsign-additive also for its product reason, since b1 lacks
-    EthereumTxMetadata outright) only while the ledger declares it missing.
+    A case in CONTRACT_CAPABILITY expected to pass may instead skip with its
+    capability's skip reason, but only if the firmware did not report that
+    capability (missing_capabilities, derived from the capability skips).
     """
     inputs = []
     for variant, directory in sorted(CONTRACT_JUNIT_DIRS.items()):
@@ -527,8 +527,8 @@ def validate_contract_junit(root, missing_capabilities=frozenset()):
 def validate_native_contract_junit(root, missing_capabilities=frozenset()):
     """Bind owned native controls to each product's actual GoogleTest run.
 
-    A staged block may omit (never fail) a NATIVE_CAPABILITY case while the
-    validated ledger declares its capability missing.
+    A NATIVE_CAPABILITY case may be absent (never failed) only if the firmware
+    did not report its capability.
     """
     inputs = []
     for variant, relative in sorted(NATIVE_CONTRACT_JUNIT.items()):
