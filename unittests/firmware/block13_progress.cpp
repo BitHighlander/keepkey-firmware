@@ -397,12 +397,15 @@ TEST_P(Block13CoinProgress, InvalidInitialRequestCannotRenewDeadline) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-TEST_P(Block13CoinProgress, AcceptedContinuationsRenewThenPollingExpires) {
+TEST_P(Block13CoinProgress, AcceptedContinuationsDeferThenPollingExpires) {
   Start();
   ASSERT_TRUE(Active());
   for (int i = 0; i < 2; ++i) {
     ASSERT_TRUE(kkconfirm_preload(ReviewCount(), 0));
-    increment_idle_time(kDeadline - 1);
+    // No press renews the deadline, so each continuation must land inside the
+    // window its predecessor's progress opened (one delay after it, the
+    // stalled stream is locked at dispatch).
+    increment_idle_time(kDeadline - 1 - i);
     Continue();
     EXPECT_EQ(0, kkconfirm_drain());
     ASSERT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
