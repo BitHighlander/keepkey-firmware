@@ -1643,7 +1643,7 @@ TEST_F(AutoLockProgress, EthereumChunksRenewButFeaturePollingDoesNot) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-TEST_F(AutoLockProgress, TypedDataProgressRenewsButPollingEventuallyLocks) {
+TEST_F(AutoLockProgress, TypedDataProgressDefersButPollingEventuallyLocks) {
   signing_abort();
   ScopedFlash flash;
   storage_setMnemonic("all all all all all all all all all all all all");
@@ -1678,6 +1678,7 @@ TEST_F(AutoLockProgress, TypedDataProgressRenewsButPollingEventuallyLocks) {
 TEST(Fsm, TypedDataContinuationAndSessionBoundariesAreExplicit) {
   kk_test_board_init();
   fsm_init();
+  keepkey_user_activity();  // a fresh deadline; dispatch checks it
   for (auto boundary :
        {MessageType_MessageType_Initialize, MessageType_MessageType_Cancel,
         MessageType_MessageType_ClearSession,
@@ -1768,6 +1769,7 @@ TEST(Fsm, TypedDataFinalScreenShowsTheWholePrimaryType) {
 TEST(Fsm, PingKeepsAWaitingTypedDataStreamOnScreen) {
   kk_test_board_init();
   fsm_init();
+  keepkey_user_activity();  // a fresh deadline; dispatch checks it
   EthereumSignTypedData start{};
   std::strcpy(start.primary_type, "Mail");
   ASSERT_TRUE(eip712_stream_begin(&start, false));
