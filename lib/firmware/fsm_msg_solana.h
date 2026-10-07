@@ -673,6 +673,17 @@ static bool solana_confirm_schema(const SolanaSignTx* msg,
     }
   }
 
+  /* solana_schemaApplies admits Memo companions; swap intents and
+   * destinations ride in them, so page each one in full. The compute-budget
+   * companions only bound the priority fee shown next. */
+  for (uint8_t i = 0; i < parsed->num_instructions; i++) {
+    if (parsed->instructions[i].type == SOL_INSTR_MEMO &&
+        !solana_confirmInstruction(&parsed->instructions[i], msg, i,
+                                   parsed->num_instructions)) {
+      return false;
+    }
+  }
+
   return solana_confirm_priority_fee(
       parsed, parsed->num_accounts > 0 ? parsed->accounts[0] : NULL);
 }
