@@ -12,7 +12,9 @@ extern "C" {
 
 #include "gtest/gtest.h"
 #include "zcash_note_vectors.h"
+#include "zcash_zip244_vectors.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <cstring>
@@ -1732,6 +1734,91 @@ TEST(Zcash, ComputeShieldedSighash_KnownVector) {
 
   EXPECT_TRUE(memcmp(sighash, expected, 32) == 0)
       << "Sighash must match direct BLAKE2b computation";
+}
+
+/* Official ZIP-244 vectors (provenance in zcash_zip244_vectors.h): the
+ * firmware builds header and transparent digests from the plaintext fields,
+ * then the sighash; expected values come from the vectors only. */
+static size_t zip244_hex(const char* hex, uint8_t* out, size_t out_size) {
+  size_t n = strlen(hex) / 2;
+  if (n > out_size) return SIZE_MAX;
+  for (size_t i = 0; i < n; i++) {
+    unsigned int byte = 0;
+    sscanf(hex + 2 * i, "%2x", &byte);
+    out[i] = (uint8_t)byte;
+  }
+  return n;
+}
+
+static void zip244_hex32(const char* hex, uint8_t out[32]) {
+  ASSERT_EQ(zip244_hex(hex, out, 32), 32u);
+}
+
+TEST(Zcash, Zip244OfficialVectors_V5Sighash) {
+  for (const Zip244Vector& v : kZip244Vectors) {
+    SCOPED_TRACE(testing::Message() << "zip_0244.json vector " << v.index);
+
+    uint8_t prevouts[3][32], in_scripts[3][16], out_scripts[3][16];
+    ZcashTransparentInputDigestInfo inputs[3] = {};
+    ZcashTransparentOutputDigestInfo outputs[3] = {};
+    ASSERT_LE(v.n_inputs, 3u);
+    ASSERT_LE(v.n_outputs, 3u);
+    for (size_t i = 0; i < v.n_inputs; i++) {
+      zip244_hex32(v.inputs[i].prevout_txid, prevouts[i]);
+      inputs[i].prevout_txid = prevouts[i];
+      inputs[i].prevout_index = v.inputs[i].prevout_index;
+      inputs[i].sequence = v.inputs[i].sequence;
+      inputs[i].value = v.inputs[i].amount;
+      inputs[i].script_pubkey = in_scripts[i];
+      inputs[i].script_pubkey_size =
+          zip244_hex(v.inputs[i].script_pubkey, in_scripts[i], 16);
+      ASSERT_NE(inputs[i].script_pubkey_size, SIZE_MAX);
+    }
+    for (size_t i = 0; i < v.n_outputs; i++) {
+      outputs[i].value = v.outputs[i].value;
+      outputs[i].script_pubkey = out_scripts[i];
+      outputs[i].script_pubkey_size =
+          zip244_hex(v.outputs[i].script_pubkey, out_scripts[i], 16);
+      ASSERT_NE(outputs[i].script_pubkey_size, SIZE_MAX);
+    }
+
+    uint8_t sapling[32], orchard[32], expected_txid[32], expected_sighash[32];
+    zip244_hex32(v.sapling_digest, sapling);
+    zip244_hex32(v.orchard_digest, orchard);
+    zip244_hex32(v.txid, expected_txid);
+    zip244_hex32(v.sighash_shielded, expected_sighash);
+
+    uint8_t header[32], t_digest[32], t_sig_digest[32], out[32];
+    ASSERT_TRUE(zcash_compute_header_digest(5, v.version_group_id, v.branch_id,
+                                            v.lock_time, v.expiry_height,
+                                            header));
+
+    /* txid: T.2 transparent_digest. */
+    ASSERT_TRUE(zcash_compute_transparent_digest(inputs, v.n_inputs, outputs,
+                                                 v.n_outputs, t_digest));
+    ASSERT_TRUE(zcash_compute_shielded_sighash(header, t_digest, sapling,
+                                               orchard, v.branch_id, out));
+    EXPECT_EQ(memcmp(out, expected_txid, 32), 0) << "txid";
+
+    /* sighash_shielded: S.2 with SIGHASH_ALL and empty txin_sig_digest. */
+    ASSERT_TRUE(zcash_compute_orchard_transparent_sig_digest(
+        inputs, v.n_inputs, outputs, v.n_outputs, t_sig_digest));
+    ASSERT_TRUE(zcash_compute_shielded_sighash(header, t_sig_digest, sapling,
+                                               orchard, v.branch_id, out));
+    EXPECT_EQ(memcmp(out, expected_sighash, 32), 0) << "sighash_shielded";
+
+    /* sighash_all for the vector's transparent input. */
+    if (v.transparent_input >= 0) {
+      uint8_t expected_all[32];
+      zip244_hex32(v.sighash_all, expected_all);
+      ASSERT_TRUE(zcash_compute_transparent_sighash_digest(
+          inputs, v.n_inputs, outputs, v.n_outputs,
+          (uint32_t)v.transparent_input, 0x01, t_sig_digest));
+      ASSERT_TRUE(zcash_compute_shielded_sighash(header, t_sig_digest, sapling,
+                                                 orchard, v.branch_id, out));
+      EXPECT_EQ(memcmp(out, expected_all, 32), 0) << "sighash_all";
+    }
+  }
 }
 
 /* ── RedPallas Signing Smoke Test ────────────────────────────────── */
