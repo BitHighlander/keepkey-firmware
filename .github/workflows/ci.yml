@@ -1196,9 +1196,9 @@ jobs:
       - name: Download bitcoin-only python test results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          # Only the dedicated contract JUnit files are consumed from this leg;
-          # they prove bitcoin-only still runs Stack 06/07 with the expected
-          # intentional skips.
+          # Bitcoin-only's own release evidence: base controls, capability
+          # census, and the dedicated contract files with their intentional
+          # skips.
           name: python-test-results-bitcoin-only
           path: test-reports/bitcoin-only/python-keepkey/
 
