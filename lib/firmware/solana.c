@@ -620,6 +620,16 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
 /*  Transaction parser                                                 */
 /* ------------------------------------------------------------------ */
 
+/* Solana's message sanitize rules for the header: a writable signer (the fee
+ * payer) exists, and the signer and read-only unsigned ranges fit inside the
+ * static keys without overlapping. Checked before any review classification,
+ * since even an opaque message is signable under AdvancedMode. */
+static bool solana_header_ok(const SolanaParsedTx* tx, uint16_t num_accounts) {
+  return tx->num_readonly_signed < tx->num_required_sigs &&
+         (uint16_t)tx->num_required_sigs + tx->num_readonly_unsigned <=
+             num_accounts;
+}
+
 static SolanaTxReview solana_parseLegacyTx(const uint8_t* raw, size_t raw_len,
                                            SolanaParsedTx* tx) {
   memset(tx, 0, sizeof(*tx));
@@ -638,6 +648,7 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t* raw, size_t raw_len,
   int n = read_compact_u16(raw + pos, raw_len - pos, &num_accounts);
   if (n < 0) return SOL_TX_REVIEW_MALFORMED;
   pos += n;
+  if (!solana_header_ok(tx, num_accounts)) return SOL_TX_REVIEW_MALFORMED;
 
   if (num_accounts > SOL_MAX_ACCOUNTS) return SOL_TX_REVIEW_OPAQUE;
   tx->num_accounts = (uint8_t)num_accounts;
@@ -668,15 +679,6 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t* raw, size_t raw_len,
   return SOL_TX_REVIEW_VERIFIED;
 }
 
-/* Solana's message sanitize rules for the header: a writable signer (the fee
- * payer) exists, and the signer and read-only unsigned ranges fit inside the
- * static keys without overlapping. */
-static bool solana_header_ok(const SolanaParsedTx* tx) {
-  return tx->num_readonly_signed < tx->num_required_sigs &&
-         (uint16_t)tx->num_required_sigs + tx->num_readonly_unsigned <=
-             tx->num_accounts;
-}
-
 static SolanaTxReview solana_parseVersionedTx(const uint8_t* raw,
                                               size_t raw_len,
                                               SolanaParsedTx* tx) {
@@ -699,6 +701,7 @@ static SolanaTxReview solana_parseVersionedTx(const uint8_t* raw,
   int n = read_compact_u16(raw + pos, raw_len - pos, &num_accounts);
   if (n < 0) return SOL_TX_REVIEW_MALFORMED;
   pos += n;
+  if (!solana_header_ok(tx, num_accounts)) return SOL_TX_REVIEW_MALFORMED;
 
   if (num_accounts > SOL_MAX_ACCOUNTS) return SOL_TX_REVIEW_OPAQUE;
   tx->num_accounts = (uint8_t)num_accounts;
@@ -746,8 +749,6 @@ static SolanaTxReview solana_parseVersionedTx(const uint8_t* raw,
   }
 
   if (pos != raw_len) return SOL_TX_REVIEW_MALFORMED;
-  /* Zero-LUT v0 messages can verify, so their header must be well formed. */
-  if (!solana_header_ok(tx)) return SOL_TX_REVIEW_MALFORMED;
 
   /* A zero-LUT v0 message verifies like legacy. */
   if (tx->num_instructions == 0 || has_unknown || force_opaque) {

@@ -6,6 +6,7 @@ extern "C" {
 
 #include "gtest/gtest.h"
 #include <cstring>
+#include <vector>
 
 TEST(Solana, FormatAmount) {
   char buf[32];
@@ -834,6 +835,39 @@ TEST(Solana, VersionedMessageWithInvalidHeaderIsMalformed) {
     raw[pos++] = 0; /* zero lookup tables */
     SolanaParsedTx tx;
     EXPECT_EQ(solana_inspectTx(raw, pos, &tx), h.review);
+  }
+}
+
+// Legacy messages get the same header sanitize rules as v0, before any
+// review classification, including the opaque path for too many accounts.
+TEST(Solana, LegacyMessageWithInvalidHeaderIsMalformed) {
+  struct Header {
+    uint8_t sigs, ro_signed, ro_unsigned, accounts;
+    SolanaTxReview review;
+  };
+  const Header headers[] = {
+      {1, 0, 1, 3, SOL_TX_REVIEW_VERIFIED},  /* control */
+      {1, 0, 2, 3, SOL_TX_REVIEW_VERIFIED},  /* 1 + 2 == 3 static keys */
+      {0, 0, 1, 3, SOL_TX_REVIEW_MALFORMED}, /* no signer */
+      {1, 1, 1, 3, SOL_TX_REVIEW_MALFORMED}, /* no writable signer */
+      {4, 0, 0, 3, SOL_TX_REVIEW_MALFORMED}, /* more signers than keys */
+      {1, 0, 3, 3, SOL_TX_REVIEW_MALFORMED}, /* ranges overlap */
+      {1, 0, 1, SOL_MAX_ACCOUNTS + 1, SOL_TX_REVIEW_OPAQUE}, /* control */
+      {1, 1, 1, SOL_MAX_ACCOUNTS + 1, SOL_TX_REVIEW_MALFORMED},
+  };
+  for (const Header& h : headers) {
+    SCOPED_TRACE(testing::Message()
+                 << int(h.sigs) << "," << int(h.ro_signed) << ","
+                 << int(h.ro_unsigned) << "," << int(h.accounts));
+    std::vector<uint8_t> raw = {h.sigs, h.ro_signed, h.ro_unsigned, h.accounts};
+    raw.insert(raw.end(), 32, 0x11);
+    raw.insert(raw.end(), 32, 0x22);
+    for (uint8_t i = 2; i < h.accounts; i++) raw.insert(raw.end(), 32, 0x00);
+    raw.insert(raw.end(), 32, 0xBB); /* blockhash */
+    raw.insert(raw.end(), {1, 2, 2, 0, 1, 12, 2, 0, 0, 0});
+    raw.insert(raw.end(), {0x00, 0xCA, 0x9A, 0x3B, 0, 0, 0, 0});
+    SolanaParsedTx tx;
+    EXPECT_EQ(h.review, solana_inspectTx(raw.data(), raw.size(), &tx));
   }
 }
 
