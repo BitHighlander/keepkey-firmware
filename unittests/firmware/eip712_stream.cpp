@@ -1283,6 +1283,54 @@ TEST(Eip712Stream, ReplayBindsMemberKindNotOnlySpelling) {
   eip712_stream_abort();
 }
 
+// Seaport BulkOrder and LooksRare BatchOrder sign 2^h orders at once; the
+// device cannot review them, so the shape is refused before any message
+// screen. A same-named type of another shape walks as usual.
+TEST(Eip712Stream, BulkOrderTreesAreRefusedByShape) {
+  struct Case {
+    const char* primary;
+    const char* order;
+    size_t height;
+    bool gated;
+  };
+  const Case cases[] = {
+      {"BulkOrder", "OrderComponents", 1, true},
+      {"BulkOrder", "OrderComponents", 3, true},
+      {"BatchOrder", "Maker", 1, true},
+      {"BatchOrder", "Maker", 3, true},
+      {"BulkOrder", "Listing", 1, false},
+      {"Orders", "OrderComponents", 1, false},
+  };
+  for (const Case& c : cases) {
+    SCOPED_TRACE(std::string(c.primary) + " of " + c.order +
+                 " h=" + std::to_string(c.height));
+    std::map<std::string, Struct> types;
+    Field tree = structField(c.order);
+    tree.array_levels_count = c.height;
+    for (size_t i = 0; i < c.height; i++) tree.array_levels[i] = 2;
+    addMember(types[c.primary], "tree", tree);
+    addMember(types[c.order], "price",
+              mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+    const int used = walk(
+        c.primary, types,
+        [](const std::vector<uint32_t>& path) -> Bytes {
+          if (path.size() <= 3) return Bytes{0, 2};
+          return word(1);
+        },
+        8);
+    if (c.gated) {
+      EXPECT_EQ(used, 0);
+      ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
+      EXPECT_STREQ(eip712_stream_next()->error,
+                   "Bulk order: sign listings individually");
+    } else {
+      EXPECT_EQ(used, 2);
+      EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+    }
+    eip712_stream_abort();
+  }
+}
+
 // ── One screen per string ───────────────────────────────────────────
 // The body renderer drops a space where it wraps a line and the pager drops
 // one at a page start, so a string leaf that keeps a space literally can draw

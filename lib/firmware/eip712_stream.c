@@ -1112,6 +1112,34 @@ bool eip712_stream_resume_for_field(void) {
   return begin_root(e712.primary_type);
 }
 
+/* Seaport's BulkOrder and LooksRare's BatchOrder sign a Merkle tree of 2^h
+ * orders with one signature. The device cannot review 2^h orders, so the
+ * shape is refused before any of it is shown. Narrow on purpose: the primary
+ * type's name, its `tree` member, the order struct and every dimension 2. */
+static bool is_bulk_order_tree(const EthereumTypedDataStructAck* ack) {
+  const char* order;
+  if (strcmp(e712.primary_type, "BulkOrder") == 0) {
+    order = "OrderComponents"; /* Seaport */
+  } else if (strcmp(e712.primary_type, "BatchOrder") == 0) {
+    order = "Maker"; /* LooksRare v2 */
+  } else {
+    return false;
+  }
+  for (size_t m = 0; m < ack->members_count; m++) {
+    const Eip712FieldType* ft = &ack->members[m].type;
+    if (strcmp(ack->members[m].name, "tree") != 0) continue;
+    if (ft->data_type != EthereumTypedDataStructAck_EthereumDataType_STRUCT ||
+        !ft->has_struct_name || strcmp(ft->struct_name, order) != 0 ||
+        ft->array_levels_count == 0)
+      return false;
+    for (size_t i = 0; i < ft->array_levels_count; i++) {
+      if (ft->array_levels[i] != 2) return false;
+    }
+    return true;
+  }
+  return false;
+}
+
 bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
   if (!e712.active || e712.waiting != EIP712_WANT_STRUCT) {
     fail("Unexpected EIP-712 struct");
@@ -1171,6 +1199,11 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
 
   switch (e712.phase) {
     case PH_DISCOVER: {
+      if (e712.root == 1 && e712.depth == 1 && e712.closure_index == 0 &&
+          is_bulk_order_tree(ack)) {
+        fail("Bulk order: sign listings individually");
+        return false;
+      }
       /* Grow the closure; the already-present check terminates cycles. */
       for (size_t m = 0; m < ack->members_count; m++) {
         const Eip712FieldType* ft = &ack->members[m].type;
