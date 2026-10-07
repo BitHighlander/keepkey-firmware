@@ -16,6 +16,8 @@ extern "C" {
 
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
+void kkconfirm_capture_start(void);
+std::vector<std::string> kkconfirm_capture_finish(void);
 
 TEST(Tron, LongBinaryMemoRequiresApprovalOfEveryPage) {
   std::vector<uint8_t> memo(114, 'W');
@@ -288,6 +290,96 @@ TEST(Tron, TypedHashIsRefusedBeforeAnyScreenWithoutAdvancedMode) {
     EXPECT_TRUE(fsm_test_derivedNodeIsZero());
   }
   ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+}
+
+namespace {
+// Seeded device whose m/44'/195'/0' account owns the transactions below.
+struct TronSignFixture {
+  std::vector<uint8_t> bytes = std::vector<uint8_t>(FLASH_TOTAL_SIZE, 0xff);
+  uint8_t* previous = emulator_flash_base;
+  std::vector<uint8_t> owner = std::vector<uint8_t>(TRON_RAW_ADDRESS_SIZE);
+  const uint32_t path[3] = {0x80000000 | 44, 0x80000000 | 195, 0x80000000};
+  TronSignFixture() {
+    emulator_flash_base = bytes.data();
+    storage_init();
+    LoadDevice load = {};
+    load.has_mnemonic = true;
+    std::strcpy(load.mnemonic,
+                "all all all all all all all all all all all all");
+    storage_loadDevice(&load);
+    HDNode node = {};
+    storage_getRootNode("secp256k1", true, &node);
+    for (uint32_t step : path) hdnode_private_ckd(&node, step);
+    hdnode_fill_public_key(&node);
+    char address[TRON_ADDRESS_MAX_LEN];
+    tron_getAddress(node.public_key, address, sizeof(address));
+    base58_decode_check(address, HASHER_SHA2D, owner.data(), owner.size());
+  }
+  ~TronSignFixture() {
+    storage_setPolicy("AdvancedMode", false);
+    storage_reset();
+    emulator_flash_base = previous;
+  }
+  TronSignTx request(const std::vector<uint8_t>& raw) const {
+    TronSignTx tx = {};
+    tx.address_n_count = 3;
+    std::memcpy(tx.address_n, path, sizeof(path));
+    tx.has_raw_data = true;
+    tx.raw_data.size = raw.size();
+    std::memcpy(tx.raw_data.bytes, raw.data(), raw.size());
+    return tx;
+  }
+};
+}  // namespace
+
+// The transfer selector does not prove what an arbitrary contract executes,
+// so a TRC-20 call meets the blind-sign gate; native TRX does not (control).
+TEST(Tron, Trc20TransferRequiresAdvancedModeBlindSign) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  TronSignFixture f;
+  TronSignTx trc20 = f.request(
+      rawTx(contractMsg(
+                31, TRIGGER_URL,
+                triggerContractValue(f.owner, tronAddr(0x33),
+                                     trc20Calldata(tronAddr(0x22), 42, false))),
+            nullptr, 0));
+  TronSignTx native = f.request(
+      rawTx(contractMsg(1, TRANSFER_URL,
+                        transferContractValue(f.owner, tronAddr(0x22), 1)),
+            nullptr, 0));
+
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+  fsm_test_clearLastFailure();
+  fsm_msgTronSignTx(&trc20);
+  EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+  EXPECT_STREQ("Enable AdvancedMode to blind-sign",
+               fsm_test_lastFailureMessage());
+  EXPECT_EQ(2, kkconfirm_drain()) << "a screen ran before the refusal";
+
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+  kkconfirm_capture_start();
+  fsm_test_clearLastFailure();
+  fsm_msgTronSignTx(&native);
+  auto screens = kkconfirm_capture_finish();
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  ASSERT_EQ(1u, screens.size());
+  EXPECT_EQ(0u, screens[0].find("Send ")) << screens[0];
+  EXPECT_EQ(0, kkconfirm_drain());
+
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+  kkconfirm_capture_start();
+  fsm_test_clearLastFailure();
+  fsm_msgTronSignTx(&trc20);
+  screens = kkconfirm_capture_finish();
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  ASSERT_EQ(1u, screens.size());
+  EXPECT_NE(std::string::npos, screens[0].find("TRON transaction"))
+      << screens[0];
+  EXPECT_EQ(0, kkconfirm_drain());
+  EXPECT_TRUE(fsm_test_derivedNodeIsZero());
 }
 
 TEST(Tron, ParseNativeTransfer) {

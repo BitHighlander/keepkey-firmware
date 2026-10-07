@@ -108,8 +108,10 @@ void fsm_msgTronSignTx(TronSignTx* msg) {
   TronTxType tx_type =
       tron_parseRawTx(msg->raw_data.bytes, msg->raw_data.size, &parsed);
 
-  if (tx_type == TRON_TX_UNVERIFIED) {
-    /* Unrecognized payload: explicit blind-sign only, as for Solana. */
+  /* Unrecognized payloads are explicit blind-sign only, as for Solana. So are
+   * TRC-20 calls: with no trusted contract table, the transfer selector does
+   * not prove what the contract executes. Their decoded fields follow. */
+  if (tx_type != TRON_TX_TRANSFER) {
     if (!storage_isPolicyEnabled("AdvancedMode")) {
       memzero(node, sizeof(*node));
       fsm_sendFailure(FailureType_Failure_Other,
@@ -127,7 +129,8 @@ void fsm_msgTronSignTx(TronSignTx* msg) {
       layoutHome();
       return;
     }
-  } else {
+  }
+  if (tx_type != TRON_TX_UNVERIFIED) {
     /* The parsed owner account is the one spending — it must be ours. */
     char derived_addr[TRON_ADDRESS_MAX_LEN];
     char owner_addr[TRON_ADDRESS_MAX_LEN];
