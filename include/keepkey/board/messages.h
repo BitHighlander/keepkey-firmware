@@ -35,6 +35,9 @@ bool msg_handler_rejected(void);
 /* Runs before each normal message's handler; false means the firmware has
  * already answered and the handler must not run. */
 bool keepkey_before_message_dispatch(MessageType msg_id);
+/* Called from nested waits that never return to the main loop, so the
+ * firmware's auto-lock clock is sampled at least about once a second. */
+void keepkey_idle_clock_sample(void);
 
 #define MSG_IN(ID, STRUCT_NAME, PROCESS_FUNC)                        \
   [ID].msg_id = (ID), [ID].type = (NORMAL_MSG), [ID].dir = (IN_MSG), \

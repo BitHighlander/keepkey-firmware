@@ -293,6 +293,7 @@ class AutoLockProgress : public ::testing::Test {
     fsm_init();
     layoutHomeForced();
     storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+    keepkey_user_activity();  // the press that approved the SignTx
     SignTx start = {};
     start.inputs_count = start.outputs_count = 1;
     HDNode root = {};
@@ -470,7 +471,7 @@ TEST(Fsm, SignMessageRefusesTaprootBeforeAnyScreen) {
 
 TEST_F(AutoLockProgress, FeaturePollingCannotKeepStalledSigningUnlocked) {
   GetFeatures poll = {};
-  for (int i = 0; i < 4; ++i) {
+  for (int i = 0; i < 3; ++i) {
     advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT / 4);
     receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
                    &poll);
@@ -478,6 +479,10 @@ TEST_F(AutoLockProgress, FeaturePollingCannotKeepStalledSigningUnlocked) {
     ASSERT_TRUE(signing_is_active());
     toggle_screensaver();
   }
+  // The poll that arrives at the deadline is answered by a locked device.
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT / 4);
+  receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
+                 &poll);
   EXPECT_FALSE(signing_is_active());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
@@ -497,7 +502,9 @@ TEST_F(AutoLockProgress, IncompleteFrameCannotKeepStalledSigningUnlocked) {
   usb_test_receive(tail, sizeof(tail));
 }
 
-TEST_F(AutoLockProgress, ValidBitcoinStreamProgressRenewsTheIdleDeadline) {
+// A stream still making validated progress is not locked mid-flow, but a
+// stall of one full delay is.
+TEST_F(AutoLockProgress, ValidBitcoinStreamProgressDefersTheLockMidFlow) {
   TxAck ack = {};
   ack.has_tx = true;
   ack.tx.inputs_count = 1;
@@ -665,7 +672,7 @@ TEST_F(AutoLockProgress, InvalidBitcoinAckEndsTheStream) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-TEST_F(AutoLockProgress, RecoveryEditsRenewButPollingAndEmptyDeleteDoNot) {
+TEST_F(AutoLockProgress, RecoveryEditsDeferButPollingAndEmptyDeleteDoNot) {
   signing_abort();
   ASSERT_TRUE(kkconfirm_preload(1, 0));
   recovery_cipher_init(12, false, false, "english", "idle test", false,
@@ -698,6 +705,204 @@ TEST_F(AutoLockProgress, RecoveryEditsRenewButPollingAndEmptyDeleteDoNot) {
   toggle_screensaver();
   EXPECT_FALSE(setup_isArmed());
   EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+namespace {
+// Starts a non-segwit input and answers the previous-transaction metadata
+// request with a large but well-formed prev tx, so every further TxAck is a
+// genuine, validated stage the host can pace as it likes without a button.
+void startLongPrevTxStream(TxAck* prev_input) {
+  TxAck ack = {};
+  ack.has_tx = true;
+  ack.tx.inputs_count = 1;
+  ack.tx.inputs[0].prev_hash.size = 32;
+  ack.tx.inputs[0].has_script_type = true;
+  ack.tx.inputs[0].script_type = InputScriptType_SPENDADDRESS;
+  receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &ack);
+  ASSERT_TRUE(signing_is_active());
+  ack = {};
+  ack.has_tx = true;
+  ack.tx.has_inputs_cnt = ack.tx.has_outputs_cnt = true;
+  ack.tx.inputs_cnt = 1000;
+  ack.tx.outputs_cnt = 1;
+  receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &ack);
+  ASSERT_TRUE(signing_is_active());
+  *prev_input = {};
+  prev_input->has_tx = true;
+  prev_input->tx.inputs_count = 1;
+  prev_input->tx.inputs[0].prev_hash.size = 32;
+}
+
+void loadPinProtectedWallet(void) {
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  storage_setPin("1234");
+  storage_commit();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+}
+
+// Asks for an xpub with a Cancel already queued for any PIN prompt. Returns
+// the failure code: 0 means the key was served from the cached PIN.
+FailureType requestPublicKey(void) {
+  kkconfirm_sendTiny(MessageType_MessageType_Cancel, nullptr, 0);
+  GetPublicKey get = {};
+  const uint32_t path[] = {0x8000002c, 0x80000000, 0x80000000};
+  std::memcpy(get.address_n, path, sizeof(path));
+  get.address_n_count = 3;
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_GetPublicKey, GetPublicKey_fields,
+                 &get);
+  const FailureType code = fsm_test_lastFailureCode();
+  // Drop the Cancel if the request never prompted for it.
+  kkconfirm_preload(0, 0);
+  kkconfirm_drain();
+  return code;
+}
+}  // namespace
+
+// F1: validated stream progress is host-driven. Pacing it past the deadline
+// with no button press, then ending it with Initialize, must leave a locked
+// session: the very next PIN-gated read prompts for the PIN, even before the
+// main loop gets a pass.
+TEST_F(AutoLockProgress, HostPacedSigningStreamCannotKeepThePinCached) {
+  ScopedFlash flash;
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  signing_abort();
+  loadPinProtectedWallet();
+  keepkey_user_activity();
+  SignTx start = {};
+  start.inputs_count = start.outputs_count = 1;
+  HDNode root = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &root));
+  signing_init(&start, coinByName("Bitcoin"), &root);
+  leave_home();
+
+  TxAck prev_input;
+  startLongPrevTxStream(&prev_input);
+  for (int i = 0; i < 4; ++i) {
+    advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2000);
+    receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &prev_input);
+    toggle_screensaver();
+    ASSERT_TRUE(signing_is_active()) << "locked mid-flow at ack " << i;
+    ASSERT_TRUE(session_isPinCached());
+  }
+
+  Initialize init = {};
+  receiveMessage(MessageType_MessageType_Initialize, Initialize_fields, &init);
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_FALSE(session_isPinCached())
+      << "the stream ended past the deadline; the session must lock now";
+  EXPECT_NE((FailureType)0, requestPublicKey())
+      << "an expired deadline served an xpub from the cached PIN";
+  EXPECT_FALSE(session_isPinCached());
+}
+
+// The same stream, but the user pressed the button partway through: the
+// deadline runs from that press, so ending the stream inside it is no lock.
+TEST_F(AutoLockProgress, ButtonPressDuringAStreamRenewsTheDeadline) {
+  ScopedFlash flash;
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  signing_abort();
+  loadPinProtectedWallet();
+  keepkey_user_activity();
+  SignTx start = {};
+  start.inputs_count = start.outputs_count = 1;
+  HDNode root = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &root));
+  signing_init(&start, coinByName("Bitcoin"), &root);
+  leave_home();
+
+  TxAck prev_input;
+  startLongPrevTxStream(&prev_input);
+  for (int i = 0; i < 3; ++i) {
+    advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2000);
+    receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &prev_input);
+    toggle_screensaver();
+    ASSERT_TRUE(signing_is_active());
+  }
+  keepkey_user_activity();
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2000);
+  receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &prev_input);
+
+  Initialize init = {};
+  receiveMessage(MessageType_MessageType_Initialize, Initialize_fields, &init);
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_TRUE(session_isPinCached());
+  toggle_screensaver();
+  EXPECT_NE(SCREENSAVER, home_get_state());
+  EXPECT_TRUE(session_isPinCached());
+
+  advance_clock(2000);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+  EXPECT_FALSE(session_isPinCached());
+}
+
+// Recovery words are typed on the host. They keep the ceremony from locking
+// mid-entry, but once it ends the deadline still runs from the last press.
+TEST_F(AutoLockProgress, RecoveryCharacterStreamDoesNotRenewTheDeadline) {
+  signing_abort();
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  recovery_cipher_init(12, false, false, "english", "idle test", false,
+                       STORAGE_MIN_SCREENSAVER_TIMEOUT, 0, false);
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+  ASSERT_EQ(0, kkconfirm_drain());
+  keepkey_user_activity();  // the press that confirmed the recovery
+  for (int i = 0; i < 4; ++i) {
+    advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2000);
+    // Type a letter, then delete it: every message is a real edit.
+    CharacterAck character = {};
+    if (i % 2 == 0) {
+      character.has_character = true;
+      character.character[0] = 'a';
+    } else {
+      character.has_delete = character.del = true;
+    }
+    receiveMessage(MessageType_MessageType_CharacterAck, CharacterAck_fields,
+                   &character);
+    toggle_screensaver();
+    ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY)) << "locked mid-entry " << i;
+  }
+
+  Cancel cancel = {};
+  receiveMessage(MessageType_MessageType_Cancel, Cancel_fields, &cancel);
+  EXPECT_FALSE(setup_isArmed());
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state())
+      << "host-typed characters renewed the deadline";
+}
+
+// F2: a nested wait that never returns to the main loop (a confirm left up,
+// a U2F exchange kept alive by pings) can outlast the 2^32 ms counter. Its
+// poll loop must keep sampling the clock, or the main loop's one subtraction
+// sees the wrapped remainder: here, 5 s.
+TEST(Fsm, NestedWaitLongerThanTheClockWrapStillLocks) {
+  kk_test_board_init();
+  ScopedFlash flash;
+  fsm_init();
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  storage_setPin("1234");
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  layoutHomeForced();
+  keepkey_user_activity();
+
+  uint8_t buf[MSG_TINY_BFR_SZ];
+  for (int i = 0; i < 4; ++i) {  // the nested wait's own poll iterations
+    advance_clock(1u << 30);
+    check_for_tiny_msg(buf);
+  }
+  advance_clock(5000);
+  toggle_screensaver();  // back in the main loop: 2^32 + 5000 ms later
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+  EXPECT_FALSE(session_isPinCached());
+  layoutHomeForced();
 }
 
 /* Clearing PIN authorization revokes signing, but must not discard a staged

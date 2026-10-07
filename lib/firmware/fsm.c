@@ -324,7 +324,7 @@ static void sendFailureWrapper(FailureType code, const char* text) {
 }
 
 /* True while a setup ceremony is armed or any signer waits for the host. */
-static bool fsm_workflowInProgress(void) {
+bool fsm_workflowInProgress(void) {
   if (setup_isArmed() || signing_is_active()) return true;
 #if !BITCOIN_ONLY
   if (ethereum_signing_isInProgress() ||
@@ -383,10 +383,10 @@ void fsm_init(void) {
  * Deliberately NOT session_clear(true): that is a LOCK. It would drop the PIN,
  * passphrase and seed cache, disarm AdvancedMode and revoke ClearSign signers
  * on every request, so ApplyPolicies/LoadClearsignSigner could never reach the
- * EthereumSignTx that needs them. Idle locking stays with toggle_screensaver.
+ * EthereumSignTx that needs them. Idle locking stays with auto_lock_if_due().
  * Metadata loaded before a sign survives: ethereum_signing_abort() only clears
  * it while a stream is active. */
-bool keepkey_before_message_dispatch(MessageType msg_id) {
+static bool fsm_dispatchGate(MessageType msg_id) {
   switch (msg_id) {
     case MessageType_MessageType_GetFeatures:
     case MessageType_MessageType_GetCoinTable:
@@ -477,6 +477,20 @@ bool keepkey_before_message_dispatch(MessageType msg_id) {
       fsm_abort_signing_workflows();
       return true;
   }
+}
+
+/* An expired idle deadline must never serve a PIN-gated request. The main
+ * loop checks it only once per pass, and a workflow defers it only while it
+ * runs; the gate above ends that workflow for any unrelated request, which
+ * would then run on the cached PIN before the next pass. So check on both
+ * sides of the gate: before, so a stalled workflow's own ACK is refused as
+ * "not in progress"; after, so the request that just ended a workflow runs
+ * on a locked session. */
+bool keepkey_before_message_dispatch(MessageType msg_id) {
+  auto_lock_if_due();
+  if (!fsm_dispatchGate(msg_id)) return false;
+  auto_lock_if_due();
+  return true;
 }
 
 void fsm_sendSuccess(const char* text) {

@@ -126,6 +126,9 @@ __attribute__((weak)) bool keepkey_before_message_dispatch(MessageType msg_id) {
   return true;
 }
 
+/* Firmware samples its auto-lock clock here; board-only targets have none. */
+__attribute__((weak)) void keepkey_idle_clock_sample(void) {}
+
 /*
  * dispatch() - Process received message and jump to corresponding process
  * function
@@ -482,6 +485,7 @@ static MessageType tiny_msg_poll_and_buffer(bool block, uint8_t* buf) {
 
   while (msg_tiny_id == MSG_TINY_TYPE_ERROR && !tiny_handler_rejected) {
     usbPoll();
+    keepkey_idle_clock_sample();
 
     if (!block) {
       break;

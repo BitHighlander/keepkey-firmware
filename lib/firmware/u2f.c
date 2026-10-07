@@ -290,6 +290,7 @@ void u2fhid_read_start(const U2FHID_FRAME* f) {
           return;
         }
         usbPoll();
+        keepkey_idle_clock_sample();
         forgetPromptIfOverdrawn();
       }
     }
@@ -319,6 +320,7 @@ void u2fhid_read_start(const U2FHID_FRAME* f) {
     while (dialog_timeout > 0 && reader->cmd == 0) {
       dialog_timeout--;
       usbPoll();  // may trigger new request
+      keepkey_idle_clock_sample();
       forgetPromptIfOverdrawn();
       if ((last_req_state == AUTH || last_req_state == REG) &&
           presenceReleased()) {
