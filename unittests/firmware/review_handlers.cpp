@@ -967,6 +967,70 @@ TEST_F(ReviewHandlers, ZcashFabricatedSameAddressOutputSigns) {
   memzero(&keys, sizeof(keys));
 }
 
+// A real NU6.2 bundle (zcash_fabricated_vectors.h) padded with a dummy
+// zero-valued output to a random address whose ciphertext does decrypt. It
+// moves no funds, so like Keystone and Ledger the device shows only the
+// change output; the host-signed dummy spend is not signed. A dummy output
+// whose cmx does not match its note is still refused before any output screen.
+TEST_F(ReviewHandlers, ZcashZeroValuePaddingOutputIsNotShown) {
+  ZcashOrchardKeys keys;
+  ASSERT_TRUE(storage_zcashOrchardKeys(0, true, &keys));
+
+  for (bool tampered : {false, true}) {
+    SCOPED_TRACE(tampered);
+    std::vector<ZcashPCZTAction> actions = {
+        zcashFabricatedAction(0, kZcashPaddingBundle[0]),
+        zcashFabricatedAction(1, kZcashPaddingBundle[1])};
+    actions[1].is_spend = false;  // the dummy spend carries dummy_sk
+    if (tampered) actions[1].cmx.bytes[0] ^= 1;
+    uint8_t digest[32];
+    zcashBundleDigest(actions, 10000, digest);
+    ZcashSignPCZT msg = zcashSignRequest(2, digest, 10000, 10000);
+
+    // Summary, the change output's two screens, then the fee.
+    ASSERT_TRUE(kkconfirm_preload(4, 0));
+    fsm_test_clearLastFailure();
+    kkconfirm_capture_start();
+    fsm_msgZcashSignPCZT(&msg);
+    ASSERT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
+    for (auto& action : actions) {
+      fsm_msgZcashPCZTAction(&action);
+      if (fsm_test_lastFailureCode() != 0) break;
+    }
+    const auto screens = kkconfirm_capture_finish();
+    EXPECT_FALSE(zcash_signing_is_active());
+    for (const auto& s : screens)
+      EXPECT_EQ(std::string::npos, s.find("0.00000000 ZEC")) << s;
+
+    if (tampered) {
+      EXPECT_STREQ("Shielded note commitment mismatch",
+                   fsm_test_lastFailureMessage());
+      EXPECT_FALSE(zcashSignatureEmitted(kkconfirm_readResponseIds()));
+      (void)kkconfirm_drain();
+      continue;
+    }
+
+    EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
+        << fsm_test_lastFailureMessage();
+    ASSERT_EQ(4u, screens.size());
+    EXPECT_NE(std::string::npos, screens[1].find("0.00090000 ZEC"));
+    EXPECT_NE(std::string::npos, screens[3].find("0.00010000 ZEC"));
+    EXPECT_EQ(0, kkconfirm_drain());
+
+    ZcashSignedPCZT signed_pczt = {};
+    ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_ZcashSignedPCZT,
+                                       ZcashSignedPCZT_fields, &signed_pczt));
+    ASSERT_EQ(1u, signed_pczt.signatures_count);
+    uint8_t empty_transparent[32], sighash[32];
+    ASSERT_TRUE(
+        zcash_compute_transparent_digest(NULL, 0, NULL, 0, empty_transparent));
+    zcashRequestSighash(msg, empty_transparent, sighash);
+    EXPECT_EQ(0, redpallas_verify_digest(actions[0].rk.bytes, sighash,
+                                         signed_pczt.signatures[0].bytes));
+  }
+  memzero(&keys, sizeof(keys));
+}
+
 namespace {
 // m/44'/133'/0'/0/index public key for this fixture's seed.
 std::vector<uint8_t> zcashTransparentPubkey(uint32_t index) {
