@@ -1220,7 +1220,9 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
       blake2b_Final(&zcash_signing.memos_ctx, memos_hash, 32);
       blake2b_Final(&zcash_signing.noncompact_ctx, noncompact_hash, 32);
 
-      /* v6 Ironwood moves the anchor to the auth digest (ZIP-229). */
+      /* Every v6 bundle digest, Orchard or Ironwood, omits the anchor: v6
+       * moves it to the auth digest. The action digests keep their v5
+       * personalizations for the Orchard pool (ZIP-229). */
       BLAKE2B_CTX orchard_ctx;
       blake2b_InitPersonal(
           &orchard_ctx, 32,
