@@ -78,6 +78,10 @@ static CONFIDENTIAL struct {
   uint64_t fee;
   uint32_t branch_id;
   ZcashOrchardKeys keys;
+  /* The account's internal-scope (change) ivk, and the value of the outputs
+   * proven to pay it: shown once, at the final gate. */
+  uint8_t ivk_internal[32];
+  uint64_t change_value;
   uint8_t header_digest[32];
   uint8_t sighash[32];
   bool transaction_v6;
@@ -284,9 +288,11 @@ static bool zcash_verify_and_confirm_orchard_output(
 
   /* The cmx checked above binds value 0, so this output pays no one: padding
    * dummies (protocol spec 4.8.3) and, from NU6.3, the fabricated output paired
-   * with each spend (ZIP 326), whose ciphertext may be random bytes. It is
-   * accepted unshown whether or not it decrypts, as Keystone and Ledger do. */
-  if (msg->value == 0) return true;
+   * with each spend (ZIP 326), whose ciphertext may be random bytes. Without a
+   * user_address it is accepted unshown whether or not it decrypts, as
+   * Keystone does. With one it is a deliberate send, e.g. memo-only, and is
+   * checked and shown like any other. */
+  if (msg->value == 0 && !msg->has_user_address) return true;
 
   /* cmx alone does not reach the recipient: a corrupted epk or ciphertext
    * leaves a valid note that normal wallet scanning can never find. */
@@ -301,8 +307,7 @@ static bool zcash_verify_and_confirm_orchard_output(
   }
 
   /* ZIP 374: show the address the user entered only once it is proven to
-   * hold this output's Orchard receiver; any doubt refuses the transaction.
-   * Without it, show the Orchard-only address rebuilt from the receiver. */
+   * hold this output's Orchard receiver; any doubt refuses the transaction. */
   char address[ZCASH_ORCHARD_UNIFIED_ADDRESS_SIZE];
   const char* shown = address;
   const char* title = "Orchard address";
@@ -329,8 +334,28 @@ static bool zcash_verify_and_confirm_orchard_output(
     }
     shown = msg->user_address;
     title = "Shielded recipient";
-  } else if (!zcash_orchard_receiver_to_unified_address(
-                 msg->recipient.bytes, "u", address, sizeof(address))) {
+  }
+
+  /* Change, as Ledger finds it: the recipient is proven to be this account's
+   * internal-scope address, pk_d = [ivk_internal] g_d, so the note returns to
+   * the key that signs. Its value is shown once, as a total, at the final
+   * gate. An output to any other address, the account's external ones
+   * included, is shown on its own. */
+  if (msg->value > 0 && zcash_orchard_receiver_matches_ivk(
+                            zcash_signing.ivk_internal, msg->recipient.bytes)) {
+    if (zcash_signing.change_value > UINT64_MAX - msg->value) {
+      fsm_sendFailure(FailureType_Failure_Other, _("Invalid change value"));
+      return false;
+    }
+    zcash_signing.change_value += msg->value;
+    return true;
+  }
+
+  /* Without a user_address, show the Orchard-only address rebuilt from the
+   * receiver. */
+  if (!msg->has_user_address &&
+      !zcash_orchard_receiver_to_unified_address(msg->recipient.bytes, "u",
+                                                 address, sizeof(address))) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Invalid Orchard recipient"));
     return false;
@@ -959,10 +984,10 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
 
   /* The summary shows no amount. total_amount is host-supplied and nothing
    * the device signs commits to it, so it must never be displayed as a fact;
-   * every value that is signed is shown on its own verified screen (Orchard
-   * outputs, transparent outputs). The fee shown here is the host's claim and
-   * is checked against the device-computed fee, then confirmed again, before
-   * any signature is released. */
+   * every value that is signed is shown on a verified screen (Orchard
+   * outputs, proven change as one total, transparent outputs). The fee shown
+   * here is the host's claim and is checked against the device-computed fee,
+   * then confirmed again, before any signature is released. */
   char fee_str[32];
   uint64_t fee = msg->has_fee ? msg->fee : 0;
 
@@ -1019,6 +1044,16 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
 
   /* Derive Orchard keys via storage; the seed never leaves storage.c. */
   if (!storage_zcashOrchardKeys(account, true, &zcash_signing.keys)) {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _("Orchard key derivation failed"));
+    layoutHome();
+    return;
+  }
+  /* Change is recognised by the internal-scope ivk, derived once here. */
+  if (!zcash_orchard_derive_internal_ivk(
+          zcash_signing.keys.ak, zcash_signing.keys.nk, zcash_signing.keys.rivk,
+          zcash_signing.ivk_internal)) {
+    zcash_signing_abort();
     fsm_sendFailure(FailureType_Failure_Other,
                     _("Orchard key derivation failed"));
     layoutHome();
@@ -1384,6 +1419,18 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
       return;
     }
     zcash_signing.has_device_sighash = true;
+
+    if (zcash_signing.change_value > 0) {
+      char change_str[32];
+      zcash_format_amount(zcash_signing.change_value, change_str,
+                          sizeof(change_str));
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   "Zcash Change", "Change back to your wallet:\n%s",
+                   change_str)) {
+        zcash_fail(FailureType_Failure_ActionCancelled, _("Signing cancelled"));
+        return;
+      }
+    }
 
     if (!zcash_verify_and_confirm_fee()) {
       zcash_signing_abort();

@@ -888,8 +888,9 @@ ZcashPCZTAction zcashFabricatedAction(uint32_t index,
 
 // A real NU6.3 bundle from the orchard crate (zcash_fabricated_vectors.h):
 // the spend's fabricated zero-valued output carries a random ciphertext
-// (ZIP 326) and is accepted without a screen; the change output is shown and
-// both spends are signed. A value-bearing output whose ciphertext does not
+// (ZIP 326) and is accepted without a screen; the change output, proven to
+// pay the account's internal address, is shown as the change total, and both
+// spends are signed. A value-bearing output whose ciphertext does not
 // decrypt, or a zero-valued output whose cmx does not match its note, is
 // still refused before any output screen and releases nothing.
 TEST_F(ReviewHandlers, ZcashFabricatedSameAddressOutputSigns) {
@@ -917,8 +918,8 @@ TEST_F(ReviewHandlers, ZcashFabricatedSameAddressOutputSigns) {
     zcashBundleDigest(actions, 10000, digest);
     ZcashSignPCZT msg = zcashSignRequest(2, digest, 10000, 10000);
 
-    // Summary, the change output's two screens, then the fee.
-    ASSERT_TRUE(kkconfirm_preload(4, 0));
+    // Summary, the change total, then the fee.
+    ASSERT_TRUE(kkconfirm_preload(3, 0));
     fsm_test_clearLastFailure();
     kkconfirm_capture_start();
     fsm_msgZcashSignPCZT(&msg);
@@ -944,11 +945,13 @@ TEST_F(ReviewHandlers, ZcashFabricatedSameAddressOutputSigns) {
 
     EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
         << fsm_test_lastFailureMessage();
-    ASSERT_EQ(4u, screens.size());
-    EXPECT_NE(std::string::npos, screens[1].find("0.00090000 ZEC"));
+    ASSERT_EQ(3u, screens.size());
+    EXPECT_NE(std::string::npos,
+              screens[1].find("Change back to your wallet:\n0.00090000 ZEC"))
+        << screens[1];
     for (const auto& s : screens)
       EXPECT_EQ(std::string::npos, s.find("0.00000000 ZEC")) << s;
-    EXPECT_NE(std::string::npos, screens[3].find("0.00010000 ZEC"));
+    EXPECT_NE(std::string::npos, screens[2].find("0.00010000 ZEC"));
     EXPECT_EQ(0, kkconfirm_drain());
 
     ZcashSignedPCZT signed_pczt = {};
@@ -970,8 +973,9 @@ TEST_F(ReviewHandlers, ZcashFabricatedSameAddressOutputSigns) {
 
 // A real NU6.2 bundle (zcash_fabricated_vectors.h) padded with a dummy
 // zero-valued output to a random address whose ciphertext does decrypt. It
-// moves no funds, so like Keystone and Ledger the device shows only the
-// change output; the host-signed dummy spend is not signed. A dummy output
+// moves no funds, so like Keystone and Ledger the device does not show it;
+// the change output is shown as the change total. The host-signed dummy spend
+// is not signed. A dummy output
 // whose cmx does not match its note is still refused before any output screen.
 TEST_F(ReviewHandlers, ZcashZeroValuePaddingOutputIsNotShown) {
   ZcashOrchardKeys keys;
@@ -988,8 +992,8 @@ TEST_F(ReviewHandlers, ZcashZeroValuePaddingOutputIsNotShown) {
     zcashBundleDigest(actions, 10000, digest);
     ZcashSignPCZT msg = zcashSignRequest(2, digest, 10000, 10000);
 
-    // Summary, the change output's two screens, then the fee.
-    ASSERT_TRUE(kkconfirm_preload(4, 0));
+    // Summary, the change total, then the fee.
+    ASSERT_TRUE(kkconfirm_preload(3, 0));
     fsm_test_clearLastFailure();
     kkconfirm_capture_start();
     fsm_msgZcashSignPCZT(&msg);
@@ -1013,9 +1017,130 @@ TEST_F(ReviewHandlers, ZcashZeroValuePaddingOutputIsNotShown) {
 
     EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
         << fsm_test_lastFailureMessage();
-    ASSERT_EQ(4u, screens.size());
-    EXPECT_NE(std::string::npos, screens[1].find("0.00090000 ZEC"));
-    EXPECT_NE(std::string::npos, screens[3].find("0.00010000 ZEC"));
+    ASSERT_EQ(3u, screens.size());
+    EXPECT_NE(std::string::npos,
+              screens[1].find("Change back to your wallet:\n0.00090000 ZEC"))
+        << screens[1];
+    EXPECT_NE(std::string::npos, screens[2].find("0.00010000 ZEC"));
+    EXPECT_EQ(0, kkconfirm_drain());
+
+    ZcashSignedPCZT signed_pczt = {};
+    ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_ZcashSignedPCZT,
+                                       ZcashSignedPCZT_fields, &signed_pczt));
+    ASSERT_EQ(1u, signed_pczt.signatures_count);
+    uint8_t empty_transparent[32], sighash[32];
+    ASSERT_TRUE(
+        zcash_compute_transparent_digest(NULL, 0, NULL, 0, empty_transparent));
+    zcashRequestSighash(msg, empty_transparent, sighash);
+    EXPECT_EQ(0, redpallas_verify_digest(actions[0].rk.bytes, sighash,
+                                         signed_pczt.signatures[0].bytes));
+  }
+  memzero(&keys, sizeof(keys));
+}
+
+// A real NU6.2 bundle (zcash_fabricated_vectors.h, kZcashMemoBundle) with
+// four outputs. Only the one proven to pay this account's internal address is
+// folded into the change total; a self-send to the account's external address
+// and a payment to another account's internal (change) address are shown like
+// any other output. The zero-valued memo-only send carries the address the
+// user entered and is shown with it at 0 ZEC; without a user_address the same
+// output is taken for padding and not shown. A change output whose cmx does
+// not match its note is refused before any output screen, and declining the
+// change total releases nothing.
+TEST_F(ReviewHandlers, ZcashOnlyProvenChangeIsFoldedAndMemoSendIsShown) {
+  ZcashOrchardKeys keys;
+  ASSERT_TRUE(storage_zcashOrchardKeys(0, true, &keys));
+
+  enum Case { kAccepted, kNoUserAddress, kTamperedChangeCmx, kChangeDeclined };
+  for (Case c :
+       {kAccepted, kNoUserAddress, kTamperedChangeCmx, kChangeDeclined}) {
+    SCOPED_TRACE(c);
+    std::vector<ZcashPCZTAction> actions;
+    for (const auto& v : kZcashMemoBundle)
+      actions.push_back(zcashFabricatedAction(actions.size(), v));
+    ASSERT_EQ(4u, actions.size());
+    for (size_t i = 1; i < actions.size(); i++)
+      actions[i].is_spend = false;  // dummy spends carry dummy_sk
+    std::vector<uint8_t> rk(32);
+    ASSERT_EQ(0, redpallas_derive_rk_from_ak(keys.ak, actions[0].alpha.bytes,
+                                             rk.data()));
+    ASSERT_EQ(zcashGet(actions[0].rk), rk);
+    if (c != kNoUserAddress) {
+      actions[3].has_user_address = true;
+      strlcpy(actions[3].user_address, kZcashMemoUserAddress,
+              sizeof(actions[3].user_address));
+    }
+    if (c == kTamperedChangeCmx) actions[2].cmx.bytes[0] ^= 1;
+    uint8_t digest[32];
+    zcashBundleDigest(actions, 10000, digest);
+    ZcashSignPCZT msg = zcashSignRequest(4, digest, 10000, 10000);
+
+    // Summary; self-send; another account's change; the memo send (only with
+    // its user_address); the change total; the fee.
+    const size_t expected = c == kNoUserAddress ? 7u : 9u;
+    if (c == kChangeDeclined) {
+      ASSERT_TRUE(kkconfirm_preload(static_cast<int>(expected) - 2, 1));
+    } else {
+      ASSERT_TRUE(kkconfirm_preload(static_cast<int>(expected), 0));
+    }
+    fsm_test_clearLastFailure();
+    kkconfirm_capture_start();
+    fsm_msgZcashSignPCZT(&msg);
+    ASSERT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
+    for (auto& action : actions) {
+      fsm_msgZcashPCZTAction(&action);
+      if (fsm_test_lastFailureCode() != 0) break;
+    }
+    const auto screens = kkconfirm_capture_finish();
+    EXPECT_FALSE(zcash_signing_is_active());
+
+    if (c == kChangeDeclined) {
+      EXPECT_STREQ("Signing cancelled", fsm_test_lastFailureMessage());
+      ASSERT_EQ(expected - 1, screens.size());  // up to the change total
+      EXPECT_NE(std::string::npos,
+                screens.back().find("Change back to your wallet:"));
+      EXPECT_FALSE(zcashSignatureEmitted(kkconfirm_readResponseIds()));
+      (void)kkconfirm_drain();
+      continue;
+    }
+    if (c == kTamperedChangeCmx) {
+      EXPECT_STREQ("Shielded note commitment mismatch",
+                   fsm_test_lastFailureMessage());
+      // The summary and the two outputs streamed before the change.
+      EXPECT_EQ(5u, screens.size());
+      EXPECT_FALSE(zcashSignatureEmitted(kkconfirm_readResponseIds()));
+      (void)kkconfirm_drain();
+      continue;
+    }
+
+    EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
+        << fsm_test_lastFailureMessage();
+    char self_ua[ZCASH_ORCHARD_UNIFIED_ADDRESS_SIZE];
+    char other_change_ua[ZCASH_ORCHARD_UNIFIED_ADDRESS_SIZE];
+    ASSERT_TRUE(zcash_orchard_receiver_to_unified_address(
+        actions[0].recipient.bytes, "u", self_ua, sizeof(self_ua)));
+    ASSERT_TRUE(zcash_orchard_receiver_to_unified_address(
+        actions[1].recipient.bytes, "u", other_change_ua,
+        sizeof(other_change_ua)));
+    auto shows = [&](size_t i, const char* text) {
+      ASSERT_LT(i, screens.size());
+      EXPECT_NE(std::string::npos, screens[i].find(text)) << screens[i];
+    };
+    ASSERT_EQ(expected, screens.size());
+    shows(1, "0.00020000 ZEC");
+    shows(2, self_ua);
+    shows(3, "0.00030000 ZEC");
+    shows(4, other_change_ua);
+    if (c == kAccepted) {
+      shows(5, "0.00000000 ZEC");
+      shows(6, kZcashMemoUserAddress);
+    }
+    shows(expected - 2, "Change back to your wallet:\n0.00040000 ZEC");
+    shows(expected - 1, "0.00010000 ZEC");
+    size_t change_screens = 0;  // the change has no screen of its own
+    for (const auto& screen : screens)
+      change_screens += screen.find("0.00040000 ZEC") != std::string::npos;
+    EXPECT_EQ(1u, change_screens);
     EXPECT_EQ(0, kkconfirm_drain());
 
     ZcashSignedPCZT signed_pczt = {};
@@ -1436,8 +1561,10 @@ ZcashMigrationRun zcashRunSession(const ZcashSignPCZT& msg,
 
 // ZIP 318 migration transfer built by librustzcash's zcash_pool_migration:
 // one v6 transaction spending an Orchard note into the Ironwood pool. Both
-// bundles are streamed and recomputed; the device shows the Ironwood output
-// and the fee, and its one signature verifies under librustzcash's sighash.
+// bundles are streamed and recomputed. The Ironwood output pays the
+// account's own internal address (ZIP 318), so the device shows it as change
+// back to the wallet, then the fee; its one signature verifies under
+// librustzcash's sighash.
 // A claim for either bundle that does not match its actions, a tampered
 // Ironwood note, or a wrong fee is refused with no signature; a host that
 // does not declare the Ironwood actions is refused as before.
@@ -1472,8 +1599,8 @@ TEST_F(ReviewHandlers, ZcashMigrationTransferSignsBothPools) {
     actions = orchard;
     actions.insert(actions.end(), ironwood.begin(), ironwood.end());
 
-    // Summary, the Ironwood output's two screens, then the fee.
-    const auto run = zcashRunSession(msg, actions, 4);
+    // Summary, the change total (the Ironwood output), then the fee.
+    const auto run = zcashRunSession(msg, actions, 3);
     switch (c) {
       case kAccepted:
         break;
@@ -1502,9 +1629,11 @@ TEST_F(ReviewHandlers, ZcashMigrationTransferSignsBothPools) {
 
     EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
         << fsm_test_lastFailureMessage();
-    ASSERT_EQ(4u, run.screens.size());
-    EXPECT_NE(std::string::npos, run.screens[1].find("0.01000000 ZEC"));
-    EXPECT_NE(std::string::npos, run.screens[3].find("0.00015000 ZEC"));
+    ASSERT_EQ(3u, run.screens.size());
+    EXPECT_NE(std::string::npos,
+              run.screens[1].find("Change back to your wallet:\n0.01000000 ZEC"))
+        << run.screens[1];
+    EXPECT_NE(std::string::npos, run.screens[2].find("0.00015000 ZEC"));
     const auto sighash = zcashHex(kZcashMigrationTransferSighash);
     ASSERT_EQ(1u, run.signatures.size());  // the one real Orchard spend
     ASSERT_EQ(64u, run.signatures[0].size());
@@ -1514,8 +1643,10 @@ TEST_F(ReviewHandlers, ZcashMigrationTransferSignsBothPools) {
 }
 
 // ZIP 318 note preparation built by librustzcash: an Orchard-only v6
-// transaction of exactly 16 actions, every spend the wallet's. All 16
-// signatures verify under librustzcash's sighash.
+// transaction of exactly 16 actions, every spend the wallet's. Its fifteen
+// outputs all pay the account's internal address, so instead of thirty output
+// screens the device shows one change total. All 16 signatures verify under
+// librustzcash's sighash.
 TEST_F(ReviewHandlers, ZcashMigrationPreparationSignsSixteenActions) {
   std::vector<ZcashPCZTAction> actions;
   for (const auto& v : kZcashMigrationPrepOrchard)
@@ -1525,11 +1656,15 @@ TEST_F(ReviewHandlers, ZcashMigrationPreparationSignsSixteenActions) {
   zcashV6BundleDigest(actions, false, 0x03, 80000, digest);
   const ZcashSignPCZT msg = zcashV6Request(16, digest, 0x03, 80000, 80000);
 
-  // Summary, two screens per value-bearing output (15), then the fee.
-  const auto run = zcashRunSession(msg, actions, 32);
+  // Summary, the change total of the fifteen outputs, then the fee.
+  const auto run = zcashRunSession(msg, actions, 3);
   EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
       << fsm_test_lastFailureMessage();
-  EXPECT_EQ(32u, run.screens.size());
+  ASSERT_EQ(3u, run.screens.size());
+  EXPECT_NE(std::string::npos,
+            run.screens[1].find("Change back to your wallet:\n0.15225000 ZEC"))
+      << run.screens[1];
+  EXPECT_NE(std::string::npos, run.screens[2].find("0.00080000 ZEC"));
   const auto sighash = zcashHex(kZcashMigrationPrepSighash);
   ASSERT_EQ(16u, run.signatures.size());
   for (size_t i = 0; i < 16; i++) {

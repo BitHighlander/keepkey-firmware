@@ -241,6 +241,18 @@ bool zcash_orchard_derive_transmission_key(const uint8_t ivk[32],
 bool zcash_orchard_derive_ivk(const uint8_t ak[32], const uint8_t nk[32],
                               const uint8_t rivk[32], uint8_t ivk_out[32]);
 
+/* ZIP 32 internal-scope (change) ivk: Commit^ivk(ak, nk, rivk_internal), with
+ * rivk_internal = ToScalar(PRF^expand_rivk([0x83] || ak || nk)). */
+bool zcash_orchard_derive_internal_ivk(const uint8_t ak[32],
+                                       const uint8_t nk[32],
+                                       const uint8_t rivk[32],
+                                       uint8_t ivk_out[32]);
+
+/* True only if receiver = d || [ivk] DiversifyHash(d): the address belongs to
+ * the key ivk, whatever its diversifier. */
+bool zcash_orchard_receiver_matches_ivk(const uint8_t ivk[32],
+                                        const uint8_t receiver[43]);
+
 /* Raw external receiver d_j || pk_dj (43 bytes) from FVK parts and index. */
 bool zcash_orchard_derive_receiver(const uint8_t ak[32], const uint8_t nk[32],
                                    const uint8_t rivk[32], const uint8_t dk[32],

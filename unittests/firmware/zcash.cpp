@@ -1507,6 +1507,63 @@ TEST(Zcash, OrchardIvk_RejectsInvalidAkEncoding) {
   memzero(ivk, sizeof(ivk));
 }
 
+/* zcash-test-vectors orchard_key_components (vectors 0-2): the internal
+ * (change) scope ivk from ak, nk and rivk, and each key's default external
+ * receiver d || pk_d, which belongs to ivk but not to internal_ivk. */
+TEST(Zcash, OrchardInternalIvk_ReferenceVectors) {
+  static const struct {
+    const char *ak, *nk, *rivk, *ivk, *internal_ivk, *d, *pk_d;
+  } vectors[] = {
+      {"740bbe5d0580b2cad430180d02cc128b9a140d5e07c151721dc16d25d4e20f15",
+       "9f2f826738945ad01f47f70db0c367c246c20c61ff5583948c39dea968fefd1b",
+       "021ccf89604f5f7cc6e034b32d338908b819fbe325fee6458b56b4ca71a7e43d",
+       "85c8b5cd1ac3ec3ad7092132f97f0178b075c81a139fd460bbe0dfcd75514724",
+       "906e2d20d00dc0bf7c520687d9df3ce9814d30ee05c215f8764a32c362f9262f",
+       "8ff3386971cb64b8e77899",
+       "08dd8ebd7de92a68e586a34db8fea999efd2016fae76750afae7ee941646bcb9"},
+      {"6de1349830d66d7b97fe231fc7b02ad64323629cfed1e3aa24ef052f56e4002a",
+       "a8b73d979b6eaada8924bcbdc63a9ef4e87346f230aba6bbe1e2b43c5bea6b22",
+       "dacb2f2a9ced363171821aaf5d8cd902bc5e3a5a41fb51ae61a9f02dc89d1d12",
+       "563a6db60c74c2db08492cbae3bb083f1aeabffbcf42551d0ac64f2690536711",
+       "121183cb3b8d06f599bb38b37322851e5fc95ad0c9707ee85fb65e21f1a30d13",
+       "7807ca650858814d5022a8",
+       "3d3de4d52c77fd0b630a40dc38212487b2ff6eeef56d8c6a6163e854aff04189"},
+      {"efa5f1debeead0940a619ce0017bedb426657b2d07406664d895312ea1c3b334",
+       "04514ea048b94363dea7cb3be8d62582ac52922e0865f662743b05eae8715f17",
+       "2a328f994f6e5ad29ca811ed344968ea2cfc3fd231030e37bbd56db42640231c",
+       "609ecbc3d8cee3be2b2a2362951f58b74482adfaeee1c40f94030440f558aa30",
+       "a06abd29d5a199e1c21025b0337e941f6d4d84eb7cc35a397f9e753fdaed810d",
+       "6424f71a3ad197426498f4",
+       "eccb6a5780204237987232bc098f89acc475c3f74bd69e2f35d44736f48f3c14"},
+  };
+  for (const auto& v : vectors) {
+    uint8_t ak[32], nk[32], rivk[32], ivk[32], internal_ivk[32];
+    uint8_t receiver[43];
+    decode_hex(v.ak, ak, 32);
+    decode_hex(v.nk, nk, 32);
+    decode_hex(v.rivk, rivk, 32);
+    decode_hex(v.ivk, ivk, 32);
+    decode_hex(v.internal_ivk, internal_ivk, 32);
+    decode_hex(v.d, receiver, 11);
+    decode_hex(v.pk_d, receiver + 11, 32);
+
+    uint8_t derived[32];
+    ASSERT_TRUE(zcash_orchard_derive_internal_ivk(ak, nk, rivk, derived));
+    EXPECT_EQ(0, memcmp(derived, internal_ivk, 32));
+
+    EXPECT_TRUE(zcash_orchard_receiver_matches_ivk(ivk, receiver));
+    EXPECT_FALSE(zcash_orchard_receiver_matches_ivk(internal_ivk, receiver));
+    receiver[0] ^= 1;  // another diversifier, same pk_d
+    EXPECT_FALSE(zcash_orchard_receiver_matches_ivk(ivk, receiver));
+    receiver[0] ^= 1;
+    receiver[20] ^= 1;  // another pk_d
+    EXPECT_FALSE(zcash_orchard_receiver_matches_ivk(ivk, receiver));
+
+    ak[31] |= 0x80;  // not a valid ak encoding
+    EXPECT_FALSE(zcash_orchard_derive_internal_ivk(ak, nk, rivk, derived));
+  }
+}
+
 TEST(Zcash, OrchardReceiver_ReferenceVectors) {
   for (const auto& vector : ORCHARD_RECEIVER_ASSEMBLY_VECTORS) {
     uint8_t receiver[43];

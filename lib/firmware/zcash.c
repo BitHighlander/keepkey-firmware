@@ -347,6 +347,40 @@ bool zcash_orchard_derive_ivk(const uint8_t ak[32], const uint8_t nk[32],
   return ok;
 }
 
+bool zcash_orchard_derive_internal_ivk(const uint8_t ak[32],
+                                       const uint8_t nk[32],
+                                       const uint8_t rivk[32],
+                                       uint8_t ivk_out[32]) {
+  if (!ak || !nk || !rivk || !ivk_out) return false;
+
+  /* ZIP 32: rivk_internal = ToScalar(PRF^expand_rivk([0x83] || ak || nk)). */
+  uint8_t input[1 + 32 + 32];
+  uint8_t expanded[64];
+  uint8_t rivk_internal[32];
+  input[0] = 0x83;
+  memcpy(input + 1, ak, 32);
+  memcpy(input + 33, nk, 32);
+  prf_expand(rivk, input, sizeof(input), expanded);
+  to_scalar(expanded, rivk_internal);
+
+  bool ok = zcash_orchard_derive_ivk(ak, nk, rivk_internal, ivk_out);
+  memzero(input, sizeof(input));
+  memzero(expanded, sizeof(expanded));
+  memzero(rivk_internal, sizeof(rivk_internal));
+  return ok;
+}
+
+bool zcash_orchard_receiver_matches_ivk(const uint8_t ivk[32],
+                                        const uint8_t receiver[43]) {
+  if (!ivk || !receiver) return false;
+
+  uint8_t pkd[32];
+  bool ok = zcash_orchard_derive_transmission_key(ivk, receiver, NULL, pkd) &&
+            memcmp(pkd, receiver + 11, sizeof(pkd)) == 0;
+  memzero(pkd, sizeof(pkd));
+  return ok;
+}
+
 bool zcash_orchard_derive_receiver(const uint8_t ak[32], const uint8_t nk[32],
                                    const uint8_t rivk[32], const uint8_t dk[32],
                                    const uint8_t index_le[11],
