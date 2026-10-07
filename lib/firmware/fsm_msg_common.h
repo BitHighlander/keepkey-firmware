@@ -267,6 +267,7 @@ void fsm_msgPing(Ping* msg) {
       "Auth secret unknown error",
       "Authenticator account already exists",
       "Action cancelled",
+      "OTP time slice timed out, regenerate OTP",
   };
 
   typedef enum _AUTH_MSG_TYPE {
