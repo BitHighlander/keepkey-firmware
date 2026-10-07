@@ -23,6 +23,7 @@
 #include "u2f_knownapps.h"
 
 #include "keepkey/board/keepkey_button.h"
+#include "keepkey/board/messages.h"
 #include "keepkey/board/confirm_sm.h"
 #include "keepkey/board/layout.h"
 #include "keepkey/board/memcmp_s.h"
@@ -112,6 +113,19 @@ typedef struct {
 } U2F_AUTHENTICATE_SIG_STR;
 
 static uint32_t dialog_timeout = 0;
+
+/* User presence is a press and release that starts after the prompt is drawn
+ * (Trezor's button.YesUp): the button must be seen up, then down, then up.
+ * Steps: 0 waits for up, 1 for down, 2 for the release. */
+static uint8_t presence_step = 0;
+
+static bool presenceReleased(void) {
+  const bool want_up = presence_step != 1;
+  if (keepkey_button_up() == want_up) presence_step++;
+  if (presence_step < 3) return false;
+  presence_step = 0;
+  return true;
+}
 
 uint32_t next_cid(void) {
   // extremely unlikely but hey
@@ -216,6 +230,10 @@ void u2fhid_read_start(const U2FHID_FRAME* f) {
   u2fhid_init_cmd(f);
 
   usbTiny(1);
+  /* Main and debug frames must not be dispatched under the U2F prompt: a
+   * nested confirm would replace it, and its held button would then count as
+   * U2F presence. Trezor uses one tiny flag for every endpoint. */
+  const bool msg_tiny = msg_set_tiny(true);
   for (;;) {
     // Do we need to wait for more data
     while ((reader->buf_ptr - reader->buf) < (signed)reader->len) {
@@ -229,6 +247,7 @@ void u2fhid_read_start(const U2FHID_FRAME* f) {
           cid = 0;
           reader = 0;
           usbTiny(0);
+          msg_set_tiny(msg_tiny);
           layoutHome();
           return;
         }
@@ -258,15 +277,11 @@ void u2fhid_read_start(const U2FHID_FRAME* f) {
     // wait for next commmand/ button press
     reader->cmd = 0;
     reader->seq = 255;
-    bool saw_button_up_at_least_once = false;
     while (dialog_timeout > 0 && reader->cmd == 0) {
       dialog_timeout--;
-      saw_button_up_at_least_once =
-          saw_button_up_at_least_once || keepkey_button_up();
       usbPoll();  // may trigger new request
-      // buttonUpdate();
-      if (saw_button_up_at_least_once && keepkey_button_down() &&
-          (last_req_state == AUTH || last_req_state == REG)) {
+      if ((last_req_state == AUTH || last_req_state == REG) &&
+          presenceReleased()) {
         last_req_state++;
         // standard requires to remember button press for 10 seconds.
         dialog_timeout = 10 * U2F_TIMEOUT;
@@ -278,6 +293,7 @@ void u2fhid_read_start(const U2FHID_FRAME* f) {
       cid = 0;
       reader = 0;
       usbTiny(0);
+      msg_set_tiny(msg_tiny);
       layoutHome();
       return;
     }
@@ -638,8 +654,8 @@ void u2f_register(const APDU* a) {
   // First Time request, return not present and display request dialog
   if (last_req_state == INIT) {
     // error: testof-user-presence is required
-    // buttonUpdate();
     promptRegister(true, req);
+    presence_step = 0;
     last_req_state = REG;
   }
 
@@ -779,8 +795,8 @@ void u2f_authenticate(const APDU* a) {
 
   if (last_req_state == INIT) {
     // error: testof-user-presence is required
-    // buttonUpdate(); // Clear button state
     promptAuthenticate(true, req);
+    presence_step = 0;
     last_req_state = AUTH;
   }
 

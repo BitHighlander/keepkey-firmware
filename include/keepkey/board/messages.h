@@ -133,6 +133,9 @@ void handle_debug_usb_rx(const void* msg, size_t len);
 
 MessageType wait_for_tiny_msg(uint8_t* buf);
 MessageType check_for_tiny_msg(uint8_t* buf);
+/* Route main and debug frames to the tiny reader, which never dispatches a
+ * handler. Returns the previous setting. */
+bool msg_set_tiny(bool set);
 
 uint32_t parse_pb_varint(RawMessage* msg, uint8_t varint_count);
 int encode_pb(const void* source_ptr, const pb_field_t* fields, uint8_t* buffer,

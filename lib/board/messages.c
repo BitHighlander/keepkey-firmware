@@ -435,6 +435,15 @@ void handle_usb_rx(const void* msg, size_t len) {
   }
 }
 
+bool msg_set_tiny(bool set) {
+  const bool previous = msg_tiny_flag;
+  msg_tiny_flag = set;
+  /* Back at top level no handler is suspended: a rejection answered while in
+   * tiny mode must not suppress later replies. */
+  if (!set) tiny_handler_rejected = false;
+  return previous;
+}
+
 #if DEBUG_LINK
 void handle_debug_usb_rx(const void* msg, size_t len) {
   if (msg_tiny_flag) {
