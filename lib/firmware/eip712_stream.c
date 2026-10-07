@@ -477,8 +477,10 @@ typedef struct {
   char label[EIP712_MAX_MEMBER_NAME];
   uint8_t slot_base;    /* first slot in the pool belonging to this frame */
   uint8_t member_count; /* members declared by the struct */
-  uint8_t member_index; /* next member (or element) to absorb */
   bool is_array;
+  /* Next member (or element) to absorb: a streamed array's length is uint16
+   * on the wire. */
+  uint16_t member_index;
   /* A struct frame never reads the array half and vice versa. */
   union {
     struct {
@@ -531,7 +533,8 @@ static struct {
   uint8_t array_owner;        /* 1 + stack index of that array, 0 = none */
 
   /* 1 + the pool slot holding SafeTx.to, 0 = none: the token an embedded
-   * approve() in SafeTx.data calls. */
+   * approve() in SafeTx.data calls. Every pop clears it, so it never
+   * outlives the frame that read it. */
   uint8_t safe_to_slot;
 
   SHA3_CTX hash;
@@ -1043,6 +1046,8 @@ static void array_sponge_final(uint8_t out[32]) {
 /* struct: keccak(typeHash || enc(m1..mn)); array: keccak(enc(e1..en)). */
 static bool fold_frame(uint8_t out[32]) {
   const Eip712Frame* f = &e712.stack[e712.depth - 1];
+  /* A later frame may reuse this one's slots: its `to` is gone with it. */
+  e712.safe_to_slot = 0;
   if (array_streams(f)) {
     array_sponge_final(out);
     e712.slots_used = f->slot_base;
@@ -1054,7 +1059,7 @@ static bool fold_frame(uint8_t out[32]) {
     if (!f->u.s.have_type_hash) return false;
     keccak_Update(&e712.hash, f->u.s.type_hash, 32);
   }
-  for (uint8_t i = 0; i < f->member_index; i++) {
+  for (uint16_t i = 0; i < f->member_index; i++) {
     keccak_Update(&e712.hash, e712.pool[f->slot_base + i], 32);
   }
   keccak_Final(&e712.hash, out);

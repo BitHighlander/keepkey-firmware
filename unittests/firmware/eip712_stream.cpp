@@ -1759,3 +1759,120 @@ TEST(Eip712Stream, EmbeddedUnlimitedApproveSignsAfterTheWarning) {
             EIP712_REQ_FAIL);
   EXPECT_EQ(std::count(titles.begin(), titles.end(), "UNLIMITED approval"), 0);
 }
+
+namespace {
+
+// A SafeTx {x, data, to} reached after another SafeTx's `to` was recorded in
+// a slot the new frame now reuses: R{A a; B b} (A{SafeTx s}, B{p, q, SafeTx
+// s}), or R{SafeTx[] a; B b} (B{p, SafeTx s}). Every x is USDC's address.
+Eip712ReqKind walkReusedSafeTxSlot(bool array_variant,
+                                   std::vector<std::string>* bodies,
+                                   std::vector<std::string>* titles) {
+  std::map<std::string, Struct> types;
+  Field u256 = mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32);
+  addMember(types["EIP712Domain"], "chainId", u256);
+  addMember(types["SafeTx"], "x", u256);
+  addMember(types["SafeTx"], "data",
+            mk(EthereumTypedDataStructAck_EthereumDataType_BYTES));
+  addMember(types["SafeTx"], "to",
+            mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
+  if (array_variant) {
+    Field txs = structField("SafeTx");
+    txs.array_levels_count = 1;
+    addMember(types["R"], "a", txs);
+  } else {
+    addMember(types["R"], "a", structField("A"));
+    addMember(types["A"], "s", structField("SafeTx"));
+  }
+  addMember(types["R"], "b", structField("B"));
+  addMember(types["B"], "p", u256);
+  if (!array_variant) addMember(types["B"], "q", u256);
+  addMember(types["B"], "s", structField("SafeTx"));
+  kkconfirm_capture_start();
+  walk(
+      "R", types,
+      [](const std::vector<uint32_t>& path) -> Bytes {
+        if (path[0] == 0) return word(1);
+        if (path.size() == 2) return Bytes{0, 1};  // a's length
+        if (path.size() == 3) return word(0);      // p, q
+        switch (path.back()) {
+          case 0: {  // x
+            Bytes x(12, 0);
+            Bytes usdc = fromHex("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+            x.insert(x.end(), usdc.begin(), usdc.end());
+            return x;
+          }
+          case 1:
+            return approveCall(0, 0xff);
+          default:
+            return Bytes(20, 0x11);
+        }
+      },
+      40);
+  *bodies = kkconfirm_capture_finish();
+  *titles = kkconfirm_captured_titles();
+  const Eip712ReqKind kind = eip712_stream_next()->kind;
+  eip712_stream_abort();
+  return kind;
+}
+
+}  // namespace
+
+// The recorded SafeTx.to belongs to the frame that read it. A later SafeTx
+// whose `data` comes before its own `to` points at 'to', never at a value of
+// its own (x) that happens to sit in the dead frame's slot.
+TEST(Eip712Stream, EmbeddedApproveNeverNamesAnotherFramesTo) {
+  for (bool array_variant : {false, true}) {
+    SCOPED_TRACE(array_variant);
+    std::vector<std::string> titles, bodies;
+    EXPECT_EQ(walkReusedSafeTxSlot(array_variant, &bodies, &titles),
+              EIP712_REQ_DONE);
+    std::vector<std::string> warned;
+    for (size_t i = 0; i < titles.size(); i++)
+      if (titles[i] == "UNLIMITED approval") warned.push_back(bodies[i]);
+    ASSERT_EQ(warned.size(), 2u);
+    for (const std::string& body : warned) {
+      EXPECT_EQ(body.find("USDC"), std::string::npos) << body;
+      EXPECT_NE(body.find("of the contract in 'to'"), std::string::npos)
+          << body;
+    }
+  }
+}
+
+// A streamed array's length is uint16 on the wire. Past 255 elements the
+// walk still completes, every index is shown as itself, and the digest is the
+// one an independent keccak computes (sponge.py, keccak of
+// EIP712Domain(uint256 chainId) with chainId 1, and Msg(uint256[] v) with
+// v[i] = i for i < 300).
+TEST(Eip712Stream, StreamedArraysPastTwoHundredFiftyFiveElementsComplete) {
+  std::map<std::string, Struct> types;
+  Field u256 = mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32);
+  addMember(types["EIP712Domain"], "chainId", u256);
+  Field values = u256;
+  values.array_levels_count = 1;
+  addMember(types["Msg"], "v", values);
+  kkconfirm_capture_start();
+  const int used = walk(
+      "Msg", types,
+      [](const std::vector<uint32_t>& path) -> Bytes {
+        if (path[0] == 0) return word(1);
+        if (path.size() == 2) return Bytes{300 >> 8, 300 & 0xff};
+        Bytes w(32, 0);
+        w[30] = (uint8_t)(path[2] >> 8);
+        w[31] = (uint8_t)path[2];
+        return w;
+      },
+      302);
+  const std::vector<std::string> bodies = kkconfirm_capture_finish();
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  EXPECT_EQ(used, 301);
+  EXPECT_EQ(hexOf(eip712_stream_next()->domain_separator, 32),
+            "2d9145f2f941cb14d4c738374c6ebde69c75a737e93da5905ee040bab57e46a8");
+  EXPECT_EQ(hexOf(eip712_stream_next()->message_hash, 32),
+            "89f049ac78541e85b598bdf522d566bcf14f5d3441fb671742f5403aae9b5609");
+  eip712_stream_abort();
+  ASSERT_EQ(bodies.size(), 301u);
+  EXPECT_EQ(bodies[1 + 255], "v[255]\nuint256: 255");
+  EXPECT_EQ(bodies[1 + 256], "v[256]\nuint256: 256");
+  EXPECT_EQ(bodies[1 + 299], "v[299]\nuint256: 299");
+}
