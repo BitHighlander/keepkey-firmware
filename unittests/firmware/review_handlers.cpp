@@ -45,6 +45,7 @@ bool kkconfirm_readResponse(uint16_t expected, const pb_field_t* fields,
 std::vector<uint16_t> kkconfirm_readResponseIds(void);
 void kkconfirm_capture_start(void);
 std::vector<std::string> kkconfirm_capture_finish(void);
+std::vector<std::string> kkconfirm_captured_titles(void);
 int kkconfirm_drain(void);
 
 class ReviewHandlers : public ::testing::Test {
@@ -693,6 +694,85 @@ bool zcashSignatureEmitted(const std::vector<uint16_t>& ids) {
   });
 }
 }  // namespace
+
+// ZIP 374 user_address on a real spend whose output is note vector 0. A
+// matching multi-receiver address (built by zcash_address 0.13.0) is shown
+// verbatim and the spend is signed; a valid address holding another Orchard
+// receiver is refused before the output screens with no signature; without
+// one the device shows the Orchard-only address under an honest title.
+TEST_F(ReviewHandlers, ZcashUserAddressIsCheckedThenShown) {
+  static const char kMatching[] =
+      "u16065qzvddm89jcmzufxjs5pe6dr006tezvd7pap2nc58cctca8tt373s2he7xx76cn"
+      "lyfatutph9kfl5g35cnuw6szxlf0qhpqajh0xrujjny6rxh6wej6mx6x5zuz4auaffd5"
+      "hd56t8kwxnnquasruhg8qv3344cn6dauw00waq8ak2lmlyn8r84jumahr2nrd246gdxw"
+      "932t8uvgs";
+  // zcash_keys 0.16.1, "all" seed, account 0: P2PKH+Sapling+Orchard.
+  static const char kOtherOrchard[] =
+      "u1elnjt36zcqfelwj62v8lujthlqefztqcy02jfm2p5vs9phrzr8fj68j3mpzmvlktay"
+      "k9fdz4zd4k3x6f7z3n62dw09w8sr9a8a0ka5m6xktd8hl6x5ekd0qky8h8t0an6p8eqk"
+      "3ggwnl30dkv7txlw5r2qef330j94r0lftqktn0ev70kc78h8ev43ja5x7de27rvvhf0h"
+      "4ku663uw6";
+  ZcashOrchardKeys keys;
+  ASSERT_TRUE(storage_zcashOrchardKeys(0, true, &keys));
+
+  enum Case { kMatch, kMismatch, kAbsent };
+  for (Case c : {kMatch, kMismatch, kAbsent}) {
+    SCOPED_TRACE(c);
+    ZcashPCZTAction action = zcashNoteAction(0, kZcashOrchardNoteVectors[0]);
+    action.is_spend = true;
+    std::vector<uint8_t> rk(32);
+    ASSERT_EQ(0, redpallas_derive_rk_from_ak(keys.ak, action.alpha.bytes,
+                                             rk.data()));
+    zcashSet(action.rk, rk);
+    if (c != kAbsent) {
+      action.has_user_address = true;
+      strlcpy(action.user_address, c == kMatch ? kMatching : kOtherOrchard,
+              sizeof(action.user_address));
+    }
+    uint8_t digest[32];
+    zcashBundleDigest({action}, 0, digest);
+    ZcashSignPCZT msg = zcashSignRequest(1, digest, 0, 0);
+
+    ASSERT_TRUE(kkconfirm_preload(8, 0));
+    fsm_test_clearLastFailure();
+    fsm_msgZcashSignPCZT(&msg);
+    ASSERT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
+    kkconfirm_capture_start();
+    fsm_msgZcashPCZTAction(&action);
+    const auto titles = kkconfirm_captured_titles();
+    const auto bodies = kkconfirm_capture_finish();
+    EXPECT_FALSE(zcash_signing_is_active());
+
+    if (c == kMismatch) {
+      EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+      EXPECT_STREQ("Recipient address does not match output",
+                   fsm_test_lastFailureMessage());
+      EXPECT_TRUE(bodies.empty()) << "refused after an output screen";
+      EXPECT_FALSE(zcashSignatureEmitted(kkconfirm_readResponseIds()));
+      (void)kkconfirm_drain();
+      continue;
+    }
+
+    EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
+        << fsm_test_lastFailureMessage();
+    const std::string title =
+        c == kMatch ? "Shielded recipient" : "Orchard address";
+    const std::string expected =
+        c == kMatch ? kMatching
+                    : "u17j4lvw84jd238ev9ukr0lvqhv4z32v98pxcglctaj3aqfqj7rr2w"
+                      "wvh73247ekczw4smyrvm2wf2v5nfxvn3sl0ycc6w4455yg49yf2m";
+    std::string shown;
+    for (size_t i = 0; i < titles.size(); i++) {
+      if (titles[i].find(title) != 0) continue;
+      for (char ch : bodies[i])
+        if (ch != '\n' && ch != ' ') shown += ch;
+    }
+    EXPECT_EQ(expected, shown);
+    EXPECT_TRUE(zcashSignatureEmitted(kkconfirm_readResponseIds()));
+    (void)kkconfirm_drain();
+  }
+  memzero(&keys, sizeof(keys));
+}
 
 // Real spends are signed in action order into a compact list; the dummy
 // between them is verified but never signed. Each signature verifies under

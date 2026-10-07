@@ -417,6 +417,136 @@ bool zcash_orchard_receiver_to_unified_address(
                                                      address_out_len) == 0;
 }
 
+static uint32_t zcash_bech32_polymod_step(uint32_t pre) {
+  const uint8_t b = pre >> 25;
+  return ((pre & 0x1FFFFFF) << 5) ^ (-((b >> 0) & 1) & 0x3b6a57b2UL) ^
+         (-((b >> 1) & 1) & 0x26508e6dUL) ^ (-((b >> 2) & 1) & 0x1ea119faUL) ^
+         (-((b >> 3) & 1) & 0x3d4233ddUL) ^ (-((b >> 4) & 1) & 0x2a1462b3UL);
+}
+
+/* A canonical compactSize no greater than 0x2000000 (ZIP 316). */
+static bool zcash_read_compact_size(const uint8_t* buf, size_t end, size_t* pos,
+                                    uint32_t* out) {
+  if (*pos >= end) return false;
+  const uint8_t tag = buf[(*pos)++];
+  if (tag < 0xfd) {
+    *out = tag;
+    return true;
+  }
+  /* 0xff introduces a 64-bit value, always above the ZIP 316 bound. */
+  const size_t n = tag == 0xfd ? 2 : tag == 0xfe ? 4 : 0;
+  if (n == 0 || end - *pos < n) return false;
+  uint32_t v = 0;
+  for (size_t i = 0; i < n; i++) v |= (uint32_t)buf[*pos + i] << (8 * i);
+  *pos += n;
+  if (v < (n == 2 ? 0xfdu : 0x10000u) || v > 0x2000000u) return false;
+  *out = v;
+  return true;
+}
+
+/* bech32m (any length), F4Jumble^-1, HRP padding, then the item walk of
+ * ZIP 316. Accepts the mainnet HRPs "u" (Revision 0) and "zu"/"tu"
+ * (Revision 2), whose encodings differ only in the HRP and permitted items. */
+ZcashUserAddressCheck zcash_user_address_check(
+    const char* address,
+    const uint8_t recipient[ZCASH_ORCHARD_RAW_RECEIVER_SIZE]) {
+  static const char charset[] = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+  if (!address || !recipient) return ZCASH_USER_ADDRESS_INVALID;
+
+  const size_t len = strnlen(address, ZCASH_USER_ADDRESS_MAX_LEN + 1);
+  const char* sep = strrchr(address, '1');
+  if (len > ZCASH_USER_ADDRESS_MAX_LEN || !sep)
+    return ZCASH_USER_ADDRESS_INVALID;
+  const size_t hrp_len = (size_t)(sep - address);
+  const size_t data_len = len - hrp_len - 1;
+
+  bool zu = false;
+  if (hrp_len == 2 && memcmp(address, "zu", 2) == 0) {
+    zu = true;
+  } else if (!(hrp_len == 1 && address[0] == 'u') &&
+             !(hrp_len == 2 && memcmp(address, "tu", 2) == 0)) {
+    const bool testnet = (hrp_len == 5 && memcmp(address, "utest", 5) == 0) ||
+                         (hrp_len == 6 && (memcmp(address, "zutest", 6) == 0 ||
+                                           memcmp(address, "tutest", 6) == 0));
+    return testnet ? ZCASH_USER_ADDRESS_NOT_MAINNET
+                   : ZCASH_USER_ADDRESS_INVALID;
+  }
+  if (data_len < 6) return ZCASH_USER_ADDRESS_INVALID;
+
+  uint32_t chk = 1;
+  for (size_t i = 0; i < hrp_len; i++)
+    chk = zcash_bech32_polymod_step(chk) ^ ((uint8_t)address[i] >> 5);
+  chk = zcash_bech32_polymod_step(chk);
+  for (size_t i = 0; i < hrp_len; i++)
+    chk = zcash_bech32_polymod_step(chk) ^ (address[i] & 0x1f);
+
+  /* Five-bit groups to bytes as the checksum runs; the 6 checksum groups
+   * are not data. Lowercase only. */
+  uint8_t raw[(ZCASH_USER_ADDRESS_MAX_LEN - 2 - 6) * 5 / 8];
+  size_t raw_len = 0;
+  uint32_t acc = 0;
+  unsigned bits = 0;
+  for (size_t i = 0; i < data_len; i++) {
+    const char* p = strchr(charset, sep[1 + i]);
+    if (!p) return ZCASH_USER_ADDRESS_INVALID;
+    const uint32_t v = (uint32_t)(p - charset);
+    chk = zcash_bech32_polymod_step(chk) ^ v;
+    if (i + 6 >= data_len) continue;
+    acc = (acc << 5) | v;
+    bits += 5;
+    if (bits >= 8) {
+      bits -= 8;
+      raw[raw_len++] = (uint8_t)(acc >> bits);
+    }
+  }
+  if (chk != 0x2bc830a3UL || bits >= 5 || (acc & ((1u << bits) - 1)) != 0)
+    return ZCASH_USER_ADDRESS_INVALID;
+
+  /* Rejects fewer than 48 bytes, the F4Jumble minimum. */
+  if (zcash_zip316_f4jumble_inv(raw, raw_len) != 0)
+    return ZCASH_USER_ADDRESS_INVALID;
+  const size_t end = raw_len - ZCASH_ZIP316_PADDING_LEN;
+  for (size_t i = 0; i < ZCASH_ZIP316_PADDING_LEN; i++) {
+    if (raw[end + i] != (i < hrp_len ? (uint8_t)address[i] : 0))
+      return ZCASH_USER_ADDRESS_INVALID;
+  }
+
+  /* Strictly ascending typecodes: canonical order and no duplicates. */
+  bool first = true, p2pkh = false, p2sh = false, orchard_match = false;
+  uint32_t prev = 0;
+  size_t pos = 0;
+  while (pos < end) {
+    uint32_t typecode, item_len;
+    if (!zcash_read_compact_size(raw, end, &pos, &typecode) ||
+        !zcash_read_compact_size(raw, end, &pos, &item_len) ||
+        item_len > end - pos || (!first && typecode <= prev))
+      return ZCASH_USER_ADDRESS_INVALID;
+    first = false;
+    prev = typecode;
+    const uint8_t* item = raw + pos;
+    pos += item_len;
+
+    if (typecode <= 0x01) { /* P2PKH, P2SH */
+      if (item_len != 20 || zu) return ZCASH_USER_ADDRESS_INVALID;
+      p2pkh |= typecode == 0x00;
+      p2sh |= typecode == 0x01;
+    } else if (typecode <= 0x03) { /* Sapling, Orchard */
+      if (item_len != ZCASH_ORCHARD_RAW_RECEIVER_SIZE)
+        return ZCASH_USER_ADDRESS_INVALID;
+      if (typecode == 0x03)
+        orchard_match = memcmp(item, recipient, item_len) == 0;
+    } else if (typecode >= 0xE0 && typecode <= 0xFC) {
+      /* MUST-understand: invalid in Revision 0; in Revision 2 only expiry
+       * (0xE0, 0xE1) is defined, and a signer without a clock cannot honor
+       * an expiry time. */
+      return ZCASH_USER_ADDRESS_UNSUPPORTED;
+    }
+    /* Any other typecode is ignored, as ZIP 316 requires. */
+  }
+  if (p2pkh && p2sh) return ZCASH_USER_ADDRESS_INVALID;
+  return orchard_match ? ZCASH_USER_ADDRESS_MATCH : ZCASH_USER_ADDRESS_MISMATCH;
+}
+
 static bool zcash_pack_orchard_note_commit_msg(const uint8_t receiver[43],
                                                uint64_t value,
                                                const uint8_t rho[32],

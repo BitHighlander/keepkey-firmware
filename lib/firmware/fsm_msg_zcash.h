@@ -290,9 +290,37 @@ static bool zcash_verify_and_confirm_orchard_output(
     return false;
   }
 
+  /* ZIP 374: show the address the user entered only once it is proven to
+   * hold this output's Orchard receiver; any doubt refuses the transaction.
+   * Without it, show the Orchard-only address rebuilt from the receiver. */
   char address[ZCASH_ORCHARD_UNIFIED_ADDRESS_SIZE];
-  if (!zcash_orchard_receiver_to_unified_address(msg->recipient.bytes, "u",
-                                                 address, sizeof(address))) {
+  const char* shown = address;
+  const char* title = "Orchard address";
+  if (msg->has_user_address) {
+    switch (zcash_user_address_check(msg->user_address, msg->recipient.bytes)) {
+      case ZCASH_USER_ADDRESS_MATCH:
+        break;
+      case ZCASH_USER_ADDRESS_NOT_MAINNET:
+        fsm_sendFailure(FailureType_Failure_SyntaxError,
+                        _("Recipient address is not mainnet"));
+        return false;
+      case ZCASH_USER_ADDRESS_UNSUPPORTED:
+        fsm_sendFailure(FailureType_Failure_SyntaxError,
+                        _("Recipient address metadata unsupported"));
+        return false;
+      case ZCASH_USER_ADDRESS_MISMATCH:
+        fsm_sendFailure(FailureType_Failure_Other,
+                        _("Recipient address does not match output"));
+        return false;
+      default:
+        fsm_sendFailure(FailureType_Failure_SyntaxError,
+                        _("Invalid recipient address"));
+        return false;
+    }
+    shown = msg->user_address;
+    title = "Shielded recipient";
+  } else if (!zcash_orchard_receiver_to_unified_address(
+                 msg->recipient.bytes, "u", address, sizeof(address))) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Invalid Orchard recipient"));
     return false;
@@ -313,8 +341,8 @@ static bool zcash_verify_and_confirm_orchard_output(
     return false;
   }
 
-  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-               "Shielded recipient", "%s", address)) {
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title, "%s",
+               shown)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     _("Signing cancelled"));
     memzero(address, sizeof(address));

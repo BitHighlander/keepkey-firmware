@@ -178,6 +178,23 @@ bool zcash_orchard_receiver_to_unified_address(
     const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], const char* hrp,
     char* address_out, size_t address_out_len);
 
+/* Longest ZIP 374 user_address accepted (ZcashPCZTAction.user_address). */
+#define ZCASH_USER_ADDRESS_MAX_LEN 255
+
+typedef enum {
+  ZCASH_USER_ADDRESS_MATCH = 0,
+  ZCASH_USER_ADDRESS_INVALID,     /* not a well-formed ZIP 316 address */
+  ZCASH_USER_ADDRESS_NOT_MAINNET, /* a testnet Unified Address */
+  ZCASH_USER_ADDRESS_UNSUPPORTED, /* MUST-understand metadata, e.g. expiry */
+  ZCASH_USER_ADDRESS_MISMATCH,    /* no Orchard receiver equal to recipient */
+} ZcashUserAddressCheck;
+
+/* ZIP 374: confirm that the mainnet Unified Address the user entered holds
+ * exactly one Orchard receiver and that it equals recipient. */
+ZcashUserAddressCheck zcash_user_address_check(
+    const char* address,
+    const uint8_t recipient[ZCASH_ORCHARD_RAW_RECEIVER_SIZE]);
+
 /** ZIP-2005 V3 note commitment used by the Ironwood pool. */
 bool zcash_ironwood_compute_cmx_with_progress(
     const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
