@@ -36,8 +36,6 @@ static uint32_t idle_clock = 0;
 /* Weak only so unit tests can drive the clock without the 1 ms tick. */
 __attribute__((weak)) uint32_t home_clock_ms(void) { return getSysTime(); }
 
-static void increment_idle_time(uint32_t increment_ms);
-
 /* Count real elapsed time, including time spent nested in a long wait (a U2F
  * frame, a PIN or confirm prompt) that never returns to the main loop. The
  * unsigned difference survives the ms counter's ~49.7-day wrap as long as
@@ -179,12 +177,15 @@ void toggle_screensaver(void) {
 /*
  * increment_idle_time() - Increments idle time
  *
+ * Only update_idle_time() and unit tests call this; no production path
+ * charges idle time except from the clock.
+ *
  * INPUT
  *     increment_ms - time to increment in ms
  * OUTPUT
  *     none
  */
-static void increment_idle_time(uint32_t increment_ms) {
+void increment_idle_time(uint32_t increment_ms) {
   /* Saturate: a wrap after ~49.7 days idle would read as fresh activity and
    * wake the locked screen. Only reset_idle_time() may lower it. */
   idle_time = (increment_ms > UINT32_MAX - idle_time)
