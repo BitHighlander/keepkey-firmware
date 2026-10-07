@@ -30,6 +30,8 @@ void fsm_test_seedDerivedNode(void);
 bool fsm_test_derivedNodeIsZero(void);
 void fsm_test_clearLastFailure(void);
 FailureType fsm_test_lastFailureCode(void);
+/* The shared response arena that RESP_INIT() hands to handlers. */
+uint8_t* fsm_test_responseArena(size_t* size);
 #endif
 
 #define RESP_INIT(TYPE)                                                    \

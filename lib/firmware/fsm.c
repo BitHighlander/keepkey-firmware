@@ -102,6 +102,12 @@
 #define _(X) (X)
 
 static uint8_t msg_resp[MAX_FRAME_SIZE] __attribute__((aligned(4)));
+#if DEBUG_LINK
+uint8_t* fsm_test_responseArena(size_t* size) {
+  *size = sizeof(msg_resp);
+  return msg_resp;
+}
+#endif
 /* Shared scratch returned by fsm_getDerivedNode(). It may hold a root or
  * derived private key after any chain handler, so session revocation scrubs it
  * centrally. */
