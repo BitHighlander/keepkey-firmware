@@ -23,6 +23,7 @@ extern "C" {
 #include "trezor/crypto/redpallas.h"
 #include "trezor/crypto/secp256k1.h"
 #include "zcash_fabricated_vectors.h"
+#include "zcash_migration_vectors.h"
 #include "zcash_note_vectors.h"
 #endif
 #include "keepkey/board/canvas.h"
@@ -1282,6 +1283,322 @@ TEST_F(ReviewHandlers, ZcashSignsNothingBeforeTheFinalGate) {
     }
   }
   memzero(&keys, sizeof(keys));
+}
+
+namespace {
+ZcashPCZTAction zcashMigrationAction(uint32_t index,
+                                     const ZcashMigrationAction& v) {
+  ZcashPCZTAction action = {};
+  action.has_index = action.has_is_spend = true;
+  action.index = index;
+  action.is_spend = v.is_spend;
+  action.has_alpha = action.has_value = true;
+  zcashSet(action.alpha, zcashHex(v.alpha));
+  action.value = v.value;
+  action.has_recipient = action.has_rseed = true;
+  zcashSet(action.recipient, zcashHex(v.recipient));
+  zcashSet(action.rseed, zcashHex(v.rseed));
+  action.has_nullifier = action.has_cmx = action.has_epk = true;
+  zcashSet(action.nullifier, zcashHex(v.nullifier));
+  zcashSet(action.cmx, zcashHex(v.cmx));
+  zcashSet(action.epk, zcashHex(v.epk));
+  const auto c_enc = zcashHex(v.enc);
+  action.has_enc_compact = action.has_enc_memo = true;
+  action.has_enc_noncompact = true;
+  zcashSet(action.enc_compact,
+           std::vector<uint8_t>(c_enc.begin(), c_enc.begin() + 52));
+  zcashSet(action.enc_memo,
+           std::vector<uint8_t>(c_enc.begin() + 52, c_enc.begin() + 564));
+  zcashSet(action.enc_noncompact,
+           std::vector<uint8_t>(c_enc.begin() + 564, c_enc.end()));
+  action.has_cv_net = action.has_rk = action.has_out_ciphertext = true;
+  zcashSet(action.cv_net, zcashHex(v.cv_net));
+  zcashSet(action.rk, zcashHex(v.rk));
+  zcashSet(action.out_ciphertext, zcashHex(v.out));
+  return action;
+}
+
+// ZIP-229 v6 bundle digest (no anchor) of one pool's actions.
+void zcashV6BundleDigest(const std::vector<ZcashPCZTAction>& actions,
+                         bool ironwood, uint8_t flags, int64_t value_balance,
+                         uint8_t digest[32]) {
+  std::vector<uint8_t> compact_data, memo_data, noncompact_data;
+  for (const auto& a : actions) {
+    for (const auto& part : {zcashGet(a.nullifier), zcashGet(a.cmx),
+                             zcashGet(a.epk), zcashGet(a.enc_compact)})
+      compact_data.insert(compact_data.end(), part.begin(), part.end());
+    const auto memo = zcashGet(a.enc_memo);
+    memo_data.insert(memo_data.end(), memo.begin(), memo.end());
+    for (const auto& part :
+         {zcashGet(a.cv_net), zcashGet(a.rk), zcashGet(a.enc_noncompact),
+          zcashGet(a.out_ciphertext)})
+      noncompact_data.insert(noncompact_data.end(), part.begin(), part.end());
+  }
+  uint8_t compact[32], memos[32], noncompact[32];
+  zcashPersonal(ironwood ? "ZTxIdIrnActCH_v6" : "ZTxIdOrcActCHash",
+                compact_data, compact);
+  zcashPersonal(ironwood ? "ZTxIdIrnActMH_v6" : "ZTxIdOrcActMHash", memo_data,
+                memos);
+  zcashPersonal(ironwood ? "ZTxIdIrnActNH_v6" : "ZTxIdOrcActNHash",
+                noncompact_data, noncompact);
+  std::vector<uint8_t> data(compact, compact + 32);
+  data.insert(data.end(), memos, memos + 32);
+  data.insert(data.end(), noncompact, noncompact + 32);
+  data.push_back(flags);
+  for (int i = 0; i < 8; i++)
+    data.push_back(
+        static_cast<uint8_t>(static_cast<uint64_t>(value_balance) >> (8 * i)));
+  zcashPersonal(ironwood ? "ZTxIdIronwd_H_v6" : "ZTxIdOrchardH_v6", data,
+                digest);
+}
+
+// A v6 NU6.3 request, as zcash_pool_migration builds it (expiry 69120).
+ZcashSignPCZT zcashV6Request(uint32_t n_orchard, const uint8_t orchard[32],
+                             uint8_t orchard_flags,
+                             int64_t orchard_value_balance, uint64_t fee) {
+  ZcashSignPCZT msg = {};
+  msg.has_n_actions = true;
+  msg.n_actions = n_orchard;
+  msg.has_account = true;
+  msg.has_tx_version = msg.has_version_group_id = msg.has_branch_id =
+      msg.has_lock_time = msg.has_expiry_height = true;
+  msg.tx_version = 6;
+  msg.version_group_id = 0xD884B698;
+  msg.branch_id = 0x37A5165B;
+  msg.expiry_height = 69120;
+  msg.has_header_digest = true;
+  msg.header_digest.size = 32;
+  zcash_compute_header_digest(msg.tx_version, msg.version_group_id,
+                              msg.branch_id, msg.lock_time, msg.expiry_height,
+                              msg.header_digest.bytes);
+  msg.has_orchard_digest = true;
+  msg.orchard_digest.size = 32;
+  std::memcpy(msg.orchard_digest.bytes, orchard, 32);
+  msg.has_orchard_flags = msg.has_orchard_value_balance = true;
+  msg.orchard_flags = orchard_flags;
+  msg.orchard_value_balance = orchard_value_balance;
+  msg.has_orchard_anchor = true;
+  zcashSet(msg.orchard_anchor, kZcashAnchor);
+  msg.has_fee = true;
+  msg.fee = fee;
+  return msg;
+}
+
+void zcashAddIronwood(ZcashSignPCZT& msg, uint32_t n_ironwood,
+                      const uint8_t ironwood[32], uint8_t flags,
+                      int64_t value_balance) {
+  msg.has_n_ironwood_actions = msg.has_ironwood_flags =
+      msg.has_ironwood_value_balance = msg.has_ironwood_digest = true;
+  msg.n_ironwood_actions = n_ironwood;
+  msg.ironwood_flags = flags;
+  msg.ironwood_value_balance = value_balance;
+  msg.ironwood_digest.size = 32;
+  std::memcpy(msg.ironwood_digest.bytes, ironwood, 32);
+}
+
+struct ZcashMigrationRun {
+  std::vector<std::string> screens;
+  std::vector<std::vector<uint8_t>> signatures;
+};
+
+// Streams a request and its actions, approving up to `screens` confirms.
+ZcashMigrationRun zcashRunSession(const ZcashSignPCZT& msg,
+                                  std::vector<ZcashPCZTAction>& actions,
+                                  int screens) {
+  ZcashMigrationRun run;
+  EXPECT_TRUE(kkconfirm_preload(screens, 0));
+  fsm_test_clearLastFailure();
+  kkconfirm_capture_start();
+  fsm_msgZcashSignPCZT(&msg);
+  if (fsm_test_lastFailureCode() == 0) {
+    for (auto& action : actions) {
+      fsm_msgZcashPCZTAction(&action);
+      if (fsm_test_lastFailureCode() != 0) break;
+    }
+  }
+  run.screens = kkconfirm_capture_finish();
+  EXPECT_FALSE(zcash_signing_is_active());
+  ZcashSignedPCZT signed_pczt = {};
+  if (fsm_test_lastFailureCode() == 0 &&
+      kkconfirm_readResponse(MessageType_MessageType_ZcashSignedPCZT,
+                             ZcashSignedPCZT_fields, &signed_pczt)) {
+    for (pb_size_t i = 0; i < signed_pczt.signatures_count; i++)
+      run.signatures.emplace_back(
+          signed_pczt.signatures[i].bytes,
+          signed_pczt.signatures[i].bytes + signed_pczt.signatures[i].size);
+  } else {
+    EXPECT_FALSE(zcashSignatureEmitted(kkconfirm_readResponseIds()));
+  }
+  (void)kkconfirm_drain();
+  return run;
+}
+}  // namespace
+
+// ZIP 318 migration transfer built by librustzcash's zcash_pool_migration:
+// one v6 transaction spending an Orchard note into the Ironwood pool. Both
+// bundles are streamed and recomputed; the device shows the Ironwood output
+// and the fee, and its one signature verifies under librustzcash's sighash.
+// A claim for either bundle that does not match its actions, a tampered
+// Ironwood note, or a wrong fee is refused with no signature; a host that
+// does not declare the Ironwood actions is refused as before.
+TEST_F(ReviewHandlers, ZcashMigrationTransferSignsBothPools) {
+  enum Case {
+    kAccepted,
+    kOrchardClaimMismatch,
+    kIronwoodClaimMismatch,
+    kTamperedIronwoodNote,
+    kWrongFee,
+    kUndeclaredIronwood,
+  };
+  for (Case c : {kAccepted, kOrchardClaimMismatch, kIronwoodClaimMismatch,
+                 kTamperedIronwoodNote, kWrongFee, kUndeclaredIronwood}) {
+    SCOPED_TRACE(c);
+    std::vector<ZcashPCZTAction> orchard, ironwood, actions;
+    for (const auto& v : kZcashMigrationTransferOrchard)
+      orchard.push_back(zcashMigrationAction(orchard.size(), v));
+    for (const auto& v : kZcashMigrationTransferIronwood)
+      ironwood.push_back(
+          zcashMigrationAction(orchard.size() + ironwood.size(), v));
+    uint8_t orchard_digest[32], ironwood_digest[32];
+    zcashV6BundleDigest(orchard, false, 0x03, 1015000, orchard_digest);
+    zcashV6BundleDigest(ironwood, true, 0x07, -1000000, ironwood_digest);
+    if (c == kTamperedIronwoodNote) ironwood[0].cmx.bytes[0] ^= 1;
+    if (c == kOrchardClaimMismatch) orchard_digest[0] ^= 1;
+    if (c == kIronwoodClaimMismatch) ironwood_digest[0] ^= 1;
+    ZcashSignPCZT msg = zcashV6Request(2, orchard_digest, 0x03, 1015000,
+                                       c == kWrongFee ? 10000 : 15000);
+    zcashAddIronwood(msg, 1, ironwood_digest, 0x07, -1000000);
+    if (c == kUndeclaredIronwood) msg.has_n_ironwood_actions = false;
+    actions = orchard;
+    actions.insert(actions.end(), ironwood.begin(), ironwood.end());
+
+    // Summary, the Ironwood output's two screens, then the fee.
+    const auto run = zcashRunSession(msg, actions, 4);
+    switch (c) {
+      case kAccepted:
+        break;
+      case kOrchardClaimMismatch:
+      case kIronwoodClaimMismatch:
+        EXPECT_STREQ(
+            "Shielded digest mismatch: transaction data does not match sighash",
+            fsm_test_lastFailureMessage());
+        EXPECT_TRUE(run.signatures.empty());
+        continue;
+      case kTamperedIronwoodNote:
+        EXPECT_STREQ("Shielded note commitment mismatch",
+                     fsm_test_lastFailureMessage());
+        EXPECT_TRUE(run.signatures.empty());
+        continue;
+      case kWrongFee:
+        EXPECT_STREQ("Fee mismatch", fsm_test_lastFailureMessage());
+        EXPECT_TRUE(run.signatures.empty());
+        continue;
+      case kUndeclaredIronwood:
+        EXPECT_STREQ("Orchard transaction must have an empty Ironwood bundle",
+                     fsm_test_lastFailureMessage());
+        EXPECT_TRUE(run.signatures.empty());
+        continue;
+    }
+
+    EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
+        << fsm_test_lastFailureMessage();
+    ASSERT_EQ(4u, run.screens.size());
+    EXPECT_NE(std::string::npos, run.screens[1].find("0.01000000 ZEC"));
+    EXPECT_NE(std::string::npos, run.screens[3].find("0.00015000 ZEC"));
+    const auto sighash = zcashHex(kZcashMigrationTransferSighash);
+    ASSERT_EQ(1u, run.signatures.size());  // the one real Orchard spend
+    ASSERT_EQ(64u, run.signatures[0].size());
+    EXPECT_EQ(0, redpallas_verify_digest(actions[1].rk.bytes, sighash.data(),
+                                         run.signatures[0].data()));
+  }
+}
+
+// ZIP 318 note preparation built by librustzcash: an Orchard-only v6
+// transaction of exactly 16 actions, every spend the wallet's. All 16
+// signatures verify under librustzcash's sighash.
+TEST_F(ReviewHandlers, ZcashMigrationPreparationSignsSixteenActions) {
+  std::vector<ZcashPCZTAction> actions;
+  for (const auto& v : kZcashMigrationPrepOrchard)
+    actions.push_back(zcashMigrationAction(actions.size(), v));
+  ASSERT_EQ(16u, actions.size());
+  uint8_t digest[32];
+  zcashV6BundleDigest(actions, false, 0x03, 80000, digest);
+  const ZcashSignPCZT msg = zcashV6Request(16, digest, 0x03, 80000, 80000);
+
+  // Summary, two screens per value-bearing output (15), then the fee.
+  const auto run = zcashRunSession(msg, actions, 32);
+  EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
+      << fsm_test_lastFailureMessage();
+  EXPECT_EQ(32u, run.screens.size());
+  const auto sighash = zcashHex(kZcashMigrationPrepSighash);
+  ASSERT_EQ(16u, run.signatures.size());
+  for (size_t i = 0; i < 16; i++) {
+    EXPECT_EQ(0, redpallas_verify_digest(actions[i].rk.bytes, sighash.data(),
+                                         run.signatures[i].data()))
+        << i;
+  }
+}
+
+// Transactions consensus can never accept are refused before any screen:
+// reserved flag bits (Orchard bits 2..7, Ironwood bits 3..7), value entering
+// the Orchard pool from NU6.3, a crossing outside a v6 NU6.3 transaction, and
+// more than 16 actions in all.
+TEST_F(ReviewHandlers, ZcashRefusesBundlesConsensusRejects) {
+  std::vector<ZcashPCZTAction> orchard, ironwood;
+  for (const auto& v : kZcashMigrationTransferOrchard)
+    orchard.push_back(zcashMigrationAction(orchard.size(), v));
+  for (const auto& v : kZcashMigrationTransferIronwood)
+    ironwood.push_back(zcashMigrationAction(2, v));
+  uint8_t orchard_digest[32], ironwood_digest[32];
+  zcashV6BundleDigest(orchard, false, 0x03, 1015000, orchard_digest);
+  zcashV6BundleDigest(ironwood, true, 0x07, -1000000, ironwood_digest);
+
+  struct {
+    const char* name;
+    void (*mutate)(ZcashSignPCZT&);
+    const char* failure;
+  } cases[] = {
+      {"orchard bit 2", [](ZcashSignPCZT& m) { m.orchard_flags = 0x07; },
+       "Invalid shielded bundle flags"},
+      {"orchard bit 7", [](ZcashSignPCZT& m) { m.orchard_flags = 0x83; },
+       "Invalid shielded bundle flags"},
+      {"ironwood bit 3", [](ZcashSignPCZT& m) { m.ironwood_flags = 0x0F; },
+       "Invalid shielded bundle flags"},
+      {"value into orchard",
+       [](ZcashSignPCZT& m) { m.orchard_value_balance = -1; },
+       "Value cannot enter the Orchard pool"},
+      {"crossing in v5",
+       [](ZcashSignPCZT& m) {
+         m.tx_version = 5;
+         m.version_group_id = 0x26A7270A;
+       },
+       "Invalid pool-crossing transaction"},
+      {"crossing before NU6.3",
+       [](ZcashSignPCZT& m) { m.branch_id = 0x5437F330; },
+       "Invalid pool-crossing transaction"},
+      {"ironwood session crossing",
+       [](ZcashSignPCZT& m) {
+         m.has_shielded_pool = true;
+         m.shielded_pool = ZcashShieldedPool_ZCASH_SHIELDED_POOL_IRONWOOD;
+       },
+       "Invalid pool-crossing transaction"},
+      {"17 actions", [](ZcashSignPCZT& m) { m.n_ironwood_actions = 15; },
+       "Too many Orchard actions"},
+  };
+  for (const auto& tc : cases) {
+    SCOPED_TRACE(tc.name);
+    ZcashSignPCZT msg = zcashV6Request(2, orchard_digest, 0x03, 1015000, 15000);
+    zcashAddIronwood(msg, 1, ironwood_digest, 0x07, -1000000);
+    tc.mutate(msg);
+    ASSERT_TRUE(kkconfirm_preload(1, 0));
+    fsm_test_clearLastFailure();
+    kkconfirm_capture_start();
+    fsm_msgZcashSignPCZT(&msg);
+    EXPECT_TRUE(kkconfirm_capture_finish().empty());
+    EXPECT_STREQ(tc.failure, fsm_test_lastFailureMessage());
+    EXPECT_FALSE(zcash_signing_is_active());
+    (void)kkconfirm_drain();
+  }
 }
 #endif
 
