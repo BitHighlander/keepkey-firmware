@@ -526,9 +526,11 @@ static const HDNode* generateKeyHandle(const uint8_t app_id[],
 
   // Derivation path is m/U2F'/r'/r'/r'/r'/r'/r'/r'/r'
   //
-  // The path IS the secret here -- the key handle is public and an attacker who
-  // can predict the path derives the credential -- so it draws through the RNG
-  // gate rather than random32(). Registration fails rather than minting a
+  // The path is not secret: it is the first half of the key handle, which the
+  // relying party stores. The key's secrecy rests on the U2F root. The path
+  // still draws through the RNG gate rather than random32(): a stuck or weak
+  // generator would repeat paths and give unrelated sites the same public key,
+  // linking the user across them. Registration fails rather than minting a
   // credential on an untrusted generator.
   uint32_t key_path[KEY_PATH_ENTRIES];
   if (!random_buffer_checked((uint8_t*)key_path, sizeof(key_path))) {
