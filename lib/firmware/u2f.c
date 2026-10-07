@@ -33,6 +33,8 @@
 #include "keepkey/board/util.h"
 #include "keepkey/firmware/app_layout.h"
 #include "keepkey/firmware/home_sm.h"
+#include "keepkey/firmware/recovery_cipher.h"
+#include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/u2f/u2f.h"
 #include "keepkey/firmware/u2f/u2f_keys.h"
@@ -163,6 +165,15 @@ void u2fhid_read(char tiny, const U2FHID_FRAME* f) {
     return;
   }
 
+  /* A setup ceremony waits in the main loop for its next message. A U2F
+   * session started now would draw over it and end on the home screen, while
+   * a recovery stays armed and keeps taking CharacterAcks with no cipher
+   * shown. Answer busy and leave the screen alone. */
+  if (!tiny && setup_isArmed()) {
+    send_u2fhid_error(f->cid, ERR_CHANNEL_BUSY);
+    return;
+  }
+
   if (tiny) {
     // read continue packet
     if (reader == 0 || cid != f->cid) {
@@ -219,7 +230,12 @@ static void u2fhid_session_end(bool msg_tiny) {
   reader = 0;
   usbTiny(0);
   msg_set_tiny(msg_tiny);
-  layoutHome();
+  /* As fsm_msgPing(): never leave an armed recovery behind the home screen. */
+  if (setup_isArmedAs(SETUP_RECOVERY)) {
+    recovery_cipher_redraw();
+  } else {
+    layoutHome();
+  }
 }
 
 /* A normal or debug frame rejected during the session is answered through the

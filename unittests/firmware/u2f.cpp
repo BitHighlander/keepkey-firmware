@@ -4,6 +4,8 @@ extern "C" {
 #include "keepkey/board/messages.h"
 #include "keepkey/board/usb.h"
 #include "keepkey/firmware/fsm.h"
+#include "keepkey/firmware/recovery_cipher.h"
+#include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/u2f.h"
 #include "keepkey/firmware/u2f/u2f.h"
@@ -405,4 +407,92 @@ TEST_F(U2FWait, RejectedMessageForgetsPrompt) {
                              U2F_SW_CONDITIONS_NOT_SATISFIED, U2F_SW_NO_ERROR}),
       statuses());
   EXPECT_TRUE(poll_script.empty());
+}
+
+namespace {
+
+void settle() {
+  for (int frame = 0; frame < 20; ++frame) {
+    force_animation_start();
+    animate();
+  }
+}
+
+// Arms a recovery and returns the cipher it drew.
+std::vector<uint8_t> arm_recovery() {
+  EXPECT_TRUE(kkconfirm_preload(1, 0));
+  recovery_cipher_init(12, false, false, "english", "recovery", true, 0, 0,
+                       false);
+  EXPECT_EQ(0, kkconfirm_drain());
+  EXPECT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+  settle();
+  return screen();
+}
+
+U2FHID_FRAME ping_frame() {
+  U2FHID_FRAME f = {};
+  f.cid = kCid;
+  f.init.cmd = U2FHID_PING;
+  f.init.bcntl = 4;
+  memcpy(f.init.data, "ping", 4);
+  return f;
+}
+
+}  // namespace
+
+// While a ceremony waits in the main loop, U2F frames get the busy reply and
+// draw nothing. A session used to end on the home screen with the recovery
+// still armed, taking CharacterAcks with no cipher shown.
+TEST_F(U2FWait, ArmedRecoveryAnswersU2FBusy) {
+  const auto cipher = arm_recovery();
+  const U2FHID_FRAME ping = ping_frame();
+  U2FHID_FRAME init, cont;
+  register_frames(1, &init, &cont);
+  usb_test_receive_u2f(&ping);
+  usb_test_receive_u2f(&init);
+  usb_test_receive_u2f(&cont);
+  settle();
+  EXPECT_EQ(3u, count(U2FHID_ERROR, ERR_CHANNEL_BUSY));
+  EXPECT_EQ(3u, u2f_replies.size()) << "a U2F session ran";
+  EXPECT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+  EXPECT_EQ(cipher, screen()) << "the cipher was drawn over";
+  setup_abort();
+}
+
+TEST_F(U2FWait, ArmedResetAnswersU2FBusy) {
+  ASSERT_TRUE(setup_stage(false, "english", "reset", 0, 0, false));
+  setup_arm(SETUP_RESET);
+  const auto before = screen();
+  const U2FHID_FRAME ping = ping_frame();
+  U2FHID_FRAME init, cont;
+  register_frames(1, &init, &cont);
+  usb_test_receive_u2f(&ping);
+  usb_test_receive_u2f(&init);
+  usb_test_receive_u2f(&cont);
+  EXPECT_EQ(3u, count(U2FHID_ERROR, ERR_CHANNEL_BUSY));
+  EXPECT_EQ(3u, u2f_replies.size()) << "a U2F session ran";
+  EXPECT_TRUE(setup_isArmedAs(SETUP_RESET));
+  EXPECT_EQ(before, screen());
+  setup_abort();
+
+  // Outside a ceremony U2F is served as before.
+  u2f_replies.clear();
+  u2f_reply_cmds.clear();
+  usb_test_receive_u2f(&ping);
+  ASSERT_EQ(1u, u2f_replies.size());
+  EXPECT_EQ(U2FHID_PING, u2f_reply_cmds[0]);
+  EXPECT_EQ(std::vector<uint8_t>({'p', 'i', 'n', 'g'}), u2f_replies[0]);
+}
+
+// Defence in depth: a session that ends with a recovery armed restores the
+// cipher instead of going home.
+TEST_F(U2FWait, SessionEndRestoresArmedCipher) {
+  std::vector<uint8_t> cipher;
+  poll_script.push_back([&] { cipher = arm_recovery(); });
+  run(4);
+  settle();
+  ASSERT_FALSE(cipher.empty());
+  EXPECT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+  EXPECT_EQ(cipher, screen()) << "the session went home over the cipher";
+  setup_abort();
 }
