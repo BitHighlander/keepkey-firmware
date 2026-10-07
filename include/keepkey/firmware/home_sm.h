@@ -31,7 +31,8 @@ void layoutHome(void);
 void layoutHomeForced(void);
 void leave_home(void);
 void toggle_screensaver(void);
-void increment_idle_time(uint32_t increment_ms);
+/* Monotonic ms clock behind auto-lock; getSysTime() outside unit tests. */
+uint32_t home_clock_ms(void);
 void reset_idle_time(void);
 /* Call only after validated workflow progress, never on raw host traffic. */
 void note_workflow_progress(void);

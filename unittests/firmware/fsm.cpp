@@ -43,6 +43,13 @@ void kk_test_board_init(void);
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
 bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload, uint8_t len);
+extern "C" void keepkey_user_activity(void);  // lib/firmware/home_sm.c
+
+// Auto-lock reads home_clock_ms(). The real 1 ms tick would make the deadline
+// checks below racy, so this binary's clock moves only when a test says so.
+static uint32_t fake_clock_ms = 0;
+extern "C" uint32_t home_clock_ms(void) { return fake_clock_ms; }
+static void advance_clock(uint32_t ms) { fake_clock_ms += ms; }
 
 TEST(Fsm, AuthenticatorCredentialSourceIsWipedOnEveryExit) {
   char credential[] = "site:user:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -169,11 +176,11 @@ TEST(Fsm, AutoLockTerminatesSigningWhileWaitingAwayFromHome) {
   ASSERT_TRUE(signing_is_active());
 
   leave_home();
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   toggle_screensaver();
   EXPECT_TRUE(signing_is_active());
 
-  increment_idle_time(1);
+  advance_clock(1);
   toggle_screensaver();
   EXPECT_FALSE(signing_is_active());
 
@@ -200,12 +207,12 @@ TEST(Fsm, AutoLockKeepsTheScreensaverAfterAbortingSigning) {
   ASSERT_TRUE(signing_is_active());
 
   leave_home();
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT);
   toggle_screensaver();
   ASSERT_FALSE(signing_is_active());
   ASSERT_EQ(SCREENSAVER, home_get_state());
 
-  increment_idle_time(1000);
+  advance_clock(1000);
   toggle_screensaver();
   EXPECT_EQ(SCREENSAVER, home_get_state())
       << "a locked device must stay on the screensaver, not wake to home";
@@ -213,7 +220,7 @@ TEST(Fsm, AutoLockKeepsTheScreensaverAfterAbortingSigning) {
   // ~49.7 days of further idling must not wrap the counter into "activity".
   // It holds STORAGE_MIN_SCREENSAVER_TIMEOUT + 1000 here; this brings an
   // unsaturated counter to exactly 0.
-  increment_idle_time(UINT32_MAX - (STORAGE_MIN_SCREENSAVER_TIMEOUT + 1000) + 1);
+  advance_clock(UINT32_MAX - (STORAGE_MIN_SCREENSAVER_TIMEOUT + 1000) + 1);
   toggle_screensaver();
   EXPECT_EQ(SCREENSAVER, home_get_state())
       << "the idle counter wrapped and woke the locked screen";
@@ -329,7 +336,7 @@ void lockThenEnterPin(const char* pin) {
   storage_setPin("1234");
   storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
   layoutHomeForced();
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT);
   toggle_screensaver();
   ASSERT_EQ(SCREENSAVER, home_get_state());
   ASSERT_FALSE(session_isPinCached());
@@ -355,6 +362,71 @@ TEST(Fsm, CorrectPinAfterAutoLockRenewsTheDeadline) {
   toggle_screensaver();
   EXPECT_NE(SCREENSAVER, home_get_state());
   EXPECT_TRUE(session_isPinCached());
+  layoutHomeForced();
+}
+
+// Time spent nested in a long wait never reaches the main loop: a U2F frame
+// stretched to its timeout, a prompt the host leaves open. Each main-loop pass
+// must charge the real time since the last one, not a single tick, or a host
+// can keep a PIN-unlocked session alive indefinitely without the user.
+TEST(Fsm, AutoLockCountsTimeSpentOutsideTheMainLoop) {
+  kk_test_board_init();
+  ScopedFlash flash;
+  fsm_init();
+  storage_setPin("1234");
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  layoutHomeForced();
+  keepkey_user_activity();
+
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT / 2);  // nested stall
+  toggle_screensaver();                                // one main-loop pass
+  ASSERT_EQ(AT_HOME, home_get_state());
+  ASSERT_TRUE(session_isPinCached());
+
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT / 2);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+  EXPECT_FALSE(session_isPinCached());
+  layoutHomeForced();
+}
+
+TEST(Fsm, UserActivityRenewsTheAutoLockDeadline) {
+  kk_test_board_init();
+  fsm_init();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  layoutHomeForced();
+  keepkey_user_activity();
+
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  keepkey_user_activity();
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  toggle_screensaver();
+  ASSERT_EQ(AT_HOME, home_get_state());
+
+  advance_clock(1);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+  layoutHomeForced();
+}
+
+// The ms counter wraps after ~49.7 days of uptime; a deadline that straddles
+// the wrap must still expire on time.
+TEST(Fsm, AutoLockDeadlineSurvivesClockWrap) {
+  kk_test_board_init();
+  fsm_init();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  layoutHomeForced();
+  advance_clock(0u - fake_clock_ms - STORAGE_MIN_SCREENSAVER_TIMEOUT / 2);
+  keepkey_user_activity();
+
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  ASSERT_LT(fake_clock_ms, STORAGE_MIN_SCREENSAVER_TIMEOUT) << "no wrap";
+  toggle_screensaver();
+  ASSERT_EQ(AT_HOME, home_get_state());
+
+  advance_clock(1);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
   layoutHomeForced();
 }
 
@@ -399,7 +471,7 @@ TEST(Fsm, SignMessageRefusesTaprootBeforeAnyScreen) {
 TEST_F(AutoLockProgress, FeaturePollingCannotKeepStalledSigningUnlocked) {
   GetFeatures poll = {};
   for (int i = 0; i < 4; ++i) {
-    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT / 4);
+    advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT / 4);
     receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
                    &poll);
     ASSERT_EQ(AWAY_FROM_HOME, home_get_state());
@@ -411,12 +483,12 @@ TEST_F(AutoLockProgress, FeaturePollingCannotKeepStalledSigningUnlocked) {
 }
 
 TEST_F(AutoLockProgress, IncompleteFrameCannotKeepStalledSigningUnlocked) {
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   // Valid Ping header, but its 60-byte payload has not arrived in full.
   uint8_t frame[64] = {'?', '#', '#', 0, 1, 0, 0, 0, 60};
   usb_test_receive(frame, sizeof(frame));
   ASSERT_TRUE(signing_is_active());
-  increment_idle_time(1);
+  advance_clock(1);
   toggle_screensaver();
   EXPECT_FALSE(signing_is_active());
   EXPECT_EQ(SCREENSAVER, home_get_state());
@@ -432,10 +504,10 @@ TEST_F(AutoLockProgress, ValidBitcoinStreamProgressRenewsTheIdleDeadline) {
   ack.tx.inputs[0].prev_hash.size = 32;
   ack.tx.inputs[0].has_script_type = true;
   ack.tx.inputs[0].script_type = InputScriptType_SPENDADDRESS;
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &ack);
   ASSERT_TRUE(signing_is_active());
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   toggle_screensaver();
   ASSERT_TRUE(signing_is_active());
 
@@ -445,10 +517,10 @@ TEST_F(AutoLockProgress, ValidBitcoinStreamProgressRenewsTheIdleDeadline) {
   ack.tx.has_inputs_cnt = ack.tx.has_outputs_cnt = true;
   ack.tx.inputs_cnt = ack.tx.outputs_cnt = 1;
   receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &ack);
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   toggle_screensaver();
   ASSERT_TRUE(signing_is_active());
-  increment_idle_time(1);
+  advance_clock(1);
   toggle_screensaver();
   EXPECT_FALSE(signing_is_active());
   EXPECT_EQ(SCREENSAVER, home_get_state());
@@ -457,20 +529,20 @@ TEST_F(AutoLockProgress, ValidBitcoinStreamProgressRenewsTheIdleDeadline) {
 TEST_F(AutoLockProgress, FeaturePollingAtHomeDoesNotRenewTheIdleDeadline) {
   signing_abort();
   layoutHomeForced();
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   GetFeatures poll = {};
   receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
                  &poll);
-  increment_idle_time(1);
+  advance_clock(1);
   toggle_screensaver();
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
 TEST_F(AutoLockProgress, PingCannotRenewAStalledSigningDeadline) {
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   Ping ping = {};
   receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
-  increment_idle_time(1);
+  advance_clock(1);
   toggle_screensaver();
   EXPECT_FALSE(signing_is_active());
   EXPECT_EQ(SCREENSAVER, home_get_state());
@@ -536,10 +608,10 @@ TEST_F(AutoLockProgress, NewSigningRequestCannotCoexistWithRecovery) {
 }
 
 TEST_F(AutoLockProgress, HostDrivenLayoutChangesDoNotRenewTheDeadline) {
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   layoutHome();
   leave_home();
-  increment_idle_time(1);
+  advance_clock(1);
   toggle_screensaver();
   EXPECT_FALSE(signing_is_active());
   EXPECT_EQ(SCREENSAVER, home_get_state());
@@ -566,7 +638,7 @@ TEST_F(AutoLockProgress, MalformedMultisigAddressCannotRenewTheDeadline) {
   ASSERT_TRUE(signing_is_active());
   leave_home();
 
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   GetAddress malformed = {};
   malformed.has_multisig = true;
   fsm_test_clearLastFailure();
@@ -574,21 +646,21 @@ TEST_F(AutoLockProgress, MalformedMultisigAddressCannotRenewTheDeadline) {
                  &malformed);
   EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode())
       << "the request must reach the multisig rejection, not an earlier gate";
-  increment_idle_time(1);
+  advance_clock(1);
   toggle_screensaver();
   EXPECT_FALSE(signing_is_active());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
 TEST_F(AutoLockProgress, InvalidBitcoinAckEndsTheStream) {
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   TxAck invalid = {};
   invalid.has_tx = true;
   // Decodable protobuf, but the required 32-byte previous hash is missing.
   invalid.tx.inputs_count = 1;
   receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &invalid);
   EXPECT_FALSE(signing_is_active());
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT);
   toggle_screensaver();
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
@@ -600,20 +672,20 @@ TEST_F(AutoLockProgress, RecoveryEditsRenewButPollingAndEmptyDeleteDoNot) {
                        STORAGE_MIN_SCREENSAVER_TIMEOUT, 0, false);
   ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
   ASSERT_EQ(0, kkconfirm_drain());
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   CharacterAck character = {};
   character.has_character = true;
   character.character[0] = 'a';  // Every a-z character belongs to the cipher.
   receiveMessage(MessageType_MessageType_CharacterAck, CharacterAck_fields,
                  &character);
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   toggle_screensaver();
   ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
   character = {};
   character.has_delete = character.del = true;
   receiveMessage(MessageType_MessageType_CharacterAck, CharacterAck_fields,
                  &character);
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   toggle_screensaver();
   ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
   // The mnemonic is now empty: another delete makes no progress.
@@ -622,7 +694,7 @@ TEST_F(AutoLockProgress, RecoveryEditsRenewButPollingAndEmptyDeleteDoNot) {
   GetFeatures poll = {};
   receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
                  &poll);
-  increment_idle_time(1);
+  advance_clock(1);
   toggle_screensaver();
   EXPECT_FALSE(setup_isArmed());
   EXPECT_EQ(SCREENSAVER, home_get_state());

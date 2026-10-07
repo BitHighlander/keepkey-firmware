@@ -30,6 +30,23 @@
 static HomeState home_state = AT_HOME;
 
 static uint32_t idle_time = 0;
+/* home_clock_ms() when idle_time was last brought up to date. */
+static uint32_t idle_clock = 0;
+
+/* Weak only so unit tests can drive the clock without the 1 ms tick. */
+__attribute__((weak)) uint32_t home_clock_ms(void) { return getSysTime(); }
+
+static void increment_idle_time(uint32_t increment_ms);
+
+/* Count real elapsed time, including time spent nested in a long wait (a U2F
+ * frame, a PIN or confirm prompt) that never returns to the main loop. The
+ * unsigned difference survives the ms counter's ~49.7-day wrap as long as
+ * samples are taken less than that far apart. */
+static void update_idle_time(void) {
+  const uint32_t now = home_clock_ms();
+  increment_idle_time(now - idle_clock);
+  idle_clock = now;
+}
 
 void keepkey_user_activity(void) { reset_idle_time(); }
 
@@ -118,6 +135,8 @@ void leave_home(void) {
  *     none
  */
 void toggle_screensaver(void) {
+  update_idle_time();
+
   /* Auto-lock is a session boundary even while the device is waiting for the
    * host between streamed signing messages.  Confirmation handlers block the
    * main loop, so this check cannot interrupt a button hold; AWAY_FROM_HOME
@@ -165,7 +184,7 @@ void toggle_screensaver(void) {
  * OUTPUT
  *     none
  */
-void increment_idle_time(uint32_t increment_ms) {
+static void increment_idle_time(uint32_t increment_ms) {
   /* Saturate: a wrap after ~49.7 days idle would read as fresh activity and
    * wake the locked screen. Only reset_idle_time() may lower it. */
   idle_time = (increment_ms > UINT32_MAX - idle_time)
@@ -181,7 +200,10 @@ void increment_idle_time(uint32_t increment_ms) {
  * OUTPUT
  *     none
  */
-void reset_idle_time(void) { idle_time = 0; }
+void reset_idle_time(void) {
+  idle_time = 0;
+  idle_clock = home_clock_ms();
+}
 
 /*
  * Renew the deadline only after a workflow accepts a signing stage or a real
