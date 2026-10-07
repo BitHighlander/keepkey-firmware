@@ -146,6 +146,21 @@ jobs:
           run_id = os.environ['CI_RUN_ID']
           if not manifest.get('run_url', '').endswith('/' + run_id):
               raise SystemExit('presign manifest names a different CI run')
+          # Capability-gated controls may skip on a staged block, never in a
+          # release: a build that stops reporting a capability would otherwise
+          # ship with that capability's security tests silently skipped. The
+          # required set per release is defined in generate-test-report.py.
+          gaps = manifest.get('release_capability_gaps')
+          if not isinstance(gaps, dict):
+              raise SystemExit('presign manifest has no release capability check')
+          for product in ('full', 'bitcoin-only'):
+              if gaps.get(product) is None:
+                  raise SystemExit('no release capability list for this '
+                                   'version (%s)' % product)
+              if gaps[product]:
+                  raise SystemExit('release evidence skipped required '
+                                   'capabilities (%s): %s'
+                                   % (product, ', '.join(gaps[product])))
           pdf = report_dir / manifest['pdf']['path']
           if digest(pdf) != manifest['pdf']['sha256']:
               raise SystemExit('presign PDF hash mismatch')

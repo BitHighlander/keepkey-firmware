@@ -420,6 +420,42 @@ def release_missing_capabilities(cases):
     return missing_capabilities
 
 
+# What each release must report, per product. Defined here, reviewed with the
+# release, and NOT read from the firmware: a build that drops a capability
+# from its own list must not also drop it from what the release requires.
+# Capabilities of later releases (e.g. 7.16's permit2-review) are absent.
+RELEASE_CAPABILITIES = {
+    "7.15.0": {
+        "bitcoin-only": frozenset((
+            "entropy-audit-budget", "prompt-workflow-unwind",
+            "protected-ping-presence", "safe-reset-ceremony",
+            "session-trust-lifetime",
+        )),
+        "full": frozenset((
+            "entropy-audit-budget", "prompt-workflow-unwind",
+            "protected-ping-presence", "safe-reset-ceremony",
+            "session-trust-lifetime", "legacy-evm-router-signing",
+            "thor-deposit-review", "evm-max-amount-review",
+            "evm-unknown-token-review", "evm-tx-metadata",
+            "erc7730-runtime-review", "osmosis-wire-guards",
+            "ripple-memo-policy", "hive-release-review",
+            "solana-runtime-review", "maya-single-message",
+            "tendermint-progress", "tron-trc20-review",
+            "solana-lut-attestation",
+        )),
+    },
+}
+
+
+def release_capability_gaps(fw_version, product, missing):
+    """Required capabilities whose controls were skipped. None when this
+    version has no release list, which release.yml also refuses."""
+    required = RELEASE_CAPABILITIES.get(fw_version, {}).get(product)
+    if required is None:
+        return None
+    return sorted(required & missing)
+
+
 def validate_cases(cases):
     failures = [case for case in cases
                 if case["status"] in ("fail", "error")]
@@ -688,6 +724,14 @@ def main():
     validate_cases(cases)
     # The capabilities the firmware did not report, from the JUnit skips.
     missing_capabilities = release_missing_capabilities(cases)
+    # The bitcoin-only suite's skips count too: release.yml refuses a release
+    # whose required capabilities were skipped in either product.
+    btc_junit = (ROOT / "test-reports" / "bitcoin-only" / "python-keepkey" /
+                 "junit.xml")
+    if not btc_junit.is_file():
+        fail("bitcoin-only JUnit missing: %s" % btc_junit)
+    btc_cases, _ = merge_junit([btc_junit])
+    btc_missing_capabilities = release_missing_capabilities(btc_cases)
     contract_inputs = validate_contract_junit(ROOT, missing_capabilities)
     contract_inputs += validate_native_contract_junit(ROOT, missing_capabilities)
 
@@ -772,6 +816,16 @@ def main():
             "contract_inputs": contract_inputs,
             "merged_sha256": sha256_file(MERGED_JUNIT),
             "skips": [case for case in cases if case["status"] == "skip"],
+        },
+        # A staged block may lack capabilities; a release may not.
+        # release.yml refuses evidence where this list is non-empty.
+        "missing_capabilities": sorted(missing_capabilities),
+        "missing_capabilities_bitcoin_only": sorted(btc_missing_capabilities),
+        "release_capability_gaps": {
+            "full": release_capability_gaps(
+                fw_version, "full", missing_capabilities),
+            "bitcoin-only": release_capability_gaps(
+                fw_version, "bitcoin-only", btc_missing_capabilities),
         },
         "oled": {
             "frame_count": len(pngs),

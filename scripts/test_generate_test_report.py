@@ -16,6 +16,32 @@ report = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(report)
 
 
+class ReleaseCapabilities(unittest.TestCase):
+    """A release must not ship with a required capability's controls skipped,
+    in either product; a staged block may lack later capabilities."""
+
+    def test_lists_are_known_and_bitcoin_only_is_a_subset(self):
+        for lists in report.RELEASE_CAPABILITIES.values():
+            self.assertLessEqual(lists["full"], report.KNOWN_CAPABILITIES)
+            self.assertLessEqual(lists["bitcoin-only"], lists["full"])
+
+    def test_a_skipped_required_capability_is_a_gap_in_either_product(self):
+        for product in ("full", "bitcoin-only"):
+            self.assertEqual(
+                ["safe-reset-ceremony"],
+                report.release_capability_gaps(
+                    "7.15.0", product, {"safe-reset-ceremony"}))
+
+    def test_later_release_capabilities_and_full_only_ones_are_not_gaps(self):
+        self.assertEqual([], report.release_capability_gaps(
+            "7.15.0", "full", {"permit2-review"}))
+        self.assertEqual([], report.release_capability_gaps(
+            "7.15.0", "bitcoin-only", {"hive-release-review"}))
+
+    def test_a_version_without_a_list_has_no_verdict(self):
+        self.assertIsNone(report.release_capability_gaps("9.9.9", "full", set()))
+
+
 class ContractEvidence(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
