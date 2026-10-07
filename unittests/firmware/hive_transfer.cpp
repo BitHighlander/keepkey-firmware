@@ -1,20 +1,27 @@
 extern "C" {
+#include "keepkey/board/keepkey_display.h"
+#include "keepkey/board/layout.h"
 #include "keepkey/board/memory.h"
+#include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/hive.h"
 #include "keepkey/firmware/storage.h"
 #include "trezor/crypto/curves.h"
 #include "trezor/crypto/ecdsa.h"
+#include "trezor/crypto/memzero.h"
 #include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha2.h"
 }
 
 #include "gtest/gtest.h"
 #include <cstring>
+#include <string>
 #include <vector>
 
 bool kkconfirm_preload(int, int);
 int kkconfirm_drain(void);
+void kkconfirm_capture_start(void);
+std::vector<std::string> kkconfirm_capture_finish(void);
 
 static HiveSignTx transfer_request() {
   HiveSignTx msg = {};
@@ -476,6 +483,83 @@ TEST(Hive, PublicKeyHandlersRejectNonHivePathsAndAliasedAccounts) {
   fsm_msgHiveGetPublicKeys(&keys);
   EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
   EXPECT_EQ(0, kkconfirm_drain());
+}
+
+namespace {
+std::vector<std::vector<uint8_t>> frames;
+void record_frame(const uint8_t* buffer) {
+  const Canvas* canvas = layout_get_canvas();
+  frames.emplace_back(buffer, buffer + canvas->width * canvas->height);
+}
+std::vector<uint8_t> standard_screen(const char* title, const char* body) {
+  layout_standard_notification(title, body, NOTIFICATION_REQUEST);
+  const Canvas* canvas = layout_get_canvas();
+  return std::vector<uint8_t>(canvas->buffer,
+                              canvas->buffer + canvas->width * canvas->height);
+}
+}  // namespace
+
+// A 53-character STM key overflows the address layout's text area, which
+// clips it. Every page must instead be the standard body screen, which the
+// pager has measured, and the pages together must be the whole key.
+TEST(Hive, ShowDisplayRendersTheCompleteKey) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  HiveScopedFlash flash;
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+
+  HDNode root = {};
+  ASSERT_TRUE(storage_getRootNode(SECP256K1_NAME, true, &root));
+  char expected[4][64];
+  ASSERT_TRUE(hive_getPublicKeys(&root, 0, expected[0], 64, expected[1], 64,
+                                 expected[2], 64, expected[3], 64));
+  memzero(&root, sizeof(root));
+  const std::string key = expected[0];
+  ASSERT_EQ(53u, key.size());
+
+  std::vector<std::string> pages;
+  for (size_t offset = 0; offset < key.size();) {
+    char page[BODY_CHAR_MAX];
+    const size_t take =
+        confirm_bytes_format_page((const uint8_t*)key.data() + offset,
+                                  key.size() - offset, page, sizeof(page));
+    ASSERT_GT(take, 0u);
+    pages.emplace_back(page);
+    offset += take;
+  }
+
+  HiveGetPublicKey msg = {};
+  const uint32_t path[5] = {HIVE_SLIP48_PURPOSE, HIVE_SLIP48_NETWORK,
+                            HIVE_ROLE_OWNER, 0x80000000u, 0x80000000u};
+  msg.address_n_count = 5;
+  memcpy(msg.address_n, path, sizeof(path));
+  msg.has_show_display = msg.show_display = true;
+
+  ASSERT_TRUE(kkconfirm_preload((int)pages.size(), 0));
+  frames.clear();
+  display_set_dump_callback(record_frame);
+  kkconfirm_capture_start();
+  fsm_test_clearLastFailure();
+  fsm_msgHiveGetPublicKey(&msg);
+  const auto screens = kkconfirm_capture_finish();
+  display_set_dump_callback(nullptr);
+  EXPECT_EQ(0, fsm_test_lastFailureCode());
+  EXPECT_EQ(0, kkconfirm_drain());
+  ASSERT_EQ(pages, screens);
+
+  for (size_t i = 0; i < pages.size(); i++) {
+    SCOPED_TRACE(i);
+    std::string title = "Hive Owner Key";
+    if (pages.size() > 1)
+      title += " " + std::to_string(i + 1) + "/" + std::to_string(pages.size());
+    const auto reference = standard_screen(title.c_str(), pages[i].c_str());
+    bool shown = false;
+    for (const auto& frame : frames) shown = shown || frame == reference;
+    EXPECT_TRUE(shown) << "page not drawn by the measured body renderer";
+  }
 }
 
 // hive_deriveRawKey derives only a SLIP-0048 Hive role key: an unknown role or
