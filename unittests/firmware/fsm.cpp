@@ -369,6 +369,33 @@ TEST(Fsm, WrongPinAfterAutoLockDoesNotRenewTheDeadline) {
   layoutHomeForced();
 }
 
+// An ECDSA message signature has no taproot form; labelling one with a bc1p
+// address yields a signature that can never verify.
+TEST(Fsm, SignMessageRefusesTaprootBeforeAnyScreen) {
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  ScopedFlash flash;
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  storage_commit();
+
+  SignMessage msg = {};
+  const uint32_t path[] = {0x80000056, 0x80000000, 0x80000000, 0, 0};
+  std::memcpy(msg.address_n, path, sizeof(path));
+  msg.address_n_count = 5;
+  msg.message.size = 5;
+  std::memcpy(msg.message.bytes, "hello", 5);
+  msg.has_script_type = true;
+  msg.script_type = InputScriptType_SPENDTAPROOT;
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_SignMessage, SignMessage_fields, &msg);
+
+  EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+  EXPECT_EQ(2, kkconfirm_drain())  // one screen's ButtonAck + decision
+      << "no confirmation may be shown";
+}
+
 TEST_F(AutoLockProgress, FeaturePollingCannotKeepStalledSigningUnlocked) {
   GetFeatures poll = {};
   for (int i = 0; i < 4; ++i) {
