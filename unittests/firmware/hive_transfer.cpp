@@ -3,9 +3,11 @@ extern "C" {
 #include "keepkey/board/layout.h"
 #include "keepkey/board/memory.h"
 #include "keepkey/firmware/app_confirm.h"
+#include "keepkey/firmware/app_layout.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/hive.h"
 #include "keepkey/firmware/storage.h"
+#include "qrenc/qrcodegen.h"
 #include "trezor/crypto/curves.h"
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/memzero.h"
@@ -501,7 +503,8 @@ std::vector<uint8_t> standard_screen(const char* title, const char* body) {
 
 // A 53-character STM key overflows the address layout's text area, which
 // clips it. Every page must instead be the standard body screen, which the
-// pager has measured, and the pages together must be the whole key.
+// pager has measured, and the pages together must be the whole key. A QR of
+// the same key follows on its own screen.
 TEST(Hive, ShowDisplayRendersTheCompleteKey) {
   ASSERT_TRUE(kkconfirm_preload(0, 0));
   ASSERT_EQ(0, kkconfirm_drain());
@@ -538,7 +541,7 @@ TEST(Hive, ShowDisplayRendersTheCompleteKey) {
   memcpy(msg.address_n, path, sizeof(path));
   msg.has_show_display = msg.show_display = true;
 
-  ASSERT_TRUE(kkconfirm_preload((int)pages.size(), 0));
+  ASSERT_TRUE(kkconfirm_preload((int)pages.size() + 1, 0));
   frames.clear();
   display_set_dump_callback(record_frame);
   kkconfirm_capture_start();
@@ -548,7 +551,9 @@ TEST(Hive, ShowDisplayRendersTheCompleteKey) {
   display_set_dump_callback(nullptr);
   EXPECT_EQ(0, fsm_test_lastFailureCode());
   EXPECT_EQ(0, kkconfirm_drain());
-  ASSERT_EQ(pages, screens);
+  std::vector<std::string> expected_screens = pages;
+  expected_screens.push_back(key);
+  ASSERT_EQ(expected_screens, screens);
 
   for (size_t i = 0; i < pages.size(); i++) {
     SCOPED_TRACE(i);
@@ -560,6 +565,29 @@ TEST(Hive, ShowDisplayRendersTheCompleteKey) {
     for (const auto& frame : frames) shown = shown || frame == reference;
     EXPECT_TRUE(shown) << "page not drawn by the measured body renderer";
   }
+
+  // Independent QR of the key (layout_address()'s large-code parameters):
+  // some frame must carry exactly these modules where the QR is drawn.
+  uint8_t code[qrcodegen_BUFFER_LEN_MAX], temp[qrcodegen_BUFFER_LEN_MAX];
+  ASSERT_TRUE(qrcodegen_encodeText(key.c_str(), temp, code, qrcodegen_Ecc_LOW,
+                                   8, 9, qrcodegen_Mask_AUTO, true));
+  const int side = qrcodegen_getSize(code);
+  const int width = layout_get_canvas()->width;
+  bool qr_shown = false;
+  for (const auto& frame : frames) {
+    bool match = true;
+    for (int i = 0; match && i < side; i++) {
+      for (int j = 0; match && j < side; j++) {
+        const int x = QR_DISPLAY_SCALE + (i + QR_DISPLAY_X) * QR_DISPLAY_SCALE;
+        const int y =
+            QR_DISPLAY_SCALE + (j + QR_DISPLAY_Y - 4) * QR_DISPLAY_SCALE;
+        match = frame[y * width + x] ==
+                (qrcodegen_getModule(code, i, j) ? 0x00 : 0xFF);
+      }
+    }
+    qr_shown = qr_shown || match;
+  }
+  EXPECT_TRUE(qr_shown) << "no screen shows a QR of the key";
 }
 
 // hive_deriveRawKey derives only a SLIP-0048 Hive role key: an unknown role or
