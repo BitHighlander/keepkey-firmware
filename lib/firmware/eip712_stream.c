@@ -1200,6 +1200,13 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
     case PH_MEMBER: {
       Eip712Frame* f = &e712.stack[e712.depth - 1];
       f->member_count = (uint8_t)ack->members_count;
+      /* A nested member-less struct has no leaf to show, so its presence, or
+       * an array's element count of it, would be signed unseen. An empty
+       * root is named on the final screen and flagged there as empty. */
+      if (f->member_count == 0 && e712.depth > 1) {
+        fail("EIP-712 struct has no members");
+        return false;
+      }
       if (f->member_index >= f->member_count) {
         complete_frame();
         return true;

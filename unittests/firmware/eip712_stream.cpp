@@ -1147,6 +1147,30 @@ TEST(Eip712Stream, EmptyArraysAreReviewedWithPathAndType) {
   }
 }
 
+// A struct without members has no screen of its own: as a member, or as the
+// element of an array whose length then goes unseen, it would be signed blind.
+TEST(Eip712Stream, StructsWithoutMembersAreRefused) {
+  Field single = structField("Z");
+  Field many = structField("Z");
+  many.array_levels_count = 1;
+  for (const Field& pad : {single, many}) {
+    std::map<std::string, Struct> types;
+    addMember(types["Msg"], "contents",
+              mk(EthereumTypedDataStructAck_EthereumDataType_STRING));
+    addMember(types["Msg"], "pad", pad);
+    types["Z"];  // declared, no members
+    walk(
+        "Msg", types,
+        [](const std::vector<uint32_t>& path) -> Bytes {
+          if (path.size() == 2 && path[1] == 0) return Bytes{'h', 'i'};
+          return Bytes{0, 5};
+        },
+        8);
+    EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
+    eip712_stream_abort();
+  }
+}
+
 TEST(Eip712Stream, RejectingAnEmptyArrayCancelsTheSignature) {
   std::map<std::string, Struct> types;
   Field recipients = mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS);
