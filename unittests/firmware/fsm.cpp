@@ -1625,8 +1625,8 @@ TEST_F(AutoLockProgress, EosDataProgressRenewsButEmptyChunksDoNot) {
 #endif
 
 // Drive the real protobuf dispatch at the old deadline. Each initial request
-// must buy a fresh interval; polling during the next interval must not.
-TEST_F(AutoLockProgress, ResetEntropyRequestRenewsButPollingDoesNot) {
+// defers the lock for one interval; polling during it must not.
+TEST_F(AutoLockProgress, ResetEntropyRequestDefersButPollingDoesNot) {
   ScopedFlash flash;
   signing_abort();
   storage_reset();
@@ -1655,8 +1655,8 @@ TEST_F(AutoLockProgress, ResetEntropyRequestRenewsButPollingDoesNot) {
 }
 
 #if !BITCOIN_ONLY
-// A signer's start renews the idle deadline; a GetFeatures poll does not.
-static void expectStartRenewsButPollingDoesNot(MessageType type,
+// A signer's start defers the idle lock; a GetFeatures poll does not.
+static void expectStartDefersButPollingDoesNot(MessageType type,
                                                const pb_field_t* fields,
                                                const void* start,
                                                bool (*inited)()) {
@@ -1681,26 +1681,26 @@ static void expectStartRenewsButPollingDoesNot(MessageType type,
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-TEST_F(AutoLockProgress, BinanceStartRenewsButPollingDoesNot) {
+TEST_F(AutoLockProgress, BinanceStartDefersButPollingDoesNot) {
   BinanceSignTx start = {};
   start.has_msg_count = true;
   start.msg_count = 2;
   start.has_account_number = start.has_chain_id = start.has_sequence = true;
   start.has_source = true;
   std::strcpy(start.chain_id, "Binance-Chain-Nile");
-  expectStartRenewsButPollingDoesNot(MessageType_MessageType_BinanceSignTx,
+  expectStartDefersButPollingDoesNot(MessageType_MessageType_BinanceSignTx,
                                      BinanceSignTx_fields, &start,
                                      binance_signingIsInited);
 }
 
-TEST_F(AutoLockProgress, CosmosStartRenewsButPollingDoesNot) {
+TEST_F(AutoLockProgress, CosmosStartDefersButPollingDoesNot) {
   CosmosSignTx start = {};
   start.has_msg_count = true;
   start.msg_count = 2;
   start.has_account_number = start.has_chain_id = start.has_sequence = true;
   std::strcpy(start.chain_id, "chain-1");
   start.has_fee_amount = start.has_gas = true;
-  expectStartRenewsButPollingDoesNot(
+  expectStartDefersButPollingDoesNot(
       MessageType_MessageType_CosmosSignTx, CosmosSignTx_fields, &start,
       [] { return tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS); });
 }
@@ -1728,43 +1728,43 @@ TEST_F(AutoLockProgress, UnregisteredTendermintCannotRenewTheDeadline) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-TEST_F(AutoLockProgress, OsmosisStartRenewsButPollingDoesNot) {
+TEST_F(AutoLockProgress, OsmosisStartDefersButPollingDoesNot) {
   OsmosisSignTx start = {};
   start.has_msg_count = true;
   start.msg_count = 2;
   start.has_account_number = start.has_chain_id = start.has_sequence = true;
   std::strcpy(start.chain_id, "chain-1");
   start.has_fee_amount = start.has_gas = true;
-  expectStartRenewsButPollingDoesNot(MessageType_MessageType_OsmosisSignTx,
+  expectStartDefersButPollingDoesNot(MessageType_MessageType_OsmosisSignTx,
                                      OsmosisSignTx_fields, &start,
                                      osmosis_signingIsInited);
 }
 
-TEST_F(AutoLockProgress, ThorchainStartRenewsButPollingDoesNot) {
+TEST_F(AutoLockProgress, ThorchainStartDefersButPollingDoesNot) {
   ThorchainSignTx start = {};
   start.has_msg_count = true;
   start.msg_count = 2;
   start.has_account_number = start.has_chain_id = start.has_sequence = true;
   std::strcpy(start.chain_id, "chain-1");
   start.has_fee_amount = start.has_gas = true;
-  expectStartRenewsButPollingDoesNot(MessageType_MessageType_ThorchainSignTx,
+  expectStartDefersButPollingDoesNot(MessageType_MessageType_ThorchainSignTx,
                                      ThorchainSignTx_fields, &start,
                                      thorchain_signingIsInited);
 }
 
-TEST_F(AutoLockProgress, MayachainStartRenewsButPollingDoesNot) {
+TEST_F(AutoLockProgress, MayachainStartDefersButPollingDoesNot) {
   MayachainSignTx start = {};
   start.has_msg_count = true;
   start.msg_count = 2;
   start.has_account_number = start.has_chain_id = start.has_sequence = true;
   std::strcpy(start.chain_id, "chain-1");
   start.has_fee_amount = start.has_gas = true;
-  expectStartRenewsButPollingDoesNot(MessageType_MessageType_MayachainSignTx,
+  expectStartDefersButPollingDoesNot(MessageType_MessageType_MayachainSignTx,
                                      MayachainSignTx_fields, &start,
                                      mayachain_signingIsInited);
 }
 
-TEST_F(AutoLockProgress, BinanceContinuationRenewsAndMalformedAckTerminates) {
+TEST_F(AutoLockProgress, BinanceContinuationDefersAndMalformedAckTerminates) {
   ScopedFlash flash;
   loadAllWallet();
   BinanceSignTx start = {};
@@ -1793,7 +1793,10 @@ TEST_F(AutoLockProgress, BinanceContinuationRenewsAndMalformedAckTerminates) {
   std::strcpy(ack.outputs[0].coins[0].denom, "BNB");
   for (int i = 0; i < 2; ++i) {
     ASSERT_TRUE(kkconfirm_preload(1, 0));
-    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+    // No press renews the deadline, so each continuation must land inside the
+    // window its predecessor's progress opened (one delay after it, the
+    // stalled stream is locked at dispatch).
+    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1 - i);
     receiveMessage(MessageType_MessageType_BinanceTransferMsg,
                    BinanceTransferMsg_fields, &ack);
     ASSERT_EQ(0, kkconfirm_drain());
@@ -1812,7 +1815,7 @@ TEST_F(AutoLockProgress, BinanceContinuationRenewsAndMalformedAckTerminates) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-TEST_F(AutoLockProgress, CosmosContinuationRenewsAndMalformedAckTerminates) {
+TEST_F(AutoLockProgress, CosmosContinuationDefersAndMalformedAckTerminates) {
   ScopedFlash flash;
   loadAllWallet();
   CosmosSignTx start = {};
@@ -1834,7 +1837,10 @@ TEST_F(AutoLockProgress, CosmosContinuationRenewsAndMalformedAckTerminates) {
   ASSERT_TRUE(tendermint_getAddress(&recipient, "cosmos", ack.send.to_address));
   for (int i = 0; i < 2; ++i) {
     ASSERT_TRUE(kkconfirm_preload(1, 0));
-    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+    // No press renews the deadline, so each continuation must land inside the
+    // window its predecessor's progress opened (one delay after it, the
+    // stalled stream is locked at dispatch).
+    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1 - i);
     receiveMessage(MessageType_MessageType_CosmosMsgAck, CosmosMsgAck_fields,
                    &ack);
     ASSERT_EQ(0, kkconfirm_drain());
@@ -1853,7 +1859,7 @@ TEST_F(AutoLockProgress, CosmosContinuationRenewsAndMalformedAckTerminates) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-TEST_F(AutoLockProgress, OsmosisContinuationRenewsAndMalformedAckTerminates) {
+TEST_F(AutoLockProgress, OsmosisContinuationDefersAndMalformedAckTerminates) {
   ScopedFlash flash;
   loadAllWallet();
   OsmosisSignTx start = {};
@@ -1877,7 +1883,10 @@ TEST_F(AutoLockProgress, OsmosisContinuationRenewsAndMalformedAckTerminates) {
   std::strcpy(ack.send.denom, "uosmo");
   for (int i = 0; i < 2; ++i) {
     ASSERT_TRUE(kkconfirm_preload(1, 0));
-    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+    // No press renews the deadline, so each continuation must land inside the
+    // window its predecessor's progress opened (one delay after it, the
+    // stalled stream is locked at dispatch).
+    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1 - i);
     receiveMessage(MessageType_MessageType_OsmosisMsgAck, OsmosisMsgAck_fields,
                    &ack);
     ASSERT_EQ(0, kkconfirm_drain());
@@ -1896,12 +1905,12 @@ TEST_F(AutoLockProgress, OsmosisContinuationRenewsAndMalformedAckTerminates) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-TEST_F(AutoLockProgress, EosStartRenewsButPollingDoesNot) {
+TEST_F(AutoLockProgress, EosStartDefersButPollingDoesNot) {
   EosSignTx start = {};
   start.has_chain_id = start.has_header = start.has_num_actions = true;
   start.chain_id.size = 32;
   start.num_actions = 2;
-  expectStartRenewsButPollingDoesNot(MessageType_MessageType_EosSignTx,
+  expectStartDefersButPollingDoesNot(MessageType_MessageType_EosSignTx,
                                      EosSignTx_fields, &start,
                                      eos_signingIsInited);
 }
