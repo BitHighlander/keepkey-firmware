@@ -145,20 +145,24 @@ void fsm_msgGetCoinTable(GetCoinTable* msg) {
   const size_t coin_table_count = COINS_COUNT + TOKENS_COUNT;
 #endif
 
-  CHECK_PARAM(msg->has_start == msg->has_end,
-              "Incorrect GetCoinTable parameters");
-
   resp->has_chunk_size = true;
   resp->chunk_size = sizeof(resp->table) / sizeof(resp->table[0]);
 
-  if (msg->has_start && msg->has_end) {
-    if (coin_table_count <= msg->start || coin_table_count < msg->end ||
-        msg->end < msg->start || resp->chunk_size < msg->end - msg->start) {
-      fsm_sendFailure(FailureType_Failure_Other,
-                      "Incorrect GetCoinTable parameters");
+  if (msg->has_start != msg->has_end ||
+      (msg->has_start &&
+       (coin_table_count <= msg->start || coin_table_count < msg->end ||
+        msg->end < msg->start || resp->chunk_size < msg->end - msg->start))) {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    "Incorrect GetCoinTable parameters");
+    /* The gate lets GetCoinTable through mid-workflow (CHECK_PARAM would go
+     * home), so a malformed one must not hide an armed recovery cipher, an
+     * armed reset or a signer's screen. Same rule as fsm_msgPing(). */
+    if (setup_isArmedAs(SETUP_RECOVERY)) {
+      recovery_cipher_redraw();
+    } else if (!fsm_workflowInProgress()) {
       layoutHome();
-      return;
     }
+    return;
   }
 
   resp->has_num_coins = true;
