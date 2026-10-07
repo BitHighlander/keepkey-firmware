@@ -697,9 +697,8 @@ bool zcashSignatureEmitted(const std::vector<uint16_t>& ids) {
 // Real spends are signed in action order into a compact list; the dummy
 // between them is verified but never signed. Each signature verifies under
 // the rk the device derives for its own ak and that action's alpha, and the
-// order matters. A host rk that is not the device's, or a failed RNG verdict,
-// aborts before any signature is released, although earlier actions already
-// signed internally.
+// order matters. A host rk that is not the device's aborts while streaming; a
+// failed RNG verdict aborts at the final gate. Neither releases a signature.
 TEST_F(ReviewHandlers, ZcashRealSpendsReleaseOnlyCompactVerifiedSignatures) {
   ZcashOrchardKeys keys;
   ASSERT_TRUE(storage_zcashOrchardKeys(0, true, &keys));
@@ -801,10 +800,9 @@ std::vector<uint8_t> zcashP2pkh(const std::vector<uint8_t>& pubkey) {
 }  // namespace
 
 // A hybrid (shielding) session: the P2PKH input's path, account and script
-// are checked against the session, its ECDSA signature is made and held
-// pending, and it is released only after the Orchard digest and the verified
-// fee pass and the fee screen is approved. Every refusal releases neither
-// signature response.
+// are checked against the session while streaming; its ECDSA signature is made
+// only after the Orchard digest and the verified fee pass and the fee screen is
+// approved, then released. Every refusal releases neither signature response.
 TEST_F(ReviewHandlers, ZcashHybridReleasesTransparentSignaturesLast) {
   const auto pubkey = zcashTransparentPubkey(0);
   const auto script = zcashP2pkh(pubkey);
@@ -871,8 +869,8 @@ TEST_F(ReviewHandlers, ZcashHybridReleasesTransparentSignaturesLast) {
       zcashSet(input.script_pubkey, script);
     }
 
-    // The two-page summary, the input, the two output screens, then the fee.
-    ASSERT_TRUE(kkconfirm_preload(c == kFeeCancelled ? 5 : 6,
+    // The two-page summary, the two output screens, the fee, then the input.
+    ASSERT_TRUE(kkconfirm_preload(c == kFeeCancelled ? 4 : 6,
                                   c == kFeeCancelled ? 1 : 0));
     fsm_test_clearLastFailure();
     fsm_msgZcashSignPCZT(&msg);
@@ -929,6 +927,100 @@ TEST_F(ReviewHandlers, ZcashHybridReleasesTransparentSignaturesLast) {
                                     transparent.signatures[0].size, sig));
     EXPECT_EQ(0, ecdsa_verify_digest(&secp256k1, pubkey.data(), sig, sighash));
   }
+}
+
+// Verify before sign: no RedPallas or transparent ECDSA operation runs until
+// the final gate has recomputed the bundle digest, so a host whose claimed
+// orchard_digest differs from the streamed actions gets no signature and no
+// signing operation at all. The accepted control signs only at the gate.
+TEST_F(ReviewHandlers, ZcashSignsNothingBeforeTheFinalGate) {
+  ZcashOrchardKeys keys;
+  ASSERT_TRUE(storage_zcashOrchardKeys(0, true, &keys));
+  const auto pubkey = zcashTransparentPubkey(0);
+  const auto script = zcashP2pkh(pubkey);
+  const std::vector<uint8_t> txid(32, 0xab);
+  const uint64_t amount = 100000;
+  const int64_t value_balance = -90000;
+
+  ZcashTransparentInputDigestInfo info = {};
+  info.prevout_txid = txid.data();
+  info.prevout_index = 1;
+  info.sequence = 0xffffffff;
+  info.value = amount;
+  info.script_pubkey = script.data();
+  info.script_pubkey_size = script.size();
+  uint8_t transparent_digest[32];
+  ASSERT_TRUE(zcash_compute_orchard_transparent_sig_digest(&info, 1, NULL, 0,
+                                                           transparent_digest));
+
+  std::vector<ZcashPCZTAction> actions = {
+      zcashNoteAction(0, kZcashOrchardNoteVectors[0]),
+      zcashNoteAction(1, kZcashOrchardNoteVectors[1])};
+  for (uint32_t i = 0; i < actions.size(); i++) {
+    actions[i].is_spend = true;
+    zcashSet(actions[i].alpha, std::vector<uint8_t>(32, uint8_t(0x21 + i)));
+    std::vector<uint8_t> rk(32);
+    ASSERT_EQ(0, redpallas_derive_rk_from_ak(keys.ak, actions[i].alpha.bytes,
+                                             rk.data()));
+    zcashSet(actions[i].rk, rk);
+  }
+  uint8_t digest[32];
+  zcashBundleDigest(actions, value_balance, digest);
+
+  for (bool tampered : {true, false}) {
+    SCOPED_TRACE(tampered);
+    ZcashSignPCZT msg =
+        zcashSignRequest(2, digest, value_balance, amount + value_balance);
+    if (tampered) msg.orchard_digest.bytes[0] ^= 1;
+    msg.has_n_transparent_inputs = true;
+    msg.n_transparent_inputs = 1;
+    msg.has_transparent_digest = true;
+    msg.transparent_digest.size = 32;
+    std::memcpy(msg.transparent_digest.bytes, transparent_digest, 32);
+
+    ZcashTransparentInput input = {};
+    input.address_n_count = 5;
+    const uint32_t path[] = {0x80000000u | 44, 0x80000000u | 133, 0x80000000u,
+                             0, 0};
+    std::memcpy(input.address_n, path, sizeof(path));
+    input.has_amount = input.has_prevout_txid = input.has_prevout_index =
+        input.has_sequence = input.has_script_pubkey = true;
+    input.amount = amount;
+    zcashSet(input.prevout_txid, txid);
+    input.prevout_index = info.prevout_index;
+    input.sequence = info.sequence;
+    zcashSet(input.script_pubkey, script);
+
+    // Two-page summary, two screens per output, the fee, then the input.
+    ASSERT_TRUE(kkconfirm_preload(8, 0));
+    fsm_test_clearLastFailure();
+    zcash_test_clearSignOperations();
+    fsm_msgZcashSignPCZT(&msg);
+    fsm_msgZcashTransparentInput(&input);
+    ZcashPCZTAction first = actions[0];
+    fsm_msgZcashPCZTAction(&first);
+    ASSERT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
+        << fsm_test_lastFailureMessage();
+    EXPECT_EQ(0u, zcash_test_signOperations())
+        << "signed before the final gate";
+
+    ZcashPCZTAction last = actions[1];
+    fsm_msgZcashPCZTAction(&last);
+    EXPECT_FALSE(zcash_signing_is_active());
+    if (tampered) {
+      EXPECT_EQ(0u, std::string(fsm_test_lastFailureMessage())
+                        .find("Shielded digest mismatch"));
+      EXPECT_EQ(0u, zcash_test_signOperations());
+      EXPECT_FALSE(zcashSignatureEmitted(kkconfirm_readResponseIds()));
+      (void)kkconfirm_drain();
+    } else {
+      EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
+          << fsm_test_lastFailureMessage();
+      EXPECT_EQ(3u, zcash_test_signOperations());
+      EXPECT_EQ(0, kkconfirm_drain());
+    }
+  }
+  memzero(&keys, sizeof(keys));
 }
 #endif
 

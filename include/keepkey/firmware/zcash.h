@@ -262,4 +262,11 @@ bool storage_zcashSeedFingerprint(bool usePassphrase,
 void zcash_signing_abort(void);
 bool zcash_signing_is_active(void);
 
+#if DEBUG_LINK
+/* Signing operations (RedPallas and transparent ECDSA) since the last clear,
+ * so a test can show that nothing is signed before the final gate. */
+uint32_t zcash_test_signOperations(void);
+void zcash_test_clearSignOperations(void);
+#endif
+
 #endif
