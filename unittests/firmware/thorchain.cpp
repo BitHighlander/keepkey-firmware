@@ -383,6 +383,13 @@ TEST(Thorchain, DepositAssetAndSignerFailClosed) {
 TEST(Thorchain, DeclaredDepositAssetValidatorEnforcesGrammar) {
   EXPECT_TRUE(tendermint_isValidAsset("THOR.RUNE"));
   EXPECT_TRUE(tendermint_isValidAsset("BTC/BTC"));
+  // Trade (CHAIN~SYMBOL) and secured (CHAIN-SYMBOL) assets, as thornode's
+  // NewAsset splits them.
+  EXPECT_TRUE(tendermint_isValidAsset("BTC~BTC"));
+  EXPECT_TRUE(tendermint_isValidAsset("ETH~USDC-0XA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48"));
+  EXPECT_TRUE(tendermint_isValidAsset("BTC-BTC"));
+  EXPECT_FALSE(tendermint_isValidAsset("BTC~BTC:x"));
+  EXPECT_FALSE(tendermint_isValidAsset("BTC~BTC\"\n"));
   EXPECT_FALSE(tendermint_isValidAsset("THOR:RUNE"));
   EXPECT_FALSE(tendermint_isValidAsset("THOR_RUNE"));
   EXPECT_FALSE(tendermint_isValidAsset(nullptr));
