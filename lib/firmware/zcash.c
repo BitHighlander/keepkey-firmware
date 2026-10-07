@@ -34,6 +34,7 @@
 #include "trezor/crypto/pallas_sinsemilla.h"
 #include "trezor/crypto/pallas_swu.h"
 #include "trezor/crypto/redpallas.h"
+#include "trezor/crypto/segwit_addr.h"
 #include "trezor/crypto/zcash_zip316.h"
 
 /* ZIP-32 Orchard master key only; children use PRF^expand. */
@@ -1001,6 +1002,24 @@ bool zcash_v6_orchard_ironwood_digest_valid(bool present, size_t size,
   return memcmp(digest, empty, 32) == 0;
 }
 
+bool zcash_tex_address(const uint8_t hash160[20], char* out, size_t out_size) {
+  /* "tex" + '1' + 32 data + 6 checksum characters + NUL. */
+  if (!hash160 || !out || out_size < 3 + 1 + 32 + 6 + 1) return false;
+  uint8_t words[32];
+  uint32_t acc = 0;
+  int bits = 0;
+  size_t n = 0;
+  for (size_t i = 0; i < 20; i++) {
+    acc = (acc << 8) | hash160[i];
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      words[n++] = (acc >> bits) & 0x1f;
+    }
+  }
+  return bech32_encode(out, "tex", words, n, BECH32_ENCODING_BECH32M) == 1;
+}
+
 bool zcash_script_is_p2pkh(const uint8_t* script, size_t script_size) {
   return script && script_size == 25 && script[0] == 0x76 &&
          script[1] == 0xa9 && script[2] == 0x14 && script[23] == 0x88 &&
@@ -1317,9 +1336,15 @@ ZcashPCZTSigningRequestStatus zcash_pczt_signing_request_status(
     return ZCASH_PCZT_SIGNING_REQUEST_INVALID_DIGEST_SIZE;
   }
 
-  (void)meta->sapling_digest_size;
+  /* Sapling is unsupported: only the canonical empty digest, which is what the
+   * device signs over anyway, may be supplied. */
   if (meta->has_sapling_digest) {
-    return ZCASH_PCZT_SIGNING_REQUEST_UNSUPPORTED_SAPLING_COMPONENT;
+    uint8_t empty[32];
+    zcash_blake2b_personal_256("ZTxIdSaplingHash", NULL, 0, empty);
+    if (meta->sapling_digest_size != 32 || !meta->sapling_digest ||
+        memcmp(meta->sapling_digest, empty, 32) != 0) {
+      return ZCASH_PCZT_SIGNING_REQUEST_UNSUPPORTED_SAPLING_COMPONENT;
+    }
   }
 
   if (!meta->has_header_fields) {

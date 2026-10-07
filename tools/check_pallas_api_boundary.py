@@ -313,15 +313,27 @@ def main():
     # two available implementations by name (see the normaliser note above).
     # Requiring a function by name pins whichever one happened to be in use;
     # forbid the unsafe one as well, so the gate states the property.
-    require(action_handler, "redpallas_sign_digest_with_ak",
-            "PCZT action handler")
-    forbid(action_handler, "redpallas_sign_digest_for_rk(",
-           "PCZT action handler")
+    #
+    # Nothing is signed while actions stream: the last action, or the last
+    # transparent input of a transaction with none, reaches zcash_final_gate,
+    # which signs every buffered spend in zcash_sign_orchard_spends. Follow
+    # that chain rather than the handler alone.
+    require(action_handler, "zcash_final_gate(", "PCZT action handler")
+    final_gate = code_only(function_body(zcash_fsm, "zcash_final_gate"))
+    require(final_gate, "zcash_sign_orchard_spends(", "Zcash final gate")
+    spend_signer = code_only(function_body(zcash_fsm,
+                                           "zcash_sign_orchard_spends"))
+    require(spend_signer, "redpallas_sign_digest_with_ak",
+            "Orchard spend signer")
+    for body, where in ((action_handler, "PCZT action handler"),
+                        (final_gate, "Zcash final gate"),
+                        (spend_signer, "Orchard spend signer")):
+        forbid(body, "redpallas_sign_digest_for_rk(", where)
     require(action_handler, "signatures[zcash_signing.signature_count]",
             "compact PCZT signature collection")
     require(action_handler, "zcash_signing.signature_count++",
             "compact PCZT signature collection")
-    require(action_handler,
+    require(final_gate,
             "resp_signed->signatures_count = zcash_signing.signature_count",
             "compact PCZT signature response")
     output_verification = code_only(function_body(

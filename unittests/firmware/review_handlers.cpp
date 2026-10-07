@@ -25,6 +25,8 @@ extern "C" {
 #include "zcash_fabricated_vectors.h"
 #include "zcash_migration_vectors.h"
 #include "zcash_note_vectors.h"
+#include "zcash_tex_vectors.h"
+#include "trezor/crypto/base58.h"
 #endif
 #include "keepkey/board/canvas.h"
 #include "storage.h"
@@ -32,6 +34,7 @@ extern "C" {
 #include "gtest/gtest.h"
 #include <cstring>
 #include <algorithm>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -1162,15 +1165,17 @@ TEST_F(ReviewHandlers, ZcashOnlyProvenChangeIsFoldedAndMemoSendIsShown) {
 }
 
 namespace {
-// m/44'/133'/0'/0/index public key for this fixture's seed.
-std::vector<uint8_t> zcashTransparentPubkey(uint32_t index) {
+// m/44'/133'/account'/change/index public key for this fixture's seed.
+std::vector<uint8_t> zcashTransparentPubkey(uint32_t index, uint32_t change = 0,
+                                            uint32_t account = 0) {
   uint8_t seed[64];
   mnemonic_to_seed("all all all all all all all all all all all all", "", seed,
                    NULL);
   HDNode node;
   hdnode_from_seed(seed, sizeof(seed), SECP256K1_NAME, &node);
   for (uint32_t child :
-       {0x80000000u | 44, 0x80000000u | 133, 0x80000000u, 0u, index})
+       {0x80000000u | 44, 0x80000000u | 133, 0x80000000u | account, change,
+        index})
     hdnode_private_ckd(&node, child);
   hdnode_fill_public_key(&node);
   std::vector<uint8_t> pubkey(node.public_key, node.public_key + 33);
@@ -1675,6 +1680,355 @@ TEST_F(ReviewHandlers, ZcashMigrationPreparationSignsSixteenActions) {
     EXPECT_EQ(0, redpallas_verify_digest(actions[i].rk.bytes, sighash.data(),
                                          run.signatures[i].data()))
         << i;
+  }
+}
+
+namespace {
+// The t1 address of a P2PKH script.
+std::string zcashT1(const std::vector<uint8_t>& script) {
+  uint8_t raw[22] = {0x1c, 0xb8};
+  std::memcpy(raw + 2, script.data() + 3, 20);
+  char out[64];
+  EXPECT_NE(0, base58_encode_check(raw, sizeof(raw), HASHER_SHA2D, out,
+                                   sizeof(out)));
+  return out;
+}
+
+ZcashTransparentOutput zcashOutput(const std::vector<uint8_t>& script,
+                                   uint64_t amount) {
+  ZcashTransparentOutput out = {};
+  out.has_amount = out.has_script_pubkey = true;
+  out.amount = amount;
+  zcashSet(out.script_pubkey, script);
+  return out;
+}
+
+void zcashSetPath(uint32_t* address_n, pb_size_t* count, uint32_t account,
+                  uint32_t change, uint32_t index) {
+  const uint32_t path[] = {0x80000000u | 44, 0x80000000u | 133,
+                           0x80000000u | account, change, index};
+  std::memcpy(address_n, path, sizeof(path));
+  *count = 5;
+}
+
+struct ZcashTexRun {
+  std::vector<std::string> screens;
+  std::vector<std::vector<uint8_t>> orchard;
+  std::vector<std::vector<uint8_t>> transparent;
+  bool signed_pczt = false;
+};
+
+// Streams outputs, inputs, then actions, approving every screen; stops at the
+// first failure.
+ZcashTexRun zcashRunTex(const ZcashSignPCZT& msg,
+                        std::vector<ZcashTransparentOutput> outputs,
+                        std::vector<ZcashTransparentInput> inputs,
+                        std::vector<ZcashPCZTAction> actions) {
+  ZcashTexRun run;
+  EXPECT_TRUE(kkconfirm_preload(16, 0));
+  fsm_test_clearLastFailure();
+  kkconfirm_capture_start();
+  fsm_msgZcashSignPCZT(&msg);
+  for (size_t i = 0; i < outputs.size() && !fsm_test_lastFailureCode(); i++) {
+    outputs[i].index = i;
+    fsm_msgZcashTransparentOutput(&outputs[i]);
+  }
+  for (size_t i = 0; i < inputs.size() && !fsm_test_lastFailureCode(); i++) {
+    inputs[i].index = i;
+    fsm_msgZcashTransparentInput(&inputs[i]);
+  }
+  for (size_t i = 0; i < actions.size() && !fsm_test_lastFailureCode(); i++)
+    fsm_msgZcashPCZTAction(&actions[i]);
+  run.screens = kkconfirm_capture_finish();
+  EXPECT_FALSE(zcash_signing_is_active());
+  if (fsm_test_lastFailureCode() == 0) {
+    if (!inputs.empty()) {
+      ZcashTransparentSigned t = {};
+      EXPECT_TRUE(
+          kkconfirm_readResponse(MessageType_MessageType_ZcashTransparentSigned,
+                                 ZcashTransparentSigned_fields, &t));
+      for (pb_size_t i = 0; i < t.signatures_count; i++)
+        run.transparent.emplace_back(
+            t.signatures[i].bytes,
+            t.signatures[i].bytes + t.signatures[i].size);
+    }
+    ZcashSignedPCZT signed_pczt = {};
+    run.signed_pczt =
+        kkconfirm_readResponse(MessageType_MessageType_ZcashSignedPCZT,
+                               ZcashSignedPCZT_fields, &signed_pczt);
+    for (pb_size_t i = 0; i < signed_pczt.signatures_count; i++)
+      run.orchard.emplace_back(signed_pczt.signatures[i].bytes,
+                               signed_pczt.signatures[i].bytes +
+                                   signed_pczt.signatures[i].size);
+  } else {
+    EXPECT_FALSE(zcashSignatureEmitted(kkconfirm_readResponseIds()));
+  }
+  (void)kkconfirm_drain();
+  return run;
+}
+
+bool zcashShown(const ZcashTexRun& run, const std::string& text) {
+  return std::any_of(run.screens.begin(), run.screens.end(),
+                     [&](const std::string& s) {
+                       return s.find(text) != std::string::npos;
+                     });
+}
+}  // namespace
+
+// ZIP 320 TEX step 1, built by librustzcash: a v6 NU6.3 transaction spending
+// an Orchard note to the account's own one-time address m/44'/133'/0'/2/0.
+// With that path the device proves the script pays its own key and shows a
+// transfer to yourself, not a payment; without it, a normal send to the same
+// t1 address. A path that does not pay the script, is not the one-time
+// scope, belongs to another account, or claims to be a TEX is refused before
+// any signature. The Orchard signature verifies under librustzcash's sighash.
+TEST_F(ReviewHandlers, ZcashTexStep1PaysTheOwnOneTimeAddress) {
+  const auto pubkey = zcashTransparentPubkey(0, 2);
+  ASSERT_EQ(zcashHex(kZcashTexEphemeralPubkey), pubkey);
+  const auto script = zcashHex(kZcashTexStep1OutputScript);
+  ASSERT_EQ(zcashP2pkh(pubkey), script);
+  const std::string t1 = zcashT1(script);
+
+  std::vector<ZcashPCZTAction> actions;
+  for (const auto& v : kZcashTexStep1Orchard)
+    actions.push_back(zcashMigrationAction(actions.size(), v));
+  uint8_t digest[32];
+  zcashV6BundleDigest(actions, false, 0x03, kZcashTexStep1ValueBalance,
+                      digest);
+  ZcashTransparentOutputDigestInfo info = {};
+  info.value = kZcashTexStep1OutputValue;
+  info.script_pubkey = script.data();
+  info.script_pubkey_size = script.size();
+
+  enum Case { kOwn, kNoPath, kOtherIndex, kExternal, kOtherAccount, kTex };
+  for (Case c : {kOwn, kNoPath, kOtherIndex, kExternal, kOtherAccount, kTex}) {
+    SCOPED_TRACE(c);
+    ZcashSignPCZT msg = zcashV6Request(2, digest, 0x03,
+                                       kZcashTexStep1ValueBalance,
+                                       kZcashTexStep1Fee);
+    msg.has_n_transparent_outputs = msg.has_transparent_digest = true;
+    msg.n_transparent_outputs = 1;
+    msg.transparent_digest.size = 32;
+    ASSERT_TRUE(zcash_compute_orchard_transparent_sig_digest(
+        NULL, 0, &info, 1, msg.transparent_digest.bytes));
+    ZcashTransparentOutput out = zcashOutput(script, kZcashTexStep1OutputValue);
+    if (c != kNoPath)
+      zcashSetPath(out.address_n, &out.address_n_count,
+                   c == kOtherAccount ? 1 : 0, c == kExternal ? 0 : 2,
+                   c == kOtherIndex ? 1 : 0);
+    if (c == kTex) out.has_is_tex = out.is_tex = true;
+
+    const auto run = zcashRunTex(msg, {out}, {}, actions);
+    if (c == kOwn || c == kNoPath) {
+      EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
+          << fsm_test_lastFailureMessage();
+      EXPECT_TRUE(zcashShown(run, c == kOwn ? "To your one-time address:\n" + t1
+                                            : "Send transparent ZEC?\n" + t1));
+      EXPECT_EQ(c == kOwn, zcashShown(run, "one-time"));
+      EXPECT_TRUE(zcashShown(run, "Amount: 0.01010000 ZEC"));
+      EXPECT_TRUE(zcashShown(run, "0.00015000 ZEC"));
+      ASSERT_EQ(1u, run.orchard.size());  // the one real Orchard spend
+      const auto sighash = zcashHex(kZcashTexStep1Sighash);
+      EXPECT_EQ(0, redpallas_verify_digest(actions[1].rk.bytes, sighash.data(),
+                                           run.orchard[0].data()));
+      continue;
+    }
+    EXPECT_STREQ(c == kOtherIndex
+                     ? "Transparent output script does not match path"
+                 : c == kExternal ? "Output path must be a one-time address"
+                 : c == kOtherAccount
+                     ? "Account does not match approved session"
+                     : "A one-time address is not a TEX",
+                 fsm_test_lastFailureMessage());
+    EXPECT_FALSE(zcashShown(run, t1));
+    EXPECT_TRUE(run.orchard.empty());
+  }
+}
+
+namespace {
+// TEX step 2 as librustzcash builds it: the one-time output of step 1 to the
+// ZIP 320 example TEX address, transparent-only, v6 (NU6.3) or v5 (NU6.2).
+struct ZcashTexStep2 {
+  ZcashSignPCZT msg;
+  ZcashTransparentOutput output;
+  ZcashTransparentInput input;
+  std::vector<uint8_t> txid;
+  std::vector<uint8_t> input_script;
+  std::vector<uint8_t> output_script;
+};
+
+ZcashTexStep2 zcashTexStep2(bool v6) {
+  ZcashTexStep2 t = {};
+  t.txid = zcashHex(v6 ? kZcashTexStep2V6PrevoutTxid
+                       : kZcashTexStep2V5PrevoutTxid);
+  t.input_script = zcashHex(kZcashTexStep1OutputScript);
+  t.output_script = zcashHex(kZcashTexStep2OutputScript);
+  uint8_t empty_orchard[32];
+  zcashPersonal(v6 ? "ZTxIdOrchardH_v6" : "ZTxIdOrchardHash", {},
+                empty_orchard);
+  t.msg = v6 ? zcashV6Request(0, empty_orchard, 0, 0, kZcashTexStep2Fee)
+             : zcashSignRequest(0, empty_orchard, 0, kZcashTexStep2Fee);
+  t.msg.orchard_flags = 0;
+  t.msg.expiry_height = 69121;
+  t.msg.branch_id = v6 ? 0x37A5165B : 0x5437F330;
+  zcash_compute_header_digest(t.msg.tx_version, t.msg.version_group_id,
+                              t.msg.branch_id, t.msg.lock_time,
+                              t.msg.expiry_height, t.msg.header_digest.bytes);
+  t.msg.has_n_transparent_inputs = t.msg.has_n_transparent_outputs = true;
+  t.msg.n_transparent_inputs = t.msg.n_transparent_outputs = 1;
+
+  t.output = zcashOutput(t.output_script, kZcashTexStep2OutputValue);
+  t.output.has_is_tex = t.output.is_tex = true;
+
+  ZcashTransparentInput& in = t.input;
+  zcashSetPath(in.address_n, &in.address_n_count, 0, 2, 0);
+  in.has_amount = in.has_prevout_txid = in.has_prevout_index =
+      in.has_sequence = in.has_script_pubkey = true;
+  in.amount = kZcashTexStep2InputValue;
+  zcashSet(in.prevout_txid, t.txid);
+  in.prevout_index = 0;
+  in.sequence = 0xffffffff;
+  zcashSet(in.script_pubkey, t.input_script);
+  return t;
+}
+
+// The host's transparent digest claim for the current input and output.
+void zcashTexClaimDigest(ZcashTexStep2& t) {
+  ZcashTransparentInputDigestInfo in = {};
+  in.prevout_txid = t.input.prevout_txid.bytes;
+  in.prevout_index = t.input.prevout_index;
+  in.sequence = t.input.sequence;
+  in.value = t.input.amount;
+  in.script_pubkey = t.input.script_pubkey.bytes;
+  in.script_pubkey_size = t.input.script_pubkey.size;
+  ZcashTransparentOutputDigestInfo out = {};
+  out.value = t.output.amount;
+  out.script_pubkey = t.output.script_pubkey.bytes;
+  out.script_pubkey_size = t.output.script_pubkey.size;
+  t.msg.has_transparent_digest = true;
+  t.msg.transparent_digest.size = 32;
+  ASSERT_TRUE(zcash_compute_orchard_transparent_sig_digest(
+      &in, 1, &out, 1, t.msg.transparent_digest.bytes));
+}
+}  // namespace
+
+// ZIP 320 TEX step 2, built by librustzcash in v6 and v5: no shielded action,
+// one input from the account's one-time address, one P2PKH output to the TEX
+// recipient. The device shows the tex1 address (the ZIP 320 example) when the
+// host marks the output is_tex and the plain t1 form of the same key hash
+// otherwise, then the fee and the input; the one ECDSA signature verifies under
+// librustzcash's transparent sighash and no Orchard signature is returned. The
+// canonical empty Sapling digest is accepted.
+TEST_F(ReviewHandlers, ZcashTexStep2SignsATransparentOnlyTransaction) {
+  const auto pubkey = zcashTransparentPubkey(0, 2);
+  for (bool v6 : {true, false}) {
+    for (bool tex : {true, false}) {
+      SCOPED_TRACE(std::string(v6 ? "v6" : "v5") + (tex ? " tex" : " t1"));
+      ZcashTexStep2 t = zcashTexStep2(v6);
+      t.output.is_tex = tex;
+      zcashTexClaimDigest(t);
+      t.msg.has_sapling_digest = true;
+      zcashSet(t.msg.sapling_digest, std::vector<uint8_t>(32));
+      zcashPersonal("ZTxIdSaplingHash", {}, t.msg.sapling_digest.bytes);
+
+      const auto run = zcashRunTex(t.msg, {t.output}, {t.input}, {});
+      ASSERT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
+          << fsm_test_lastFailureMessage();
+      EXPECT_TRUE(zcashShown(run, "Send transparent ZEC?\nFee: 0.00010000 ZEC"));
+      EXPECT_TRUE(zcashShown(
+          run, tex ? std::string("Send to TEX address?\n") + kZcashTexAddress
+                   : "Send transparent ZEC?\nt1VmmGiyjVNeCjxDZzg7vZmd99WyzVby9yC"));
+      EXPECT_EQ(tex, zcashShown(run, "tex1"));
+      EXPECT_TRUE(zcashShown(run, "Amount: 0.01000000 ZEC"));
+      EXPECT_TRUE(zcashShown(run, "Confirm transaction fee?\n0.00010000 ZEC"));
+      EXPECT_TRUE(zcashShown(run, "Input 1: 0.01010000 ZEC"));
+      EXPECT_FALSE(zcashShown(run, "Shield"));
+      EXPECT_FALSE(zcashShown(run, "Actions"));
+
+      EXPECT_TRUE(run.signed_pczt);
+      EXPECT_TRUE(run.orchard.empty());
+      ASSERT_EQ(1u, run.transparent.size());
+      uint8_t sig[64];
+      ASSERT_EQ(0, ecdsa_sig_from_der(run.transparent[0].data(),
+                                      run.transparent[0].size(), sig));
+      const auto sighash =
+          zcashHex(v6 ? kZcashTexStep2V6Sighash : kZcashTexStep2V5Sighash);
+      EXPECT_EQ(0, ecdsa_verify_digest(&secp256k1, pubkey.data(), sig,
+                                       sighash.data()));
+    }
+  }
+}
+
+// A transparent-only request is refused, with no signature, when it has no
+// transparent input to sign, claims a shielded bundle the device would not
+// see, or a non-empty Sapling component; an input path in the one-time scope
+// of another account, or a change index past the one-time scope (2), is
+// refused while streaming.
+TEST_F(ReviewHandlers, ZcashTransparentOnlyRefusals) {
+  const auto other_account = zcashP2pkh(zcashTransparentPubkey(0, 2, 1));
+  const auto change3 = zcashP2pkh(zcashTransparentPubkey(0, 3));
+  struct {
+    const char* name;
+    std::function<void(ZcashTexStep2&)> mutate;
+    const char* failure;
+  } cases[] = {
+      {"no transparent input",
+       [](ZcashTexStep2& t) { t.msg.n_transparent_inputs = 0; },
+       "No actions specified"},
+      {"ironwood actions",
+       [](ZcashTexStep2& t) {
+         t.msg.has_n_ironwood_actions = true;
+         t.msg.n_ironwood_actions = 1;
+       },
+       "No actions specified"},
+      {"orchard digest",
+       [](ZcashTexStep2& t) { t.msg.orchard_digest.bytes[0] ^= 1; },
+       "Transparent transaction must have empty shielded bundles"},
+      {"orchard value balance",
+       [](ZcashTexStep2& t) { t.msg.orchard_value_balance = 5000; },
+       "Transparent transaction must have empty shielded bundles"},
+      {"ironwood digest",
+       [](ZcashTexStep2& t) {
+         t.msg.has_ironwood_digest = true;
+         t.msg.ironwood_digest.size = 32;
+         t.msg.ironwood_digest.bytes[0] = 1;
+       },
+       "Orchard transaction must have an empty Ironwood bundle"},
+      {"ironwood value balance",
+       [](ZcashTexStep2& t) {
+         t.msg.has_ironwood_value_balance = true;
+         t.msg.ironwood_value_balance = -1;
+       },
+       "Transparent transaction must have empty shielded bundles"},
+      {"sapling digest",
+       [](ZcashTexStep2& t) {
+         t.msg.has_sapling_digest = true;
+         zcashSet(t.msg.sapling_digest, std::vector<uint8_t>(32, 0x11));
+       },
+       "Sapling not supported"},
+      {"other account one-time input",
+       [&](ZcashTexStep2& t) {
+         zcashSetPath(t.input.address_n, &t.input.address_n_count, 1, 2, 0);
+         zcashSet(t.input.script_pubkey, other_account);
+       },
+       "Account does not match approved session"},
+      {"change 3",
+       [&](ZcashTexStep2& t) {
+         zcashSetPath(t.input.address_n, &t.input.address_n_count, 0, 3, 0);
+         zcashSet(t.input.script_pubkey, change3);
+       },
+       "Change must be 0, 1 or 2"},
+  };
+  for (const auto& tc : cases) {
+    SCOPED_TRACE(tc.name);
+    ZcashTexStep2 t = zcashTexStep2(true);
+    tc.mutate(t);
+    zcashTexClaimDigest(t);
+    const auto run = zcashRunTex(t.msg, {t.output}, {t.input}, {});
+    EXPECT_STREQ(tc.failure, fsm_test_lastFailureMessage());
+    EXPECT_TRUE(run.transparent.empty());
+    EXPECT_FALSE(run.signed_pczt);
+    EXPECT_FALSE(zcashShown(run, "Sign transparent input?"));
   }
 }
 

@@ -51,6 +51,7 @@ typedef struct {
   size_t transparent_digest_size;
   bool has_sapling_digest;
   size_t sapling_digest_size;
+  const uint8_t* sapling_digest;
   bool has_orchard_digest;
   size_t orchard_digest_size;
   bool is_ironwood;
@@ -95,8 +96,9 @@ typedef struct {
 #define ZCASH_ORCHARD_UNIFIED_ADDRESS_SIZE 128
 
 /* Validates the initial ZcashSignPCZT metadata: digest presence and sizes,
- * header fields, transparent and Orchard metadata, and no Sapling component.
- * Per-action sighashes are refused later, in fsm_msgZcashPCZTAction(). */
+ * header fields, transparent and Orchard metadata, and an empty Sapling
+ * component. Per-action sighashes are refused later, in
+ * fsm_msgZcashPCZTAction(). */
 ZcashPCZTSigningRequestStatus zcash_pczt_signing_request_status(
     const ZcashPCZTSigningRequestMeta* meta);
 
@@ -137,6 +139,10 @@ bool zcash_tx_version_supported(uint32_t version, uint32_t version_group_id);
  * if it equals that, else the device would sign a different sighash. */
 bool zcash_v6_orchard_ironwood_digest_valid(bool present, size_t size,
                                             const uint8_t* digest);
+
+/* ZIP 320 mainnet TEX address: bech32m, HRP "tex", over a P2PKH key hash.
+ * out_size must be at least 43. */
+bool zcash_tex_address(const uint8_t hash160[20], char* out, size_t out_size);
 
 /* True when script has the P2PKH shape (OP_DUP OP_HASH160 <20> ...). */
 bool zcash_script_is_p2pkh(const uint8_t* script, size_t script_size);

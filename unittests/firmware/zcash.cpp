@@ -1789,13 +1789,55 @@ TEST(Zcash, PCZTSigningPolicy_RejectsInvalidOptionalDigests) {
             ZCASH_PCZT_SIGNING_REQUEST_INVALID_DIGEST_SIZE);
 }
 
-TEST(Zcash, PCZTSigningPolicy_RejectsSaplingComponent) {
-  ZcashPCZTSigningRequestMeta meta = clear_pczt_meta();
+// Sapling is unsupported, so only the canonical empty digest (the one the
+// device signs over) may be supplied; any other value is refused.
+TEST(Zcash, PCZTSigningPolicy_AcceptsOnlyTheEmptySaplingDigest) {
+  /* ZIP-244 empty Sapling digest (BLAKE2b-256 "ZTxIdSaplingHash", no data). */
+  static const uint8_t empty[32] = {
+      0x6f, 0x2f, 0xc8, 0xf9, 0x8f, 0xea, 0xfd, 0x94, 0xe7, 0x4a, 0x0d,
+      0xf4, 0xbe, 0xd7, 0x43, 0x91, 0xee, 0x0b, 0x5a, 0x69, 0x94, 0x5e,
+      0x4c, 0xed, 0x8c, 0xa8, 0xa0, 0x95, 0x20, 0x6f, 0x00, 0xae};
+  uint8_t other[32];
+  memcpy(other, empty, sizeof(other));
+  other[0] ^= 0x01;
 
+  ZcashPCZTSigningRequestMeta meta = clear_pczt_meta();
   meta.has_sapling_digest = true;
   meta.sapling_digest_size = 32;
+  meta.sapling_digest = empty;
+  EXPECT_EQ(zcash_pczt_signing_request_status(&meta),
+            ZCASH_PCZT_SIGNING_REQUEST_OK);
+
+  meta.sapling_digest = other;
   EXPECT_EQ(zcash_pczt_signing_request_status(&meta),
             ZCASH_PCZT_SIGNING_REQUEST_UNSUPPORTED_SAPLING_COMPONENT);
+
+  meta.sapling_digest = empty;
+  meta.sapling_digest_size = 31;
+  EXPECT_EQ(zcash_pczt_signing_request_status(&meta),
+            ZCASH_PCZT_SIGNING_REQUEST_UNSUPPORTED_SAPLING_COMPONENT);
+
+  meta.sapling_digest_size = 32;
+  meta.sapling_digest = NULL;
+  EXPECT_EQ(zcash_pczt_signing_request_status(&meta),
+            ZCASH_PCZT_SIGNING_REQUEST_UNSUPPORTED_SAPLING_COMPONENT);
+}
+
+// ZIP 320 reference: t1VmmGiyjVNeCjxDZzg7vZmd99WyzVby9yC carries this key
+// hash, and the ZIP's TEX form of it is the address below (also recomputed
+// with an independent bech32m encoder and by zcash_address).
+TEST(Zcash, TexAddress_Zip320Vector) {
+  static const uint8_t hash[20] = {0x82, 0x86, 0xbf, 0x79, 0x08, 0x66, 0x80,
+                                   0x53, 0x97, 0xe3, 0xa9, 0x47, 0x64, 0x0b,
+                                   0x77, 0xa4, 0x3f, 0x0b, 0x43, 0xa5};
+  char address[64];
+  ASSERT_TRUE(zcash_tex_address(hash, address, sizeof(address)));
+  EXPECT_STREQ("tex1s2rt77ggv6q989lr49rkgzmh5slsksa9khdgte", address);
+
+  char exact[43];
+  EXPECT_TRUE(zcash_tex_address(hash, exact, sizeof(exact)));
+  EXPECT_FALSE(zcash_tex_address(hash, exact, sizeof(exact) - 1));
+  EXPECT_FALSE(zcash_tex_address(NULL, address, sizeof(address)));
 }
 
 TEST(Zcash, PCZTSigningPolicy_RejectsTransparentComponentsWithoutDigest) {
