@@ -307,6 +307,40 @@ TEST(Recovery, UnrelatedRequestsKeepTheCipherAndSigningEndsTheCeremony) {
             std::vector<uint8_t>(canvas->buffer, canvas->buffer + bytes))
       << "a refused RecoveryDevice must not draw home over the cipher";
 
+  // Requests that would draw over the ceremony are refused untouched.
+  EXPECT_FALSE(
+      keepkey_before_message_dispatch(MessageType_MessageType_GetAddress));
+  EXPECT_FALSE(
+      keepkey_before_message_dispatch(MessageType_MessageType_GetPublicKey));
+  Ping protected_ping = {};
+  protected_ping.has_button_protection = true;
+  protected_ping.button_protection = true;
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  fsm_msgPing(&protected_ping);
+  EXPECT_EQ(0, kkconfirm_drain()) << "no prompt may be drawn mid-ceremony";
+  // An authenticator Ping is PIN-gated: refused, never served.
+  Ping auth_ping = {};
+  auth_ping.has_message = true;
+  std::strcpy(auth_ping.message, "\x17getAccount:0");
+  kkconfirm_sendTiny(MessageType_MessageType_Cancel, nullptr, 0);
+  fsm_test_clearLastFailure();
+  fsm_msgPing(&auth_ping);
+  EXPECT_EQ(FailureType_Failure_UnexpectedMessage, fsm_test_lastFailureCode())
+      << "an authenticator Ping was handled mid-ceremony";
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  (void)kkconfirm_drain();
+  for (int frame = 0; frame < 20; ++frame) {
+    force_animation_start();
+    animate();
+  }
+  EXPECT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+  EXPECT_EQ(cipher_before,
+            std::vector<uint8_t>(canvas->buffer, canvas->buffer + bytes))
+      << "a refused request must leave the cipher on screen";
+  // Requests that end the ceremony still reach their handlers.
+  EXPECT_TRUE(
+      keepkey_before_message_dispatch(MessageType_MessageType_Initialize));
+
 #if !BITCOIN_ONLY
   EXPECT_TRUE(keepkey_before_message_dispatch(
       MessageType_MessageType_EthereumSignTx));

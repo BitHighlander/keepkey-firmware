@@ -519,7 +519,12 @@ static bool fsm_dispatchGate(MessageType msg_id) {
     default:
       /* A new signing operation may replace an old signer, but it must never
        * coexist with recovery/reset and borrow that ceremony's progress or
-       * blocking screens. Administrative requests still preserve ceremonies. */
+       * blocking screens. While a ceremony is armed, anything else is refused
+       * without touching the screen or the cached PIN: a dry run keeps the
+       * PIN cached and its character stream defers the lock, so a read served
+       * here could outlive the deadline. Only requests that end the ceremony
+       * (Initialize, Cancel, ClearSession) or are refused by their handler (a
+       * second ResetDevice/RecoveryDevice) get through. */
       switch (msg_id) {
         case MessageType_MessageType_SignTx:
         case MessageType_MessageType_SignMessage:
@@ -560,7 +565,19 @@ static bool fsm_dispatchGate(MessageType msg_id) {
 #endif
           setup_abort();
           break;
+        case MessageType_MessageType_Initialize:
+        case MessageType_MessageType_Cancel:
+        case MessageType_MessageType_ClearSession:
+        case MessageType_MessageType_ResetDevice:
+        case MessageType_MessageType_RecoveryDevice:
+          break;
         default:
+          if (setup_isArmed()) {
+            fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
+                            "Device is in the middle of setup. Send "
+                            "Initialize or Cancel first.");
+            return false;
+          }
           break;
       }
       fsm_abort_signing_workflows();

@@ -323,8 +323,8 @@ TEST_F(Block13Confirmation,
   EXPECT_EQ(expected, pixels());
   replies.clear();
 
-  // VerifyMessage is allowed during setup. Its invalid signature path draws
-  // a progress message and Home while keeping the recovery ceremony armed.
+  // Any other request is refused by the dispatch gate before its handler
+  // can draw, keeping the recovery ceremony armed and on screen.
   VerifyMessage unrelated = {};
   unrelated.has_address = unrelated.has_message = true;
   std::strcpy(unrelated.address, "invalid-address");
@@ -334,7 +334,7 @@ TEST_F(Block13Confirmation,
            &unrelated);
   EXPECT_EQ(1u, count(MessageType_MessageType_Failure));
   EXPECT_EQ(
-      FailureType_Failure_InvalidSignature,
+      FailureType_Failure_UnexpectedMessage,
       response<Failure>(MessageType_MessageType_Failure, Failure_fields).code);
   EXPECT_EQ(0u, count(MessageType_MessageType_CharacterRequest));
   EXPECT_TRUE(setup_isArmedAs(SETUP_RECOVERY));

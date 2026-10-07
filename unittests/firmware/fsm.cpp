@@ -52,6 +52,7 @@ extern "C" {
 // Calling timer_init() again relinks the static runnable nodes into a cycle.
 #include "test_board.h"
 bool kkconfirm_preload(int nYes, int nNo);
+bool kkconfirm_preload_no_sentinel(int nYes, int nNo);
 int kkconfirm_drain(void);
 bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload, uint8_t len);
 bool kkconfirm_openDebugPeer(void);
@@ -1497,6 +1498,68 @@ TEST_F(AutoLockProgress, RecoveryCharacterStreamDoesNotRenewTheDeadline) {
   toggle_screensaver();
   EXPECT_EQ(SCREENSAVER, home_get_state())
       << "host-typed characters renewed the deadline";
+}
+
+// A dry-run recovery keeps the PIN cached, and its host-typed characters
+// defer the lock indefinitely. Nothing PIN-gated may be served beside it, even
+// past the deadline: the dispatch gate refuses it before its handler runs.
+TEST_F(AutoLockProgress, DryRunRecoveryPastTheDeadlineServesNoPinGatedRead) {
+  ScopedFlash flash;
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  signing_abort();
+  loadPinProtectedWallet();
+  ASSERT_TRUE(session_isPinCached());
+  // A dry run asks for the PIN, then for confirmation.
+  ASSERT_TRUE(kkconfirm_preload_no_sentinel(0, 0));
+  std::thread host([] {
+    answerPinPrompt("1234").join();
+    static const uint8_t yes[] = {0x08, 0x01};
+    kkconfirm_sendTiny(MessageType_MessageType_ButtonAck, nullptr, 0);
+    kkconfirm_sendTiny(MessageType_MessageType_DebugLinkDecision, yes, 2);
+  });
+  recovery_cipher_init(12, false, false, "english", "dry run", false,
+                       STORAGE_MIN_SCREENSAVER_TIMEOUT, 0, /*dry_run=*/true);
+  host.join();
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+  keepkey_user_activity();  // the press that confirmed the dry run
+  for (int i = 0; i < 4; ++i) {
+    advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2000);
+    CharacterAck character = {};
+    if (i % 2 == 0) {
+      character.has_character = true;
+      character.character[0] = 'a';
+    } else {
+      character.has_delete = character.del = true;
+    }
+    receiveMessage(MessageType_MessageType_CharacterAck, CharacterAck_fields,
+                   &character);
+    toggle_screensaver();
+    ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY)) << "locked mid-entry " << i;
+    ASSERT_TRUE(session_isPinCached());
+  }
+
+  EXPECT_EQ(FailureType_Failure_UnexpectedMessage, requestPublicKey())
+      << "an xpub was served beside a dry run past the deadline";
+  EXPECT_STREQ("Device is in the middle of setup. Send Initialize or Cancel "
+               "first.",
+               fsm_test_lastFailureMessage());
+
+  Ping auth = {};
+  auth.has_message = true;
+  std::strcpy(auth.message, "\x17getAccount:0");
+  kkconfirm_sendTiny(MessageType_MessageType_Cancel, nullptr, 0);
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &auth);
+  EXPECT_EQ(FailureType_Failure_UnexpectedMessage, fsm_test_lastFailureCode())
+      << "an authenticator Ping was served beside a dry run";
+  kkconfirm_preload(0, 0);
+  kkconfirm_drain();
+  EXPECT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+
+  Cancel cancel = {};
+  receiveMessage(MessageType_MessageType_Cancel, Cancel_fields, &cancel);
+  EXPECT_FALSE(setup_isArmed());
 }
 
 // F2: a nested wait that never returns to the main loop (a confirm left up,
