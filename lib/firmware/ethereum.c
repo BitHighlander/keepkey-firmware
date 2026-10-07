@@ -144,17 +144,17 @@ static bool ethereum_isUnlimitedApproval(const EthereumSignTx* msg) {
 
 /* An unlimited approve signs only after this warning, with the full spender
  * and the token named by symbol, or by contract when the table lacks it. */
-static bool ethereum_confirmUnlimitedApproval(const EthereumSignTx* msg) {
-  const uint32_t cid = msg->has_chain_id ? msg->chain_id : 0;
+bool ethereum_confirmUnlimitedApproval(uint32_t cid,
+                                       const uint8_t* spender_address,
+                                       const uint8_t* token_address) {
   char spender[43] = "0x";
-  ethereum_address_checksum(msg->data_initial_chunk.bytes + 16, spender + 2,
-                            false, cid);
+  ethereum_address_checksum(spender_address, spender + 2, false, cid);
   char asset[43] = "0x";
-  const TokenType* token = tokenByChainAddress(cid, msg->to.bytes);
+  const TokenType* token = tokenByChainAddress(cid, token_address);
   if (token != UnknownToken) {
     strlcpy(asset, token->ticker + 1, sizeof(asset));
   } else {
-    ethereum_address_checksum(msg->to.bytes, asset + 2, false, cid);
+    ethereum_address_checksum(token_address, asset + 2, false, cid);
   }
   return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                  "UNLIMITED approval", "Allow %s to spend ALL your %s", spender,
@@ -1040,7 +1040,9 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     // Native value cannot exempt a payable token from this warning. It comes
     // before any contract, metadata or generic screen, so none can mask it.
     if (ethereum_isUnlimitedApproval(msg) &&
-        !ethereum_confirmUnlimitedApproval(msg)) {
+        !ethereum_confirmUnlimitedApproval(
+            msg->has_chain_id ? msg->chain_id : 0,
+            msg->data_initial_chunk.bytes + 16, msg->to.bytes)) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
                       "Signing cancelled by user");
       ethereum_signing_abort();

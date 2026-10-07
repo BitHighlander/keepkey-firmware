@@ -43,8 +43,10 @@
 
 /* Shared pool of 32-byte member encodings; a completed container collapses to
  * one digest in its parent's slot. Only ONE SHA3_CTX (~400 B) is ever live,
- * which is what fits SRAM. Slots along a path add up: Seaport needs
- * 11 + n + 6, so 24 slots take seven items. */
+ * which is what fits SRAM. Struct widths along a path add up. The outermost
+ * open array hashes its elements as they arrive and takes no slots, so
+ * Seaport needs 11 + 6 whatever its item counts; an array nested inside it
+ * takes one slot per element. */
 #define EIP712_MAX_SLOTS 24
 
 /* Widest single leaf the device will absorb. Each EthereumTypedDataValueAck

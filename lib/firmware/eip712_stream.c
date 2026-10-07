@@ -39,6 +39,7 @@
 #include "keepkey/board/layout.h"
 #include "keepkey/board/util.h"
 #include "keepkey/firmware/erc7730_format.h"
+#include "keepkey/firmware/ethereum.h"
 #include "trezor/crypto/address.h"
 #include "trezor/crypto/bignum.h"
 #include "trezor/crypto/memzero.h"
@@ -206,13 +207,14 @@ bool eip712_encode_leaf(const Eip712FieldType* field, const uint8_t* value,
   }
 }
 
-/* Leaf validation: runs before display AND encoding. */
-static bool is_valid_utf8_printable(const uint8_t* s, uint16_t len) {
+/* Leaf validation: runs before display AND encoding. Control bytes such as
+ * a newline in a Snapshot vote's reason are valid: the review escapes every
+ * byte outside 0x21-0x7e as \xNN and a backslash as \\, so no two strings
+ * draw the same screen. */
+static bool is_valid_utf8(const uint8_t* s, uint16_t len) {
   uint16_t i = 0;
   while (i < len) {
     uint8_t c = s[i];
-    /* Control bytes break display injectivity (two strings, one screen). */
-    if (c < 0x20 || c == 0x7F) return false;
     uint8_t extra;
     uint32_t cp;
     if (c < 0x80) {
@@ -258,7 +260,7 @@ bool eip712_validate_leaf(const Eip712FieldType* field, const uint8_t* value,
     case EthereumTypedDataStructAck_EthereumDataType_ADDRESS:
       return value_len == 20;
     case EthereumTypedDataStructAck_EthereumDataType_STRING:
-      return is_valid_utf8_printable(value, value_len);
+      return is_valid_utf8(value, value_len);
     case EthereumTypedDataStructAck_EthereumDataType_BYTES:
       /* bytesN is exactly N, N in [1,32], rejected here as a validation error
        * rather than later as a Cancel. Dynamic bytes: any length we hold. */
@@ -521,6 +523,17 @@ static struct {
   uint8_t pool[EIP712_MAX_SLOTS][32];
   uint8_t slots_used;
 
+  /* The outermost open array absorbs each element as it completes, so its
+   * length costs no pool slots. A bare Keccak state: the bytes waiting for a
+   * permutation are XORed in place, so no 136-byte block buffer is kept. */
+  uint64_t array_sponge[25];
+  uint8_t array_sponge_bytes; /* absorbed since the last permutation */
+  uint8_t array_owner;        /* 1 + stack index of that array, 0 = none */
+
+  /* 1 + the pool slot holding SafeTx.to, 0 = none: the token an embedded
+   * approve() in SafeTx.data calls. */
+  uint8_t safe_to_slot;
+
   SHA3_CTX hash;
 
   /* The one outstanding value request, stored compactly (not the wire
@@ -780,6 +793,52 @@ static const char* leaf_title(void) {
   return e712.root == 0 ? "EIP-712 Domain" : "EIP-712 Message";
 }
 
+/* approve(spender, amount) carried in a dynamic `bytes` leaf, such as a
+ * Safe transaction's data: the policy of a top-level approve. */
+static bool embedded_approve(const Eip712FieldType* field, const uint8_t* value,
+                             uint16_t len) {
+  return field->data_type ==
+             EthereumTypedDataStructAck_EthereumDataType_BYTES &&
+         !field->has_size && len >= 68 &&
+         memcmp(value, "\x09\x5e\xa7\xb3", 4) == 0;
+}
+
+/* Pre-0.8 Solidity masks the spender word's high bytes, so a dirty one
+ * still grants the allowance on chain: refused, as ethereum.c does. */
+static bool embedded_approve_is_dirty(const uint8_t* value) {
+  for (size_t i = 4; i < 16; i++)
+    if (value[i] != 0) return true;
+  return false;
+}
+
+/* An unlimited embedded approve signs only after the UNLIMITED warning,
+ * which names the full spender, and the token from SafeTx.to once seen. */
+static Eip712LeafResult confirm_embedded_unlimited(const uint8_t* value) {
+  for (size_t i = 36; i < 68; i++)
+    if (value[i] != 0xff) return EIP712_LEAF_OK;
+  const uint64_t chain = e712.domain_facts.chain_id;
+  const uint32_t cid = e712.domain_facts.has_chain_id && chain <= UINT32_MAX
+                           ? (uint32_t)chain
+                           : 0;
+  const Eip712Frame* f = &e712.stack[e712.depth - 1];
+  const bool safe_tx =
+      !f->is_array && strcmp(e712.types.names[f->u.s.type], "SafeTx") == 0;
+  const uint8_t to = e712.safe_to_slot;
+  if (safe_tx && to > f->slot_base && to <= f->slot_base + f->member_index)
+    return ethereum_confirmUnlimitedApproval(cid, value + 16,
+                                             e712.pool[to - 1] + 12)
+               ? EIP712_LEAF_OK
+               : EIP712_LEAF_CANCELLED;
+  char spender[43] = "0x";
+  ethereum_address_checksum(value + 16, spender + 2, false, cid);
+  return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                 "UNLIMITED approval",
+                 "Allow %s to spend ALL your tokens of %s", spender,
+                 safe_tx ? "the contract in 'to'" : "the contract called")
+             ? EIP712_LEAF_OK
+             : EIP712_LEAF_CANCELLED;
+}
+
 static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
                                             const uint8_t* value,
                                             uint16_t len) {
@@ -815,6 +874,10 @@ static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
         return EIP712_LEAF_INVALID;
       break;
     case EthereumTypedDataStructAck_EthereumDataType_BYTES:
+      if (embedded_approve(field, value, len)) {
+        const Eip712LeafResult warned = confirm_embedded_unlimited(value);
+        if (warned != EIP712_LEAF_OK) return warned;
+      }
       return confirm_parts(title, path, type_name, EIP712_RENDER_HEX, value,
                            len);
     default:
@@ -925,13 +988,67 @@ static bool begin_root(const char* name) {
   }
   e712.depth = 1;
   e712.slots_used = 0;
+  e712.array_owner = 0;
+  e712.safe_to_slot = 0;
   begin_type_hash();
   return true;
+}
+
+static bool array_streams(const Eip712Frame* f) {
+  return e712.array_owner != 0 && f == &e712.stack[e712.array_owner - 1];
+}
+
+/* Width of a frame's own region in the pool: a streamed array has none. */
+static uint8_t array_slots(const Eip712Frame* arr) {
+  return array_streams(arr) ? 0 : (uint8_t)arr->u.a.array_len;
+}
+
+/* Keccak-f on the bare state. Absorbing a zero block XORs nothing in, so
+ * the library's block step is exactly the permutation. Runs only between
+ * folds, while e712.hash is idle. */
+static void array_sponge_permute(void) {
+  static const uint8_t zero_block[SHA3_256_BLOCK_LENGTH];
+  keccak_256_Init(&e712.hash);
+  memcpy(e712.hash.hash, e712.array_sponge, sizeof(e712.array_sponge));
+  keccak_Update(&e712.hash, zero_block, sizeof(zero_block));
+  memcpy(e712.array_sponge, e712.hash.hash, sizeof(e712.array_sponge));
+  memzero(&e712.hash, sizeof(e712.hash));
+  e712.array_sponge_bytes = 0;
+}
+
+/* Lanes are little-endian, as in sha3_process_block(). */
+static void array_sponge_xor(uint8_t at, uint8_t byte) {
+  e712.array_sponge[at / 8] ^= (uint64_t)byte << (8 * (at % 8));
+}
+
+static void array_sponge_absorb(const uint8_t word[32]) {
+  for (uint8_t i = 0; i < 32; i++) {
+    array_sponge_xor(e712.array_sponge_bytes++, word[i]);
+    if (e712.array_sponge_bytes == SHA3_256_BLOCK_LENGTH)
+      array_sponge_permute();
+  }
+}
+
+/* keccak_Final()'s padding: 0x01 after the data, 0x80 in the last byte. */
+static void array_sponge_final(uint8_t out[32]) {
+  array_sponge_xor(e712.array_sponge_bytes, 0x01);
+  array_sponge_xor(SHA3_256_BLOCK_LENGTH - 1, 0x80);
+  array_sponge_permute();
+  for (uint8_t i = 0; i < 32; i++)
+    out[i] = (uint8_t)(e712.array_sponge[i / 8] >> (8 * (i % 8)));
+  memzero(e712.array_sponge, sizeof(e712.array_sponge));
+  e712.array_owner = 0;
 }
 
 /* struct: keccak(typeHash || enc(m1..mn)); array: keccak(enc(e1..en)). */
 static bool fold_frame(uint8_t out[32]) {
   const Eip712Frame* f = &e712.stack[e712.depth - 1];
+  if (array_streams(f)) {
+    array_sponge_final(out);
+    e712.slots_used = f->slot_base;
+    e712.depth--;
+    return true;
+  }
   keccak_256_Init(&e712.hash);
   if (!f->is_array) {
     if (!f->u.s.have_type_hash) return false;
@@ -958,7 +1075,11 @@ static void complete_frame(void) {
 
   if (e712.depth > 0) {
     Eip712Frame* parent = &e712.stack[e712.depth - 1];
-    memcpy(e712.pool[parent->slot_base + parent->member_index], digest, 32);
+    if (array_streams(parent)) {
+      array_sponge_absorb(digest);
+    } else {
+      memcpy(e712.pool[parent->slot_base + parent->member_index], digest, 32);
+    }
     parent->member_index++;
     advance_after_slot();
     return;
@@ -1013,7 +1134,7 @@ static void drive_array_element(void) {
     Eip712Frame* inner = &e712.stack[e712.depth];
     memzero(inner, sizeof(*inner));
     inner->is_array = true;
-    inner->slot_base = arr->slot_base + arr->u.a.array_len;
+    inner->slot_base = arr->slot_base + array_slots(arr);
     inner->u.a = arr->u.a;
     inner->u.a.array_len = 0;
     inner->u.a.level_index = arr->u.a.level_index + 1;
@@ -1038,7 +1159,7 @@ static void drive_array_element(void) {
     Eip712Frame* child = &e712.stack[e712.depth];
     memzero(child, sizeof(*child));
     child->u.s.type = arr->u.a.elem_type;
-    child->slot_base = arr->slot_base + arr->u.a.array_len;
+    child->slot_base = arr->slot_base + array_slots(arr);
     e712.depth++;
     begin_type_hash();
     return;
@@ -1387,7 +1508,12 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
       fail("EIP-712 array length does not match its declared size");
       return false;
     }
-    if ((uint32_t)arr->slot_base + len > EIP712_MAX_SLOTS) {
+    if (e712.array_owner == 0) {
+      /* Only arrays nested inside this one keep their elements in slots. */
+      memzero(e712.array_sponge, sizeof(e712.array_sponge));
+      e712.array_sponge_bytes = 0;
+      e712.array_owner = (uint8_t)(e712.depth + 1);
+    } else if ((uint32_t)arr->slot_base + len > EIP712_MAX_SLOTS) {
       fail("EIP-712 array is too long for this device");
       return false;
     }
@@ -1422,6 +1548,10 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
     fail("EIP-712 value does not match its declared type");
     return false;
   }
+  if (embedded_approve(field, bytes, len) && embedded_approve_is_dirty(bytes)) {
+    fail("Malformed ERC20 approval");
+    return false;
+  }
   if (e712.root == 0 && e712.depth == 1 &&
       !eip712_domain_facts_observe(&e712.domain_facts, e712.pending_name, field,
                                    bytes, len)) {
@@ -1433,11 +1563,20 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
   if (!review_approved(eip712_confirm_leaf(field, bytes, len))) return false;
 
   Eip712Frame* f = &e712.stack[e712.depth - 1];
+  uint8_t word[32];
   if (!eip712_encode_leaf(field, bytes, len,
-                          e712.pool[f->slot_base + f->member_index])) {
+                          array_streams(f)
+                              ? word
+                              : e712.pool[f->slot_base + f->member_index])) {
     fail("EIP-712 value could not be encoded");
     return false;
   }
+  if (array_streams(f)) array_sponge_absorb(word);
+  if (e712.root == 1 && !f->is_array &&
+      field->data_type == EthereumTypedDataStructAck_EthereumDataType_ADDRESS &&
+      strcmp(e712.pending_name, "to") == 0 &&
+      strcmp(e712.types.names[f->u.s.type], "SafeTx") == 0)
+    e712.safe_to_slot = (uint8_t)(f->slot_base + f->member_index + 1);
   f->member_index++;
   advance_after_slot();
   return true;

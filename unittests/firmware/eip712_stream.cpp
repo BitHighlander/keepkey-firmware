@@ -5,6 +5,7 @@ extern "C" {
 #include "keepkey/firmware/eip712_stream.h"
 #include "keepkey/firmware/eip712_stream.h"  // Public declarations stay guarded.
 #include "messages-ethereum.pb.h"
+#include "trezor/crypto/address.h"
 #include "trezor/crypto/sha3.h"
 }
 
@@ -398,13 +399,18 @@ TEST(Eip712Stream, ValidateIntegerWidthMustMatchDeclaration) {
   EXPECT_FALSE(eip712_validate_leaf(&f, v, 1));
 }
 
-TEST(Eip712Stream, ValidateStringRejectsControlBytes) {
+// Real documents carry control bytes (a Snapshot vote's reason with a line
+// break). Any valid UTF-8 signs; the review shows each control byte as an
+// escape, so an embedded NUL is drawn, never a terminator
+// (StringControlBytesAreShownEscaped).
+TEST(Eip712Stream, ValidateStringAcceptsControlBytes) {
   Field f = mk(EthereumTypedDataStructAck_EthereumDataType_STRING);
   EXPECT_TRUE(eip712_validate_leaf(&f, (const uint8_t*)"Send 1 USDC", 11));
-  // An embedded NUL is how bytes past the terminator get signed but never
-  // drawn -- the exact defect class 7.14.2 closed for message signing.
-  EXPECT_FALSE(eip712_validate_leaf(&f, (const uint8_t*)"a\0b", 3));
-  EXPECT_FALSE(eip712_validate_leaf(&f, (const uint8_t*)"a\nb", 3));
+  EXPECT_TRUE(eip712_validate_leaf(&f, (const uint8_t*)"a\0b", 3));
+  EXPECT_TRUE(eip712_validate_leaf(&f, (const uint8_t*)"a\nb", 3));
+  EXPECT_TRUE(eip712_validate_leaf(&f, (const uint8_t*)"\t\r\x7f\x1b", 4));
+  const uint8_t c1_control[] = {0xC2, 0x85};  // U+0085, valid UTF-8
+  EXPECT_TRUE(eip712_validate_leaf(&f, c1_control, 2));
 }
 
 TEST(Eip712Stream, ValidateStringRejectsMalformedUtf8) {
@@ -1042,6 +1048,10 @@ TEST(Eip712Stream, EmptyMessageIsFlaggedForTheFinalScreen) {
 
 // Seaport's OrderComponents has 11 members and holds arrays of 5- and
 // 6-member structs, which the former 12-slot pool could never fit.
+// The outermost array hashes its elements as they arrive, so an order's item
+// count costs no pool slots: 11 + 6 slots for any length.
+static uint16_t g_items;
+
 TEST(Eip712Stream, SeaportShapedDocumentFitsThePool) {
   std::map<std::string, Struct> types;
   Field u256 = mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32);
@@ -1058,17 +1068,21 @@ TEST(Eip712Stream, SeaportShapedDocumentFitsThePool) {
     snprintf(name, sizeof(name), "g%d", i);
     addMember(types["ConsiderationItem"], name, u256);
   }
-  int used = walk(
-      "OrderComponents", types,
-      [](const std::vector<uint32_t>& path) -> Bytes {
-        if (path.size() == 2 && path[1] == 10)
-          return Bytes{0x00, 0x03};  // three items
-        return word(path.back());
-      },
-      40);
-  EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
-  EXPECT_EQ(used, 10 + 3 * 6);
-  eip712_stream_abort();
+  for (uint16_t items : {3, 8, 32, 64}) {
+    SCOPED_TRACE(items);
+    g_items = items;
+    int used = walk(
+        "OrderComponents", types,
+        [](const std::vector<uint32_t>& path) -> Bytes {
+          if (path.size() == 2 && path[1] == 10)
+            return Bytes{(uint8_t)(g_items >> 8), (uint8_t)g_items};
+          return word(path.back());
+        },
+        10 + items * 6 + 2);
+    EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+    EXPECT_EQ(used, 10 + items * 6);
+    eip712_stream_abort();
+  }
 }
 
 // Every nested struct and every array dimension is one frame. Four fit (the
@@ -1154,6 +1168,14 @@ TEST(Eip712Stream, FixedDimensionsAreCheckedOutermostFirst) {
   EXPECT_EQ(walkMatrix({2, 4}, 4, 2), EIP712_REQ_DONE);
   EXPECT_EQ(walkMatrix({2, 4}, 2, 2), EIP712_REQ_FAIL);
   EXPECT_EQ(walkMatrix({2, 4}, 4, 4), EIP712_REQ_FAIL);
+}
+
+// Only the outermost array streams. An array nested inside it keeps one pool
+// slot per element: Matrix takes one slot, leaving 23.
+TEST(Eip712Stream, ArraysInsideAStreamedArrayStillUseThePool) {
+  EXPECT_EQ(walkMatrix({0, 0}, 1, EIP712_MAX_SLOTS - 1), EIP712_REQ_DONE);
+  EXPECT_EQ(walkMatrix({0, 0}, 1, EIP712_MAX_SLOTS), EIP712_REQ_FAIL);
+  EXPECT_EQ(walkMatrix({0}, 60, 0), EIP712_REQ_DONE);
 }
 
 TEST(Eip712Stream, InnerDimensionsAreCheckedToo) {
@@ -1457,12 +1479,15 @@ Bytes corpusValue(const std::vector<uint32_t>& path) {
 }  // namespace
 
 TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
-  EXPECT_GE(kCorpus.size(), 45u);
+  EXPECT_GE(kCorpus.size(), 52u);
   // Max approvals sign, with the warning on the value's own screen.
   const std::map<std::string, std::string> unlimited = {
       {"permit2-PermitSingle-unlimited", "details.amount\nuint160: UNLIMITED"},
       {"eip2612-Permit-unlimited", "value\nuint256: UNLIMITED"},
       {"dai-Permit-allowed", "allowed\nbool: UNLIMITED (allowed)"},
+      {"safe-SafeTx-approve-unlimited",
+       "Allow 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45 to spend ALL your "
+       "USDC"},
   };
   size_t warned_docs = 0;
   for (const CorpusDoc& doc : kCorpus) {
@@ -1603,4 +1628,134 @@ TEST(Eip712Stream, StringsDifferingByOneSpaceNeverShareAScreen) {
   // The sweep reached both kinds of dropped space.
   EXPECT_TRUE(wrap_covered);
   EXPECT_TRUE(page_covered);
+}
+
+// A control byte draws as an escape, and a backslash is escaped too, so the
+// newline and the four literal characters "\x0a" never share a screen.
+TEST(Eip712Stream, StringControlBytesAreShownEscaped) {
+  const std::string newline = std::string("a\nb\tc") + '\0' + "d";
+  const std::string literal = "a\\x0ab\\x09c\\x00d";
+  std::map<std::string, Struct> types;
+  addMember(types["EIP712Domain"], "name",
+            mk(EthereumTypedDataStructAck_EthereumDataType_STRING));
+  addMember(types["Msg"], "note",
+            mk(EthereumTypedDataStructAck_EthereumDataType_STRING));
+  std::vector<std::string> bodies;
+  for (const std::string* note : {&newline, &literal}) {
+    g_note = *note;
+    kkconfirm_capture_start();
+    walk(
+        "Msg", types,
+        [](const std::vector<uint32_t>& path) -> Bytes {
+          if (path[0] == 0) return Bytes{'A', 'p', 'p'};
+          return Bytes(g_note.begin(), g_note.end());
+        },
+        40);
+    EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+    eip712_stream_abort();
+    const std::vector<std::string> shown = kkconfirm_capture_finish();
+    ASSERT_GE(shown.size(), 2u);
+    bodies.push_back(shown[1]);
+  }
+  EXPECT_EQ(bodies[0], "note\nstring: a\\x0ab\\x09c\\x00d");
+  EXPECT_EQ(bodies[1], "note\nstring: a\\\\x0ab\\\\x09c\\\\x00d");
+  EXPECT_TRUE(noteScreens(newline) != noteScreens(literal));
+}
+
+// approve(spender, amount) inside a `bytes` leaf (a Safe transaction's data)
+// gets the top-level policy: 2^256-1 signs only after the UNLIMITED warning,
+// and a dirty spender word is refused.
+namespace {
+
+Bytes g_approve;
+bool g_data_first;
+
+Bytes approveCall(uint8_t spender_high, uint8_t amount_fill) {
+  Bytes b = {0x09, 0x5e, 0xa7, 0xb3};
+  b.insert(b.end(), 12, 0);
+  b[15] = spender_high;
+  for (int i = 0; i < 20; i++) b.push_back((uint8_t)(0x10 + i));
+  b.insert(b.end(), 32, amount_fill);
+  return b;
+}
+
+// The domain's chainId, then SafeTx {to, value, data} (or data first).
+Eip712ReqKind walkSafeTx(const Bytes& data, bool data_first, int screens,
+                         std::vector<std::string>* titles,
+                         std::vector<std::string>* bodies) {
+  std::map<std::string, Struct> types;
+  addMember(types["EIP712Domain"], "chainId",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  Field address = mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS);
+  Field bytes = mk(EthereumTypedDataStructAck_EthereumDataType_BYTES);
+  if (data_first) addMember(types["SafeTx"], "data", bytes);
+  addMember(types["SafeTx"], "to", address);
+  addMember(types["SafeTx"], "value",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  if (!data_first) addMember(types["SafeTx"], "data", bytes);
+  g_approve = data;
+  g_data_first = data_first;
+  kkconfirm_capture_start();
+  walk(
+      "SafeTx", types,
+      [](const std::vector<uint32_t>& path) -> Bytes {
+        if (path[0] == 0) return word(1);
+        const uint32_t data_at = g_data_first ? 0 : 2;
+        const uint32_t to_at = g_data_first ? 1 : 0;
+        if (path[1] == data_at) return g_approve;
+        if (path[1] == to_at)  // USDC on chain 1
+          return fromHex("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+        return word(0);
+      },
+      screens);
+  *bodies = kkconfirm_capture_finish();
+  *titles = kkconfirm_captured_titles();
+  const Eip712ReqKind kind = eip712_stream_next()->kind;
+  eip712_stream_abort();
+  return kind;
+}
+
+}  // namespace
+
+TEST(Eip712Stream, EmbeddedUnlimitedApproveSignsAfterTheWarning) {
+  std::vector<std::string> titles, bodies;
+  char expected[128];
+
+  // `to` already reviewed: the token is named.
+  EXPECT_EQ(walkSafeTx(approveCall(0, 0xff), false, 20, &titles, &bodies),
+            EIP712_REQ_DONE);
+  std::vector<std::string> warned;
+  for (size_t i = 0; i < titles.size(); i++)
+    if (titles[i] == "UNLIMITED approval") warned.push_back(bodies[i]);
+  ASSERT_EQ(warned.size(), 1u);
+  EXPECT_NE(warned[0].find("to spend ALL your USDC"), std::string::npos);
+  char checksummed[41];
+  const Bytes call = approveCall(0, 0xff);
+  ethereum_address_checksum(call.data() + 16, checksummed, false, 1);
+  snprintf(expected, sizeof(expected), "Allow 0x%s to spend ALL your USDC",
+           checksummed);
+  EXPECT_EQ(warned[0], expected);
+
+  // `data` before `to`: the token is pointed at, not guessed.
+  EXPECT_EQ(walkSafeTx(approveCall(0, 0xff), true, 20, &titles, &bodies),
+            EIP712_REQ_DONE);
+  snprintf(expected, sizeof(expected),
+           "Allow 0x%s to spend ALL your tokens of the contract in 'to'",
+           checksummed);
+  EXPECT_EQ(std::count(bodies.begin(), bodies.end(), std::string(expected)), 1);
+
+  // A finite approve keeps the ordinary screen.
+  EXPECT_EQ(walkSafeTx(approveCall(0, 0x01), false, 20, &titles, &bodies),
+            EIP712_REQ_DONE);
+  EXPECT_EQ(std::count(titles.begin(), titles.end(), "UNLIMITED approval"), 0);
+
+  // Declining the warning signs nothing: only the domain and `to`, `value`
+  // screens are accepted.
+  EXPECT_EQ(walkSafeTx(approveCall(0, 0xff), false, 3, &titles, &bodies),
+            EIP712_REQ_CANCELLED);
+
+  // A dirty spender word is refused before any screen of it.
+  EXPECT_EQ(walkSafeTx(approveCall(0x01, 0xff), false, 20, &titles, &bodies),
+            EIP712_REQ_FAIL);
+  EXPECT_EQ(std::count(titles.begin(), titles.end(), "UNLIMITED approval"), 0);
 }
