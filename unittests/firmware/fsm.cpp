@@ -1799,9 +1799,30 @@ TEST(Fsm, PingKeepsAWaitingTypedDataStreamOnScreen) {
 
 // A definition chunk refused for AdvancedMode ends the certified workflow
 // (and the typed-data stream it belongs to) instead of leaving it armed.
+// Every ERC-7730 phase is driven by the host between screens, so a Ping in
+// any of them must not draw home over the live workflow.
+TEST(Fsm, PingKeepsALiveErc7730WorkflowOnScreen) {
+  kk_test_board_init();
+  fsm_init();
+  for (auto phase : {ERC7730_WORKFLOW_REPLAY, ERC7730_WORKFLOW_SELECT,
+                     ERC7730_WORKFLOW_FETCH, ERC7730_WORKFLOW_CALLDATA}) {
+    auto* workflow = erc7730_workflow_state();
+    workflow->phase = phase;
+    leave_home();
+    ASSERT_EQ(AWAY_FROM_HOME, home_get_state());
+    Ping ping = {};
+    ASSERT_TRUE(keepkey_before_message_dispatch(MessageType_MessageType_Ping));
+    fsm_msgPing(&ping);
+    EXPECT_EQ(AWAY_FROM_HOME, home_get_state()) << phase;
+    workflow->phase = ERC7730_WORKFLOW_IDLE;
+    layoutHomeForced();
+  }
+}
+
 TEST(Fsm, Erc7730ChunkRefusedWithoutAdvancedModeEndsTheWorkflow) {
   kk_test_board_init();
   fsm_init();
+  ScopedFlash flash;  // storage_init(): the policy table this test sets
   ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
   for (auto phase : {ERC7730_WORKFLOW_REPLAY, ERC7730_WORKFLOW_SELECT,
                      ERC7730_WORKFLOW_FETCH}) {

@@ -434,6 +434,7 @@ bool fsm_workflowInProgress(void) {
 #if !BITCOIN_ONLY
   if (ethereum_signing_isInProgress() ||
       eip712_stream_waiting() != EIP712_IDLE ||
+      erc7730_workflow_active(erc7730_workflow_state()) ||
       tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS) ||
       tendermint_signingIsInited(TENDERMINT_SIGNING_GENERIC) ||
       osmosis_signingIsInited() || binance_signingIsInited() ||
