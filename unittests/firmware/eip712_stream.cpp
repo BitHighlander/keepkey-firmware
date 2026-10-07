@@ -1,4 +1,6 @@
 extern "C" {
+#include "keepkey/board/font.h"
+#include "keepkey/board/layout.h"
 #include "keepkey/firmware/eip712_stream.h"
 #include "keepkey/firmware/eip712_stream.h"  // Public declarations stay guarded.
 #include "messages-ethereum.pb.h"
@@ -12,6 +14,10 @@ extern "C" {
 #include <string>
 #include <vector>
 #include "kkconfirm_driver.h"
+
+void kkconfirm_capture_start(void);
+std::vector<std::string> kkconfirm_capture_finish(void);
+std::vector<std::string> kkconfirm_captured_titles(void);
 
 namespace {
 
@@ -1045,4 +1051,35 @@ TEST(Eip712Stream, InnerDimensionsAreCheckedToo) {
   EXPECT_EQ(walkMatrix({2, 0}, 3, 1), EIP712_REQ_FAIL);
   EXPECT_EQ(walkMatrix({0, 4}, 4, 3), EIP712_REQ_DONE);
   EXPECT_EQ(walkMatrix({0, 4}, 3, 3), EIP712_REQ_FAIL);
+}
+
+// Titles do not push the body down when they wrap, so every review title
+// must fit one row even for the longest accepted primary type.
+TEST(Eip712Stream, LeafTitlesFitOneRowForTheLongestPrimaryType) {
+  const std::string primary(EIP712_MAX_STRUCT_NAME - 1, 'W');
+  ASSERT_TRUE(eip712_identifier_ok(primary.c_str()));
+  std::map<std::string, Struct> types;
+  addMember(types["EIP712Domain"], "name",
+            mk(EthereumTypedDataStructAck_EthereumDataType_STRING));
+  addMember(types[primary], "amount",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  kkconfirm_capture_start();
+  const int used = walk(
+      primary.c_str(), types,
+      [](const std::vector<uint32_t>& path) -> Bytes {
+        return path[0] == 0 ? Bytes{'A', 'p', 'p'} : word(5);
+      },
+      2);
+  kkconfirm_capture_finish();
+  EXPECT_EQ(used, 2);
+  EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  EXPECT_STREQ(eip712_stream_next()->primary_type, primary.c_str());
+  const std::vector<std::string> titles = kkconfirm_captured_titles();
+  ASSERT_EQ(titles.size(), 2u);
+  for (std::string title : titles) {
+    for (char& c : title) c = (char)toupper((unsigned char)c);
+    EXPECT_EQ(1u, calc_str_line(get_title_font(), title.c_str(), TITLE_WIDTH))
+        << title;
+  }
+  eip712_stream_abort();
 }

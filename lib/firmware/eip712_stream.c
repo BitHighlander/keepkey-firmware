@@ -714,6 +714,12 @@ bool eip712_render_integer(const Eip712FieldType* field, const uint8_t* value,
   return written > 0;
 }
 
+/* Fixed and short: a wrapped title draws over the body, and a primary type
+ * may fill a whole row. The final signing screen names the primary type. */
+static const char* leaf_title(void) {
+  return e712.root == 0 ? "EIP-712 Domain" : "EIP-712 Message";
+}
+
 static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
                                             const uint8_t* value,
                                             uint16_t len) {
@@ -723,7 +729,7 @@ static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
   if (!eip712_type_name(field, type_name, sizeof(type_name)) ||
       !leaf_path(path, sizeof(path)))
     return EIP712_LEAF_INVALID;
-  const char* title = e712.root == 0 ? "EIP-712 Domain" : e712.primary_type;
+  const char* title = leaf_title();
 
   switch (field->data_type) {
     case EthereumTypedDataStructAck_EthereumDataType_STRING:
