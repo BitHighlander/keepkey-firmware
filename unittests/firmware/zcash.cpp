@@ -1413,11 +1413,20 @@ TEST(Zcash, UserAddress_RejectsMalformedStrings) {
   EXPECT_EQ(ZCASH_USER_ADDRESS_INVALID,
             zcash_user_address_check(bad_checksum.c_str(), receiver));
 
-  std::string upper = ua;  // valid bech32m, but only lowercase is accepted
+  std::string upper = ua;  // all-uppercase is valid bech32m (QR codes)
   for (auto& c : upper) c = (char)toupper((unsigned char)c);
-  EXPECT_EQ(ZCASH_USER_ADDRESS_INVALID,
+  ASSERT_NE(ua, upper);
+  EXPECT_EQ(ZCASH_USER_ADDRESS_MATCH,
             zcash_user_address_check(upper.c_str(), receiver));
-  std::string mixed = ua;  // and mixed case is never valid bech32m
+  receiver[42] ^= 1;  // control: still a receiver match, not a parse alone
+  EXPECT_EQ(ZCASH_USER_ADDRESS_MISMATCH,
+            zcash_user_address_check(upper.c_str(), receiver));
+  receiver[42] ^= 1;
+  std::string upper_bad = upper;  // uppercase still runs the checksum
+  upper_bad.back() = upper_bad.back() == 'Q' ? 'P' : 'Q';
+  EXPECT_EQ(ZCASH_USER_ADDRESS_INVALID,
+            zcash_user_address_check(upper_bad.c_str(), receiver));
+  std::string mixed = ua;  // but mixed case is never valid bech32m
   mixed[30] = (char)toupper((unsigned char)mixed[30]);
   ASSERT_NE(ua, mixed);
   EXPECT_EQ(ZCASH_USER_ADDRESS_INVALID,

@@ -699,7 +699,8 @@ bool zcashSignatureEmitted(const std::vector<uint16_t>& ids) {
 
 // ZIP 374 user_address on a real spend whose output is note vector 0. A
 // matching multi-receiver address (built by zcash_address 0.13.0) is shown
-// verbatim and the spend is signed; a valid address holding another Orchard
+// verbatim and the spend is signed, and so is its all-uppercase QR form,
+// shown in lowercase; a valid address holding another Orchard
 // receiver is refused before the output screens with no signature; without
 // one the device shows the Orchard-only address under an honest title.
 TEST_F(ReviewHandlers, ZcashUserAddressIsCheckedThenShown) {
@@ -717,8 +718,8 @@ TEST_F(ReviewHandlers, ZcashUserAddressIsCheckedThenShown) {
   ZcashOrchardKeys keys;
   ASSERT_TRUE(storage_zcashOrchardKeys(0, true, &keys));
 
-  enum Case { kMatch, kMismatch, kAbsent };
-  for (Case c : {kMatch, kMismatch, kAbsent}) {
+  enum Case { kMatch, kUpper, kMismatch, kAbsent };
+  for (Case c : {kMatch, kUpper, kMismatch, kAbsent}) {
     SCOPED_TRACE(c);
     ZcashPCZTAction action = zcashNoteAction(0, kZcashOrchardNoteVectors[0]);
     action.is_spend = true;
@@ -728,8 +729,11 @@ TEST_F(ReviewHandlers, ZcashUserAddressIsCheckedThenShown) {
     zcashSet(action.rk, rk);
     if (c != kAbsent) {
       action.has_user_address = true;
-      strlcpy(action.user_address, c == kMatch ? kMatching : kOtherOrchard,
+      strlcpy(action.user_address, c == kMismatch ? kOtherOrchard : kMatching,
               sizeof(action.user_address));
+      if (c == kUpper)
+        for (char* p = action.user_address; *p; p++)
+          *p = (char)toupper((unsigned char)*p);
     }
     uint8_t digest[32];
     zcashBundleDigest({action}, 0, digest);
@@ -758,9 +762,9 @@ TEST_F(ReviewHandlers, ZcashUserAddressIsCheckedThenShown) {
     EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
         << fsm_test_lastFailureMessage();
     const std::string title =
-        c == kMatch ? "Shielded recipient" : "Orchard address";
+        c == kAbsent ? "Orchard address" : "Shielded recipient";
     const std::string expected =
-        c == kMatch ? kMatching
+        c != kAbsent ? kMatching
                     : "u17j4lvw84jd238ev9ukr0lvqhv4z32v98pxcglctaj3aqfqj7rr2w"
                       "wvh73247ekczw4smyrvm2wf2v5nfxvn3sl0ycc6w4455yg49yf2m";
     std::string shown;

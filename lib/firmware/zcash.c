@@ -478,9 +478,15 @@ static bool zcash_read_compact_size(const uint8_t* buf, size_t end, size_t* pos,
   return true;
 }
 
+static char zcash_ascii_lower(char c) {
+  return c >= 'A' && c <= 'Z' ? (char)(c + ('a' - 'A')) : c;
+}
+
 /* bech32m (any length), F4Jumble^-1, HRP padding, then the item walk of
  * ZIP 316. Accepts the mainnet HRPs "u" (Revision 0) and "zu"/"tu"
- * (Revision 2), whose encodings differ only in the HRP and permitted items. */
+ * (Revision 2), whose encodings differ only in the HRP and permitted items.
+ * BIP 350 allows all-uppercase (QR alphanumeric mode) and forbids mixed
+ * case; an accepted string is read as its lowercase form. */
 ZcashUserAddressCheck zcash_user_address_check(
     const char* address,
     const uint8_t recipient[ZCASH_ORCHARD_RAW_RECEIVER_SIZE]) {
@@ -491,17 +497,27 @@ ZcashUserAddressCheck zcash_user_address_check(
   const char* sep = strrchr(address, '1');
   if (len > ZCASH_USER_ADDRESS_MAX_LEN || !sep)
     return ZCASH_USER_ADDRESS_INVALID;
+  bool lower = false, upper = false;
+  for (size_t i = 0; i < len; i++) {
+    lower |= address[i] >= 'a' && address[i] <= 'z';
+    upper |= address[i] >= 'A' && address[i] <= 'Z';
+  }
+  if (lower && upper) return ZCASH_USER_ADDRESS_INVALID;
   const size_t hrp_len = (size_t)(sep - address);
   const size_t data_len = len - hrp_len - 1;
+  /* The longest known HRP, "zutest", is 6 characters. */
+  char hrp[7] = {0};
+  for (size_t i = 0; i < hrp_len && i < sizeof(hrp) - 1; i++)
+    hrp[i] = zcash_ascii_lower(address[i]);
 
   bool zu = false;
-  if (hrp_len == 2 && memcmp(address, "zu", 2) == 0) {
+  if (hrp_len == 2 && memcmp(hrp, "zu", 2) == 0) {
     zu = true;
-  } else if (!(hrp_len == 1 && address[0] == 'u') &&
-             !(hrp_len == 2 && memcmp(address, "tu", 2) == 0)) {
-    const bool testnet = (hrp_len == 5 && memcmp(address, "utest", 5) == 0) ||
-                         (hrp_len == 6 && (memcmp(address, "zutest", 6) == 0 ||
-                                           memcmp(address, "tutest", 6) == 0));
+  } else if (!(hrp_len == 1 && hrp[0] == 'u') &&
+             !(hrp_len == 2 && memcmp(hrp, "tu", 2) == 0)) {
+    const bool testnet = (hrp_len == 5 && memcmp(hrp, "utest", 5) == 0) ||
+                         (hrp_len == 6 && (memcmp(hrp, "zutest", 6) == 0 ||
+                                           memcmp(hrp, "tutest", 6) == 0));
     return testnet ? ZCASH_USER_ADDRESS_NOT_MAINNET
                    : ZCASH_USER_ADDRESS_INVALID;
   }
@@ -509,19 +525,19 @@ ZcashUserAddressCheck zcash_user_address_check(
 
   uint32_t chk = 1;
   for (size_t i = 0; i < hrp_len; i++)
-    chk = zcash_bech32_polymod_step(chk) ^ ((uint8_t)address[i] >> 5);
+    chk = zcash_bech32_polymod_step(chk) ^ ((uint8_t)hrp[i] >> 5);
   chk = zcash_bech32_polymod_step(chk);
   for (size_t i = 0; i < hrp_len; i++)
-    chk = zcash_bech32_polymod_step(chk) ^ (address[i] & 0x1f);
+    chk = zcash_bech32_polymod_step(chk) ^ (hrp[i] & 0x1f);
 
   /* Five-bit groups to bytes as the checksum runs; the 6 checksum groups
-   * are not data. Lowercase only. */
+   * are not data. */
   uint8_t raw[(ZCASH_USER_ADDRESS_MAX_LEN - 2 - 6) * 5 / 8];
   size_t raw_len = 0;
   uint32_t acc = 0;
   unsigned bits = 0;
   for (size_t i = 0; i < data_len; i++) {
-    const char* p = strchr(charset, sep[1 + i]);
+    const char* p = strchr(charset, zcash_ascii_lower(sep[1 + i]));
     if (!p) return ZCASH_USER_ADDRESS_INVALID;
     const uint32_t v = (uint32_t)(p - charset);
     chk = zcash_bech32_polymod_step(chk) ^ v;
@@ -541,7 +557,7 @@ ZcashUserAddressCheck zcash_user_address_check(
     return ZCASH_USER_ADDRESS_INVALID;
   const size_t end = raw_len - ZCASH_ZIP316_PADDING_LEN;
   for (size_t i = 0; i < ZCASH_ZIP316_PADDING_LEN; i++) {
-    if (raw[end + i] != (i < hrp_len ? (uint8_t)address[i] : 0))
+    if (raw[end + i] != (i < hrp_len ? (uint8_t)hrp[i] : 0))
       return ZCASH_USER_ADDRESS_INVALID;
   }
 

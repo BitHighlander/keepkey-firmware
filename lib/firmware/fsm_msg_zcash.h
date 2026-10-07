@@ -332,6 +332,11 @@ static bool zcash_verify_and_confirm_orchard_output(
                         _("Invalid recipient address"));
         return false;
     }
+    /* The check refused mixed case, so this only turns an all-uppercase
+     * address (a QR scan) into the lowercase form wallets show. msg lives in
+     * the writable decode buffer. */
+    for (char* c = (char*)msg->user_address; *c; c++)
+      if (*c >= 'A' && *c <= 'Z') *c = (char)(*c + ('a' - 'A'));
     shown = msg->user_address;
     title = "Shielded recipient";
   }
