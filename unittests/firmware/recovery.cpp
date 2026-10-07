@@ -371,3 +371,21 @@ TEST(Recovery, DeleteAcrossWordBoundaryShowsTheWordBeforeTheEditedOne) {
   recovery_review_previous_after_delete("zoo", previous);  // first word
   EXPECT_STREQ("", previous);
 }
+
+// The previous-word indicator must stay on one line: a wrapped second line
+// lands on "Recovery Cipher:".
+TEST(Recovery, PrevWordIndicatorFitsOneLine) {
+  const Font* font = get_body_font();
+  char info[32];
+  int overflows = 0;
+  for (uint32_t pos = 1; pos <= 24; pos++) {
+    for (int i = 0; wordlist[i]; i++) {
+      recovery_cipher_prev_word_info(info, sizeof(info), pos, wordlist[i]);
+      uint32_t width = calc_str_width(font, info);
+      if (width > CIPHER_PREV_WORD_WIDTH) {
+        if (overflows++ < 5) ADD_FAILURE() << info << " is " << width << " px";
+      }
+    }
+  }
+  EXPECT_EQ(0, overflows);
+}

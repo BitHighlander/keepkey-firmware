@@ -66,6 +66,8 @@
 #define CIPHER_FOREGROUND 0X99
 #define CIPHER_START_X 76
 #define CIPHER_START_Y 3
+/* Ends left of the cipher grid, which starts at CIPHER_START_X - 4. */
+#define CIPHER_PREV_WORD_WIDTH 68
 #define CIPHER_MASK_COLOR 0x00
 #define CIPHER_FONT_COLOR 0x99
 #define CIPHER_MAP_FONT_COLOR 0xFF

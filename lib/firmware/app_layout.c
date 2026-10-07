@@ -769,7 +769,7 @@ void layout_cipher(const char* current_word, const char* cipher,
     sp.y = 2;
     sp.x = 4;
     sp.color = CIPHER_FONT_COLOR; /* gray -- less prominent than current word */
-    draw_string(canvas, title_font, prev_word_info, &sp, 68,
+    draw_string(canvas, title_font, prev_word_info, &sp, CIPHER_PREV_WORD_WIDTH,
                 font_height(title_font));
   }
 
