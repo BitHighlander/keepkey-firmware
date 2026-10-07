@@ -473,8 +473,9 @@ bool eip712_type_hash(const char* name, Eip712StructLookup lookup, void* ctx,
  * stay >= 16,384 B). One SHA3_CTX: encodeType streams and frame folds never
  * overlap. */
 typedef struct {
-  /* Parent member name for review paths; empty for array elements. */
-  char label[EIP712_MAX_MEMBER_NAME];
+  /* Parent member name for review paths, at e712.labels + label_off; empty
+   * for array elements. */
+  uint8_t label_off;
   uint8_t slot_base;    /* first slot in the pool belonging to this frame */
   uint8_t member_count; /* members declared by the struct */
   bool is_array;
@@ -521,6 +522,8 @@ static struct {
 
   Eip712Frame stack[EIP712_MAX_DEPTH];
   uint8_t depth;
+  /* The labels of stack[1..depth), packed in stack order, each NUL-ended. */
+  char labels[EIP712_MAX_PATH];
 
   uint8_t pool[EIP712_MAX_SLOTS][32];
   uint8_t slots_used;
@@ -563,6 +566,7 @@ static struct {
 
 _Static_assert(EIP712_MAX_STRUCTS + 1 <= 8, "schema_known is one byte");
 _Static_assert(EIP712_MAX_STRUCTS + 1 < EIP712_NO_TYPE, "type index range");
+_Static_assert(EIP712_MAX_PATH <= 256, "label_off is one byte");
 
 bool eip712_stream_domain_matches(uint8_t field, uint8_t literal_kind,
                                   const uint8_t* value, size_t length,
@@ -725,7 +729,8 @@ static bool leaf_path(char* out, size_t out_size) {
   for (uint8_t i = 1; i <= e712.depth; i++) {
     const bool leaf = i == e712.depth;
     const Eip712Frame* parent = &e712.stack[i - 1];
-    const char* label = leaf ? e712.pending_name : e712.stack[i].label;
+    const char* label =
+        leaf ? e712.pending_name : e712.labels + e712.stack[i].label_off;
     int n;
     if (parent->is_array) {
       n = snprintf(out + used, out_size - used, "[%u]",
@@ -846,7 +851,7 @@ static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
                                             const uint8_t* value,
                                             uint16_t len) {
   char type_name[EIP712_MAX_TYPE_NAME];
-  char path[160];
+  char path[EIP712_MAX_PATH];
   char text[82]; /* "-" + 78 digits, or a checksummed address */
   if (!eip712_type_name(field, type_name, sizeof(type_name)) ||
       !leaf_path(path, sizeof(path)))
@@ -895,7 +900,7 @@ static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
 static Eip712LeafResult eip712_confirm_empty_array(const Eip712Frame* arr) {
   Eip712FieldType type;
   char type_name[EIP712_MAX_TYPE_NAME];
-  char path[160];
+  char path[EIP712_MAX_PATH];
   memzero(&type, sizeof(type));
   type.data_type = (Eip712DataType)arr->u.a.elem_data_type;
   type.has_size = arr->u.a.elem_has_size;
@@ -968,6 +973,23 @@ static void request_value(void) {
     next_step.member_path[1 + i] = e712.stack[i].member_index;
   }
   e712.waiting = EIP712_WANT_VALUE;
+}
+
+/* Give `staged` (stack[depth], not pushed yet) its label, after the labels of
+ * the open frames. Each label costs its length + 1 here and at least that in
+ * the review path, which also holds the leaf, so a document this refuses has
+ * a path leaf_path() could not render either. */
+static bool stage_label(Eip712Frame* staged, const char* name) {
+  size_t off = 0;
+  if (e712.depth > 1) {
+    const Eip712Frame* top = &e712.stack[e712.depth - 1];
+    off = top->label_off + strlen(e712.labels + top->label_off) + 1;
+  }
+  const size_t len = strlen(name);
+  if (off + len + 1 > sizeof(e712.labels)) return false;
+  memcpy(e712.labels + off, name, len + 1);
+  staged->label_off = (uint8_t)off;
+  return true;
 }
 
 /* typeHash for the top frame's struct; recomputed per use to save .bss. */
@@ -1138,6 +1160,10 @@ static void drive_array_element(void) {
     }
     Eip712Frame* inner = &e712.stack[e712.depth];
     memzero(inner, sizeof(*inner));
+    if (!stage_label(inner, "")) {
+      fail("EIP-712 member path too long for this device");
+      return;
+    }
     inner->is_array = true;
     inner->slot_base = arr->slot_base + array_slots(arr);
     inner->u.a = arr->u.a;
@@ -1163,6 +1189,10 @@ static void drive_array_element(void) {
     }
     Eip712Frame* child = &e712.stack[e712.depth];
     memzero(child, sizeof(*child));
+    if (!stage_label(child, "")) {
+      fail("EIP-712 member path too long for this device");
+      return;
+    }
     child->u.s.type = arr->u.a.elem_type;
     child->slot_base = arr->slot_base + array_slots(arr);
     e712.depth++;
@@ -1432,7 +1462,10 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
         memzero(arr, sizeof(*arr));
         arr->is_array = true;
         arr->slot_base = f->slot_base + f->member_count;
-        strlcpy(arr->label, m->name, sizeof(arr->label));
+        if (!stage_label(arr, m->name)) {
+          fail("EIP-712 member path too long for this device");
+          return false;
+        }
         arr->u.a.elem_data_type = (uint8_t)m->type.data_type;
         arr->u.a.elem_has_size = m->type.has_size;
         arr->u.a.elem_size = m->type.size;
@@ -1476,7 +1509,10 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
           fail("EIP-712 type graph too large or malformed");
           return false;
         }
-        strlcpy(child->label, m->name, sizeof(child->label));
+        if (!stage_label(child, m->name)) {
+          fail("EIP-712 member path too long for this device");
+          return false;
+        }
         child->slot_base = f->slot_base + f->member_count;
         e712.depth++;
         begin_type_hash();

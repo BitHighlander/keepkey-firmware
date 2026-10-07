@@ -37,9 +37,14 @@
 #define EIP712_MAX_TYPE_NAME 112
 
 /* Nesting bound and C-stack recursion bound; checked BEFORE descending. Each
- * nested struct and each array dimension is one frame: UniswapX's
- * witness.baseOutputs[i] and eth-sig-util's to[i].wallets need four. */
-#define EIP712_MAX_DEPTH 4
+ * nested struct and each array dimension is one frame: UniswapX's V3 Dutch
+ * order witness.baseOutputs[i].curve.relativeAmounts needs six. */
+#define EIP712_MAX_DEPTH 6
+
+/* Longest review path ("witness.baseOutputs[0].curve.relativeAmounts[0]"),
+ * with its NUL. The member names along the open frames share one buffer of
+ * this size: whatever fits the path fits the buffer. */
+#define EIP712_MAX_PATH 160
 
 /* Shared pool of 32-byte member encodings; a completed container collapses to
  * one digest in its parent's slot. Only ONE SHA3_CTX (~400 B) is ever live,
@@ -55,9 +60,9 @@
 #define EIP712_MAX_LEAF 1024
 
 /* Distinct struct types one primary type may reference, including itself.
- * Permit2's PermitSingle needs 2, Seaport's OrderComponents 3, Across 4 and a
- * UniswapX PriorityOrder witness 6. */
-#define EIP712_MAX_STRUCTS 6
+ * Permit2's PermitSingle needs 2, Seaport's OrderComponents 3, Across 4, a
+ * UniswapX PriorityOrder witness 6 and a UniswapX V3DutchOrder witness 7. */
+#define EIP712_MAX_STRUCTS 7
 
 /* The wire allows 80; each byte costs EIP712_MAX_STRUCTS + 4 of SRAM. 48 holds
  * Hyperliquid's "HyperliquidTransaction:ApproveBuilderFee" (40). */

@@ -636,12 +636,12 @@ TEST(Eip712Stream, SortIsNotMerelyReversedDiscoveryOrder) {
 TEST(Eip712Stream, RefusesADocumentWiderThanTheClosure) {
   // EIP712_MAX_STRUCTS bounds the closure INCLUDING the primary type, so the
   // real ceiling is that many distinct struct types in one document. A
-  // UniswapX PriorityOrder witness sits exactly at it; one more dependency
+  // UniswapX V3DutchOrder witness sits exactly at it; one more dependency
   // must be REFUSED rather than silently truncated, because a truncated
   // closure still produces a well-formed 32-byte typeHash -- one that no
   // verifier reproduces.
   // Discovered neither sorted nor reverse-sorted.
-  const char* names[] = {"Delta", "Alpha", "Foxtrot",
+  const char* names[] = {"Delta", "Alpha", "Foxtrot", "Golf",
                          "Bravo", "Echo",  "Charlie"};
   static_assert(sizeof(names) / sizeof(names[0]) == EIP712_MAX_STRUCTS,
                 "one dependency more than fits");
@@ -1085,12 +1085,12 @@ TEST(Eip712Stream, SeaportShapedDocumentFitsThePool) {
   }
 }
 
-// Every nested struct and every array dimension is one frame. Four fit (the
-// UniswapX witness.baseOutputs[i] and eth-sig-util to[i].wallets shapes); a
-// fifth is refused before it is pushed.
-TEST(Eip712Stream, NestsFourFramesDeepButNotFive) {
-  const char* chain[] = {"L1", "L2", "L3", "L4", "L5"};
-  for (size_t frames : {4u, 5u}) {
+// Every nested struct and every array dimension is one frame. Six fit (the
+// UniswapX V3 Dutch order witness.baseOutputs[i].curve.relativeAmounts
+// shape); a seventh is refused before it is pushed.
+TEST(Eip712Stream, NestsSixFramesDeepButNotSeven) {
+  const char* chain[] = {"L1", "L2", "L3", "L4", "L5", "L6", "L7"};
+  for (size_t frames : {6u, 7u}) {
     SCOPED_TRACE(frames);
     std::map<std::string, Struct> types;
     for (size_t i = 0; i + 1 < frames; i++)
@@ -1100,7 +1100,7 @@ TEST(Eip712Stream, NestsFourFramesDeepButNotFive) {
     const int used = walk(
         "L1", types,
         [](const std::vector<uint32_t>&) -> Bytes { return word(9); }, 2);
-    if (frames == 4) {
+    if (frames == 6) {
       EXPECT_EQ(used, 1);
       EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
     } else {
@@ -1108,6 +1108,77 @@ TEST(Eip712Stream, NestsFourFramesDeepButNotFive) {
       ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
       EXPECT_STREQ(eip712_stream_next()->error,
                    "EIP-712 document nests too deeply for this device");
+    }
+    eip712_stream_abort();
+  }
+}
+
+// The open frames' member names share one EIP712_MAX_PATH buffer. Whatever
+// path the review screen can show must fit it: an empty array whose path is
+// the longest that renders fills the buffer exactly, and a leaf path of
+// EIP712_MAX_PATH - 1 characters six frames deep signs. One character more
+// is refused by the review screen, as before.
+TEST(Eip712Stream, MemberNamesFitEveryPathTheReviewCanShow) {
+  // P0.a.b.c.d holds an empty uint256[] e: five 31-character names.
+  {
+    std::map<std::string, Struct> types;
+    std::string path;
+    const char* chain[] = {"P0", "P1", "P2", "P3", "P4"};
+    for (int i = 0; i < 5; i++) {
+      const std::string name = std::string(1, (char)('a' + i)) +
+                               std::string(30, (char)('a' + i));
+      path += (i ? "." : "") + name;
+      if (i < 4) {
+        addMember(types[chain[i]], name.c_str(), structField(chain[i + 1]));
+      } else {
+        Field arr = mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32);
+        arr.array_levels_count = 1;
+        arr.array_levels[0] = 0;
+        addMember(types[chain[i]], name.c_str(), arr);
+      }
+    }
+    ASSERT_EQ(path.size(), (size_t)EIP712_MAX_PATH - 1);
+    kkconfirm_capture_start();
+    walk("P0", types,
+         [](const std::vector<uint32_t>&) -> Bytes { return Bytes{0, 0}; }, 4);
+    // One screen, which the pager may show as several pages.
+    std::string shown;
+    for (const std::string& page : kkconfirm_capture_finish()) shown += page;
+    EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+    EXPECT_EQ(shown, path + "\nuint256[]: 0 items");
+    eip712_stream_abort();
+  }
+  // L1..L6, one member each; the six names add up to `total` characters.
+  for (size_t total : {154u, 155u}) {
+    SCOPED_TRACE(total);
+    const char* chain[] = {"L1", "L2", "L3", "L4", "L5", "L6"};
+    std::map<std::string, Struct> types;
+    std::string path;
+    for (size_t i = 0; i < 6; i++) {
+      const size_t len = i == 5 ? total - 5 * 26 : 26;
+      const std::string name = std::string(len, (char)('a' + i));
+      path += (i ? "." : "") + name;
+      if (i < 5) {
+        addMember(types[chain[i]], name.c_str(), structField(chain[i + 1]));
+      } else {
+        addMember(types[chain[i]], name.c_str(),
+                  mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+      }
+    }
+    kkconfirm_capture_start();
+    const int used = walk(
+        "L1", types,
+        [](const std::vector<uint32_t>&) -> Bytes { return word(9); }, 4);
+    std::string shown;
+    for (const std::string& page : kkconfirm_capture_finish()) shown += page;
+    if (path.size() < EIP712_MAX_PATH) {
+      EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+      EXPECT_EQ(shown, path + "\nuint256: 9");
+    } else {
+      EXPECT_EQ(used, 0);
+      ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
+      EXPECT_STREQ(eip712_stream_next()->error,
+                   "EIP-712 value cannot be displayed");
     }
     eip712_stream_abort();
   }
@@ -1479,7 +1550,7 @@ Bytes corpusValue(const std::vector<uint32_t>& path) {
 }  // namespace
 
 TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
-  EXPECT_GE(kCorpus.size(), 52u);
+  EXPECT_GE(kCorpus.size(), 55u);
   // Max approvals sign, with the warning on the value's own screen.
   const std::map<std::string, std::string> unlimited = {
       {"permit2-PermitSingle-unlimited", "details.amount\nuint160: UNLIMITED"},
