@@ -333,7 +333,8 @@ struct TronSignFixture {
 }  // namespace
 
 // The transfer selector does not prove what an arbitrary contract executes,
-// so a TRC-20 call meets the blind-sign gate; native TRX does not (control).
+// so a TRC-20 call to a contract outside the trusted table meets the
+// blind-sign gate; native TRX does not (control).
 TEST(Tron, Trc20TransferRequiresAdvancedModeBlindSign) {
   ASSERT_TRUE(kkconfirm_preload(0, 0));
   ASSERT_EQ(0, kkconfirm_drain());
@@ -419,6 +420,105 @@ TEST(Tron, FeeLimitIsShownAsAnEnergyLimit) {
   }
 }
 
+namespace {
+std::vector<uint8_t> decodeTronAddress(const char* base58) {
+  std::vector<uint8_t> raw(TRON_RAW_ADDRESS_SIZE);
+  if (base58_decode_check(base58, HASHER_SHA2D, raw.data(), raw.size()) !=
+      TRON_RAW_ADDRESS_SIZE)
+    raw.clear();
+  return raw;
+}
+std::vector<uint8_t> amountWord(uint64_t high, uint64_t low) {
+  std::vector<uint8_t> word(32, 0);
+  for (int i = 0; i < 8; i++) {
+    word[16 + i] = static_cast<uint8_t>(high >> (8 * (7 - i)));
+    word[24 + i] = static_cast<uint8_t>(low >> (8 * (7 - i)));
+  }
+  return word;
+}
+}  // namespace
+
+// Issuer-published mainnet contracts with the symbol and decimals their
+// contracts report; a lookalike or superseded contract is not trusted.
+TEST(Tron, KnownTokenTableMatchesIssuerContracts) {
+  struct Case {
+    const char* address;
+    const char* symbol; /* nullptr: must not be trusted */
+    int decimals;
+  };
+  const Case cases[] = {
+      {"TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", "USDT", 6},
+      {"TXDk8mbtRbXeYuMNS83CfKPaYYT8XWv9Hz", "USDD", 18},
+      {"TNUC9Qb1rRpS5CbWLmNMxXBjyFoydXjWFR", "WTRX", 6},
+      /* USDD OLD reports the same on-chain symbol as USDD 2.0. */
+      {"TPYmHEhy5n8TCEfYGqW2rPxsghSfzghPDn", nullptr, 0},
+      /* Circle's TRON USDC, discontinued. */
+      {"TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8", nullptr, 0},
+  };
+  for (const Case& c : cases) {
+    SCOPED_TRACE(c.address);
+    const auto raw = decodeTronAddress(c.address);
+    ASSERT_EQ(TRON_RAW_ADDRESS_SIZE, raw.size());
+    const TronToken* token = tron_knownToken(raw.data());
+    if (!c.symbol) {
+      EXPECT_EQ(nullptr, token);
+      continue;
+    }
+    ASSERT_NE(nullptr, token);
+    EXPECT_STREQ(c.symbol, token->symbol);
+    EXPECT_EQ(c.decimals, token->decimals);
+    auto lookalike = raw;
+    lookalike[20] ^= 1;
+    EXPECT_EQ(nullptr, tron_knownToken(lookalike.data()));
+  }
+
+  const TronToken* usdd = tron_knownToken(
+      decodeTronAddress("TXDk8mbtRbXeYuMNS83CfKPaYYT8XWv9Hz").data());
+  ASSERT_NE(nullptr, usdd);
+  char buf[96];
+  /* 1.5e18 base units of an 18-decimal token */
+  ASSERT_TRUE(tron_formatTrc20Amount(
+      amountWord(0, 1500000000000000000ULL).data(), usdd, buf, sizeof(buf)));
+  EXPECT_STREQ("1.5 USDD", buf);
+  /* the uint256 maximum still fits the buffer */
+  std::vector<uint8_t> max(32, 0xff);
+  ASSERT_TRUE(tron_formatTrc20Amount(max.data(), usdd, buf, sizeof(buf)));
+}
+
+// A transfer on a trusted contract clear-signs without AdvancedMode: one
+// screen with the amount in token units and the full recipient, taken from
+// the signed raw_data.
+TEST(Tron, KnownTrc20TransferClearSignsWithoutAdvancedMode) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  TronSignFixture f;
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+  const auto usdt = decodeTronAddress("TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t");
+  ASSERT_EQ(TRON_RAW_ADDRESS_SIZE, usdt.size());
+  const auto to = tronAddr(0x22);
+  char to_str[TRON_ADDRESS_MAX_LEN];
+  ASSERT_TRUE(tron_addressFromBytes(to.data(), to_str, sizeof(to_str)));
+  TronSignTx tx = f.request(
+      rawTx(contractMsg(31, TRIGGER_URL,
+                        triggerContractValue(
+                            f.owner, usdt, trc20Calldata(to, 1500000, false))),
+            nullptr, 0));
+
+  for (bool approve : {false, true}) {
+    SCOPED_TRACE(approve ? "approve" : "reject");
+    ASSERT_TRUE(kkconfirm_preload(approve ? 1 : 0, approve ? 0 : 1));
+    kkconfirm_capture_start();
+    fsm_test_clearLastFailure();
+    fsm_msgTronSignTx(&tx);
+    const auto screens = kkconfirm_capture_finish();
+    EXPECT_EQ(approve ? 0 : FailureType_Failure_ActionCancelled,
+              fsm_test_lastFailureCode());
+    ASSERT_EQ(1u, screens.size());
+    EXPECT_EQ(std::string("Send 1.5 USDT to ") + to_str + "?", screens[0]);
+    EXPECT_EQ(0, kkconfirm_drain());
+  }
+}
+
 TEST(Tron, ParseNativeTransfer) {
   auto owner = tronAddr(0x11);
   auto to = tronAddr(0x22);
@@ -471,7 +571,7 @@ TEST(Tron, ParseTrc20Transfer) {
     EXPECT_EQ(parsed.fee_limit, 100000000u);
 
     char amount[90];
-    ASSERT_TRUE(tron_formatTrc20Amount(parsed.trc20_amount, amount,
+    ASSERT_TRUE(tron_formatTrc20Amount(parsed.trc20_amount, nullptr, amount,
                                        sizeof(amount)));
     EXPECT_STREQ(amount, "123456789");
   }
@@ -758,7 +858,7 @@ TEST(Tron, FormatTrc20AmountUint256) {
   uint8_t amount[32] = {0};
   amount[31] = 0x01;
   char buf[90];
-  ASSERT_TRUE(tron_formatTrc20Amount(amount, buf, sizeof(buf)));
+  ASSERT_TRUE(tron_formatTrc20Amount(amount, nullptr, buf, sizeof(buf)));
   EXPECT_STREQ(buf, "1");
 
   /* 10^18 — an 18-decimals token unit */
@@ -766,7 +866,7 @@ TEST(Tron, FormatTrc20AmountUint256) {
   const uint64_t e18 = 1000000000000000000ULL;
   for (int i = 0; i < 8; i++)
     big[24 + i] = static_cast<uint8_t>(e18 >> (8 * (7 - i)));
-  ASSERT_TRUE(tron_formatTrc20Amount(big, buf, sizeof(buf)));
+  ASSERT_TRUE(tron_formatTrc20Amount(big, nullptr, buf, sizeof(buf)));
   EXPECT_STREQ(buf, "1000000000000000000");
 }
 
