@@ -2310,13 +2310,15 @@ TEST(Fsm, DirtySpenderWordCannotBypassApprovalPolicy) {
   }
 }
 
-TEST(Fsm, PaddedZeroUnlimitedApprovalReachesTheGlobalRefusal) {
-  kk_test_board_init();
-  fsm_init();
-  fsm_test_clearLastFailure();
-  kkconfirm_drain();
-  ASSERT_TRUE(kkconfirm_preload(0, 1));
+namespace {
 
+const uint8_t kUsdc[20] = {0xa0, 0xb8, 0x69, 0x91, 0xc6, 0x21, 0x8b,
+                           0x36, 0xc1, 0xd1, 0x9d, 0x4a, 0x2e, 0x9e,
+                           0xb0, 0xce, 0x36, 0x06, 0xeb, 0x48};
+// The spender is 0x2222...2222; checksummed, as the warning shows it.
+const char kSpender[] = "0x2222222222222222222222222222222222222222";
+
+EthereumSignTx usdcApproval(uint8_t amount_byte) {
   EthereumSignTx msg = {};
   msg.has_chain_id = true;
   msg.chain_id = 1;
@@ -2325,95 +2327,125 @@ TEST(Fsm, PaddedZeroUnlimitedApprovalReachesTheGlobalRefusal) {
   msg.gas_price.bytes[0] = msg.gas_limit.bytes[0] = 1;
   msg.has_to = true;
   msg.to.size = 20;
-  msg.to.bytes[0] = 1;
+  memcpy(msg.to.bytes, kUsdc, 20);
+  msg.has_data_length = msg.has_data_initial_chunk = true;
+  msg.data_length = msg.data_initial_chunk.size = 68;
+  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
+  memset(msg.data_initial_chunk.bytes + 16, 0x22, 20);
+  memset(msg.data_initial_chunk.bytes + 36, amount_byte, 32);
+  return msg;
+}
+
+struct Shown {
+  std::vector<std::string> titles, bodies;
+};
+
+// Runs signing with `yes` accepted screens, then rejects the next.
+Shown signApproval(EthereumSignTx* msg, int yes) {
+  kk_test_board_init();
+  fsm_init();
+  fsm_test_clearLastFailure();
+  kkconfirm_drain();
+  EXPECT_TRUE(kkconfirm_preload(yes, 1));
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  EXPECT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+  kkconfirm_capture_start();
+  ethereum_signing_init(msg, &node, true);
+  Shown shown;
+  shown.bodies = kkconfirm_capture_finish();
+  shown.titles = kkconfirm_captured_titles();
+  kkconfirm_drain();
+  return shown;
+}
+
+}  // namespace
+
+// Owner decision 2026-10-07: an unlimited approve is signed, never refused,
+// after a warning that names the full spender and the token. The warning is
+// the first screen, and a non-canonical zero value does not change that.
+TEST(Fsm, UnlimitedApprovalSignsAfterTheWarning) {
+  EthereumSignTx msg = usdcApproval(0xff);
   msg.has_value = true;
   msg.value.size = 32;  // Non-canonical spelling of zero.
-  msg.has_data_length = msg.has_data_initial_chunk = true;
-  msg.data_length = msg.data_initial_chunk.size = 68;
-  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
-  memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
-
-  HDNode node = {};
-  const uint8_t seed[32] = {1};
-  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
-  ethereum_signing_init(&msg, &node, false);
-
+  Shown shown = signApproval(&msg, 3);
+  EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
+      << fsm_test_lastFailureMessage();
   EXPECT_FALSE(ethereum_signing_isInProgress());
-  EXPECT_EQ(0u, msg.value.size)
-      << "the global ERC-20 classifier never saw canonical zero";
-  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
-  EXPECT_EQ(2, kkconfirm_drain())
-      << "a generic-signing confirmation ran before the global refusal";
+  ASSERT_EQ(3u, shown.titles.size()) << ::testing::PrintToString(shown.titles);
+  EXPECT_EQ("UNLIMITED approval", shown.titles[0]);
+  EXPECT_EQ(std::string("Allow ") + kSpender + " to spend ALL your USDC",
+            shown.bodies[0]);
+  EXPECT_EQ("Approve", shown.titles[1]);
+  EXPECT_EQ(std::string("Unlock full USDC balance for withdrawal by ") +
+                kSpender + "?",
+            shown.bodies[1]);
+  EXPECT_EQ("Transaction", shown.titles[2]);
 }
-TEST(Fsm, NativeValueCannotBypassUnlimitedApprovalRefusal) {
-  kk_test_board_init();
-  fsm_init();
-  fsm_test_clearLastFailure();
-  kkconfirm_drain();
-  ASSERT_TRUE(kkconfirm_preload(0, 1));
 
-  EthereumSignTx msg = {};
-  msg.has_chain_id = true;
-  msg.chain_id = 1;
-  msg.has_gas_price = msg.has_gas_limit = true;
-  msg.gas_price.size = msg.gas_limit.size = 1;
-  msg.gas_price.bytes[0] = msg.gas_limit.bytes[0] = 1;
-  msg.has_to = true;
-  msg.to.size = 20;
-  msg.to.bytes[0] = 1;
-  msg.has_value = true;
-  msg.value.size = 1;
-  msg.value.bytes[0] = 1;  // A payable token may accept value with approve.
-  msg.has_data_length = msg.has_data_initial_chunk = true;
-  msg.data_length = msg.data_initial_chunk.size = 68;
-  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
-  memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
-
-  HDNode node = {};
-  const uint8_t seed[32] = {1};
-  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
-  ethereum_signing_init(&msg, &node, false);
-
-  EXPECT_FALSE(ethereum_signing_isInProgress());
-  EXPECT_EQ(1u, msg.value.size);
+TEST(Fsm, DecliningTheUnlimitedWarningSignsNothing) {
+  EthereumSignTx msg = usdcApproval(0xff);
+  Shown shown = signApproval(&msg, 0);
   EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
-  EXPECT_EQ(2, kkconfirm_drain())
-      << "a generic-signing confirmation ran before the global refusal";
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  ASSERT_EQ(1u, shown.titles.size());
+  EXPECT_EQ("UNLIMITED approval", shown.titles[0]);
 }
-TEST(Fsm, TrailingCalldataCannotBypassUnlimitedApprovalRefusal) {
-  kk_test_board_init();
-  fsm_init();
-  fsm_test_clearLastFailure();
-  kkconfirm_drain();
-  ASSERT_TRUE(kkconfirm_preload(0, 1));
 
-  EthereumSignTx msg = {};
-  msg.has_chain_id = true;
-  msg.chain_id = 1;
-  msg.has_gas_price = msg.has_gas_limit = true;
-  msg.gas_price.size = msg.gas_limit.size = 1;
-  msg.gas_price.bytes[0] = msg.gas_limit.bytes[0] = 1;
-  msg.has_to = true;
-  msg.to.size = 20;
-  msg.to.bytes[0] = 1;
-  msg.has_value = true;
-  msg.value.size = 1;
-  msg.value.bytes[0] = 1;  // A payable token may accept value with approve.
-  msg.has_data_length = msg.has_data_initial_chunk = true;
-  msg.data_length = msg.data_initial_chunk.size = 69;
-  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
-  memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
+// Control: a finite approve has no warning and reads as before.
+TEST(Fsm, FiniteApprovalHasNoUnlimitedWarning) {
+  EthereumSignTx msg = usdcApproval(0x00);
+  msg.data_initial_chunk.bytes[67] = 1;
+  Shown shown = signApproval(&msg, 3);
+  EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
+      << fsm_test_lastFailureMessage();
+  EXPECT_EQ(
+      (std::vector<std::string>{"Approve 1/2", "Approve 2/2", "Transaction"}),
+      shown.titles);
+  const std::string review = shown.bodies[0] + shown.bodies[1];
+  EXPECT_EQ(0u, review.find("Approve withdrawal of up to 0.000001 USDC by"))
+      << review;
+  EXPECT_NE(std::string::npos, review.find(kSpender)) << review;
+}
 
-  HDNode node = {};
-  const uint8_t seed[32] = {1};
-  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
-  ethereum_signing_init(&msg, &node, false);
+// An unknown token is named by its full contract address. The body is
+// longer than one page, so confirm() pages it; nothing is cut.
+TEST(Fsm, UnlimitedApprovalOfAnUnknownTokenNamesItsContract) {
+  EthereumSignTx msg = usdcApproval(0xff);
+  memset(msg.to.bytes, 0x33, 20);
+  Shown shown = signApproval(&msg, 6);
+  ASSERT_LE(3u, shown.titles.size()) << ::testing::PrintToString(shown.titles);
+  EXPECT_EQ("UNLIMITED approval 1/2", shown.titles[0]);
+  EXPECT_EQ("UNLIMITED approval 2/2", shown.titles[1]);
+  EXPECT_EQ(0u, shown.bodies[0].find(std::string("Allow ") + kSpender));
+  EXPECT_EQ(std::string("Allow ") + kSpender +
+                " to spend ALL your 0x3333333333333333333333333333333333333333",
+            shown.bodies[0] + shown.bodies[1]);
+  // The unknown-token review then shows UNLIMITED, not a 78-digit number.
+  std::string review;
+  for (size_t i = 2; i < shown.titles.size(); i++)
+    if (shown.titles[i].rfind("Approve", 0) == 0) review += shown.bodies[i];
+  EXPECT_NE(std::string::npos, review.find("withdraw up to UNLIMITED?"))
+      << review;
+}
 
-  EXPECT_FALSE(ethereum_signing_isInProgress());
-  EXPECT_EQ(1u, msg.value.size);
-  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
-  EXPECT_EQ(2, kkconfirm_drain())
-      << "a generic-signing confirmation ran before the global refusal";
+// Native value or trailing calldata make it no standard approve, but the
+// warning still comes first, before any generic or blind-signing screen.
+TEST(Fsm, NonStandardUnlimitedApprovalShowsTheWarningFirst) {
+  for (bool trailing : {false, true}) {
+    EthereumSignTx msg = usdcApproval(0xff);
+    if (trailing) {
+      msg.data_length = msg.data_initial_chunk.size = 69;
+    } else {
+      msg.has_value = true;
+      msg.value.size = 1;
+      msg.value.bytes[0] = 1;  // A payable token may accept value.
+    }
+    Shown shown = signApproval(&msg, 0);
+    EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+    ASSERT_EQ(1u, shown.titles.size()) << trailing;
+    EXPECT_EQ("UNLIMITED approval", shown.titles[0]) << trailing;
+  }
 }
 TEST(Fsm, SplitCalldataCannotBypassUnlimitedApprovalRefusal) {
   for (size_t initial : {1u, 2u, 3u, 4u, 16u, 67u}) {

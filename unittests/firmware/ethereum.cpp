@@ -162,13 +162,24 @@ TEST(Ethereum, UnknownErc20CannotBePresentedAsAReviewedTransfer) {
   EXPECT_NE(std::string::npos,
             std::string(approval_review).find("withdraw up to 1 base units"));
 
-  /* The largest finite approval (unlimited is refused separately) is a
-   * 78-digit amount; its review must still fit the signing body. */
+  /* The largest finite approval is a 78-digit amount; its review must
+   * still fit the signing body. */
   memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
   msg.data_initial_chunk.bytes[67] = 0xfe;
   char largest_review[ETHEREUM_CONFIRM_BODY_SIZE] = {};
   EXPECT_TRUE(ethereumFormatUnknownTokenReview(&msg, largest_review,
                                                sizeof(largest_review)));
+  EXPECT_NE(std::string::npos,
+            std::string(largest_review).find("115792089237316195"));
+
+  /* Unlimited reads UNLIMITED, after its own warning screen. */
+  msg.data_initial_chunk.bytes[67] = 0xff;
+  char unlimited_review[ETHEREUM_CONFIRM_BODY_SIZE] = {};
+  ASSERT_TRUE(ethereumFormatUnknownTokenReview(&msg, unlimited_review,
+                                               sizeof(unlimited_review)));
+  EXPECT_NE(std::string::npos,
+            std::string(unlimited_review).find("withdraw up to UNLIMITED?"))
+      << unlimited_review;
 }
 
 TEST(Ethereum, UnknownTokenReviewIsExactAndFailsClosedAtCapacity) {
@@ -1147,6 +1158,21 @@ TEST(Ethereum, ApproveLiquidityRouterRejectsUnreviewedTail) {
   msg.data_initial_chunk.size = 69;
   EXPECT_FALSE(zx_isZxApproveLiquid(&msg));
   EXPECT_FALSE(ethereum_contractHandled(69, &msg, nullptr));
+}
+
+// A max LP approval was refused: 2^256-1 at 18 decimals overflows the body.
+// It is reviewed as UNLIMITED LP instead.
+TEST(Ethereum, UnlimitedLpApprovalIsReviewedAsUnlimited) {
+  EthereumSignTx msg = approve_liquidity_tx();
+  memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
+  ASSERT_TRUE(zx_isZxApproveLiquid(&msg));
+  ASSERT_TRUE(kkconfirm_preload(2, 0));
+  kkconfirm_capture_start();
+  EXPECT_TRUE(zx_confirmApproveLiquidity(68, &msg));
+  const auto screens = kkconfirm_capture_finish();
+  EXPECT_EQ(0, kkconfirm_drain());
+  ASSERT_EQ(2u, screens.size());
+  EXPECT_EQ("UNLIMITED LP", screens[0]);
 }
 
 // ---- THORChain deposit(address,address,uint256,string) fixtures ----------

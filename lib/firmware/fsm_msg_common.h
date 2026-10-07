@@ -153,6 +153,8 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
       Features_Capability_CAPABILITY_EVM_MAX_AMOUNT_REVIEW,
       Features_Capability_CAPABILITY_EVM_UNKNOWN_TOKEN_REVIEW,
       Features_Capability_CAPABILITY_EVM_TX_METADATA,
+      Features_Capability_CAPABILITY_ERC20_UNLIMITED_APPROVE_REVIEW,
+      Features_Capability_CAPABILITY_ERC20_UNLIMITED_PERMIT_REVIEW,
 #endif
   };
   _Static_assert(sizeof(capabilities) <= sizeof(resp->capabilities),

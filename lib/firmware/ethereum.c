@@ -135,6 +135,32 @@ static bool ethereum_isERC20ApproveCall(const EthereumSignTx* msg) {
   return false;
 }
 
+static bool ethereum_isUnlimitedApproval(const EthereumSignTx* msg) {
+  if (!ethereum_isERC20ApproveCall(msg)) return false;
+  for (size_t i = 36; i < 68; ++i)
+    if (msg->data_initial_chunk.bytes[i] != 0xff) return false;
+  return true;
+}
+
+/* An unlimited approve signs only after this warning, with the full spender
+ * and the token named by symbol, or by contract when the table lacks it. */
+static bool ethereum_confirmUnlimitedApproval(const EthereumSignTx* msg) {
+  const uint32_t cid = msg->has_chain_id ? msg->chain_id : 0;
+  char spender[43] = "0x";
+  ethereum_address_checksum(msg->data_initial_chunk.bytes + 16, spender + 2,
+                            false, cid);
+  char asset[43] = "0x";
+  const TokenType* token = tokenByChainAddress(cid, msg->to.bytes);
+  if (token != UnknownToken) {
+    strlcpy(asset, token->ticker + 1, sizeof(asset));
+  } else {
+    ethereum_address_checksum(msg->to.bytes, asset + 2, false, cid);
+  }
+  return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                 "UNLIMITED approval", "Allow %s to spend ALL your %s", spender,
+                 asset);
+}
+
 bool ethereum_isStandardERC20Approve(const EthereumSignTx* msg) {
   return ethereum_valueIsZero(msg) && msg->data_initial_chunk.size == 68 &&
          ethereum_isERC20ApproveCall(msg);
@@ -223,15 +249,16 @@ bool ethereumFormatUnknownTokenReview(const EthereumSignTx* msg, char* buf,
   ethereum_address_checksum(msg->data_initial_chunk.bytes + 16,
                             counterparty + 2, false, msg->chain_id);
 
+  const bool approve = ethereum_isStandardERC20Approve(msg);
   bignum256 raw_value;
   bn_from_bytes(msg->data_initial_chunk.bytes + 36, 32, &raw_value);
-  char amount[96];
-  if (bn_format(&raw_value, NULL, " base units", 0, 0, false, amount,
+  char amount[96] = "UNLIMITED";
+  if (!(approve && ethereum_isUnlimitedApproval(msg)) &&
+      bn_format(&raw_value, NULL, " base units", 0, 0, false, amount,
                 sizeof(amount)) == 0) {
     return false;
   }
 
-  const bool approve = ethereum_isStandardERC20Approve(msg);
   const int written =
       approve
           ? snprintf(buf, buflen,
@@ -1010,15 +1037,12 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       ethereum_signing_abort();
       return;
     }
-    // Native value cannot exempt a payable token from this allowance policy.
-    // Unlimited approval grants open-ended authority and is refused before
-    // any generic transaction confirmation can mask this policy decision.
-    const uint8_t* allowance = msg->data_initial_chunk.bytes + 36;
-    bool unlimited = true;
-    for (size_t i = 0; i < 32; ++i) unlimited &= allowance[i] == 0xff;
-    if (unlimited) {
+    // Native value cannot exempt a payable token from this warning. It comes
+    // before any contract, metadata or generic screen, so none can mask it.
+    if (ethereum_isUnlimitedApproval(msg) &&
+        !ethereum_confirmUnlimitedApproval(msg)) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                      _("Unlimited ERC20 approval is disabled"));
+                      "Signing cancelled by user");
       ethereum_signing_abort();
       return;
     }

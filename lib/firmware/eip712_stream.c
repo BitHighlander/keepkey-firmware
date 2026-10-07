@@ -747,6 +747,33 @@ bool eip712_render_integer(const Eip712FieldType* field, const uint8_t* value,
   return written > 0;
 }
 
+/* An unlimited permit (EIP-2612 or DAI on the domain's verifyingContract,
+ * Permit2 on its token member) names that value on its own screen: the
+ * type's maximum reads UNLIMITED, under a warning title. NULL otherwise. */
+static const char* unlimited_permit_text(const Eip712FieldType* field,
+                                         const uint8_t* value, uint16_t len) {
+  if (e712.root != 1) return NULL;
+  const Eip712Frame* f = &e712.stack[e712.depth - 1];
+  if (f->is_array) return NULL;
+  const char* name = e712.types.names[f->u.s.type];
+  const char* member = e712.pending_name;
+  if (field->data_type == EthereumTypedDataStructAck_EthereumDataType_BOOL)
+    return strcmp(name, "Permit") == 0 && strcmp(member, "allowed") == 0 &&
+                   value[0] == 1
+               ? "UNLIMITED (allowed)"
+               : NULL;
+  if (field->data_type != EthereumTypedDataStructAck_EthereumDataType_UINT ||
+      !((strcmp(name, "Permit") == 0 && strcmp(member, "value") == 0) ||
+        ((strcmp(name, "PermitDetails") == 0 ||
+          strcmp(name, "TokenPermissions") == 0) &&
+         strcmp(member, "amount") == 0)))
+    return NULL;
+  /* The leaf is exactly the declared width, so all ones is its maximum. */
+  for (uint16_t i = 0; i < len; i++)
+    if (value[i] != 0xff) return NULL;
+  return len > 0 ? "UNLIMITED" : NULL;
+}
+
 /* Fixed and short: a wrapped title draws over the body, and a primary type
  * may fill a whole row. The final signing screen names the primary type. */
 static const char* leaf_title(void) {
@@ -763,6 +790,12 @@ static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
       !leaf_path(path, sizeof(path)))
     return EIP712_LEAF_INVALID;
   const char* title = leaf_title();
+  const char* unlimited = unlimited_permit_text(field, value, len);
+  if (unlimited) {
+    return confirm_parts("UNLIMITED approval", path, type_name,
+                         EIP712_RENDER_TEXT, (const uint8_t*)unlimited,
+                         strlen(unlimited));
+  }
 
   switch (field->data_type) {
     case EthereumTypedDataStructAck_EthereumDataType_STRING:
@@ -816,28 +849,6 @@ static Eip712LeafResult eip712_confirm_empty_array(const Eip712Frame* arr) {
   static const char empty[] = "0 items";
   return confirm_parts(leaf_title(), path, type_name, EIP712_RENDER_TEXT,
                        (const uint8_t*)empty, sizeof(empty) - 1);
-}
-
-/* Unlimited permits (EIP-2612, DAI, Permit2) are refused, as in approve(). */
-static bool is_unlimited_permit(const Eip712FieldType* field,
-                                const uint8_t* value, uint16_t len) {
-  if (e712.root != 1) return false;
-  const Eip712Frame* f = &e712.stack[e712.depth - 1];
-  if (f->is_array) return false;
-  const char* name = e712.types.names[f->u.s.type];
-  const char* member = e712.pending_name;
-  if (field->data_type == EthereumTypedDataStructAck_EthereumDataType_BOOL)
-    return strcmp(name, "Permit") == 0 && strcmp(member, "allowed") == 0 &&
-           value[0] == 1;
-  if (field->data_type != EthereumTypedDataStructAck_EthereumDataType_UINT ||
-      !((strcmp(name, "Permit") == 0 && strcmp(member, "value") == 0) ||
-        ((strcmp(name, "PermitDetails") == 0 ||
-          strcmp(name, "TokenPermissions") == 0) &&
-         strcmp(member, "amount") == 0)))
-    return false;
-  for (uint16_t i = 0; i < len; i++)
-    if (value[i] != 0xff) return false;
-  return len > 0;
 }
 
 /* The walk: each function emits one request and returns, or finishes; the
@@ -1415,11 +1426,6 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
       !eip712_domain_facts_observe(&e712.domain_facts, e712.pending_name, field,
                                    bytes, len)) {
     fail("EIP-712 domain binding is invalid");
-    return false;
-  }
-
-  if (is_unlimited_permit(field, bytes, len)) {
-    fail("Unlimited ERC20 approval is disabled");
     return false;
   }
 

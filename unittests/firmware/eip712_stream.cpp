@@ -898,7 +898,10 @@ TEST(Eip712Stream, LongValuesAreDisclosedInPartsAndSign) {
   eip712_stream_abort();
 }
 
-TEST(Eip712Stream, UnlimitedPermitsAreRefusedBeforeTheirScreen) {
+// Owner decision 2026-10-07: unlimited permits sign, never refused. The value
+// leaf's own screen reads UNLIMITED under a warning title; a finite value and
+// a revoking DAI permit keep the ordinary screen.
+TEST(Eip712Stream, UnlimitedPermitsSignWithAWarningOnTheirValue) {
   struct Case {
     const char* primary;
     const char* container;
@@ -906,14 +909,17 @@ TEST(Eip712Stream, UnlimitedPermitsAreRefusedBeforeTheirScreen) {
     Field type;
     Bytes unlimited;
     Bytes finite;
+    const char* unlimited_body;
+    const char* finite_body;
   };
   const Case cases[] = {
       {"Permit", "Permit", "value",
        mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32),
-       Bytes(32, 0xff), word(1)},
+       Bytes(32, 0xff), word(1), "value\nuint256: UNLIMITED",
+       "value\nuint256: 1"},
       {"Permit", "Permit", "allowed",
-       mk(EthereumTypedDataStructAck_EthereumDataType_BOOL), Bytes{1},
-       Bytes{0}},
+       mk(EthereumTypedDataStructAck_EthereumDataType_BOOL), Bytes{1}, Bytes{0},
+       "allowed\nbool: UNLIMITED (allowed)", "allowed\nbool: false"},
       {"PermitSingle", "PermitDetails", "amount",
        mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 20),
        Bytes(20, 0xff),
@@ -921,14 +927,17 @@ TEST(Eip712Stream, UnlimitedPermitsAreRefusedBeforeTheirScreen) {
          Bytes b(20, 0);
          b[19] = 1;
          return b;
-       }()},
+       }(),
+       "details.amount\nuint160: UNLIMITED", "details.amount\nuint160: 1"},
       {"PermitTransferFrom", "TokenPermissions", "amount",
        mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32),
-       Bytes(32, 0xff), word(7)},
+       Bytes(32, 0xff), word(7), "details.amount\nuint256: UNLIMITED",
+       "details.amount\nuint256: 7"},
   };
   static const Case* current;
   static bool unlimited;
   for (const Case& c : cases) {
+    SCOPED_TRACE(c.member);
     std::map<std::string, Struct> types;
     addMember(types[c.container], "token",
               mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
@@ -938,6 +947,7 @@ TEST(Eip712Stream, UnlimitedPermitsAreRefusedBeforeTheirScreen) {
     current = &c;
     for (bool u : {true, false}) {
       unlimited = u;
+      kkconfirm_capture_start();
       int used = walk(
           c.primary, types,
           [](const std::vector<uint32_t>& path) -> Bytes {
@@ -945,18 +955,43 @@ TEST(Eip712Stream, UnlimitedPermitsAreRefusedBeforeTheirScreen) {
             return unlimited ? current->unlimited : current->finite;
           },
           5);
-      if (u) {
-        EXPECT_EQ(used, 1) << c.member;  // only the token screen
-        ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
-        EXPECT_STREQ(eip712_stream_next()->error,
-                     "Unlimited ERC20 approval is disabled");
-      } else {
-        EXPECT_EQ(used, 2) << c.member;
-        EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
-      }
+      const std::vector<std::string> bodies = kkconfirm_capture_finish();
+      const std::vector<std::string> titles = kkconfirm_captured_titles();
+      EXPECT_EQ(used, 2);  // the token screen, then the value screen
+      EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+      ASSERT_EQ(bodies.size(), 2u);
+      EXPECT_EQ(titles[0], "EIP-712 Message");
+      EXPECT_EQ(titles[1], u ? "UNLIMITED approval" : "EIP-712 Message");
+      EXPECT_EQ(bodies[1], u ? c.unlimited_body : c.finite_body);
+      std::string title = titles[1];
+      for (char& ch : title) ch = (char)toupper((unsigned char)ch);
+      EXPECT_EQ(1u,
+                calc_str_line(get_title_font(), title.c_str(), TITLE_WIDTH));
       eip712_stream_abort();
     }
   }
+}
+
+// Only the permit members named above get the warning: an all-ones amount in
+// any other struct is an ordinary number.
+TEST(Eip712Stream, AllOnesOutsideAPermitIsAnOrdinaryNumber) {
+  std::map<std::string, Struct> types;
+  addMember(types["Order"], "value",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  kkconfirm_capture_start();
+  int used = walk(
+      "Order", types,
+      [](const std::vector<uint32_t>&) -> Bytes { return Bytes(32, 0xff); }, 4);
+  const std::vector<std::string> bodies = kkconfirm_capture_finish();
+  EXPECT_GE(used, 1);
+  EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  std::string shown;
+  for (const std::string& title : kkconfirm_captured_titles())
+    EXPECT_EQ(0u, title.rfind("EIP-712 Message", 0)) << title;
+  for (const std::string& body : bodies) shown += body;
+  EXPECT_EQ(std::string::npos, shown.find("UNLIMITED"));
+  EXPECT_NE(std::string::npos, shown.find("115792089237316195"));
+  eip712_stream_abort();
 }
 
 // eth-sig-util/MetaMask v4 sign keccak(0x1901 || domainSeparator) when the
@@ -1422,7 +1457,14 @@ Bytes corpusValue(const std::vector<uint32_t>& path) {
 }  // namespace
 
 TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
-  EXPECT_GE(kCorpus.size(), 40u);
+  EXPECT_GE(kCorpus.size(), 45u);
+  // Max approvals sign, with the warning on the value's own screen.
+  const std::map<std::string, std::string> unlimited = {
+      {"permit2-PermitSingle-unlimited", "details.amount\nuint160: UNLIMITED"},
+      {"eip2612-Permit-unlimited", "value\nuint256: UNLIMITED"},
+      {"dai-Permit-allowed", "allowed\nbool: UNLIMITED (allowed)"},
+  };
+  size_t warned_docs = 0;
   for (const CorpusDoc& doc : kCorpus) {
     SCOPED_TRACE(doc.id);
     std::map<std::string, Struct> types;
@@ -1434,7 +1476,20 @@ TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
     g_doc = &doc;
     g_missing_value = false;
     // A long value is reviewed in parts, so allow several screens per leaf.
+    kkconfirm_capture_start();
     const int used = walk(doc.primary, types, corpusValue, 4 * doc.leaves + 8);
+    const std::vector<std::string> bodies = kkconfirm_capture_finish();
+    const std::vector<std::string> titles = kkconfirm_captured_titles();
+    std::vector<std::string> warned;
+    for (size_t i = 0; i < titles.size(); i++)
+      if (titles[i] == "UNLIMITED approval") warned.push_back(bodies[i]);
+    const auto expect = unlimited.find(doc.id);
+    if (expect == unlimited.end()) {
+      EXPECT_TRUE(warned.empty());
+    } else {
+      warned_docs++;
+      EXPECT_EQ(warned, std::vector<std::string>{expect->second});
+    }
     const Eip712Next* next = eip712_stream_next();
     EXPECT_FALSE(g_missing_value);
     if (next->kind != EIP712_REQ_DONE) {
@@ -1452,6 +1507,7 @@ TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
     EXPECT_EQ(hexOf(next->message_hash, 32), doc.message_hash);
     eip712_stream_abort();
   }
+  EXPECT_EQ(warned_docs, unlimited.size());
 }
 
 // ── One screen per string ───────────────────────────────────────────
