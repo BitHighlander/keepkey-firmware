@@ -1331,6 +1331,129 @@ TEST(Eip712Stream, BulkOrderTreesAreRefusedByShape) {
   }
 }
 
+// ── Real-world corpus ───────────────────────────────────────────────
+// One document per protocol, from the type strings in each protocol's own
+// source (eip712_corpus.json lists them). Every one must sign, and its domain
+// separator and message hash must equal the values computed outside this
+// firmware: a pure-Python encoder written from the spec, cross-checked by
+// eth-sig-util and ethers (eip712_corpus_gen.py).
+namespace {
+
+struct CorpusMember {
+  const char* name;
+  const char* type;
+};
+struct CorpusStruct {
+  const char* name;
+  std::vector<CorpusMember> members;
+};
+struct CorpusValue {
+  std::vector<uint32_t> path;
+  const char* hex;
+};
+struct CorpusDoc {
+  const char* id;
+  const char* primary;
+  std::vector<CorpusStruct> types;
+  std::vector<CorpusValue> values;
+  int leaves;
+  const char* domain_separator;
+  const char* message_hash;
+};
+
+const std::vector<CorpusDoc> kCorpus = {
+#include "eip712_corpus.inc"
+};
+
+// "uint160", "bytes32", "Person[]", "OrderComponents[2][2]" as the host's
+// FieldType: dimensions in written order.
+Field corpusField(const std::string& spelled) {
+  const size_t bracket = spelled.find('[');
+  const std::string base = spelled.substr(0, bracket);
+  Field f;
+  unsigned bits = 0;
+  if (sscanf(base.c_str(), "uint%u", &bits) == 1 &&
+      "uint" + std::to_string(bits) == base) {
+    f = mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, bits / 8);
+  } else if (sscanf(base.c_str(), "int%u", &bits) == 1 &&
+             "int" + std::to_string(bits) == base) {
+    f = mkSized(EthereumTypedDataStructAck_EthereumDataType_INT, bits / 8);
+  } else if (sscanf(base.c_str(), "bytes%u", &bits) == 1 &&
+             "bytes" + std::to_string(bits) == base) {
+    f = mkSized(EthereumTypedDataStructAck_EthereumDataType_BYTES, bits);
+  } else if (base == "bytes") {
+    f = mk(EthereumTypedDataStructAck_EthereumDataType_BYTES);
+  } else if (base == "string") {
+    f = mk(EthereumTypedDataStructAck_EthereumDataType_STRING);
+  } else if (base == "bool") {
+    f = mk(EthereumTypedDataStructAck_EthereumDataType_BOOL);
+  } else if (base == "address") {
+    f = mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS);
+  } else {
+    f = structField(base.c_str());
+  }
+  for (size_t at = bracket; at != std::string::npos;
+       at = spelled.find('[', at + 1)) {
+    f.array_levels[f.array_levels_count++] =
+        (uint32_t)strtoul(spelled.c_str() + at + 1, nullptr, 10);
+  }
+  return f;
+}
+
+Bytes fromHex(const char* hex) {
+  Bytes out;
+  for (size_t i = 0; hex[i] && hex[i + 1]; i += 2) {
+    out.push_back((uint8_t)std::stoi(std::string(hex + i, 2), nullptr, 16));
+  }
+  return out;
+}
+
+const CorpusDoc* g_doc;
+bool g_missing_value;
+
+Bytes corpusValue(const std::vector<uint32_t>& path) {
+  for (const CorpusValue& v : g_doc->values) {
+    if (v.path == path) return fromHex(v.hex);
+  }
+  g_missing_value = true;
+  return Bytes{};
+}
+
+}  // namespace
+
+TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
+  EXPECT_GE(kCorpus.size(), 40u);
+  for (const CorpusDoc& doc : kCorpus) {
+    SCOPED_TRACE(doc.id);
+    std::map<std::string, Struct> types;
+    for (const CorpusStruct& s : doc.types) {
+      Struct& ack = types[s.name];
+      for (const CorpusMember& m : s.members)
+        addMember(ack, m.name, corpusField(m.type));
+    }
+    g_doc = &doc;
+    g_missing_value = false;
+    // A long value is reviewed in parts, so allow several screens per leaf.
+    const int used = walk(doc.primary, types, corpusValue, 4 * doc.leaves + 8);
+    const Eip712Next* next = eip712_stream_next();
+    EXPECT_FALSE(g_missing_value);
+    if (next->kind != EIP712_REQ_DONE) {
+      ADD_FAILURE() << "refused: "
+                    << (next->kind == EIP712_REQ_FAIL && next->error
+                            ? next->error
+                            : "(no error)");
+      eip712_stream_abort();
+      continue;
+    }
+    EXPECT_GE(used, doc.leaves);
+    EXPECT_FALSE(next->message_empty);
+    EXPECT_STREQ(next->primary_type, doc.primary);
+    EXPECT_EQ(hexOf(next->domain_separator, 32), doc.domain_separator);
+    EXPECT_EQ(hexOf(next->message_hash, 32), doc.message_hash);
+    eip712_stream_abort();
+  }
+}
+
 // ── One screen per string ───────────────────────────────────────────
 // The body renderer drops a space where it wraps a line and the pager drops
 // one at a page start, so a string leaf that keeps a space literally can draw
