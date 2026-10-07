@@ -2,6 +2,7 @@ set(sources
     hw_entropy.cpp
     hw_entropy_probe.c
     memcmp_s.cpp
+    signatures.cpp
     board.cpp)
 
 # Only this probe compiles the device entropy branch on the native host.
