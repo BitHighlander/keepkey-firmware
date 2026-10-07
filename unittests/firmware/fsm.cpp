@@ -1689,6 +1689,43 @@ TEST(Fsm, TypedDataContinuationAndSessionBoundariesAreExplicit) {
   }
 }
 
+// Both loads clear the metadata binding, so a waiting typed-data stream must
+// refuse them before their handlers run, exactly as an EVM tx signer does.
+TEST(Fsm, TypedDataStreamRefusesMetadataAndSignerLoads) {
+  kk_test_board_init();
+  fsm_init();
+  for (auto load : {MessageType_MessageType_EthereumTxMetadata,
+                    MessageType_MessageType_LoadClearsignSigner}) {
+    EthereumSignTypedData start{};
+    std::strcpy(start.primary_type, "Mail");
+    ASSERT_TRUE(eip712_stream_begin(&start, false));
+    ASSERT_EQ(eip712_stream_waiting(), EIP712_WANT_STRUCT);
+    fsm_test_clearLastFailure();
+    EXPECT_FALSE(keepkey_before_message_dispatch(load));
+    EXPECT_EQ(FailureType_Failure_UnexpectedMessage,
+              fsm_test_lastFailureCode());
+    eip712_stream_abort();
+  }
+}
+
+// Ping between typed-data acks must not draw home over a live stream.
+TEST(Fsm, PingKeepsAWaitingTypedDataStreamOnScreen) {
+  kk_test_board_init();
+  fsm_init();
+  EthereumSignTypedData start{};
+  std::strcpy(start.primary_type, "Mail");
+  ASSERT_TRUE(eip712_stream_begin(&start, false));
+  leave_home();
+  ASSERT_EQ(AWAY_FROM_HOME, home_get_state());
+  Ping ping = {};
+  ASSERT_TRUE(keepkey_before_message_dispatch(MessageType_MessageType_Ping));
+  fsm_msgPing(&ping);
+  EXPECT_EQ(AWAY_FROM_HOME, home_get_state());
+  EXPECT_EQ(eip712_stream_waiting(), EIP712_WANT_STRUCT);
+  eip712_stream_abort();
+  layoutHomeForced();
+}
+
 TEST_F(AutoLockProgress, EosDataProgressRenewsButEmptyChunksDoNot) {
   signing_abort();
   storage_reset();

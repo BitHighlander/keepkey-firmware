@@ -431,6 +431,7 @@ bool fsm_workflowInProgress(void) {
   if (setup_isArmed() || signing_is_active()) return true;
 #if !BITCOIN_ONLY
   if (ethereum_signing_isInProgress() ||
+      eip712_stream_waiting() != EIP712_IDLE ||
       tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS) ||
       tendermint_signingIsInited(TENDERMINT_SIGNING_GENERIC) ||
       osmosis_signingIsInited() || binance_signingIsInited() ||
@@ -494,15 +495,16 @@ static bool fsm_dispatchGate(MessageType msg_id) {
        * clears the tx<->metadata binding, so accepting it mid-signing would
        * let a host approve one decode and then sign different calldata
        * without the enforce check. The default path below would end the
-       * signer and then accept the metadata, so refuse it here instead. */
-      if (ethereum_signing_isInProgress())
+       * signer and then accept the metadata, so refuse it here instead. A
+       * typed-data stream waiting for its next ack counts as signing too. */
+      if (fsm_workflowInProgress())
         return reject_stale_continuation("Metadata not allowed during signing");
       fsm_abort_signing_workflows();
       return true;
     case MessageType_MessageType_LoadClearsignSigner:
       /* Storing a signer clears the same binding (signed_metadata_clear()),
        * so it is refused mid-signing for the same reason. */
-      if (ethereum_signing_isInProgress())
+      if (fsm_workflowInProgress())
         return reject_stale_continuation(
             "Signer load not allowed during signing");
       fsm_abort_signing_workflows();
