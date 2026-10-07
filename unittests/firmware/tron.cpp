@@ -382,6 +382,43 @@ TEST(Tron, Trc20TransferRequiresAdvancedModeBlindSign) {
   EXPECT_TRUE(fsm_test_derivedNodeIsZero());
 }
 
+// fee_limit caps smart-contract energy only. The screen must say so, and never
+// present it as a cap on a native transfer's fee.
+TEST(Tron, FeeLimitIsShownAsAnEnergyLimit) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  TronSignFixture f;
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+  struct Case {
+    std::vector<uint8_t> contract;
+    int screens; /* the fee screen is last */
+    const char* expected;
+  };
+  const Case cases[] = {
+      {contractMsg(1, TRANSFER_URL,
+                   transferContractValue(f.owner, tronAddr(0x22), 1)),
+       2, "Energy fee limit 5 TRX\nNot used by TRX transfers"},
+      {contractMsg(
+           31, TRIGGER_URL,
+           triggerContractValue(f.owner, tronAddr(0x33),
+                                trc20Calldata(tronAddr(0x22), 42, false))),
+       4, "Energy fee limit 5 TRX\nBandwidth fees are extra"},
+  };
+  for (const Case& c : cases) {
+    SCOPED_TRACE(c.expected);
+    TronSignTx tx = f.request(rawTx(c.contract, nullptr, 5000000));
+    ASSERT_TRUE(kkconfirm_preload(c.screens - 1, 1));
+    kkconfirm_capture_start();
+    fsm_test_clearLastFailure();
+    fsm_msgTronSignTx(&tx);
+    const auto screens = kkconfirm_capture_finish();
+    EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+    ASSERT_EQ((size_t)c.screens, screens.size());
+    EXPECT_EQ(c.expected, screens.back());
+    EXPECT_EQ(0, kkconfirm_drain());
+  }
+}
+
 TEST(Tron, ParseNativeTransfer) {
   auto owner = tronAddr(0x11);
   auto to = tronAddr(0x22);

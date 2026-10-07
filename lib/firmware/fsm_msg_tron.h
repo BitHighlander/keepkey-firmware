@@ -175,10 +175,19 @@ void fsm_msgTronSignTx(TronSignTx* msg) {
     }
 
     if (confirmed && parsed.has_fee_limit) {
+      /* fee_limit caps smart-contract energy only: bandwidth is charged on
+       * top, and a native transfer ignores it. */
       char fee_str[32];
       tron_formatAmount(fee_str, sizeof(fee_str), parsed.fee_limit);
-      confirmed = confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "TRON",
-                          "Max network fee %s", fee_str);
+      if (tx_type == TRON_TX_TRANSFER) {
+        confirmed =
+            confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "TRON",
+                    "Energy fee limit %s\nNot used by TRX transfers", fee_str);
+      } else {
+        confirmed =
+            confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "TRON",
+                    "Energy fee limit %s\nBandwidth fees are extra", fee_str);
+      }
     }
 
     if (confirmed && parsed.memo_len > 0) {
