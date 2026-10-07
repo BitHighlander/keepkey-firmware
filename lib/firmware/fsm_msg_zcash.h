@@ -267,6 +267,18 @@ static bool zcash_verify_and_confirm_orchard_output(
   }
   memzero(computed_cmx, sizeof(computed_cmx));
 
+  /* cmx alone does not reach the recipient: a corrupted epk or ciphertext
+   * leaves a valid note that normal wallet scanning can never find. */
+  if (!zcash_orchard_note_ciphertext_valid(
+          msg->recipient.bytes, msg->value, msg->nullifier.bytes,
+          msg->rseed.bytes, zcash_signing.is_ironwood, msg->epk.bytes,
+          msg->enc_compact.bytes, msg->enc_memo.bytes,
+          msg->enc_noncompact.bytes)) {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _("Shielded note ciphertext mismatch"));
+    return false;
+  }
+
   char address[ZCASH_ORCHARD_UNIFIED_ADDRESS_SIZE];
   if (!zcash_orchard_receiver_to_unified_address(msg->recipient.bytes, "u",
                                                  address, sizeof(address))) {

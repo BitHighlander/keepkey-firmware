@@ -14,6 +14,7 @@ extern "C" {
 #if ZCASH_PRIVACY
 #include "keepkey/firmware/zcash.h"
 #include "trezor/crypto/blake2b.h"
+#include "zcash_note_vectors.h"
 #endif
 #include "storage.h"
 }
@@ -417,13 +418,9 @@ TEST_F(ReviewHandlers, ZcashV5RefusesAnIronwoodDigest) {
   EXPECT_EQ(0, kkconfirm_drain());
 }
 
-// Handler-level walk of a whole shielded-only session: summary, one streamed
-// output action (the cmx is the device's own known-answer vector, see
-// OrchardNoteCommitment_KnownVectorAndProgress), the recomputed bundle digest,
-// then the final fee gate. A legacy host action sighash is refused outright. A bundle digest the device does not recompute, or a
-// host fee other than the verified one (here orchard_value_balance, 0), aborts
-// before the fee screen and releases nothing; the matching request reaches the
-// fee screen and completes.
+// Fixtures for streamed Orchard sessions. Every output is a zcash-test-vectors
+// note (zcash_note_vectors.h), so the device's cmx and note-ciphertext checks
+// pass on real data; cv_net and out_ciphertext are opaque to the device.
 namespace {
 std::vector<uint8_t> zcashHex(const char* hex) {
   std::vector<uint8_t> out;
@@ -447,71 +444,136 @@ void zcashSet(Bytes& field, const std::vector<uint8_t>& value) {
   field.size = value.size();
   std::memcpy(field.bytes, value.data(), value.size());
 }
-}  // namespace
 
-TEST_F(ReviewHandlers, ZcashSessionCompletesOnlyPastTheDigestAndFeeGates) {
-  const auto rho = zcashHex(
-      "112233445566778899aabbccddeeff00112233445566778899aabbccddeeff00");
-  const auto cmx = zcashHex(
-      "02defb39c8f2e1ecc945189373cf2a8e21d4e154398efa1621d5fb989e1deb36");
-  const auto recipient = zcashHex(
-      "3c150e6098b861716cc7f62835f69feb302193c92660444f26624fd13e00ea7a"
-      "c774cd55074d6367efef37");
-  const auto rseed = zcashHex(
-      "cafebabedeadbeef0102030405060708090a0b0c0d0e0f101112131415161718");
-  const std::vector<uint8_t> epk(32, 2), enc_compact(52, 3), enc_memo(512, 4),
-      enc_noncompact(16, 5), cv_net(32, 6), rk(32, 7), out_ciphertext(80, 8),
-      anchor(32, 0x13);
-  const uint8_t flags = 3;
+template <typename Bytes>
+std::vector<uint8_t> zcashGet(const Bytes& field) {
+  return std::vector<uint8_t>(field.bytes, field.bytes + field.size);
+}
 
-  // The ZIP-244 Orchard bundle digest the device recomputes.
-  uint8_t compact[32], memos[32], noncompact[32], digest[32];
-  std::vector<uint8_t> data = rho;
-  data.insert(data.end(), cmx.begin(), cmx.end());
-  data.insert(data.end(), epk.begin(), epk.end());
-  data.insert(data.end(), enc_compact.begin(), enc_compact.end());
-  zcashPersonal("ZTxIdOrcActCHash", data, compact);
-  zcashPersonal("ZTxIdOrcActMHash", enc_memo, memos);
-  data = cv_net;
-  data.insert(data.end(), rk.begin(), rk.end());
-  data.insert(data.end(), enc_noncompact.begin(), enc_noncompact.end());
-  data.insert(data.end(), out_ciphertext.begin(), out_ciphertext.end());
-  zcashPersonal("ZTxIdOrcActNHash", data, noncompact);
-  data.assign(compact, compact + 32);
+const std::vector<uint8_t> kZcashAnchor(32, 0x13);
+const uint8_t kZcashFlags = 3;
+
+ZcashPCZTAction zcashNoteAction(uint32_t index, const ZcashNoteVector& note) {
+  ZcashPCZTAction action = {};
+  action.has_index = action.has_is_spend = true;
+  action.index = index;
+  action.has_alpha = true;
+  zcashSet(action.alpha, std::vector<uint8_t>(32, 1));
+  action.has_value = true;
+  action.value = note.value;
+  action.has_recipient = action.has_rseed = true;
+  auto recipient = zcashHex(note.d);
+  const auto pk_d = zcashHex(note.pk_d);
+  recipient.insert(recipient.end(), pk_d.begin(), pk_d.end());
+  zcashSet(action.recipient, recipient);
+  zcashSet(action.rseed, zcashHex(note.rseed));
+  action.has_nullifier = action.has_cmx = action.has_epk = true;
+  zcashSet(action.nullifier, zcashHex(note.rho));  // rho of the output note
+  zcashSet(action.cmx, zcashHex(note.cmx));
+  zcashSet(action.epk, zcashHex(note.epk));
+  const auto c_enc = zcashHex(note.c_enc);
+  action.has_enc_compact = action.has_enc_memo = true;
+  action.has_enc_noncompact = true;
+  zcashSet(action.enc_compact,
+           std::vector<uint8_t>(c_enc.begin(), c_enc.begin() + 52));
+  zcashSet(action.enc_memo,
+           std::vector<uint8_t>(c_enc.begin() + 52, c_enc.begin() + 564));
+  zcashSet(action.enc_noncompact,
+           std::vector<uint8_t>(c_enc.begin() + 564, c_enc.end()));
+  action.has_cv_net = action.has_rk = action.has_out_ciphertext = true;
+  zcashSet(action.cv_net, std::vector<uint8_t>(32, 6));
+  zcashSet(action.rk, std::vector<uint8_t>(32, 7));
+  zcashSet(action.out_ciphertext, std::vector<uint8_t>(80, 8));
+  return action;
+}
+
+// The ZIP-244 v5 Orchard bundle digest the device recomputes.
+void zcashBundleDigest(const std::vector<ZcashPCZTAction>& actions,
+                       int64_t value_balance, uint8_t digest[32]) {
+  std::vector<uint8_t> compact_data, memo_data, noncompact_data;
+  for (const auto& a : actions) {
+    for (const auto& part : {zcashGet(a.nullifier), zcashGet(a.cmx),
+                             zcashGet(a.epk), zcashGet(a.enc_compact)})
+      compact_data.insert(compact_data.end(), part.begin(), part.end());
+    const auto memo = zcashGet(a.enc_memo);
+    memo_data.insert(memo_data.end(), memo.begin(), memo.end());
+    for (const auto& part :
+         {zcashGet(a.cv_net), zcashGet(a.rk), zcashGet(a.enc_noncompact),
+          zcashGet(a.out_ciphertext)})
+      noncompact_data.insert(noncompact_data.end(), part.begin(), part.end());
+  }
+  uint8_t compact[32], memos[32], noncompact[32];
+  zcashPersonal("ZTxIdOrcActCHash", compact_data, compact);
+  zcashPersonal("ZTxIdOrcActMHash", memo_data, memos);
+  zcashPersonal("ZTxIdOrcActNHash", noncompact_data, noncompact);
+  std::vector<uint8_t> data(compact, compact + 32);
   data.insert(data.end(), memos, memos + 32);
   data.insert(data.end(), noncompact, noncompact + 32);
-  data.push_back(flags);
-  data.insert(data.end(), 8, 0);  // orchard_value_balance = 0, LE i64
-  data.insert(data.end(), anchor.begin(), anchor.end());
+  data.push_back(kZcashFlags);
+  for (int i = 0; i < 8; i++)
+    data.push_back(
+        static_cast<uint8_t>(static_cast<uint64_t>(value_balance) >> (8 * i)));
+  data.insert(data.end(), kZcashAnchor.begin(), kZcashAnchor.end());
   zcashPersonal("ZTxIdOrchardHash", data, digest);
+}
 
-  enum Case { kHostSighash, kTamperedDigest, kFeeMismatch, kAccepted };
-  for (Case c : {kHostSighash, kTamperedDigest, kFeeMismatch, kAccepted}) {
+// A v5 (NU6.2) request for account 0 over a precomputed bundle digest.
+ZcashSignPCZT zcashSignRequest(uint32_t n_actions, const uint8_t digest[32],
+                               int64_t value_balance, uint64_t fee) {
+  ZcashSignPCZT msg = {};
+  msg.has_n_actions = true;
+  msg.n_actions = n_actions;
+  msg.has_account = true;
+  msg.has_tx_version = msg.has_version_group_id = msg.has_branch_id =
+      msg.has_lock_time = msg.has_expiry_height = true;
+  msg.tx_version = 5;
+  msg.version_group_id = 0x26a7270a;
+  msg.branch_id = 0x5437f330;
+  msg.has_header_digest = true;
+  msg.header_digest.size = 32;
+  zcash_compute_header_digest(msg.tx_version, msg.version_group_id,
+                              msg.branch_id, msg.lock_time, msg.expiry_height,
+                              msg.header_digest.bytes);
+  msg.has_orchard_digest = true;
+  msg.orchard_digest.size = 32;
+  std::memcpy(msg.orchard_digest.bytes, digest, 32);
+  msg.has_orchard_flags = msg.has_orchard_value_balance = true;
+  msg.orchard_flags = kZcashFlags;
+  msg.orchard_value_balance = value_balance;
+  msg.has_orchard_anchor = true;
+  zcashSet(msg.orchard_anchor, kZcashAnchor);
+  msg.has_fee = true;
+  msg.fee = fee;
+  return msg;
+}
+}  // namespace
+
+// Handler-level walk of a whole shielded-only session: summary, one streamed
+// output action, the recomputed bundle digest, then the final fee gate. A
+// legacy host action sighash and a note ciphertext that does not decrypt to
+// the committed note are refused before the output screens. A bundle digest
+// the device does not recompute, or a host fee other than the verified one
+// (here orchard_value_balance, 0), aborts before the fee screen and releases
+// nothing; the matching request reaches the fee screen and completes.
+TEST_F(ReviewHandlers, ZcashSessionCompletesOnlyPastTheDigestAndFeeGates) {
+  enum Case {
+    kHostSighash,
+    kTamperedCiphertext,
+    kTamperedDigest,
+    kFeeMismatch,
+    kAccepted
+  };
+  for (Case c : {kHostSighash, kTamperedCiphertext, kTamperedDigest,
+                 kFeeMismatch, kAccepted}) {
     SCOPED_TRACE(c);
-    ZcashSignPCZT msg = {};
-    msg.has_n_actions = true;
-    msg.n_actions = 1;
-    msg.has_account = true;
-    msg.has_tx_version = msg.has_version_group_id = msg.has_branch_id =
-        msg.has_lock_time = msg.has_expiry_height = true;
-    msg.tx_version = 5;
-    msg.version_group_id = 0x26a7270a;
-    msg.branch_id = 0x5437f330;
-    msg.has_header_digest = true;
-    msg.header_digest.size = 32;
-    ASSERT_TRUE(zcash_compute_header_digest(
-        msg.tx_version, msg.version_group_id, msg.branch_id, msg.lock_time,
-        msg.expiry_height, msg.header_digest.bytes));
-    msg.has_orchard_digest = true;
-    msg.orchard_digest.size = 32;
-    std::memcpy(msg.orchard_digest.bytes, digest, 32);
+    ZcashPCZTAction action = zcashNoteAction(0, kZcashOrchardNoteVectors[0]);
+    // A host corrupting the ciphertext also recomputes the bundle digest.
+    if (c == kTamperedCiphertext) action.enc_memo.bytes[100] ^= 1;
+    uint8_t digest[32];
+    zcashBundleDigest({action}, 0, digest);
+    ZcashSignPCZT msg =
+        zcashSignRequest(1, digest, 0, c == kFeeMismatch ? 1000 : 0);
     if (c == kTamperedDigest) msg.orchard_digest.bytes[0] ^= 1;
-    msg.has_orchard_flags = msg.has_orchard_value_balance = true;
-    msg.orchard_flags = flags;
-    msg.has_orchard_anchor = true;
-    zcashSet(msg.orchard_anchor, anchor);
-    msg.has_fee = true;
-    msg.fee = c == kFeeMismatch ? 1000 : 0;
 
     // Summary, the two output screens, then the fee screen if it is reached.
     ASSERT_TRUE(kkconfirm_preload(4, 0));
@@ -520,28 +582,6 @@ TEST_F(ReviewHandlers, ZcashSessionCompletesOnlyPastTheDigestAndFeeGates) {
     fsm_msgZcashSignPCZT(&msg);
     ASSERT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
 
-    ZcashPCZTAction action = {};
-    action.has_index = action.has_is_spend = true;
-    action.has_alpha = true;
-    zcashSet(action.alpha, std::vector<uint8_t>(32, 1));
-    action.has_value = true;
-    action.value = 12345678;
-    action.has_nullifier = action.has_cmx = action.has_epk = true;
-    zcashSet(action.nullifier, rho);
-    zcashSet(action.cmx, cmx);
-    zcashSet(action.epk, epk);
-    action.has_enc_compact = action.has_enc_memo = true;
-    action.has_enc_noncompact = true;
-    zcashSet(action.enc_compact, enc_compact);
-    zcashSet(action.enc_memo, enc_memo);
-    zcashSet(action.enc_noncompact, enc_noncompact);
-    action.has_cv_net = action.has_rk = action.has_out_ciphertext = true;
-    zcashSet(action.cv_net, cv_net);
-    zcashSet(action.rk, rk);
-    zcashSet(action.out_ciphertext, out_ciphertext);
-    action.has_recipient = action.has_rseed = true;
-    zcashSet(action.recipient, recipient);
-    zcashSet(action.rseed, rseed);
     if (c == kHostSighash) {
       action.has_sighash = true;
       zcashSet(action.sighash, std::vector<uint8_t>(32, 9));
@@ -552,10 +592,13 @@ TEST_F(ReviewHandlers, ZcashSessionCompletesOnlyPastTheDigestAndFeeGates) {
         std::any_of(screens.begin(), screens.end(), [](const std::string& s) {
           return s.find("Confirm transaction fee?") != std::string::npos;
         });
-    if (c == kHostSighash) {
+    if (c == kHostSighash || c == kTamperedCiphertext) {
       // Refused before the output screens: only the summary was shown.
-      EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
-      EXPECT_STREQ("Host action sighash rejected",
+      EXPECT_EQ(c == kHostSighash ? FailureType_Failure_SyntaxError
+                                  : FailureType_Failure_Other,
+                fsm_test_lastFailureCode());
+      EXPECT_STREQ(c == kHostSighash ? "Host action sighash rejected"
+                                     : "Shielded note ciphertext mismatch",
                    fsm_test_lastFailureMessage());
       EXPECT_EQ(1u, screens.size());
       EXPECT_EQ(6, kkconfirm_drain());  // three unused screens' pairs

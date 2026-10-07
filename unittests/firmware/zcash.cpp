@@ -11,6 +11,7 @@ extern "C" {
 }
 
 #include "gtest/gtest.h"
+#include "zcash_note_vectors.h"
 
 #include <cstdio>
 #include <cstring>
@@ -1025,6 +1026,106 @@ TEST(Zcash, IronwoodNoteCommitment_V3KnownVector) {
       kNoteRecipient, 12345678, kNoteRho, kNoteRseed, cmx, NULL, NULL));
   EXPECT_TRUE(memcmp(cmx, expected_cmx, sizeof(cmx)) == 0);
   memzero(cmx, sizeof(cmx));
+}
+
+/* A ZcashNoteVector decoded into wire-sized buffers. */
+struct DecodedNote {
+  uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE];
+  uint64_t value;
+  uint8_t rseed[32], rho[32], cmx[32], epk[32], c_enc[580];
+};
+
+static void decode_hex(const char* hex, uint8_t* out, size_t len) {
+  ASSERT_EQ(2 * len, strlen(hex));
+  for (size_t i = 0; i < len; i++) {
+    unsigned int byte = 0;
+    ASSERT_EQ(1, sscanf(hex + 2 * i, "%2x", &byte));
+    out[i] = (uint8_t)byte;
+  }
+}
+
+static void decode_note(const ZcashNoteVector& v, DecodedNote* n) {
+  decode_hex(v.d, n->receiver, 11);
+  decode_hex(v.pk_d, n->receiver + 11, 32);
+  n->value = v.value;
+  decode_hex(v.rseed, n->rseed, 32);
+  decode_hex(v.rho, n->rho, 32);
+  decode_hex(v.cmx, n->cmx, 32);
+  decode_hex(v.epk, n->epk, 32);
+  decode_hex(v.c_enc, n->c_enc, 580);
+}
+
+static bool note_ciphertext_valid(const DecodedNote& n, bool ironwood) {
+  return zcash_orchard_note_ciphertext_valid(n.receiver, n.value, n.rho,
+                                             n.rseed, ironwood, n.epk, n.c_enc,
+                                             n.c_enc + 52, n.c_enc + 564);
+}
+
+TEST(Zcash, OrchardNoteCiphertext_ReferenceVectors) {
+  for (const auto& vector : kZcashOrchardNoteVectors) {
+    DecodedNote note;
+    decode_note(vector, &note);
+    uint8_t cmx[32];
+    ASSERT_TRUE(zcash_orchard_compute_cmx_with_progress(
+        note.receiver, note.value, note.rho, note.rseed, cmx, NULL, NULL));
+    EXPECT_EQ(0, memcmp(cmx, note.cmx, 32));
+    EXPECT_TRUE(note_ciphertext_valid(note, false));
+    // An Orchard (0x02) plaintext is not an Ironwood note.
+    EXPECT_FALSE(note_ciphertext_valid(note, true));
+  }
+}
+
+TEST(Zcash, IronwoodNoteCiphertext_V3Vector) {
+  DecodedNote note;
+  decode_note(kZcashIronwoodNoteVector, &note);
+  uint8_t cmx[32];
+  ASSERT_TRUE(zcash_ironwood_compute_cmx_with_progress(
+      note.receiver, note.value, note.rho, note.rseed, cmx, NULL, NULL));
+  EXPECT_EQ(0, memcmp(cmx, note.cmx, 32));
+  EXPECT_TRUE(note_ciphertext_valid(note, true));
+  EXPECT_FALSE(note_ciphertext_valid(note, false));
+}
+
+TEST(Zcash, OrchardNoteCiphertext_RejectsEveryTamperedField) {
+  DecodedNote good;
+  decode_note(kZcashOrchardNoteVectors[0], &good);
+  ASSERT_TRUE(note_ciphertext_valid(good, false));
+
+  // Ciphertext: lead byte, d, value, rseed, memo, tag; and epk.
+  for (size_t offset : {0u, 1u, 12u, 20u, 51u, 52u, 563u, 564u, 579u}) {
+    SCOPED_TRACE(offset);
+    DecodedNote note = good;
+    note.c_enc[offset] ^= 0x01;
+    EXPECT_FALSE(note_ciphertext_valid(note, false));
+  }
+  for (size_t offset : {0u, 31u}) {
+    SCOPED_TRACE(offset);
+    DecodedNote note = good;
+    note.epk[offset] ^= 0x01;
+    EXPECT_FALSE(note_ciphertext_valid(note, false));
+  }
+
+  // The verified note fields must be the ones the ciphertext carries.
+  DecodedNote note = good;
+  note.value++;
+  EXPECT_FALSE(note_ciphertext_valid(note, false));
+  note = good;
+  note.rseed[0] ^= 0x01;
+  EXPECT_FALSE(note_ciphertext_valid(note, false));
+  note = good;
+  note.rho[0] ^= 0x01;
+  EXPECT_FALSE(note_ciphertext_valid(note, false));
+  note = good;
+  note.receiver[0] ^= 0x01;  // d
+  EXPECT_FALSE(note_ciphertext_valid(note, false));
+  note = good;
+  note.receiver[11] ^= 0x01;  // pk_d
+  EXPECT_FALSE(note_ciphertext_valid(note, false));
+
+  // A pk_d that is not a curve point (the identity encoding) is refused.
+  note = good;
+  memset(note.receiver + 11, 0, 32);
+  EXPECT_FALSE(note_ciphertext_valid(note, false));
 }
 
 TEST(Zcash, OrchardReceiverToUnifiedAddress_KnownVector) {

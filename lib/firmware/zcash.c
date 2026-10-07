@@ -25,6 +25,7 @@
 #include "trezor/crypto/aes/aes.h"
 #include "trezor/crypto/bignum.h"
 #include "trezor/crypto/blake2b.h"
+#include "trezor/crypto/chacha20poly1305/rfc7539.h"
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/hasher.h"
 #include "trezor/crypto/memzero.h"
@@ -530,6 +531,97 @@ bool zcash_ironwood_compute_cmx_with_progress(
     ZcashOrchardProgressCallback progress, void* progress_context) {
   return zcash_orchard_family_compute_cmx_with_progress(
       receiver, value, rho, rseed, cmx_out, true, progress, progress_context);
+}
+
+/* repr_P decoding for a public point (here pk_d): canonical x, on-curve,
+ * not the identity. */
+static bool pallas_decode_public_point(const uint8_t in[32], curve_point* p) {
+  uint8_t buf[32];
+  memcpy(buf, in, 32);
+  const int y_odd = buf[31] >> 7;
+  buf[31] &= 0x7f;
+  bn_read_le(buf, &p->x);
+  if (!bn_is_less(&p->x, &pallas_prime)) return false;
+
+  bignum256 y2, five;
+  bn_copy(&p->x, &y2);
+  pallas_mul_mod_p(&y2, &p->x);
+  pallas_mul_mod_p(&y2, &p->x);
+  bn_read_uint32(5, &five);
+  pallas_add_mod_p(&y2, &five, &y2);
+  bn_copy(&y2, &p->y);
+  if (pallas_sqrt_mod_p(&p->y) != 0) return false;
+
+  bignum256 check;
+  bn_copy(&p->y, &check);
+  pallas_mul_mod_p(&check, &p->y);
+  bn_normalize(&check);
+  bn_normalize(&y2);
+  bn_normalize(&p->y);
+  if (!bn_is_equal(&check, &y2)) return false;
+  if (bn_is_zero(&p->y)) return !y_odd;
+  if (bn_is_odd(&p->y) != y_odd) pallas_sub_mod_p(&pallas_prime, &p->y, &p->y);
+  return !pallas_point_is_identity(p);
+}
+
+bool zcash_orchard_note_ciphertext_valid(
+    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
+    const uint8_t rho[32], const uint8_t rseed[32], bool ironwood,
+    const uint8_t epk[32], const uint8_t enc_compact[52],
+    const uint8_t enc_memo[512], const uint8_t enc_tag[16]) {
+  if (!receiver || !rho || !rseed || !epk || !enc_compact || !enc_memo ||
+      !enc_tag) {
+    return false;
+  }
+
+  /* Every input is host-supplied, so esk is public: fast multiplies are
+   * fine and nothing here needs wiping. */
+  uint8_t prf_in[33], prf_out[64], esk_bytes[32], point_bytes[32];
+  prf_in[0] = 0x04;
+  memcpy(prf_in + 1, rho, 32);
+  prf_expand(rseed, prf_in, sizeof(prf_in), prf_out);
+  to_scalar(prf_out, esk_bytes);
+
+  bignum256 esk;
+  bn_read_le(esk_bytes, &esk);
+  curve_point gd, pkd, point;
+  if (bn_is_zero(&esk) || !orchard_diversify_point(receiver, &gd) ||
+      !pallas_decode_public_point(receiver + 11, &pkd)) {
+    return false;
+  }
+
+  pallas_point_mult(&esk, &gd, &point);
+  pallas_point_encode(&point, point_bytes);
+  if (memcmp(point_bytes, epk, 32) != 0) return false;
+
+  /* K_enc = KDF^Orchard([esk] pk_d, epk) */
+  pallas_point_mult(&esk, &pkd, &point);
+  pallas_point_encode(&point, point_bytes);
+  uint8_t key[32];
+  BLAKE2B_CTX kdf;
+  blake2b_InitPersonal(&kdf, 32, "Zcash_OrchardKDF", 16);
+  blake2b_Update(&kdf, point_bytes, 32);
+  blake2b_Update(&kdf, epk, 32);
+  blake2b_Final(&kdf, key, 32);
+
+  /* AEAD_CHACHA20_POLY1305, zero nonce, no AD, over compact || memo. */
+  static const uint8_t nonce[12] = {0};
+  chacha20poly1305_ctx aead;
+  uint8_t compact[52], tag[16];
+  rfc7539_init(&aead, key, nonce);
+  chacha20poly1305_decrypt(&aead, enc_compact, compact, sizeof(compact));
+  chacha20poly1305_auth(&aead, enc_memo, 512);
+  rfc7539_finish(&aead, 0, sizeof(compact) + 512, tag);
+  if (memcmp(tag, enc_tag, sizeof(tag)) != 0) return false;
+
+  uint8_t expected[52];
+  expected[0] = ironwood ? 0x03 : 0x02;
+  memcpy(expected + 1, receiver, 11);
+  for (size_t i = 0; i < 8; i++) {
+    expected[12 + i] = (uint8_t)(value >> (8 * i));
+  }
+  memcpy(expected + 20, rseed, 32);
+  return memcmp(compact, expected, sizeof(expected)) == 0;
 }
 
 bool zcash_derive_orchard_keys_with_progress(
