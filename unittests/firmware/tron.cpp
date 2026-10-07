@@ -16,6 +16,8 @@ extern "C" {
 
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
+bool kkconfirm_readResponse(uint16_t expected, const pb_field_t* fields,
+                            void* result);
 void kkconfirm_capture_start(void);
 std::vector<std::string> kkconfirm_capture_finish(void);
 
@@ -517,6 +519,24 @@ TEST(Tron, KnownTrc20TransferClearSignsWithoutAdvancedMode) {
     EXPECT_EQ(std::string("Send 1.5 USDT to ") + to_str + "?", screens[0]);
     EXPECT_EQ(0, kkconfirm_drain());
   }
+}
+
+// Hosts and tests tell trusted-TRC-20 builds apart by this capability.
+TEST(Tron, FeaturesReportTrc20Review) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  TronSignFixture f;
+  GetFeatures request = {};
+  fsm_msgGetFeatures(&request);
+  static Features features;
+  features = Features{};
+  ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_Features,
+                                     Features_fields, &features));
+  bool reported = false;
+  for (pb_size_t i = 0; i < features.capabilities_count; i++)
+    reported = reported || features.capabilities[i] ==
+                               Features_Capability_CAPABILITY_TRON_TRC20_REVIEW;
+  EXPECT_TRUE(reported);
 }
 
 TEST(Tron, ParseNativeTransfer) {
