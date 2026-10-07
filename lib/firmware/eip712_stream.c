@@ -758,6 +758,30 @@ static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
                        (const uint8_t*)text, strlen(text));
 }
 
+/* An empty array has no element screen, so it would otherwise sign unseen.
+ * `arr` is staged but not pushed, so leaf_path() still ends at the array. */
+static Eip712LeafResult eip712_confirm_empty_array(const Eip712Frame* arr) {
+  Eip712FieldType type;
+  char type_name[EIP712_MAX_TYPE_NAME];
+  char path[160];
+  memzero(&type, sizeof(type));
+  type.data_type = (Eip712DataType)arr->elem_data_type;
+  type.has_size = arr->elem_has_size;
+  type.size = arr->elem_size;
+  type.has_struct_name = arr->elem_struct[0] != 0;
+  strlcpy(type.struct_name, arr->elem_struct, sizeof(type.struct_name));
+  /* This level's type keeps its inner dimensions; the outermost is last. */
+  type.array_levels_count = arr->levels_total - arr->level_index;
+  memcpy(type.array_levels, arr->array_levels,
+         type.array_levels_count * sizeof(type.array_levels[0]));
+  if (!eip712_type_name(&type, type_name, sizeof(type_name)) ||
+      !leaf_path(path, sizeof(path)))
+    return EIP712_LEAF_INVALID;
+  static const char empty[] = "0 items";
+  return confirm_parts(leaf_title(), path, type_name, EIP712_RENDER_TEXT,
+                       (const uint8_t*)empty, sizeof(empty) - 1);
+}
+
 /* Unlimited permits (EIP-2612, DAI, Permit2) are refused, as in approve(). */
 static bool is_unlimited_permit(const Eip712FieldType* field,
                                 const uint8_t* value, uint16_t len) {
@@ -793,6 +817,22 @@ static void fail(const char* why) {
   memzero(&next_step, sizeof(next_step));
   next_step.kind = EIP712_REQ_FAIL;
   next_step.error = why;
+}
+
+/* True when the user approved the screen; otherwise the walk has ended. */
+static bool review_approved(Eip712LeafResult shown) {
+  if (shown == EIP712_LEAF_INVALID) {
+    fail("EIP-712 value cannot be displayed");
+    return false;
+  }
+  if (shown != EIP712_LEAF_OK) {
+    eip712_stream_abort();
+    memzero(&next_step, sizeof(next_step));
+    next_step.kind = EIP712_REQ_CANCELLED;
+    return false;
+  }
+  if (e712.root == 1) e712.message_value_confirmed = true;
+  return true;
 }
 
 static void request_struct(const char* name) {
@@ -1255,6 +1295,8 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
       fail("EIP-712 array is too long for this device");
       return false;
     }
+    if (len == 0 && !review_approved(eip712_confirm_empty_array(arr)))
+      return false;
 
     arr->array_len = len;
     arr->member_index = 0;
@@ -1297,18 +1339,7 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
   }
 
   /* Display and absorb from the SAME buffer: no second read can differ. */
-  const Eip712LeafResult shown = eip712_confirm_leaf(field, bytes, len);
-  if (shown == EIP712_LEAF_INVALID) {
-    fail("EIP-712 value cannot be displayed");
-    return false;
-  }
-  if (shown != EIP712_LEAF_OK) {
-    eip712_stream_abort();
-    memzero(&next_step, sizeof(next_step));
-    next_step.kind = EIP712_REQ_CANCELLED;
-    return false;
-  }
-  if (e712.root == 1) e712.message_value_confirmed = true;
+  if (!review_approved(eip712_confirm_leaf(field, bytes, len))) return false;
 
   Eip712Frame* f = &e712.stack[e712.depth - 1];
   if (!eip712_encode_leaf(field, bytes, len,

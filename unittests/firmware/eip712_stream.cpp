@@ -1083,3 +1083,74 @@ TEST(Eip712Stream, LeafTitlesFitOneRowForTheLongestPrimaryType) {
   }
   eip712_stream_abort();
 }
+
+// An empty array has no element screens. Its path, declared type and zero
+// length are reviewed instead, at every nesting level.
+TEST(Eip712Stream, EmptyArraysAreReviewedWithPathAndType) {
+  struct Case {
+    const char* name;
+    Field type;
+    std::vector<uint16_t> lengths;  // answered in request order
+    std::vector<std::string> screens;
+  };
+  Field addresses = mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS);
+  addresses.array_levels_count = 1;
+  Field words = mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32);
+  words.array_levels_count = 1;
+  Field grid = words;
+  grid.array_levels_count = 2;
+  Field items = structField("Item");
+  items.array_levels_count = 1;
+  const Case cases[] = {
+      {"address[]", addresses, {0}, {"recipients\naddress[]: 0 items"}},
+      {"uint256[]", words, {0}, {"recipients\nuint256[]: 0 items"}},
+      {"outer", grid, {0}, {"recipients\nuint256[][]: 0 items"}},
+      {"inner",
+       grid,
+       {2, 0, 0},
+       {"recipients[0]\nuint256[]: 0 items",
+        "recipients[1]\nuint256[]: 0 items"}},
+      {"structs", items, {0}, {"recipients\nItem[]: 0 items"}},
+  };
+  static std::vector<uint16_t> lengths;
+  for (const Case& c : cases) {
+    SCOPED_TRACE(c.name);
+    std::map<std::string, Struct> types;
+    addMember(types["Msg"], "amount",
+              mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+    addMember(types["Msg"], "recipients", c.type);
+    addMember(types["Item"], "to",
+              mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
+    lengths = c.lengths;
+    kkconfirm_capture_start();
+    const int used = walk(
+        "Msg", types,
+        [](const std::vector<uint32_t>& path) -> Bytes {
+          if (path.size() == 2 && path[1] == 0) return word(7);
+          const uint16_t n = lengths.front();
+          lengths.erase(lengths.begin());
+          return Bytes{(uint8_t)(n >> 8), (uint8_t)n};
+        },
+        1 + (int)c.screens.size());
+    const std::vector<std::string> bodies = kkconfirm_capture_finish();
+    EXPECT_EQ(used, 1 + (int)c.screens.size());
+    ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+    ASSERT_EQ(bodies.size(), 1 + c.screens.size());
+    for (size_t i = 0; i < c.screens.size(); i++)
+      EXPECT_EQ(bodies[1 + i], c.screens[i]);
+    eip712_stream_abort();
+  }
+}
+
+TEST(Eip712Stream, RejectingAnEmptyArrayCancelsTheSignature) {
+  std::map<std::string, Struct> types;
+  Field recipients = mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS);
+  recipients.array_levels_count = 1;
+  addMember(types["Msg"], "recipients", recipients);
+  const int used = walk(
+      "Msg", types,
+      [](const std::vector<uint32_t>&) -> Bytes { return Bytes{0, 0}; }, 0);
+  EXPECT_EQ(used, -1);  // the rejection sentinel answered the empty array
+  EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_CANCELLED);
+  eip712_stream_abort();
+}
