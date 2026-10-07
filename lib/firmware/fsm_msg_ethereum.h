@@ -753,6 +753,22 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
     return;
   }
   if (field->kind == 13) {
+    /* An inner approve(spender, 2^256-1) signs only after the device's own
+     * UNLIMITED warning, before its inner or blind screens. */
+    if (field->unlimited_approve && field->has_address) {
+      const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
+      if (ui != ERC7730_UI_OK) {
+        fail_erc7730_ui(workflow, ui);
+        return;
+      }
+      if (!ethereum_confirmUnlimitedApproval(
+              (uint32_t)workflow->identity.chain_id, field->approve_spender,
+              field->address)) {
+        fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
+                           _("Signing cancelled by user"));
+        return;
+      }
+    }
     /* Clear-sign the inner call at depth 1, outside iterations, for whole ABI
      * words; otherwise it is shown blind (7.15). */
     const bool fetchable = workflow->depth == 0 && !workflow->iterating &&
