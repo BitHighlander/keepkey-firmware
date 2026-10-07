@@ -1187,6 +1187,20 @@ TEST(Solana, ParserCountsLookupLoadedAccounts) {
   EXPECT_EQ(0u, tx.num_loaded_accounts);
 }
 
+// A lookup-account attestation is shown only when it lists exactly the
+// accounts the message loads: a partial or padded list would mislead.
+TEST(Solana, LookupAttestationMustCoverEveryLoadedAccount) {
+  SolanaParsedTx tx;
+  memset(&tx, 0, sizeof(tx));
+  tx.num_loaded_accounts = 3;
+  EXPECT_TRUE(solana_lut_attestation_complete(&tx, 3));
+  EXPECT_FALSE(solana_lut_attestation_complete(&tx, 1));
+  EXPECT_FALSE(solana_lut_attestation_complete(&tx, 4));
+  EXPECT_FALSE(solana_lut_attestation_complete(&tx, 0));
+  tx.num_loaded_accounts = 0;
+  EXPECT_FALSE(solana_lut_attestation_complete(&tx, 0));
+}
+
 TEST(Solana, MemoBodyCaptured) {
   /* Legacy tx: system transfer + memo instruction (THORChain-style swap
    * memo). The parser must expose the memo bytes for display. */

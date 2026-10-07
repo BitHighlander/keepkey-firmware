@@ -1306,6 +1306,11 @@ static bool solana_lut_accounts_preimage(const uint8_t* raw_tx, size_t raw_len,
   return true;
 }
 
+bool solana_lut_attestation_complete(const SolanaParsedTx* tx,
+                                     size_t attested) {
+  return tx && attested > 0 && attested == tx->num_loaded_accounts;
+}
+
 bool solana_lut_accounts_trusted(const uint8_t* raw_tx, size_t raw_len,
                                  const uint8_t (*accounts)[32],
                                  size_t num_accounts, uint32_t signer_key_id,

@@ -342,6 +342,10 @@ uint64_t solana_defaultComputeUnitLimit(const SolanaParsedTx* tx);
  *
  * message = the bytes the device signs. Runtime signer: annotation only, the
  * caller still runs the unverified review. */
+/// True iff an attestation listing `attested` accounts covers every account the
+/// message's lookup tables load, so "describes N account(s)" is complete.
+bool solana_lut_attestation_complete(const SolanaParsedTx* tx, size_t attested);
+
 bool solana_lut_accounts_trusted(const uint8_t* raw_tx, size_t raw_len,
                                  const uint8_t (*accounts)[32],
                                  size_t num_accounts, uint32_t signer_key_id,
