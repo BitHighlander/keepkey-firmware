@@ -614,8 +614,8 @@ static bool render_part(Eip712Render how, const uint8_t* value, size_t len,
     *consumed = n;
     return true;
   }
-  /* One byte escapes to <= 4 chars, so budget 4 always progresses. Finds a
-   * fitting prefix, not necessarily the longest (not monotonic). */
+  /* One byte escapes to <= 4 chars, so budget 4 always progresses. Bytes
+   * escape independently, so this finds the longest fitting prefix. */
   if (budget < 4) return false;
   size_t lo = 1, hi = left < budget ? left : budget;
   while (lo < hi) {

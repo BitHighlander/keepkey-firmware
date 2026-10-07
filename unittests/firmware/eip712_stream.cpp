@@ -1,4 +1,5 @@
 extern "C" {
+#include "keepkey/board/canvas.h"
 #include "keepkey/board/font.h"
 #include "keepkey/board/layout.h"
 #include "keepkey/firmware/eip712_stream.h"
@@ -14,6 +15,10 @@ extern "C" {
 #include <string>
 #include <vector>
 #include "kkconfirm_driver.h"
+
+extern "C" {
+#include "keepkey/board/confirm_sm.h"
+}
 
 void kkconfirm_capture_start(void);
 std::vector<std::string> kkconfirm_capture_finish(void);
@@ -1182,4 +1187,99 @@ TEST(Eip712Stream, ReplayBindsMemberKindNotOnlySpelling) {
   EXPECT_STREQ(eip712_stream_next()->error,
                "EIP-712 schema changed during signing");
   eip712_stream_abort();
+}
+
+// ── One screen per string ───────────────────────────────────────────
+// The body renderer drops a space where it wraps a line and the pager drops
+// one at a page start, so a string leaf that keeps a space literally can draw
+// the same pixels as the string without it, while the two hash differently.
+namespace {
+
+std::string g_note;
+
+// Title plus the canvas the real layout draws, for every captured screen.
+std::vector<std::string> pixels(const std::vector<std::string>& titles,
+                                const std::vector<std::string>& bodies) {
+  std::vector<std::string> out;
+  for (size_t i = 0; i < bodies.size(); i++) {
+    layout_has_icon(false);
+    layout_standard_notification(titles[i].c_str(), bodies[i].c_str(),
+                                 NOTIFICATION_REQUEST_NO_ANIMATION);
+    const Canvas* canvas = layout_get_canvas();
+    out.push_back(titles[i] + '\0' +
+                  std::string((const char*)canvas->buffer,
+                              (size_t)canvas->width * canvas->height));
+  }
+  return out;
+}
+
+// Every screen a document with one string member `note` draws.
+std::vector<std::string> noteScreens(const std::string& note) {
+  std::map<std::string, Struct> types;
+  addMember(types["EIP712Domain"], "name",
+            mk(EthereumTypedDataStructAck_EthereumDataType_STRING));
+  addMember(types["Msg"], "note",
+            mk(EthereumTypedDataStructAck_EthereumDataType_STRING));
+  g_note = note;
+  kkconfirm_capture_start();
+  const int used = walk(
+      "Msg", types,
+      [](const std::vector<uint32_t>& path) -> Bytes {
+        if (path[0] == 0) return Bytes{'A', 'p', 'p'};
+        return Bytes(g_note.begin(), g_note.end());
+      },
+      40);
+  const std::vector<std::string> bodies = kkconfirm_capture_finish();
+  EXPECT_GT(used, 0);
+  EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  eip712_stream_abort();
+  return pixels(kkconfirm_captured_titles(), bodies);
+}
+
+// The screens confirm() draws for `body` as given, and its page bodies.
+std::vector<std::string> rawScreens(const std::string& body,
+                                    std::vector<std::string>* pages) {
+  kkconfirm_capture_start();
+  EXPECT_TRUE(kkconfirm_preload(10, 0));
+  EXPECT_TRUE(
+      confirm(ButtonRequestType_ButtonRequest_Other, "T", "%s", body.c_str()));
+  kkconfirm_drain();
+  *pages = kkconfirm_capture_finish();
+  return pixels(kkconfirm_captured_titles(), *pages);
+}
+
+}  // namespace
+
+TEST(Eip712Stream, StringsDifferingByOneSpaceNeverShareAScreen) {
+  const std::string tail = "payTo0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed";
+  const std::string prefix = "note\nstring: ";
+  bool wrap_covered = false, page_covered = false;
+  // A row holds 37 'X': k = 37 puts the space at the first page break and
+  // k = 74 at a line wrap inside the second page. Each window brackets one.
+  for (size_t k : {35, 36, 37, 38, 39, 72, 73, 74, 75, 76}) {
+    SCOPED_TRACE(k);
+    const std::string spaced = std::string(k, 'X') + " " + tail;
+    const std::string joined = std::string(k, 'X') + tail;
+
+    // Coverage: shown verbatim, which k put the space where it is dropped?
+    std::vector<std::string> pages, unused;
+    if (rawScreens(prefix + spaced, &pages) ==
+        rawScreens(prefix + joined, &unused)) {
+      const std::string raw = prefix + spaced;
+      const size_t space = prefix.size() + k;
+      size_t pos = 0;
+      bool at_page_edge = false;
+      for (size_t i = 0; i < pages.size(); i++) {
+        while (raw[pos] == ' ') at_page_edge |= pos++ == space;
+        pos += pages[i].size();
+        at_page_edge |= i + 1 < pages.size() && pos - 1 == space;
+      }
+      (at_page_edge ? page_covered : wrap_covered) = true;
+    }
+
+    EXPECT_TRUE(noteScreens(spaced) != noteScreens(joined));
+  }
+  // The sweep reached both kinds of dropped space.
+  EXPECT_TRUE(wrap_covered);
+  EXPECT_TRUE(page_covered);
 }
