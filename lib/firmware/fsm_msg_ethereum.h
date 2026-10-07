@@ -284,13 +284,13 @@ static bool confirm_erc7730_text(const char* title, const char* label,
   return true;
 }
 
-/* Signer-authored strings are escaped like captured values: raw text is not
- * shown one-to-one (non-ASCII glyphs, dropped edge spaces). */
+/* Signer-authored strings are escaped as labels: raw text is not shown
+ * one-to-one (non-ASCII glyphs, dropped edge spaces). */
 static bool confirm_erc7730_escaped(const char* title, const char* label,
                                     const char* raw) {
   char text[ERC7730_FORMATTED_VALUE_MAX + 1u];
-  const bool shown = erc7730_format_text((const uint8_t*)raw, strlen(raw), text,
-                                         sizeof(text)) &&
+  const bool shown = erc7730_format_label((const uint8_t*)raw, strlen(raw),
+                                          text, sizeof(text)) &&
                      confirm_erc7730_text(title, label, text);
   memzero(text, sizeof(text));
   return shown;
@@ -328,8 +328,8 @@ static Erc7730UiResult confirm_erc7730_source_and_intent(
 static bool confirm_erc7730_field(const char* title, const char* label,
                                   const char* value) {
   char escaped[ERC7730_FORMATTED_VALUE_MAX + 1u];
-  const bool shown = erc7730_format_text((const uint8_t*)label, strlen(label),
-                                         escaped, sizeof(escaped)) &&
+  const bool shown = erc7730_format_label((const uint8_t*)label, strlen(label),
+                                          escaped, sizeof(escaped)) &&
                      confirm_erc7730_text(title, escaped, value);
   memzero(escaped, sizeof(escaped));
   return shown;
@@ -494,8 +494,8 @@ static void show_erc7730_value(Erc7730Workflow* workflow, const char* text) {
   char escaped[ERC7730_FORMATTED_VALUE_MAX + 1u];
   char formatted[ERC7730_FORMATTED_VALUE_MAX + 1u];
   bool ok = field->has_value &&
-            (!text || erc7730_format_text((const uint8_t*)text, strlen(text),
-                                          escaped, sizeof(escaped)));
+            (!text || erc7730_format_label((const uint8_t*)text, strlen(text),
+                                           escaped, sizeof(escaped)));
   const uint64_t chain_id = workflow->identity.chain_id;
   if (ok) {
     switch (field->kind) {
@@ -1641,8 +1641,9 @@ void fsm_msgEthereumClearSignDefinitionChunk(
         show_erc7730_value(workflow, text);
       } else {
         char escaped[ERC7730_FORMATTED_VALUE_MAX + 1u];
-        if (erc7730_format_text((const uint8_t*)text, length, escaped,
-                                sizeof(escaped))) {
+        /* A signed constant or an intent text part: signer-authored. */
+        if (erc7730_format_label((const uint8_t*)text, length, escaped,
+                                 sizeof(escaped))) {
           show_erc7730_field(workflow, escaped);
         } else {
           fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,

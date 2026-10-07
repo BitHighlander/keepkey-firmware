@@ -185,6 +185,54 @@ TEST(Erc7730Format, TextFitsExactlyOrFailsClosed) {
   EXPECT_FALSE(text("a", 1, nullptr, 8));
 }
 
+namespace {
+
+bool label(const char* input, char* output, size_t size) {
+  return erc7730_format_label(reinterpret_cast<const uint8_t*>(input),
+                              strlen(input), output, size);
+}
+
+}  // namespace
+
+// Signer-authored text keeps a single interior space; edge and doubled spaces,
+// backslashes, controls and non-ASCII bytes are escaped as in a value.
+TEST(Erc7730Format, LabelKeepsSingleSpacesOnly) {
+  char output[64];
+  ASSERT_TRUE(label("Audit protocol", output, sizeof(output)));
+  EXPECT_STREQ(output, "Audit protocol");
+  ASSERT_TRUE(label("sign multisig operation", output, sizeof(output)));
+  EXPECT_STREQ(output, "sign multisig operation");
+  ASSERT_TRUE(label(" ab", output, sizeof(output)));
+  EXPECT_STREQ(output, "\\x20ab");
+  ASSERT_TRUE(label("ab ", output, sizeof(output)));
+  EXPECT_STREQ(output, "ab\\x20");
+  ASSERT_TRUE(label("a  b", output, sizeof(output)));
+  EXPECT_STREQ(output, "a\\x20\\x20b");
+  ASSERT_TRUE(label(" ", output, sizeof(output)));
+  EXPECT_STREQ(output, "\\x20");
+  ASSERT_TRUE(label("a\\b \xc3\xa9\n", output, sizeof(output)));
+  EXPECT_STREQ(output, "a\\\\b \\xc3\\xa9\\x0a");
+  ASSERT_TRUE(label("a\tb", output, sizeof(output)));
+  EXPECT_STREQ(output, "a\\x09b");
+  char small[4];
+  EXPECT_FALSE(label("a b c", small, sizeof(small)));
+  EXPECT_STREQ(small, "");
+}
+
+// The same bytes as a signed value still escape every space: an interpolated
+// intent shows its text parts as labels and its value parts as values.
+TEST(Erc7730Format, IntentTextPartsKeepSpacesButValuePartsDoNot) {
+  char part[64], value[64];
+  ASSERT_TRUE(label("Send to", part, sizeof(part)));
+  EXPECT_STREQ(part, "Send to");
+  const uint8_t captured[] = {'p', 'a', 'y', ' ', 't', 'o'};
+  ASSERT_TRUE(format(ERC7730_ABI_STRING, 0, captured, sizeof(captured), value,
+                     sizeof(value)));
+  EXPECT_STREQ(value, "pay\\x20to");
+  ASSERT_TRUE(text("Audit protocol", 14, value, sizeof(value)));
+  EXPECT_STREQ(value, "Audit\\x20protocol");
+}
+
 TEST(Erc7730Format, FormatsDecimalAmountsWithoutFloatingPoint) {
   const Erc7730AbiNode nodes[] = {
       {ERC7730_ABI_TUPLE, 0, 1, 1, 0},
