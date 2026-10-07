@@ -18,6 +18,7 @@ extern "C" {
 #include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/mayachain.h"
 #include "keepkey/firmware/osmosis.h"
+#include "keepkey/firmware/pin_sm.h"
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/signtx_tendermint.h"
@@ -31,13 +32,17 @@ extern "C" {
 
 #include <cstring>
 #include <algorithm>
+#include <string>
+#include <thread>
 #include <vector>
+#include <unistd.h>
 
 // The shared bootstrap initializes the canvas and timer queues exactly once.
 // Calling timer_init() again relinks the static runnable nodes into a cycle.
 void kk_test_board_init(void);
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
+bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload, uint8_t len);
 
 TEST(Fsm, AuthenticatorCredentialSourceIsWipedOnEveryExit) {
   char credential[] = "site:user:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -295,7 +300,74 @@ class AutoLockProgress : public ::testing::Test {
     layoutHomeForced();
   }
 };
+
+// Plays the host: waits for the next PIN prompt, then sends `pin` as matrix
+// positions, the way a host relays the user's clicks on the scrambled grid.
+std::thread answerPinPrompt(const char* pin) {
+  return std::thread([pin] {
+    for (int tries = 0; tries < 5000; tries++, usleep(1000)) {
+      if (std::strcmp(get_pin_matrix(), "XXXXXXXXX") == 0) continue;
+      usleep(50000);  // let the prompt finish shuffling
+      const std::string matrix = get_pin_matrix();
+      std::string positions;
+      for (const char* d = pin; *d; d++)
+        positions += (char)('1' + matrix.find(*d));
+      uint8_t ack[2 + 9] = {0x0a, (uint8_t)positions.size()};
+      std::memcpy(&ack[2], positions.data(), positions.size());
+      kkconfirm_sendTiny(MessageType_MessageType_PinMatrixAck, ack,
+                         (uint8_t)(2 + positions.size()));
+      return;
+    }
+  });
+}
+
+// Locks a PIN-protected session by idling, then unlocks it with a protected
+// Ping answered with `pin`.
+void lockThenEnterPin(const char* pin) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  storage_setPin("1234");
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  layoutHomeForced();
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  toggle_screensaver();
+  ASSERT_EQ(SCREENSAVER, home_get_state());
+  ASSERT_FALSE(session_isPinCached());
+
+  Ping ping = {};
+  ping.has_pin_protection = true;
+  ping.pin_protection = true;
+  std::thread host = answerPinPrompt(pin);
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+  host.join();
+}
 }  // namespace
+
+// Host-side PIN entry presses no button, so without this the device would
+// re-lock on the next main-loop tick after every unlock.
+TEST(Fsm, CorrectPinAfterAutoLockRenewsTheDeadline) {
+  ScopedFlash flash;
+  lockThenEnterPin("1234");
+  ASSERT_EQ((FailureType)0, fsm_test_lastFailureCode());
+  ASSERT_TRUE(session_isPinCached());
+
+  toggle_screensaver();
+  EXPECT_NE(SCREENSAVER, home_get_state());
+  EXPECT_TRUE(session_isPinCached());
+  layoutHomeForced();
+}
+
+TEST(Fsm, WrongPinAfterAutoLockDoesNotRenewTheDeadline) {
+  ScopedFlash flash;
+  lockThenEnterPin("5678");
+  ASSERT_EQ(FailureType_Failure_PinInvalid, fsm_test_lastFailureCode());
+  ASSERT_FALSE(session_isPinCached());
+
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+  layoutHomeForced();
+}
 
 TEST_F(AutoLockProgress, FeaturePollingCannotKeepStalledSigningUnlocked) {
   GetFeatures poll = {};
