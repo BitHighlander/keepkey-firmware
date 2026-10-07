@@ -430,6 +430,9 @@ static void MakeThorDeposit(EthereumSignTx* msg, const char* to_hex,
   msg->data_initial_chunk.size = 4 + 6 * 32;
   std::memcpy(msg->data_initial_chunk.bytes, THOR_SELECTOR_DEPOSIT_WITH_EXPIRY,
               4);
+  // A real deadline: expiry 0 reverts on the classic routers and is refused.
+  const uint8_t epoch[4] = {0x65, 0x53, 0xf1, 0x00};  // 1700000000
+  std::memcpy(msg->data_initial_chunk.bytes + 4 + 4 * 32 + 28, epoch, 4);
 }
 
 TEST(Ethereum, ThorchainDepositIsPinnedToItsRouterOnItsChain) {
@@ -515,10 +518,9 @@ TEST(Ethereum, ThorchainDepositIsPinnedOnBscBaseAndArbitrum) {
 // A complete depositWithExpiry() to `router`, accepted on every screen.
 // Native deposits send two coins as both msg.value and the ABI amount; token
 // deposits move two whole units of an unlisted token and send no value.
-static std::vector<std::string> ThorFullDepositScreens(const char* router,
-                                                       uint32_t chain_id,
-                                                       bool native,
-                                                       bool* confirmed) {
+static std::vector<std::string> ThorFullDepositScreens(
+    const char* router, uint32_t chain_id, bool native, bool* confirmed,
+    bool zero_expiry = false) {
   static const char kMemo[] =
       "=:ETH.ETH:0x41e5560054824ea6b0732e656e3ad64e20e94e45:0";
   const size_t memo_len = sizeof(kMemo) - 1;
@@ -527,6 +529,7 @@ static std::vector<std::string> ThorFullDepositScreens(const char* router,
   uint8_t* d = msg.data_initial_chunk.bytes;
   std::memset(d + 4 + 12, 0x22, 20);                    // vault
   if (!native) std::memset(d + 4 + 32 + 12, 0x11, 20);  // token
+  if (zero_expiry) std::memset(d + 4 + 4 * 32, 0, 32);
   const uint64_t two = 2000000000000000000ULL;
   for (int i = 0; i < 8; i++)
     d[4 + 2 * 32 + 24 + i] = (uint8_t)(two >> (56 - 8 * i));
@@ -578,7 +581,7 @@ TEST(Ethereum, ThorNewRoutersClearSignNativeAndTokenDeposits) {
     ASSERT_FALSE(screens.empty()) << c.chain_id;
     EXPECT_EQ(c.label, screens[0]) << c.chain_id;
     EXPECT_TRUE(HasScreen(screens, c.native_amount)) << c.chain_id;
-    EXPECT_TRUE(HasScreen(screens, "Expiry epoch 0")) << c.chain_id;
+    EXPECT_TRUE(HasScreen(screens, "Expiry epoch 1700000000")) << c.chain_id;
 
     screens = ThorFullDepositScreens(c.router, c.chain_id, false, &confirmed);
     EXPECT_TRUE(confirmed) << c.chain_id;
@@ -825,27 +828,27 @@ static std::string ThorNativeScreenAfterSending(const char* router,
   EXPECT_EQ(0, kkconfirm_drain());
   if (screens.size() < 4) return "";
   EXPECT_EQ(std::string("Confirm sending ") + std::to_string(value_coins) +
-                (chain_id == 43114 ? " AVAX" : " ETH"),
+                (chain_id == 43114 ? " AVAX"
+                                   : chain_id == 56 ? " BNB"
+                                                    : " ETH"),
             screens[2]);
   return screens[3];
 }
 
 TEST(Ethereum, ThorNativeAmountEqualToValueNeedsNoExtraScreen) {
-  EXPECT_EQ("Expiry epoch 0",
+  EXPECT_EQ("Expiry epoch 1700000000",
             ThorNativeScreenAfterSending(THOR_ROUTER, 1, 2, 2));
-  EXPECT_EQ("Expiry epoch 0",
+  EXPECT_EQ("Expiry epoch 1700000000",
             ThorNativeScreenAfterSending(MAYA_ROUTER, 1, 2, 2));
-  EXPECT_EQ("Expiry epoch 0",
+  EXPECT_EQ("Expiry epoch 1700000000",
             ThorNativeScreenAfterSending(THOR_ROUTER_AVAX, 43114, 2, 2));
 }
 
 TEST(Ethereum, ThorNativeAmountZeroNeedsNoExtraScreen) {
-  EXPECT_EQ("Expiry epoch 0",
+  EXPECT_EQ("Expiry epoch 1700000000",
             ThorNativeScreenAfterSending(THOR_ROUTER, 1, 0, 2));
-  EXPECT_EQ("Expiry epoch 0",
+  EXPECT_EQ("Expiry epoch 1700000000",
             ThorNativeScreenAfterSending(MAYA_ROUTER, 1, 0, 2));
-  EXPECT_EQ("Expiry epoch 0",
-            ThorNativeScreenAfterSending(THOR_ROUTER_AVAX, 43114, 0, 2));
 }
 
 TEST(Ethereum, ThorNativeAmountDifferentFromValueIsShown) {
@@ -853,8 +856,106 @@ TEST(Ethereum, ThorNativeAmountDifferentFromValueIsShown) {
             ThorNativeScreenAfterSending(THOR_ROUTER, 1, 1, 2));
   EXPECT_EQ("3 ETH (ignored by router; value sent: 2 ETH)",
             ThorNativeScreenAfterSending(MAYA_ROUTER, 1, 3, 2));
-  EXPECT_EQ("1 AVAX (ignored by router; value sent: 2 AVAX)",
-            ThorNativeScreenAfterSending(THOR_ROUTER_AVAX, 43114, 1, 2));
+  EXPECT_EQ("1 BNB (ignored by router; value sent: 2 BNB)",
+            ThorNativeScreenAfterSending(THOR_ROUTER_BSC, 56, 1, 2));
+}
+
+// THORChain_RouterV6 (Avalanche, Base) skips the deadline when expiration is
+// 0, so the screen says so instead of an epoch that reads as already expired.
+TEST(Ethereum, ThorV6ExpiryZeroShowsNoExpiry) {
+  const struct {
+    const char* router;
+    uint32_t chain_id;
+  } kV6[] = {{THOR_ROUTER_AVAX, 43114}, {THOR_ROUTER_BASE, 8453}};
+  for (const auto& c : kV6) {
+    for (bool native : {true, false}) {
+      bool confirmed = false;
+      const auto screens = ThorFullDepositScreens(c.router, c.chain_id, native,
+                                                  &confirmed, true);
+      EXPECT_TRUE(confirmed) << c.chain_id;
+      EXPECT_TRUE(HasScreen(screens, "No expiry")) << c.chain_id;
+      for (const auto& body : screens) {
+        EXPECT_EQ(std::string::npos, body.find("Expiry epoch")) << body;
+      }
+    }
+  }
+}
+
+// RouterV6 reverts a native deposit unless msg.value == amount ("TC:eth amount
+// mismatch"), so a mismatch, amount 0 included, is refused before any screen.
+// Token deposits keep their behaviour.
+TEST(Ethereum, ThorV6NativeAmountMismatchIsRefused) {
+  const struct {
+    const char* router;
+    uint32_t chain_id;
+  } kV6[] = {{THOR_ROUTER_AVAX, 43114}, {THOR_ROUTER_BASE, 8453}};
+  for (const auto& c : kV6) {
+    for (int amount_coins : {0, 1, 3}) {
+      EthereumSignTx msg;
+      MakeThorDeposit(&msg, c.router, c.chain_id);
+      msg.data_initial_chunk.bytes[4 + 3 * 32 + 31] = 0xa0;
+      msg.has_value = true;
+      msg.value.size = 1;
+      msg.value.bytes[0] = 2;
+      msg.data_initial_chunk.bytes[4 + 3 * 32 - 1] = (uint8_t)amount_coins;
+      ASSERT_TRUE(thor_isThorchainTx(&msg));
+      ASSERT_NE(nullptr, thor_depositRefusal(&msg)) << c.chain_id;
+      EXPECT_STREQ("Router would revert: native amount must equal value",
+                   thor_depositRefusal(&msg));
+      ASSERT_TRUE(kkconfirm_preload(0, 0));
+      EXPECT_FALSE(thor_confirmThorTx(msg.data_initial_chunk.size, &msg));
+      EXPECT_EQ(0, kkconfirm_drain()) << "no screen for a doomed deposit";
+    }
+
+    // amount == value is what every host sends; it signs.
+    bool confirmed = false;
+    const auto screens =
+        ThorFullDepositScreens(c.router, c.chain_id, true, &confirmed);
+    EXPECT_TRUE(confirmed) << c.chain_id;
+    for (const auto& body : screens) {
+      EXPECT_EQ(std::string::npos, body.find("ignored by router")) << body;
+    }
+
+    // A token deposit's amount is pulled by transferFrom and value is 0.
+    EthereumSignTx token;
+    MakeThorDeposit(&token, c.router, c.chain_id);
+    std::memset(token.data_initial_chunk.bytes + 4 + 32 + 12, 0x11, 20);
+    token.data_initial_chunk.bytes[4 + 3 * 32 - 1] = 5;
+    EXPECT_EQ(nullptr, thor_depositRefusal(&token)) << c.chain_id;
+  }
+}
+
+// Every classic router requires block.timestamp < expiration, so expiry 0 can
+// only revert: refused before any screen. A real deadline, the legacy
+// deposit() selector, and native amount != value keep their behaviour there.
+TEST(Ethereum, ThorClassicExpiryZeroIsRefused) {
+  const struct {
+    const char* router;
+    uint32_t chain_id;
+  } kClassic[] = {{THOR_ROUTER, 1},
+                  {MAYA_ROUTER, 1},
+                  {THOR_ROUTER_BSC, 56},
+                  {MAYA_ROUTER_ARB, 42161}};
+  for (const auto& c : kClassic) {
+    EthereumSignTx msg;
+    MakeThorDeposit(&msg, c.router, c.chain_id);
+    EXPECT_EQ(nullptr, thor_depositRefusal(&msg)) << c.chain_id;
+
+    std::memset(msg.data_initial_chunk.bytes + 4 + 4 * 32, 0, 32);
+    const bool maya = thor_isMayachainTx(&msg);
+    ASSERT_TRUE(maya || thor_isThorchainTx(&msg));
+    EXPECT_STREQ("Router would revert: deposit expiry is 0",
+                 thor_depositRefusal(&msg))
+        << c.chain_id;
+    ASSERT_TRUE(kkconfirm_preload(0, 0));
+    EXPECT_FALSE(maya ? thor_confirmMayaTx(msg.data_initial_chunk.size, &msg)
+                      : thor_confirmThorTx(msg.data_initial_chunk.size, &msg));
+    EXPECT_EQ(0, kkconfirm_drain()) << c.chain_id;
+
+    // deposit() has no expiry word; the same zero word is its memo offset.
+    std::memcpy(msg.data_initial_chunk.bytes, THOR_SELECTOR_DEPOSIT, 4);
+    EXPECT_EQ(nullptr, thor_depositRefusal(&msg)) << c.chain_id;
+  }
 }
 
 // The largest word must still render (not cancel an approved flow).
