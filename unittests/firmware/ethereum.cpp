@@ -566,3 +566,86 @@ TEST(Ethereum, NativeThorConfirmationDisplaysValueInsteadOfAbiAmount) {
   EXPECT_EQ(screens.end(),
             std::find(screens.begin(), screens.end(), "Confirm sending 1 ETH"));
 }
+
+// A native deposit signs the ABI amount word, which the router ignores in
+// favour of msg.value. Real hosts send amount == value (or 0); any other word
+// must be shown rather than signed behind identical screens. Returns the
+// screen after "Confirm sending", rejecting it so the memo is never reached.
+static std::string ThorNativeScreenAfterSending(const char* router,
+                                                uint32_t chain_id,
+                                                uint8_t amount_coins,
+                                                uint8_t value_coins) {
+  EthereumSignTx msg;
+  MakeThorDeposit(&msg, router, chain_id);
+  msg.data_initial_chunk.bytes[4 + 3 * 32 + 31] = 0xa0;
+  // Whole-coin values: n * 1e18 wei, big-endian in the low 8 bytes.
+  const uint64_t amount = amount_coins * 1000000000000000000ULL;
+  const uint64_t value = value_coins * 1000000000000000000ULL;
+  msg.has_value = true;
+  msg.value.size = 8;
+  for (int i = 0; i < 8; i++) {
+    msg.data_initial_chunk.bytes[4 + 2 * 32 + 24 + i] =
+        (uint8_t)(amount >> (56 - 8 * i));
+    msg.value.bytes[i] = (uint8_t)(value >> (56 - 8 * i));
+  }
+
+  // Accept router, vault and amount; reject whatever comes fourth.
+  EXPECT_TRUE(kkconfirm_preload(3, 1));
+  kkconfirm_capture_start();
+  EXPECT_FALSE(thor_confirmThorTx(msg.data_initial_chunk.size, &msg));
+  const auto screens = kkconfirm_capture_finish();
+  EXPECT_EQ(0, kkconfirm_drain());
+  if (screens.size() < 4) return "";
+  EXPECT_EQ(std::string("Confirm sending ") + std::to_string(value_coins) +
+                (chain_id == 43114 ? " AVAX" : " ETH"),
+            screens[2]);
+  return screens[3];
+}
+
+TEST(Ethereum, ThorNativeAmountEqualToValueNeedsNoExtraScreen) {
+  EXPECT_EQ("Expiry epoch 0",
+            ThorNativeScreenAfterSending(THOR_ROUTER, 1, 2, 2));
+  EXPECT_EQ("Expiry epoch 0",
+            ThorNativeScreenAfterSending(MAYA_ROUTER, 1, 2, 2));
+  EXPECT_EQ("Expiry epoch 0",
+            ThorNativeScreenAfterSending(THOR_ROUTER_AVAX, 43114, 2, 2));
+}
+
+TEST(Ethereum, ThorNativeAmountZeroNeedsNoExtraScreen) {
+  EXPECT_EQ("Expiry epoch 0",
+            ThorNativeScreenAfterSending(THOR_ROUTER, 1, 0, 2));
+  EXPECT_EQ("Expiry epoch 0",
+            ThorNativeScreenAfterSending(MAYA_ROUTER, 1, 0, 2));
+  EXPECT_EQ("Expiry epoch 0",
+            ThorNativeScreenAfterSending(THOR_ROUTER_AVAX, 43114, 0, 2));
+}
+
+TEST(Ethereum, ThorNativeAmountDifferentFromValueIsShown) {
+  EXPECT_EQ("1 ETH (ignored by router; value sent: 2 ETH)",
+            ThorNativeScreenAfterSending(THOR_ROUTER, 1, 1, 2));
+  EXPECT_EQ("3 ETH (ignored by router; value sent: 2 ETH)",
+            ThorNativeScreenAfterSending(MAYA_ROUTER, 1, 3, 2));
+  EXPECT_EQ("1 AVAX (ignored by router; value sent: 2 AVAX)",
+            ThorNativeScreenAfterSending(THOR_ROUTER_AVAX, 43114, 1, 2));
+}
+
+// The largest word must still render (not cancel an approved flow).
+TEST(Ethereum, ThorNativeMaxAmountWordStillRenders) {
+  EthereumSignTx msg;
+  MakeThorDeposit(&msg, THOR_ROUTER, 1);
+  msg.data_initial_chunk.bytes[4 + 3 * 32 + 31] = 0xa0;
+  std::memset(msg.data_initial_chunk.bytes + 4 + 2 * 32, 0xff, 32);
+  msg.has_value = true;
+  msg.value.size = 1;
+  msg.value.bytes[0] = 1;
+  ASSERT_TRUE(kkconfirm_preload(3, 1));
+  kkconfirm_capture_start();
+  EXPECT_FALSE(thor_confirmThorTx(msg.data_initial_chunk.size, &msg));
+  const auto screens = kkconfirm_capture_finish();
+  EXPECT_EQ(0, kkconfirm_drain());
+  ASSERT_EQ(4u, screens.size());
+  EXPECT_EQ(0u, screens[3].rfind("115792089237316195423570985008687907853269984"
+                                 "665640564039457.584007913129639935 ETH",
+                                 0))
+      << screens[3];
+}

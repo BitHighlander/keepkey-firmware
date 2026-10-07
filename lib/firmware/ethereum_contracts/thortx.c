@@ -223,6 +223,20 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
       return false;
   }
 
+  /* The native branch above shows msg.value, but the ABI amount word is signed
+   * too. The router ignores it for native deposits, so it moves nothing, but
+   * two calldatas differing only in that word must not render identically.
+   * Every host we know of (Pioneer, KeepKey Desktop, xchainjs, SwapKit,
+   * ShapeShift) sends amount == value; 0 is the other harmless encoding. Show
+   * any other word rather than refuse it, formatted before any approval. */
+  char routerAmountStr[96];
+  const bool show_router_amount =
+      is_native && !bn_is_zero(&Amount) && !bn_is_equal(&Amount, &Value);
+  if (show_router_amount &&
+      !ethereumFormatAmount(&Amount, NULL, msg->chain_id, routerAmountStr,
+                            sizeof(routerAmountStr)))
+    return false;
+
   /* depositWithExpiry() carries a fifth head word the deposit() variant does
    * not: the expiry. It was validated into the length arithmetic and signed,
    * but no screen ever named it, so a host could pick any 256-bit value while
@@ -308,6 +322,13 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
                  "Thorchain data", "Confirm sending %s", amountStr)) {
       return false;
     }
+  }
+
+  if (show_router_amount &&
+      !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Router amount",
+               "%s (ignored by router; value sent: %s)", routerAmountStr,
+               amountStr)) {
+    return false;
   }
 
   if (is_expiry && !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
