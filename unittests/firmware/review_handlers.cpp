@@ -16,6 +16,7 @@ extern "C" {
 #include "trezor/crypto/blake2b.h"
 #include "zcash_note_vectors.h"
 #endif
+#include "keepkey/board/canvas.h"
 #include "storage.h"
 }
 #include "gtest/gtest.h"
@@ -29,6 +30,7 @@ extern "C" {
 #include "keepkey/board/confirm_sm.h"
 }
 
+extern "C" bool keepkey_before_message_dispatch(MessageType msg_id);
 bool kkconfirm_preload(int, int);
 void kkconfirm_capture_start(void);
 std::vector<std::string> kkconfirm_capture_finish(void);
@@ -619,6 +621,46 @@ TEST_F(ReviewHandlers, ZcashSessionCompletesOnlyPastTheDigestAndFeeGates) {
       EXPECT_EQ(0, kkconfirm_drain());
     }
   }
+}
+
+// An unprotected Ping between streamed actions is dispatched without ending
+// the session. It must not draw home over the signing screen while the
+// approved session and its keys stay live; the stream then completes.
+TEST_F(ReviewHandlers, ZcashPingBetweenActionsKeepsTheSigningScreen) {
+  const std::vector<ZcashPCZTAction> actions = {
+      zcashNoteAction(0, kZcashOrchardNoteVectors[0]),
+      zcashNoteAction(1, kZcashOrchardNoteVectors[1])};
+  uint8_t digest[32];
+  zcashBundleDigest(actions, 0, digest);
+  ZcashSignPCZT msg = zcashSignRequest(2, digest, 0, 0);
+
+  // Summary, two screens per output, then the fee.
+  ASSERT_TRUE(kkconfirm_preload(6, 0));
+  fsm_test_clearLastFailure();
+  fsm_msgZcashSignPCZT(&msg);
+  ZcashPCZTAction first = actions[0];
+  fsm_msgZcashPCZTAction(&first);
+  ASSERT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
+  ASSERT_TRUE(zcash_signing_is_active());
+
+  const Canvas* canvas = layout_get_canvas();
+  ASSERT_NE(nullptr, canvas);
+  const size_t bytes = canvas->width * canvas->height;
+  const std::vector<uint8_t> signing(canvas->buffer, canvas->buffer + bytes);
+
+  ASSERT_TRUE(keepkey_before_message_dispatch(MessageType_MessageType_Ping));
+  Ping ping = {};
+  fsm_msgPing(&ping);
+  EXPECT_TRUE(zcash_signing_is_active());
+  EXPECT_EQ(signing,
+            std::vector<uint8_t>(canvas->buffer, canvas->buffer + bytes))
+      << "Ping drew home over the Zcash signing screen";
+
+  ZcashPCZTAction second = actions[1];
+  fsm_msgZcashPCZTAction(&second);
+  EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
+  EXPECT_FALSE(zcash_signing_is_active());
+  EXPECT_EQ(0, kkconfirm_drain());
 }
 #endif
 

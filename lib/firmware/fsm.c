@@ -446,6 +446,9 @@ bool fsm_workflowInProgress(void) {
     return true;
   }
 #endif
+#if ZCASH_PRIVACY
+  if (zcash_signing_is_active()) return true;
+#endif
   return false;
 }
 
