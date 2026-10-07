@@ -285,9 +285,16 @@ static bool zcash_verify_and_confirm_orchard_output(
           msg->rseed.bytes, zcash_signing.is_ironwood, msg->epk.bytes,
           msg->enc_compact.bytes, msg->enc_memo.bytes,
           msg->enc_noncompact.bytes)) {
-    fsm_sendFailure(FailureType_Failure_Other,
-                    _("Shielded note ciphertext mismatch"));
-    return false;
+    /* ZIP 326/374: from NU6.3 wallets pair each Orchard spend with a
+     * fabricated zero-valued output whose ciphertext is random bytes. The cmx
+     * checked above binds value 0, so it pays no one: accept it unshown, as
+     * Keystone and Ledger do. An output carrying value is still refused. */
+    if (msg->value != 0) {
+      fsm_sendFailure(FailureType_Failure_Other,
+                      _("Shielded note ciphertext mismatch"));
+      return false;
+    }
+    return true;
   }
 
   /* ZIP 374: show the address the user entered only once it is proven to

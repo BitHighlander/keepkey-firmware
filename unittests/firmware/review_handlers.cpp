@@ -22,6 +22,7 @@ extern "C" {
 #include "trezor/crypto/memzero.h"
 #include "trezor/crypto/redpallas.h"
 #include "trezor/crypto/secp256k1.h"
+#include "zcash_fabricated_vectors.h"
 #include "zcash_note_vectors.h"
 #endif
 #include "keepkey/board/canvas.h"
@@ -846,6 +847,122 @@ TEST_F(ReviewHandlers, ZcashRealSpendsReleaseOnlyCompactVerifiedSignatures) {
     }
     EXPECT_NE(0, redpallas_verify_digest(rks[0].data(), sighash,
                                          signed_pczt.signatures[1].bytes));
+  }
+  memzero(&keys, sizeof(keys));
+}
+
+namespace {
+ZcashPCZTAction zcashFabricatedAction(uint32_t index,
+                                      const ZcashFabricatedAction& v) {
+  ZcashPCZTAction action = {};
+  action.has_index = action.has_is_spend = true;
+  action.index = index;
+  action.is_spend = true;  // both spends are wallet-controlled
+  action.has_alpha = action.has_value = true;
+  zcashSet(action.alpha, zcashHex(v.alpha));
+  action.value = v.value;
+  action.has_recipient = action.has_rseed = true;
+  zcashSet(action.recipient, zcashHex(v.recipient));
+  zcashSet(action.rseed, zcashHex(v.rseed));
+  action.has_nullifier = action.has_cmx = action.has_epk = true;
+  zcashSet(action.nullifier, zcashHex(v.nullifier));
+  zcashSet(action.cmx, zcashHex(v.cmx));
+  zcashSet(action.epk, zcashHex(v.epk));
+  const auto c_enc = zcashHex(v.enc);
+  action.has_enc_compact = action.has_enc_memo = true;
+  action.has_enc_noncompact = true;
+  zcashSet(action.enc_compact,
+           std::vector<uint8_t>(c_enc.begin(), c_enc.begin() + 52));
+  zcashSet(action.enc_memo,
+           std::vector<uint8_t>(c_enc.begin() + 52, c_enc.begin() + 564));
+  zcashSet(action.enc_noncompact,
+           std::vector<uint8_t>(c_enc.begin() + 564, c_enc.end()));
+  action.has_cv_net = action.has_rk = action.has_out_ciphertext = true;
+  zcashSet(action.cv_net, zcashHex(v.cv_net));
+  zcashSet(action.rk, zcashHex(v.rk));
+  zcashSet(action.out_ciphertext, zcashHex(v.out));
+  return action;
+}
+}  // namespace
+
+// A real NU6.3 bundle from the orchard crate (zcash_fabricated_vectors.h):
+// the spend's fabricated zero-valued output carries a random ciphertext
+// (ZIP 326) and is accepted without a screen; the change output is shown and
+// both spends are signed. A value-bearing output whose ciphertext does not
+// decrypt, or a zero-valued output whose cmx does not match its note, is
+// still refused before any output screen and releases nothing.
+TEST_F(ReviewHandlers, ZcashFabricatedSameAddressOutputSigns) {
+  ZcashOrchardKeys keys;
+  ASSERT_TRUE(storage_zcashOrchardKeys(0, true, &keys));
+
+  enum Case { kAccepted, kTamperedChangeCiphertext, kTamperedFabricatedCmx };
+  for (Case c :
+       {kAccepted, kTamperedChangeCiphertext, kTamperedFabricatedCmx}) {
+    SCOPED_TRACE(c);
+    std::vector<ZcashPCZTAction> actions = {
+        zcashFabricatedAction(0, kZcashFabricatedBundle[0]),
+        zcashFabricatedAction(1, kZcashFabricatedBundle[1])};
+    // The crate's rk is the device's own ak re-randomized by alpha.
+    for (const auto& action : actions) {
+      std::vector<uint8_t> rk(32);
+      ASSERT_EQ(0, redpallas_derive_rk_from_ak(keys.ak, action.alpha.bytes,
+                                               rk.data()));
+      ASSERT_EQ(zcashGet(action.rk), rk);
+    }
+    // A host tampering with an action also recomputes the bundle digest.
+    if (c == kTamperedChangeCiphertext) actions[1].enc_memo.bytes[7] ^= 1;
+    if (c == kTamperedFabricatedCmx) actions[0].cmx.bytes[0] ^= 1;
+    uint8_t digest[32];
+    zcashBundleDigest(actions, 10000, digest);
+    ZcashSignPCZT msg = zcashSignRequest(2, digest, 10000, 10000);
+
+    // Summary, the change output's two screens, then the fee.
+    ASSERT_TRUE(kkconfirm_preload(4, 0));
+    fsm_test_clearLastFailure();
+    kkconfirm_capture_start();
+    fsm_msgZcashSignPCZT(&msg);
+    ASSERT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
+    for (auto& action : actions) {
+      fsm_msgZcashPCZTAction(&action);
+      if (fsm_test_lastFailureCode() != 0) break;
+    }
+    const auto screens = kkconfirm_capture_finish();
+    EXPECT_FALSE(zcash_signing_is_active());
+
+    if (c != kAccepted) {
+      EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+      EXPECT_STREQ(c == kTamperedChangeCiphertext
+                       ? "Shielded note ciphertext mismatch"
+                       : "Shielded note commitment mismatch",
+                   fsm_test_lastFailureMessage());
+      EXPECT_EQ(1u, screens.size());  // the summary only
+      EXPECT_FALSE(zcashSignatureEmitted(kkconfirm_readResponseIds()));
+      (void)kkconfirm_drain();
+      continue;
+    }
+
+    EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
+        << fsm_test_lastFailureMessage();
+    ASSERT_EQ(4u, screens.size());
+    EXPECT_NE(std::string::npos, screens[1].find("0.00090000 ZEC"));
+    for (const auto& s : screens)
+      EXPECT_EQ(std::string::npos, s.find("0.00000000 ZEC")) << s;
+    EXPECT_NE(std::string::npos, screens[3].find("0.00010000 ZEC"));
+    EXPECT_EQ(0, kkconfirm_drain());
+
+    ZcashSignedPCZT signed_pczt = {};
+    ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_ZcashSignedPCZT,
+                                       ZcashSignedPCZT_fields, &signed_pczt));
+    ASSERT_EQ(2u, signed_pczt.signatures_count);
+    uint8_t empty_transparent[32], sighash[32];
+    ASSERT_TRUE(
+        zcash_compute_transparent_digest(NULL, 0, NULL, 0, empty_transparent));
+    zcashRequestSighash(msg, empty_transparent, sighash);
+    for (size_t i = 0; i < 2; i++) {
+      ASSERT_EQ(64u, signed_pczt.signatures[i].size);
+      EXPECT_EQ(0, redpallas_verify_digest(actions[i].rk.bytes, sighash,
+                                           signed_pczt.signatures[i].bytes));
+    }
   }
   memzero(&keys, sizeof(keys));
 }
