@@ -59,6 +59,15 @@ static const char* thor_router_label(const EthereumSignTx* msg,
   if (msg->chain_id == 43114 && strncmp(toStr, THOR_ROUTER_AVAX, 40) == 0) {
     return "Thorchain router"; /* Avalanche C-Chain */
   }
+  if (msg->chain_id == 56 && strncmp(toStr, THOR_ROUTER_BSC, 40) == 0) {
+    return "Thorchain router"; /* BNB Smart Chain */
+  }
+  if (msg->chain_id == 8453 && strncmp(toStr, THOR_ROUTER_BASE, 40) == 0) {
+    return "Thorchain router"; /* Base */
+  }
+  if (msg->chain_id == 42161 && strncmp(toStr, MAYA_ROUTER_ARB, 40) == 0) {
+    return "Mayachain router"; /* Arbitrum One */
+  }
   return NULL;
 }
 
