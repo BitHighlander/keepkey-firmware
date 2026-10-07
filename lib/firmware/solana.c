@@ -339,8 +339,8 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           *force_opaque = true;
         } else if (token_instr == SOL_TOKEN_TRANSFER_CHECKED_IX &&
                    data_len == 10 && num_acct_indices >= 4) {
-          /* Canonical only: opcode + amount(8) + decimals(1), accounts
-           * [source, mint, dest, authority]; anything else is UNKNOWN. */
+          /* Canonical data only: opcode + amount(8) + decimals(1). Accounts
+           * [source, mint, dest, authority], then any multisig signers. */
           pi->type = SOL_INSTR_TOKEN_TRANSFER_CHECKED;
           pi->amount = read_le64(instr_data + 1);
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
@@ -734,6 +734,7 @@ static SolanaTxReview solana_parseVersionedTx(const uint8_t* raw,
   if (lookup_table_count != 0) {
     /* Any ALT section needs unresolved chain state: opaque. */
     force_opaque = true;
+    tx->has_lookup_tables = true;
   }
 
   uint32_t loaded_accounts = 0;
@@ -922,6 +923,7 @@ bool solana_parseInstrSchema(const uint8_t* payload, size_t payload_len,
 bool solana_schemaApplies(const SolanaInstrSchema* schema,
                           const SolanaParsedTx* tx, uint8_t* out_index) {
   if (!schema || !tx || !out_index) return false;
+  if (tx->has_lookup_tables) return false;
 
   bool found = false;
   uint8_t match = 0;

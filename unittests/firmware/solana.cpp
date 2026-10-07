@@ -1928,6 +1928,42 @@ TEST(Solana, SchemaRejectsOutOfRangeAccount) {
   EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx));
 }
 
+/* A v0 message with an address-table section never takes the schema path,
+ * even when no instruction names a loaded account. */
+TEST(Solana, SchemaRejectsAnyLookupTable) {
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  uint8_t d[48];
+  build_relay_data(d, 1ULL);
+  uint8_t blob[256];
+  size_t len = build_relay_schema(blob, program, 2);
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob, len, &s));
+
+  for (bool table : {false, true}) {
+    SCOPED_TRACE(table);
+    std::vector<uint8_t> raw = {0x80, 1, 0, 1, 3};
+    raw.insert(raw.end(), 32, 0x11);
+    raw.insert(raw.end(), 32, 0x22);
+    raw.insert(raw.end(), program, program + 32);
+    raw.insert(raw.end(), 32, 0xBB); /* recent blockhash */
+    raw.insert(raw.end(), {1, 2, 2, 0, 1, sizeof(d)});
+    raw.insert(raw.end(), d, d + sizeof(d));
+    if (table) {
+      raw.push_back(1);
+      raw.insert(raw.end(), 32, 0x55);
+      raw.insert(raw.end(), {1, 0, 0}); /* loads one account, unused */
+    } else {
+      raw.push_back(0);
+    }
+    SolanaParsedTx tx;
+    ASSERT_NE(SOL_TX_REVIEW_MALFORMED,
+              solana_inspectTx(raw.data(), raw.size(), &tx));
+    uint8_t idx = 0xFF;
+    EXPECT_EQ(!table, solana_schemaApplies(&s, &tx, &idx));
+  }
+}
+
 /* Cross-language parity: these exact bytes are emitted by the KeepKey SDK's
  * KKSOLSC1 serializer (keepkey-sdk tests/fixtures/solana-schema.js, catalog
  * entries relayDepositNative / relayDepositToken). The SDK and this parser are
