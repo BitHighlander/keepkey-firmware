@@ -207,6 +207,32 @@ void u2fhid_init_cmd(const U2FHID_FRAME* f) {
   cid = f->cid;
 }
 
+/* Every exit from a U2F session. The request state and any presence progress
+ * belong to the prompt this session drew, and layoutHome() removes it, so
+ * neither may survive into a later session: a request resent then must be
+ * prompted again and needs a fresh press. */
+static void u2fhid_session_end(bool msg_tiny) {
+  last_req_state = INIT;
+  presence_step = 0;
+  dialog_timeout = 0;
+  cid = 0;
+  reader = 0;
+  usbTiny(0);
+  msg_set_tiny(msg_tiny);
+  layoutHome();
+}
+
+/* A normal or debug frame rejected during the session is answered through the
+ * failure handler, which redraws the screen (home, the recovery cipher, a
+ * signer's abort). Forget the request, so presence is not polled for a prompt
+ * that is gone: the host's next retry draws it again, and needs a fresh
+ * press. */
+static void forgetPromptIfOverdrawn(void) {
+  if (!msg_take_tiny_rejection()) return;
+  last_req_state = INIT;
+  presence_step = 0;
+}
+
 void u2fhid_read_start(const U2FHID_FRAME* f) {
   U2F_ReadBuffer readbuffer;
   memzero(&readbuffer, sizeof(readbuffer));
@@ -244,14 +270,11 @@ void u2fhid_read_start(const U2FHID_FRAME* f) {
         if (counter-- == 0) {
           // timeout
           send_u2fhid_error(cid, ERR_MSG_TIMEOUT);
-          cid = 0;
-          reader = 0;
-          usbTiny(0);
-          msg_set_tiny(msg_tiny);
-          layoutHome();
+          u2fhid_session_end(msg_tiny);
           return;
         }
         usbPoll();
+        forgetPromptIfOverdrawn();
       }
     }
 
@@ -280,6 +303,7 @@ void u2fhid_read_start(const U2FHID_FRAME* f) {
     while (dialog_timeout > 0 && reader->cmd == 0) {
       dialog_timeout--;
       usbPoll();  // may trigger new request
+      forgetPromptIfOverdrawn();
       if ((last_req_state == AUTH || last_req_state == REG) &&
           presenceReleased()) {
         last_req_state++;
@@ -289,12 +313,7 @@ void u2fhid_read_start(const U2FHID_FRAME* f) {
     }
 
     if (reader->cmd == 0) {
-      last_req_state = INIT;
-      cid = 0;
-      reader = 0;
-      usbTiny(0);
-      msg_set_tiny(msg_tiny);
-      layoutHome();
+      u2fhid_session_end(msg_tiny);
       return;
     }
   }

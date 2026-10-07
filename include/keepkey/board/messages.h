@@ -136,6 +136,10 @@ MessageType check_for_tiny_msg(uint8_t* buf);
 /* Route main and debug frames to the tiny reader, which never dispatches a
  * handler. Returns the previous setting. */
 bool msg_set_tiny(bool set);
+/* For a tiny wait that suspends no handler (U2F): true if a frame was
+ * rejected, and so a Failure was sent, since the last call. Clears it, so the
+ * next rejected frame is answered too. */
+bool msg_take_tiny_rejection(void);
 
 uint32_t parse_pb_varint(RawMessage* msg, uint8_t varint_count);
 int encode_pb(const void* source_ptr, const pb_field_t* fields, uint8_t* buffer,
