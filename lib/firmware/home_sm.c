@@ -52,6 +52,15 @@ static void update_idle_time(void) {
   const uint32_t now = home_clock_ms();
   increment_idle_time(now - idle_clock);
   idle_clock = now;
+  drop_workflow_progress_if_idle();
+}
+
+/* Progress defers the lock only for the workflow that made it. Once none
+ * runs (it completed or was aborted), forget it, so a workflow started
+ * afterwards that never notes progress itself inherits no deferral. An armed
+ * ceremony keeps its own progress when only the signers are aborted. */
+void drop_workflow_progress_if_idle(void) {
+  if (!fsm_workflowInProgress()) progress_age = UINT32_MAX;
 }
 
 /* Called from every nested USB wait so that no stretch between samples

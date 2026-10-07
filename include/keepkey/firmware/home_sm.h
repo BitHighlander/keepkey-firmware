@@ -40,6 +40,8 @@ void reset_idle_time(void);
 /* Call only after validated workflow progress, never on raw host traffic.
  * Defers the auto-lock while that workflow runs; never renews it. */
 void note_workflow_progress(void);
+/* Forget recorded progress once no workflow runs (after an abort or end). */
+void drop_workflow_progress_if_idle(void);
 /* Lock now (abort workflows, clear the PIN) if the idle deadline has passed
  * and no progressing workflow defers it. True if this call locked. */
 bool auto_lock_if_due(void);

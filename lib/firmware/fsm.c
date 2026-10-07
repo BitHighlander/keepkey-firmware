@@ -554,6 +554,7 @@ void fsm_abort_signing_workflows(void) {
 #endif
   authenticator_clear_cache();
   memzero(&fsm_derived_node, sizeof(fsm_derived_node));
+  drop_workflow_progress_if_idle();
 }
 
 void fsm_msgClearSession(ClearSession* msg) {

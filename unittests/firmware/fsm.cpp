@@ -844,6 +844,102 @@ TEST_F(AutoLockProgress, ButtonPressDuringAStreamRenewsTheDeadline) {
   EXPECT_FALSE(session_isPinCached());
 }
 
+// A host-paced stream past the deadline, then a Ping that needs the PIN. The
+// gate lets Ping through without ending the stream, so the Ping handler must
+// lock before its PIN check, or one PIN-gated answer is served on the cached
+// PIN.
+static void expectPingPastTheStreamDeadlineNeedsThePin(const Ping& ping) {
+  ScopedFlash flash;
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  signing_abort();
+  loadPinProtectedWallet();
+  keepkey_user_activity();
+  SignTx start = {};
+  start.inputs_count = start.outputs_count = 1;
+  HDNode root = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &root));
+  signing_init(&start, coinByName("Bitcoin"), &root);
+  leave_home();
+
+  TxAck prev_input;
+  startLongPrevTxStream(&prev_input);
+  for (int i = 0; i < 2; ++i) {
+    advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2000);
+    receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &prev_input);
+    toggle_screensaver();
+    ASSERT_TRUE(signing_is_active()) << "locked mid-flow at ack " << i;
+    ASSERT_TRUE(session_isPinCached());
+  }
+
+  kkconfirm_sendTiny(MessageType_MessageType_Cancel, nullptr, 0);
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+  const FailureType code = fsm_test_lastFailureCode();
+  kkconfirm_preload(0, 0);
+  kkconfirm_drain();
+
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_EQ(FailureType_Failure_PinCancelled, code)
+      << "the Ping was answered from the PIN cached before the deadline";
+  EXPECT_FALSE(session_isPinCached());
+}
+
+TEST_F(AutoLockProgress, AuthenticatorPingPastAStreamDeadlineNeedsThePin) {
+  Ping ping = {};
+  ping.has_message = true;
+  std::strcpy(ping.message, "\x17getAccount:0");
+  expectPingPastTheStreamDeadlineNeedsThePin(ping);
+}
+
+TEST_F(AutoLockProgress, PinProtectedPingPastAStreamDeadlineNeedsThePin) {
+  Ping ping = {};
+  ping.has_pin_protection = ping.pin_protection = true;
+  expectPingPastTheStreamDeadlineNeedsThePin(ping);
+}
+
+#if !BITCOIN_ONLY
+// Progress belongs to the workflow that made it. Bitcoin progress just before
+// the deadline must not defer the lock for a Cosmos sign started after the
+// Bitcoin stream was aborted; Cosmos never notes progress of its own.
+TEST_F(AutoLockProgress, AbortedStreamProgressDoesNotDeferTheNextWorkflow) {
+  TxAck ack = {};
+  ack.has_tx = true;
+  ack.tx.inputs_count = 1;
+  ack.tx.inputs[0].prev_hash.size = 32;
+  ack.tx.inputs[0].has_script_type = true;
+  ack.tx.inputs[0].script_type = InputScriptType_SPENDADDRESS;
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1000);
+  receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &ack);
+  ASSERT_TRUE(signing_is_active());
+
+  fsm_abort_workflows();
+
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+  TendermintSignTx cosmos = {};
+  cosmos.has_msg_count = true;
+  cosmos.msg_count = 1;
+  cosmos.has_chain_id = true;
+  std::strcpy(cosmos.chain_id, "cosmoshub-4");
+  cosmos.has_chain_name = true;
+  std::strcpy(cosmos.chain_name, "Cosmos");
+  cosmos.has_denom = true;
+  std::strcpy(cosmos.denom, "uatom");
+  cosmos.has_message_type_prefix = true;
+  std::strcpy(cosmos.message_type_prefix, "cosmos-sdk");
+  ASSERT_TRUE(tendermint_signTxInit(&node, &cosmos, sizeof(cosmos), "uatom",
+                                    TENDERMINT_SIGNING_GENERIC));
+
+  advance_clock(1000);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state())
+      << "the aborted Bitcoin stream's progress deferred the Cosmos sign";
+  EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_GENERIC));
+}
+#endif
+
 // Recovery words are typed on the host. They keep the ceremony from locking
 // mid-entry, but once it ends the deadline still runs from the last press.
 TEST_F(AutoLockProgress, RecoveryCharacterStreamDoesNotRenewTheDeadline) {

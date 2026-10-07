@@ -20,6 +20,7 @@ extern "C" {
 
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
+bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload, uint8_t len);
 
 extern "C" bool keepkey_before_message_dispatch(MessageType msg_id);
 
@@ -214,6 +215,17 @@ TEST(Recovery, UnrelatedRequestsKeepTheCipherAndSigningEndsTheCeremony) {
   ASSERT_TRUE(kkconfirm_preload(0, 0));
   fsm_msgPing(&protected_ping);
   EXPECT_EQ(0, kkconfirm_drain()) << "no prompt may be drawn mid-ceremony";
+  // An authenticator Ping is PIN-gated: refused, never served.
+  Ping auth_ping = {};
+  auth_ping.has_message = true;
+  std::strcpy(auth_ping.message, "\x17getAccount:0");
+  kkconfirm_sendTiny(MessageType_MessageType_Cancel, nullptr, 0);
+  fsm_test_clearLastFailure();
+  fsm_msgPing(&auth_ping);
+  EXPECT_EQ(FailureType_Failure_UnexpectedMessage, fsm_test_lastFailureCode())
+      << "an authenticator Ping was handled mid-ceremony";
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  (void)kkconfirm_drain();
   for (int frame = 0; frame < 20; ++frame) {
     force_animation_start();
     animate();
