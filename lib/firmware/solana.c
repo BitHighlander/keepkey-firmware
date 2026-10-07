@@ -138,12 +138,16 @@ static void copy_account(uint8_t out[SOL_PUBKEY_SIZE], const SolanaParsedTx* tx,
 }
 
 /* allow_external_indices: v0 lookup-table accounts (index >= static list)
- * cannot be verified, so they force the tx opaque. Never valid in legacy. */
+ * cannot be verified, so they force the tx opaque. Never valid in legacy.
+ * Program ids must always be static. *accounts_needed is one past the highest
+ * account operand index, so the caller can bound it once the loaded-account
+ * count is known. */
 static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
                                      size_t* pos_io, SolanaParsedTx* tx,
                                      uint16_t num_accounts, bool* has_unknown,
                                      bool* force_opaque,
-                                     bool allow_external_indices) {
+                                     bool allow_external_indices,
+                                     uint16_t* accounts_needed) {
   size_t pos = *pos_io;
   uint16_t num_instructions;
   int n = read_compact_u16(raw + pos, raw_len - pos, &num_instructions);
@@ -160,15 +164,13 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
 
   bool seen_compute_limit = false;
   bool seen_compute_price = false;
+  *accounts_needed = 0;
 
   for (uint16_t i = 0; i < num_instructions; i++) {
     if (pos >= raw_len) return -1;
     uint8_t program_idx = raw[pos++];
+    if (program_idx >= num_accounts) return -1;
     bool external = false;
-    if (program_idx >= num_accounts) {
-      if (!allow_external_indices) return -1;
-      external = true;
-    }
 
     uint16_t num_acct_indices;
     n = read_compact_u16(raw + pos, raw_len - pos, &num_acct_indices);
@@ -180,6 +182,8 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
     pos += num_acct_indices;
 
     for (uint16_t j = 0; j < num_acct_indices; j++) {
+      if (acct_indices[j] >= *accounts_needed)
+        *accounts_needed = (uint16_t)acct_indices[j] + 1;
       if (acct_indices[j] >= num_accounts) {
         if (!allow_external_indices) return -1;
         external = true;
@@ -665,9 +669,10 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t* raw, size_t raw_len,
   memcpy(tx->recent_blockhash, raw + pos, SOL_PUBKEY_SIZE);
   pos += SOL_PUBKEY_SIZE;
 
-  n = parse_instruction_section(raw, raw_len, &pos, tx, num_accounts,
-                                &has_unknown, &force_opaque,
-                                /*allow_external_indices=*/false);
+  uint16_t accounts_needed;
+  n = parse_instruction_section(
+      raw, raw_len, &pos, tx, num_accounts, &has_unknown, &force_opaque,
+      /*allow_external_indices=*/false, &accounts_needed);
   if (n < 0) return SOL_TX_REVIEW_MALFORMED;
 
   /* Reject if there are unconsumed bytes — prevents hidden trailing data */
@@ -716,9 +721,10 @@ static SolanaTxReview solana_parseVersionedTx(const uint8_t* raw,
   memcpy(tx->recent_blockhash, raw + pos, SOL_PUBKEY_SIZE);
   pos += SOL_PUBKEY_SIZE;
 
-  n = parse_instruction_section(raw, raw_len, &pos, tx, num_accounts,
-                                &has_unknown, &force_opaque,
-                                /*allow_external_indices=*/true);
+  uint16_t accounts_needed;
+  n = parse_instruction_section(
+      raw, raw_len, &pos, tx, num_accounts, &has_unknown, &force_opaque,
+      /*allow_external_indices=*/true, &accounts_needed);
   if (n < 0) return SOL_TX_REVIEW_MALFORMED;
 
   uint16_t lookup_table_count;
@@ -730,6 +736,7 @@ static SolanaTxReview solana_parseVersionedTx(const uint8_t* raw,
     force_opaque = true;
   }
 
+  uint32_t loaded_accounts = 0;
   for (uint16_t i = 0; i < lookup_table_count; i++) {
     uint16_t writable_count, readonly_count;
     if (pos + SOL_PUBKEY_SIZE > raw_len) return SOL_TX_REVIEW_MALFORMED;
@@ -746,9 +753,13 @@ static SolanaTxReview solana_parseVersionedTx(const uint8_t* raw,
     pos += n;
     if (pos + readonly_count > raw_len) return SOL_TX_REVIEW_MALFORMED;
     pos += readonly_count;
+    loaded_accounts += (uint32_t)writable_count + readonly_count;
   }
 
   if (pos != raw_len) return SOL_TX_REVIEW_MALFORMED;
+  /* An operand past the static plus loaded accounts does not exist. */
+  if (accounts_needed > num_accounts + loaded_accounts)
+    return SOL_TX_REVIEW_MALFORMED;
 
   /* A zero-LUT v0 message verifies like legacy. */
   if (tx->num_instructions == 0 || has_unknown || force_opaque) {

@@ -1075,6 +1075,74 @@ TEST(Solana, VersionedInstructionUsingLookupAccountIsOpaque) {
   EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
 }
 
+// Three static keys (payer, recipient, system program) and one SystemTransfer
+// whose program and recipient indices the caller chooses. `instructions`
+// repeats it, so a count past SOL_MAX_INSTRUCTIONS walks the unretained path.
+// `loaded` is the number of accounts one lookup table loads (-1: no table).
+static std::vector<uint8_t> v0_transfer(uint8_t program, uint8_t to, int loaded,
+                                        uint8_t instructions = 1) {
+  std::vector<uint8_t> raw = {0x80, 1, 0, 1, 3};
+  for (uint8_t fill : {0x11, 0x22, 0x00, 0xBB}) raw.insert(raw.end(), 32, fill);
+  raw.push_back(instructions);
+  for (uint8_t i = 0; i < instructions; i++) {
+    raw.insert(raw.end(), {program, 2, 0, to, 12, 2, 0, 0, 0});
+    raw.insert(raw.end(), {0x00, 0xCA, 0x9A, 0x3B, 0, 0, 0, 0});
+  }
+  if (loaded < 0) {
+    raw.push_back(0);
+  } else {
+    raw.push_back(1);
+    raw.insert(raw.end(), 32, 0x55);
+    raw.push_back((uint8_t)loaded);
+    for (int i = 0; i < loaded; i++) raw.push_back((uint8_t)i);
+    raw.push_back(0);
+  }
+  return raw;
+}
+
+// An operand may name a lookup-table account, but only one that a table
+// actually loads; past static + loaded keys the account does not exist.
+TEST(Solana, VersionedOperandPastLoadedAccountsIsMalformed) {
+  struct Case {
+    uint8_t to;
+    int loaded;
+    uint8_t instructions;
+    SolanaTxReview review;
+  };
+  const Case cases[] = {
+      {1, -1, 1, SOL_TX_REVIEW_VERIFIED}, /* control: static recipient */
+      {3, 1, 1, SOL_TX_REVIEW_OPAQUE},    /* control: first loaded account */
+      {4, 2, 1, SOL_TX_REVIEW_OPAQUE},    /* control: last loaded account */
+      {3, -1, 1, SOL_TX_REVIEW_MALFORMED},
+      {3, 0, 1, SOL_TX_REVIEW_MALFORMED},
+      {4, 1, 1, SOL_TX_REVIEW_MALFORMED},
+      {255, 2, 1, SOL_TX_REVIEW_MALFORMED},
+      /* Also checked for instructions too many to retain. */
+      {3, -1, SOL_MAX_INSTRUCTIONS + 1, SOL_TX_REVIEW_MALFORMED},
+  };
+  for (const Case& c : cases) {
+    SCOPED_TRACE(testing::Message()
+                 << int(c.to) << "," << c.loaded << "," << int(c.instructions));
+    const auto raw = v0_transfer(2, c.to, c.loaded, c.instructions);
+    SolanaParsedTx tx;
+    EXPECT_EQ(c.review, solana_inspectTx(raw.data(), raw.size(), &tx));
+  }
+}
+
+// A program id must be a static key; lookup tables supply operands only.
+TEST(Solana, VersionedProgramIndexMustBeStatic) {
+  SolanaParsedTx tx;
+  auto raw = v0_transfer(2, 1, 1); /* control: static system program */
+  EXPECT_EQ(SOL_TX_REVIEW_OPAQUE,
+            solana_inspectTx(raw.data(), raw.size(), &tx));
+  raw = v0_transfer(3, 1, 1); /* program = the loaded account */
+  EXPECT_EQ(SOL_TX_REVIEW_MALFORMED,
+            solana_inspectTx(raw.data(), raw.size(), &tx));
+  raw = v0_transfer(3, 1, 1, SOL_MAX_INSTRUCTIONS + 1);
+  EXPECT_EQ(SOL_TX_REVIEW_MALFORMED,
+            solana_inspectTx(raw.data(), raw.size(), &tx));
+}
+
 TEST(Solana, MemoBodyCaptured) {
   /* Legacy tx: system transfer + memo instruction (THORChain-style swap
    * memo). The parser must expose the memo bytes for display. */
