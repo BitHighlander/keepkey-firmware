@@ -10,6 +10,7 @@ extern "C" {
 
 #include "gtest/gtest.h"
 
+#include <algorithm>
 #include <cstring>
 #include <map>
 #include <string>
@@ -577,10 +578,8 @@ TEST(Eip712Stream, SortIsNotMerelyReversedDiscoveryOrder) {
   //
   // The two canaries are complementary and neither is redundant: Zebra/Apple
   // catches "no sort at all", this one catches "reversed". Deleting either
-  // leaves a wrong implementation that passes the other. A single three-
-  // dependency case would separate all three hypotheses at once, but the
-  // closure holds EIP712_MAX_STRUCTS names INCLUDING the primary type, so
-  // three dependencies do not fit -- see RefusesADocumentWiderThanTheClosure.
+  // leaves a wrong implementation that passes the other. The five-dependency
+  // case in RefusesADocumentWiderThanTheClosure separates all three at once.
   Fixture f;
   const char* names[] = {"Alpha", "Bravo"};
   for (const char* n : names) {
@@ -601,27 +600,41 @@ TEST(Eip712Stream, SortIsNotMerelyReversedDiscoveryOrder) {
 
 TEST(Eip712Stream, RefusesADocumentWiderThanTheClosure) {
   // EIP712_MAX_STRUCTS bounds the closure INCLUDING the primary type, so the
-  // real ceiling is that many distinct struct types in one document. Seaport's
-  // OrderComponents sits exactly at it (itself plus OfferItem plus
-  // ConsiderationItem); one more dependency must be REFUSED rather than
-  // silently truncated, because a truncated closure still produces a
-  // well-formed 32-byte typeHash -- one that no verifier reproduces.
-  Fixture f;
-  const char* names[] = {"Alpha", "Bravo", "Charlie"};
-  for (const char* n : names) {
-    auto& d = f.defs[n];
-    memset(&d, 0, sizeof(d));
-    addMember(d, "v",
-              mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  // real ceiling is that many distinct struct types in one document. A
+  // UniswapX PriorityOrder witness sits exactly at it; one more dependency
+  // must be REFUSED rather than silently truncated, because a truncated
+  // closure still produces a well-formed 32-byte typeHash -- one that no
+  // verifier reproduces.
+  // Discovered neither sorted nor reverse-sorted.
+  const char* names[] = {"Delta", "Alpha", "Foxtrot",
+                         "Bravo", "Echo",  "Charlie"};
+  static_assert(sizeof(names) / sizeof(names[0]) == EIP712_MAX_STRUCTS,
+                "one dependency more than fits");
+  for (size_t used = EIP712_MAX_STRUCTS - 1; used <= EIP712_MAX_STRUCTS;
+       used++) {
+    Fixture f;
+    auto& m = f.defs["M"];
+    memset(&m, 0, sizeof(m));
+    std::string head = "M(", tail;
+    std::vector<std::string> sorted;
+    for (size_t i = 0; i < used; i++) {
+      auto& d = f.defs[names[i]];
+      memset(&d, 0, sizeof(d));
+      addMember(d, "v",
+                mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+      char member[2] = {(char)('a' + i), 0};
+      addMember(m, member, structField(names[i]));
+      head += std::string(i ? "," : "") + names[i] + " " + member;
+      sorted.push_back(names[i]);
+    }
+    std::sort(sorted.begin(), sorted.end());
+    for (const std::string& n : sorted) tail += n + "(uint256 v)";
+    if (used < EIP712_MAX_STRUCTS) {
+      EXPECT_EQ(typeHashHex(f, "M"), keccakHex(head + ")" + tail));
+    } else {
+      EXPECT_EQ(typeHashHex(f, "M"), "<refused>");
+    }
   }
-  auto& m = f.defs["M"];
-  memset(&m, 0, sizeof(m));
-  addMember(m, "a", structField("Alpha"));
-  addMember(m, "b", structField("Bravo"));
-  addMember(m, "c", structField("Charlie"));
-
-  // M + three dependencies exceeds EIP712_MAX_STRUCTS.
-  EXPECT_EQ(typeHashHex(f, "M"), "<refused>");
 }
 
 TEST(Eip712Stream, TransitivelyReferencedStructsAreCollectedAndSorted) {
@@ -992,6 +1005,34 @@ TEST(Eip712Stream, SeaportShapedDocumentFitsThePool) {
   EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
   EXPECT_EQ(used, 10 + 3 * 6);
   eip712_stream_abort();
+}
+
+// Every nested struct and every array dimension is one frame. Four fit (the
+// UniswapX witness.baseOutputs[i] and eth-sig-util to[i].wallets shapes); a
+// fifth is refused before it is pushed.
+TEST(Eip712Stream, NestsFourFramesDeepButNotFive) {
+  const char* chain[] = {"L1", "L2", "L3", "L4", "L5"};
+  for (size_t frames : {4u, 5u}) {
+    SCOPED_TRACE(frames);
+    std::map<std::string, Struct> types;
+    for (size_t i = 0; i + 1 < frames; i++)
+      addMember(types[chain[i]], "next", structField(chain[i + 1]));
+    addMember(types[chain[frames - 1]], "v",
+              mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+    const int used = walk(
+        "L1", types,
+        [](const std::vector<uint32_t>&) -> Bytes { return word(9); }, 2);
+    if (frames == 4) {
+      EXPECT_EQ(used, 1);
+      EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+    } else {
+      EXPECT_EQ(used, 0);
+      ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
+      EXPECT_STREQ(eip712_stream_next()->error,
+                   "EIP-712 document nests too deeply for this device");
+    }
+    eip712_stream_abort();
+  }
 }
 
 namespace {

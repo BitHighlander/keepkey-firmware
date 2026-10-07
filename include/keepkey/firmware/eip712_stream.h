@@ -36,8 +36,10 @@
  * an elementary type, plus array suffixes such as "[10][10][10][10]". */
 #define EIP712_MAX_TYPE_NAME 112
 
-/* Nesting bound and C-stack recursion bound; checked BEFORE descending. */
-#define EIP712_MAX_DEPTH 3
+/* Nesting bound and C-stack recursion bound; checked BEFORE descending. Each
+ * nested struct and each array dimension is one frame: UniswapX's
+ * witness.baseOutputs[i] and eth-sig-util's to[i].wallets need four. */
+#define EIP712_MAX_DEPTH 4
 
 /* Shared pool of 32-byte member encodings; a completed container collapses to
  * one digest in its parent's slot. Only ONE SHA3_CTX (~400 B) is ever live,
@@ -51,11 +53,15 @@
 #define EIP712_MAX_LEAF 1024
 
 /* Distinct struct types one primary type may reference, including itself.
- * Permit2's PermitSingle needs 2, Seaport's OrderComponents 3. */
-#define EIP712_MAX_STRUCTS 3
+ * Permit2's PermitSingle needs 2, Seaport's OrderComponents 3, Across 4 and a
+ * UniswapX PriorityOrder witness 6. */
+#define EIP712_MAX_STRUCTS 6
 
-/* The wire allows 80; each byte costs EIP712_MAX_STRUCTS of SRAM. */
+/* The wire allows 80; each byte costs EIP712_MAX_STRUCTS + 1 of SRAM. */
 #define EIP712_MAX_STRUCT_NAME 32
+
+/* Member names: hashed, and shown in every review path. */
+#define EIP712_MAX_MEMBER_NAME 32
 
 typedef struct {
   uint64_t chain_id;
