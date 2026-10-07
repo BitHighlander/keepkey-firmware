@@ -395,6 +395,7 @@ KNOWN_CAPABILITIES = frozenset((
     "ripple-memo-policy", "session-trust-lifetime", "solana-certified-review",
     "solana-lut-attestation", "solana-runtime-review", "storage-v19-kdf",
     "tendermint-progress", "safe-reset-ceremony", "thor-deposit-review",
+    "tron-trc20-review",
 ))
 
 
