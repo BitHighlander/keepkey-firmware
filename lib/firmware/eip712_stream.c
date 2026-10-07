@@ -47,10 +47,10 @@
 typedef EthereumTypedDataStructAck_EthereumFieldType Eip712FieldType;
 typedef EthereumTypedDataStructAck_EthereumDataType Eip712DataType;
 
-bool eip712_identifier_ok(const char* name) {
+static bool identifier_ok(const char* name, size_t max, bool colon) {
   if (!name) return false;
   size_t len = strlen(name);
-  if (len == 0 || len + 1 > EIP712_MAX_STRUCT_NAME) return false;
+  if (len == 0 || len + 1 > max) return false;
   char first = name[0];
   if (!((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z') ||
         first == '_' || first == '$')) {
@@ -59,11 +59,20 @@ bool eip712_identifier_ok(const char* name) {
   for (size_t i = 1; i < len; i++) {
     char c = name[i];
     if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-          (c >= '0' && c <= '9') || c == '_' || c == '$')) {
+          (c >= '0' && c <= '9') || c == '_' || c == '$' ||
+          (colon && c == ':'))) {
       return false;
     }
   }
   return true;
+}
+
+bool eip712_identifier_ok(const char* name) {
+  return identifier_ok(name, EIP712_MAX_MEMBER_NAME, false);
+}
+
+bool eip712_type_identifier_ok(const char* name) {
+  return identifier_ok(name, EIP712_MAX_STRUCT_NAME, true);
 }
 
 /* encodeType spelling. Hashed into typeHash: a wrong character signs a
@@ -110,7 +119,8 @@ bool eip712_type_name(const Eip712FieldType* field, char* out, size_t out_len) {
       base = "address";
       break;
     case EthereumTypedDataStructAck_EthereumDataType_STRUCT:
-      if (!field->has_struct_name || !eip712_identifier_ok(field->struct_name))
+      if (!field->has_struct_name ||
+          !eip712_type_identifier_ok(field->struct_name))
         return false;
       base = field->struct_name;
       break;
@@ -341,7 +351,7 @@ typedef struct {
 
 /* The index of `name`, added if new; EIP712_NO_TYPE if malformed or full. */
 static uint8_t names_intern(Eip712Names* t, const char* name) {
-  if (!eip712_identifier_ok(name)) return EIP712_NO_TYPE;
+  if (!eip712_type_identifier_ok(name)) return EIP712_NO_TYPE;
   for (uint8_t i = 0; i < t->count; i++) {
     if (strcmp(t->names[i], name) == 0) return i;
   }
@@ -407,7 +417,7 @@ static bool closure_collect(const char* name, Eip712StructLookup lookup,
 static bool hash_segment_from_ack(const char* name,
                                   const EthereumTypedDataStructAck* def,
                                   SHA3_CTX* hash) {
-  if (!def || !eip712_identifier_ok(name)) return false;
+  if (!def || !eip712_type_identifier_ok(name)) return false;
 
   keccak_Update(hash, (const uint8_t*)name, strlen(name));
   keccak_Update(hash, (const uint8_t*)"(", 1);
@@ -440,8 +450,7 @@ static bool hash_type_segment(const char* name, Eip712StructLookup lookup,
 
 bool eip712_type_hash(const char* name, Eip712StructLookup lookup, void* ctx,
                       uint8_t out[32]) {
-  if (!name || !lookup || !out) return false;
-  if (strlen(name) == 0 || strlen(name) + 1 > EIP712_MAX_STRUCT_NAME)
+  if (!name || !lookup || !out || !eip712_type_identifier_ok(name))
     return false;
 
   Eip712Names names;
@@ -1061,7 +1070,7 @@ bool eip712_stream_begin(const EthereumSignTypedData* msg,
   }
   /* primary_type is `required` on the wire, so nanopb emits no has_ flag --
    * an absent one cannot decode at all. Empty and over-long still can. */
-  if (!eip712_identifier_ok(msg->primary_type)) {
+  if (!eip712_type_identifier_ok(msg->primary_type)) {
     fail("EIP-712 primary type missing or too long");
     return false;
   }

@@ -56,6 +56,9 @@ bool kkconfirm_preload(int nYes, int nNo);
 bool kkconfirm_preload_no_sentinel(int nYes, int nNo);
 int kkconfirm_drain(void);
 bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload, uint8_t len);
+void kkconfirm_capture_start(void);
+std::vector<std::string> kkconfirm_capture_finish(void);
+std::vector<std::string> kkconfirm_captured_titles(void);
 bool kkconfirm_openDebugPeer(void);
 bool kkconfirm_readDebugFrame(uint8_t frame[64]);
 extern "C" void keepkey_user_activity(void);  // lib/firmware/home_sm.c
@@ -1706,6 +1709,59 @@ TEST(Fsm, TypedDataStreamRefusesMetadataAndSignerLoads) {
               fsm_test_lastFailureCode());
     eip712_stream_abort();
   }
+}
+
+// The final screen names the action being authorised. A primary type longer
+// than a row (Hyperliquid's are up to 40 characters) is paged, never cut.
+TEST(Fsm, TypedDataFinalScreenShowsTheWholePrimaryType) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  loadAllWallet();
+  const char* primary = "HyperliquidTransaction:ApproveBuilderFee";
+  EthereumTypedDataStructAck domain{};
+  EthereumTypedDataStructAck message{};
+  message.members_count = 1;
+  std::strcpy(message.members[0].name, "nonce");
+  message.members[0].type.data_type =
+      EthereumTypedDataStructAck_EthereumDataType_UINT;
+  message.members[0].type.has_size = true;
+  message.members[0].type.size = 8;
+  ASSERT_TRUE(kkconfirm_preload(10, 0));
+  kkconfirm_capture_start();
+  EthereumSignTypedData start{};
+  std::strcpy(start.primary_type, primary);
+  receiveMessage(MessageType_MessageType_EthereumSignTypedData,
+                 EthereumSignTypedData_fields, &start);
+  for (int step = 0; step < 20 && eip712_stream_waiting() != EIP712_IDLE;
+       step++) {
+    if (eip712_stream_waiting() == EIP712_WANT_STRUCT) {
+      const bool is_domain =
+          std::strcmp(eip712_stream_next()->struct_name, "EIP712Domain") == 0;
+      receiveMessage(MessageType_MessageType_EthereumTypedDataStructAck,
+                     EthereumTypedDataStructAck_fields,
+                     is_domain ? &domain : &message);
+    } else {
+      EthereumTypedDataValueAck value{};
+      value.value.size = 8;
+      value.value.bytes[7] = 1;
+      receiveMessage(MessageType_MessageType_EthereumTypedDataValueAck,
+                     EthereumTypedDataValueAck_fields, &value);
+    }
+  }
+  const std::vector<std::string> bodies = kkconfirm_capture_finish();
+  const std::vector<std::string> titles = kkconfirm_captured_titles();
+  kkconfirm_drain();
+  ASSERT_GE(bodies.size(), 2u);
+  // The leaf, then the final screen's pages; pages are verbatim slices.
+  std::string final_screen;
+  for (size_t i = 1; i < bodies.size(); i++) {
+    EXPECT_EQ(0u, titles[i].rfind("Sign Typed Data", 0)) << titles[i];
+    final_screen += bodies[i];
+  }
+  EXPECT_NE(std::string::npos,
+            final_screen.find(std::string("Sign ") + primary + "\nfrom 0x"))
+      << final_screen;
 }
 
 // Ping between typed-data acks must not draw home over a live stream.

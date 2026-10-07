@@ -488,6 +488,35 @@ TEST(Eip712Stream, ReviewIdentifiersAreCanonicalAndNeverTruncated) {
   EXPECT_FALSE(eip712_identifier_ok("amount%08x"));
   EXPECT_FALSE(eip712_identifier_ok("member-name"));
   EXPECT_FALSE(eip712_identifier_ok("identifier_that_would_be_truncated"));
+  // ':' is a struct-name character only (Hyperliquid's user-signed actions).
+  EXPECT_FALSE(eip712_identifier_ok("HyperliquidTransaction:UsdSend"));
+}
+
+TEST(Eip712Stream, StructTypeNamesAllowAColonAndFortySevenCharacters) {
+  EXPECT_TRUE(eip712_type_identifier_ok("PermitSingle"));
+  EXPECT_TRUE(eip712_type_identifier_ok("HyperliquidTransaction:UsdSend"));
+  EXPECT_TRUE(
+      eip712_type_identifier_ok("HyperliquidTransaction:ApproveBuilderFee"));
+  const std::string longest(EIP712_MAX_STRUCT_NAME - 1, 'T');
+  EXPECT_GE(longest.size(), 47u);
+  EXPECT_TRUE(eip712_type_identifier_ok(longest.c_str()));
+  EXPECT_FALSE(eip712_type_identifier_ok((longest + "T").c_str()));
+  EXPECT_FALSE(eip712_type_identifier_ok(":UsdSend"));
+  EXPECT_FALSE(eip712_type_identifier_ok("Hyperliquid Transaction"));
+  EXPECT_FALSE(eip712_type_identifier_ok("Order(uint256 a)"));
+  EXPECT_FALSE(eip712_type_identifier_ok(""));
+
+  // encodeType spells the name byte for byte.
+  Fixture f;
+  auto& send = f.defs["HyperliquidTransaction:UsdSend"];
+  memset(&send, 0, sizeof(send));
+  addMember(send, "destination",
+            mk(EthereumTypedDataStructAck_EthereumDataType_STRING));
+  addMember(send, "time",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 8));
+  EXPECT_EQ(typeHashHex(f, "HyperliquidTransaction:UsdSend"),
+            keccakHex("HyperliquidTransaction:UsdSend(string destination,"
+                      "uint64 time)"));
 }
 
 TEST(Eip712Stream, TypeHashRejectsDuplicateMemberNames) {
@@ -1103,7 +1132,7 @@ TEST(Eip712Stream, InnerDimensionsAreCheckedToo) {
 // must fit one row even for the longest accepted primary type.
 TEST(Eip712Stream, LeafTitlesFitOneRowForTheLongestPrimaryType) {
   const std::string primary(EIP712_MAX_STRUCT_NAME - 1, 'W');
-  ASSERT_TRUE(eip712_identifier_ok(primary.c_str()));
+  ASSERT_TRUE(eip712_type_identifier_ok(primary.c_str()));
   std::map<std::string, Struct> types;
   addMember(types["EIP712Domain"], "name",
             mk(EthereumTypedDataStructAck_EthereumDataType_STRING));

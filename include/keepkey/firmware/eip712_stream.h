@@ -57,8 +57,9 @@
  * UniswapX PriorityOrder witness 6. */
 #define EIP712_MAX_STRUCTS 6
 
-/* The wire allows 80; each byte costs EIP712_MAX_STRUCTS + 1 of SRAM. */
-#define EIP712_MAX_STRUCT_NAME 32
+/* The wire allows 80; each byte costs EIP712_MAX_STRUCTS + 4 of SRAM. 48 holds
+ * Hyperliquid's "HyperliquidTransaction:ApproveBuilderFee" (40). */
+#define EIP712_MAX_STRUCT_NAME 48
 
 /* Member names: hashed, and shown in every review path. */
 #define EIP712_MAX_MEMBER_NAME 32
@@ -74,8 +75,14 @@ typedef struct {
   uint8_t domain_present;
 } Eip712DomainFacts;
 
-/* Canonical ASCII identifier: the bytes hashed are the bytes rendered. */
+/* Canonical ASCII identifier: the bytes hashed are the bytes rendered. Member
+ * names are [A-Za-z_$][A-Za-z0-9_$]*, shorter than EIP712_MAX_MEMBER_NAME. */
 bool eip712_identifier_ok(const char* name);
+
+/* A struct type name: as a member name, but ':' may follow the first
+ * character ("HyperliquidTransaction:UsdSend"), and shorter than
+ * EIP712_MAX_STRUCT_NAME. ':' is never one of encodeType's delimiters. */
+bool eip712_type_identifier_ok(const char* name);
 
 /* Member list by struct name, NULL if not supplied. Unit tests back it with
  * a fixture table. */
