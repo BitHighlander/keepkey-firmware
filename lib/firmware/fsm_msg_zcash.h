@@ -231,8 +231,9 @@ static bool zcash_check_seed_fingerprint(bool has_expected,
 static bool zcash_verify_and_confirm_orchard_output(
     const ZcashPCZTAction* msg, ZcashOrchardProgressCallback progress,
     void* progress_context) {
-  /* All five are read as fixed 32 bytes; nanopb zero-fills an omitted field,
-   * so e.g. a dropped nullifier would mean an implicit rho of zero. */
+  /* value is a uint64, recipient a 43-byte raw receiver, and rseed, nullifier
+   * and cmx 32 bytes each. All five are required: nanopb zero-fills an omitted
+   * field, so e.g. a dropped nullifier would mean an implicit rho of zero. */
   if (!msg->has_value || !msg->has_recipient ||
       msg->recipient.size != ZCASH_ORCHARD_RAW_RECEIVER_SIZE ||
       !msg->has_rseed || msg->rseed.size != 32 || !msg->has_nullifier ||
