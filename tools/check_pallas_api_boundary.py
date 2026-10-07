@@ -162,6 +162,26 @@ def forbid(body, token, where):
         raise AssertionError("{} must not call {}".format(where, token))
 
 
+# Every reduction in the ZIP-32 wide reductions handles key material: each
+# must be the constant-time operation by name, and its variable-time twin is
+# refused. A bare "pallas_ct_" prefix passed with any one of them swapped.
+WIDE_REDUCTIONS = {
+    "to_scalar": ("pallas_ct_mod_q", "pallas_ct_mul_mod_q",
+                  "pallas_ct_add_mod_q"),
+    "to_base": ("pallas_ct_mod_p", "pallas_ct_mul_mod_p",
+                "pallas_ct_add_mod_p"),
+}
+
+
+def check_wide_reductions(zcash):
+    for name, operations in WIDE_REDUCTIONS.items():
+        body = code_only(function_body(zcash, name))
+        for operation in operations:
+            require(body, operation, name)
+            forbid(body, operation.replace("pallas_ct_", "pallas_") + "(",
+                   name)
+
+
 def main():
     pallas = source("deps/crypto/trezor-firmware/crypto/pallas.c")
     sinsemilla = source("deps/crypto/trezor-firmware/crypto/pallas_sinsemilla.c")
@@ -326,9 +346,7 @@ def main():
 
     # ZIP-32 key reduction and transmission-key derivation also process
     # device-secret viewing/spending material.
-    for name in ("to_scalar", "to_base"):
-        body = code_only(function_body(zcash, name))
-        require(body, "pallas_ct_", name)
+    check_wide_reductions(zcash)
     key_derivation = code_only(function_body(
         zcash, "zcash_derive_orchard_keys_with_progress"))
     require(key_derivation, "redpallas_scalar_mult_spendauth_G_progress",
