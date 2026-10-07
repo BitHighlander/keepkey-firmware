@@ -459,13 +459,15 @@ void layout_cosmos_address_notification(const char* desc, const char* address,
                 font_height(title_font) + BODY_FONT_LINE_PADDING);
   }
 
-  /* Body */
-  sp.y = TOP_MARGIN_FOR_TWO_LINES + TOP_MARGIN + TOP_MARGIN;
+  /* Body: three 140 px rows hold any 52-character bech32 address (a
+     cosmosvaloper1... needs three). Starting one pixel higher than before is
+     what lets the third row fit; at y=27 draw_string() silently dropped it. */
+  const uint16_t row = font_height(address_font) + BODY_FONT_LINE_PADDING;
+  sp.y = KEEPKEY_DISPLAY_HEIGHT - 3 * row + BODY_FONT_LINE_PADDING;
   sp.x = LEFT_MARGIN + 65;
   sp.color = BODY_COLOR;
 
-  draw_string(canvas, address_font, address, &sp, 140,
-              font_height(address_font) + BODY_FONT_LINE_PADDING);
+  draw_string(canvas, address_font, address, &sp, 140, row);
 
   layout_address(address, QR_LARGE);
   layout_notification_icon(type, &sp);
