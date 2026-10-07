@@ -65,11 +65,17 @@ jobs:
 
           with open('/tmp/ci-runs.json', encoding='utf-8') as handle:
               runs = json.load(handle).get('workflow_runs', [])
+          # Only a push to master: a pull_request run takes its workflow from
+          # the base branch, so its evidence need not come from the ci.yml at
+          # the tag. A master push run also proves the tag is on master.
           runs = [run for run in runs
                   if run.get('head_sha') == os.environ['GITHUB_SHA']
-                  and run.get('conclusion') == 'success']
+                  and run.get('conclusion') == 'success'
+                  and run.get('event') == 'push'
+                  and run.get('head_branch') == 'master']
           if not runs:
-              raise SystemExit('no successful CI run exists for the tagged commit')
+              raise SystemExit('no successful master push CI run exists for '
+                               'the tagged commit')
           run = max(runs, key=lambda item: item.get('created_at', ''))
           run_id = str(run['id'])
           with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
