@@ -411,13 +411,27 @@ TEST(Hive, PublicKeysRejectAccountIndexWithHardeningBit) {
                                   keys[2], 64, keys[3], 64));
 }
 
+// The native binary has no mapped flash unless a test supplies one. Cleanup
+// runs on every exit, including a failed ASSERT, so later tests never see a
+// dangling emulator_flash_base.
+struct HiveScopedFlash {
+  std::vector<uint8_t> bytes = std::vector<uint8_t>(FLASH_TOTAL_SIZE, 0xff);
+  uint8_t* previous = emulator_flash_base;
+  HiveScopedFlash() {
+    emulator_flash_base = bytes.data();
+    storage_init();
+  }
+  ~HiveScopedFlash() {
+    storage_wipe();
+    storage_reset();
+    emulator_flash_base = previous;
+  }
+};
+
 TEST(Hive, PublicKeyHandlersRejectNonHivePathsAndAliasedAccounts) {
-  std::vector<uint8_t> flash(FLASH_TOTAL_SIZE, 0xff);
   ASSERT_TRUE(kkconfirm_preload(0, 0));
   ASSERT_EQ(0, kkconfirm_drain());
-  uint8_t* previous = emulator_flash_base;
-  emulator_flash_base = flash.data();
-  storage_init();
+  HiveScopedFlash flash;
   LoadDevice load = {};
   load.has_mnemonic = true;
   strcpy(load.mnemonic, "all all all all all all all all all all all all");
@@ -462,10 +476,6 @@ TEST(Hive, PublicKeyHandlersRejectNonHivePathsAndAliasedAccounts) {
   fsm_msgHiveGetPublicKeys(&keys);
   EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
   EXPECT_EQ(0, kkconfirm_drain());
-
-  storage_wipe();
-  storage_reset();
-  emulator_flash_base = previous;
 }
 
 // hive_deriveRawKey derives only a SLIP-0048 Hive role key: an unknown role or
