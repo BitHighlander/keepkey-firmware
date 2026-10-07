@@ -1341,21 +1341,28 @@ TEST(Ethereum, ThorchainDepositRejectsNonzeroAbiTailPadding) {
   }
 }
 
-TEST(Ethereum, ThorchainUnknownAssetAmountThatCannotFormatIsRefusedBeforeAnyScreen) {
+// A deposit of an unlisted token shows its raw amount. 2^256 - 1 is 78
+// digits; with " unformatted" it once overflowed a 41-byte buffer and the
+// deposit was refused. Every amount renders in full and signs.
+TEST(Ethereum, ThorchainUnknownAssetMaxAmountRendersInFull) {
   uint8_t unknown[20];
   memset(unknown, 0x42, sizeof(unknown));
   ASSERT_EQ(UnknownToken, tokenByChainAddress(1, unknown));
 
-  /* 2^256 - 1 is 78 digits: it cannot fit the 41-byte amount buffer with its
-     " unformatted" suffix, so bn_format() fails and zeroes the buffer. */
   uint8_t max_word[32];
   memset(max_word, 0xff, sizeof(max_word));
   EthereumSignTx big = thor_deposit_tx(unknown, max_word);
   ASSERT_TRUE(thor_isThorchainTx(&big));
-  ASSERT_TRUE(kkconfirm_preload(0, 0));
-  EXPECT_FALSE(thor_confirmThorTx(big.data_initial_chunk.size, &big));
-  EXPECT_EQ(0, kkconfirm_drain())
-      << "an unformattable amount must not reach the router/vault/asset screens";
+  ASSERT_TRUE(kkconfirm_preload(8, 0));
+  kkconfirm_capture_start();
+  EXPECT_TRUE(thor_confirmThorTx(big.data_initial_chunk.size, &big));
+  std::string shown;  // A long body is paged; nothing is cut.
+  for (const std::string& page : kkconfirm_capture_finish()) shown += page;
+  kkconfirm_drain();
+  EXPECT_NE(std::string::npos,
+            shown.find("amount 115792089237316195423570985008687907853269984665"
+                       "640564039457584007913129639935 unformatted"))
+      << shown;
 
   /* A small amount for the same unknown asset still clear-signs. */
   EthereumSignTx modest = thor_deposit_tx(unknown, kThorOneAmount);
@@ -1379,15 +1386,22 @@ TEST(Ethereum, ContractAmountCallsitesFailClosedAtDisplayBoundary) {
       sa_formatUint256(one, " Token Units", rendered, sizeof(rendered)));
   EXPECT_STREQ("1 Token Units", rendered);
 
-  /* THORChain: the native amount is msg.value; a value that cannot be
-     rendered is refused before any screen rather than shown blank. */
-  EthereumSignTx msg = thor_deposit_tx(kThorZeroAsset, kThorOneAmount);
+  /* THORChain: the native amount is msg.value, and even 2^256 - 1 wei
+     renders in full rather than being refused or shown blank. */
+  EthereumSignTx msg = thor_deposit_tx(kThorZeroAsset, max_word);
   msg.has_value = true;
   msg.value.size = 32;
   memset(msg.value.bytes, 0xff, 32);
-  ASSERT_TRUE(kkconfirm_preload(0, 0));
-  EXPECT_FALSE(thor_confirmThorTx(msg.data_initial_chunk.size, &msg));
-  EXPECT_EQ(0, kkconfirm_drain());
+  ASSERT_TRUE(kkconfirm_preload(8, 0));
+  kkconfirm_capture_start();
+  EXPECT_TRUE(thor_confirmThorTx(msg.data_initial_chunk.size, &msg));
+  std::string shown;
+  for (const std::string& page : kkconfirm_capture_finish()) shown += page;
+  kkconfirm_drain();
+  EXPECT_NE(std::string::npos,
+            shown.find("Confirm sending 115792089237316195423570985008687907853"
+                       "269984665640564039457.584007913129639935 ETH"))
+      << shown;
 }
 
 TEST(Ethereum, ThorchainNativeAssetUsesOnlyItsZeroAddressSentinel) {

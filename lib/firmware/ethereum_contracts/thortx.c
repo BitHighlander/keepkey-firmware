@@ -230,7 +230,9 @@ static bool thor_confirm_deposit_tx(uint32_t data_total,
   const bool is_native = memcmp(contractAssetAddress, ETH_ADDRESS, 20) == 0;
   bignum256 Value;
   bn_from_bytes(msg->value.bytes, msg->value.size, &Value);
-  char amountStr[41];
+  /* Worst case: 2^256 - 1 is 78 digits, plus a '.' or " unformatted" and
+   * the ticker; 41 bytes refused every amount of 29 digits or more. */
+  char amountStr[96];
   const TokenType* assetToken = NULL;
   bool is_unknown = false;
   if (is_native) {

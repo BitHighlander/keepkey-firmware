@@ -16,6 +16,7 @@ extern "C" {
 #include "keepkey/firmware/eos.h"
 #include "keepkey/firmware/ethereum.h"
 #include "keepkey/firmware/ethereum_tokens.h"
+#include "keepkey/firmware/ethereum_contracts/thortx.h"
 #include "keepkey/firmware/eip712_stream.h"
 #include "keepkey/firmware/recovery_cipher.h"
 #include "keepkey/firmware/fsm.h"
@@ -2408,6 +2409,51 @@ TEST(Fsm, FiniteApprovalHasNoUnlimitedWarning) {
   EXPECT_EQ(0u, review.find("Approve withdrawal of up to 0.000001 USDC by"))
       << review;
   EXPECT_NE(std::string::npos, review.find(kSpender)) << review;
+}
+
+// A THORChain deposit of an unlisted token shows the raw amount. The largest
+// one, 2^256 - 1 (78 digits), renders in full and the transaction signs.
+TEST(Fsm, ThorchainDepositOfAnUnknownTokenSignsTheLargestAmount) {
+  static const char kMemo[] = "=:ETH.ETH:0x41e5560054824ea6b0732e656e3ad64e20e94e45:0";
+  const size_t memo_len = sizeof(kMemo) - 1;
+  EthereumSignTx msg = {};
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.has_gas_price = msg.has_gas_limit = true;
+  msg.gas_price.size = msg.gas_limit.size = 1;
+  msg.gas_price.bytes[0] = msg.gas_limit.bytes[0] = 1;
+  msg.has_to = true;
+  msg.to.size = 20;
+  for (size_t i = 0; i < 20; i++) {
+    const char byte[3] = {THOR_ROUTER[2 * i], THOR_ROUTER[2 * i + 1], 0};
+    msg.to.bytes[i] = (uint8_t)strtoul(byte, nullptr, 16);
+  }
+  uint8_t* d = msg.data_initial_chunk.bytes;
+  memcpy(d, THOR_SELECTOR_DEPOSIT, 4);
+  memset(d + 4 + 12, 0x11, 20);       // vault
+  memset(d + 4 + 32 + 12, 0x42, 20);  // an unlisted token
+  memset(d + 4 + 2 * 32, 0xff, 32);   // amount 2^256 - 1
+  d[4 + 3 * 32 + 31] = 0x80;          // memo offset
+  d[4 + 4 * 32 + 31] = (uint8_t)memo_len;
+  memcpy(d + 4 + 5 * 32, kMemo, memo_len);
+  msg.has_data_length = msg.has_data_initial_chunk = true;
+  msg.data_length = msg.data_initial_chunk.size =
+      4 + 5 * 32 + ((memo_len + 31) / 32) * 32;
+  ASSERT_EQ(UnknownToken, tokenByChainAddress(1, d + 4 + 32 + 12));
+
+  Shown shown = signApproval(&msg, 20);
+  EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
+      << fsm_test_lastFailureMessage();
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  ASSERT_FALSE(shown.titles.empty());
+  EXPECT_EQ("Transaction", shown.titles.back())
+      << ::testing::PrintToString(shown.titles);
+  std::string pages;  // A long body is paged; nothing is cut.
+  for (const std::string& page : shown.bodies) pages += page;
+  EXPECT_NE(std::string::npos,
+            pages.find("amount 115792089237316195423570985008687907853269984665"
+                       "640564039457584007913129639935 unformatted"))
+      << pages;
 }
 
 // An unknown token is named by its full contract address. The body is
