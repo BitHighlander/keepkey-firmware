@@ -1115,6 +1115,12 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
     fail("Invalid EIP-712 schema");
     return false;
   }
+  /* The spelling alone does not fix a member's kind: a struct may be named
+   * "uint256". Bind each data_type too; encodeType bytes are unchanged. */
+  for (size_t i = 0; i < ack->members_count; i++) {
+    const uint8_t kind = (uint8_t)ack->members[i].type.data_type;
+    keccak_Update(&schema_hash, &kind, 1);
+  }
   keccak_Final(&schema_hash, schema_digest);
   uint8_t schema_index = 0;
   while (schema_index < e712.schema_count &&

@@ -1154,3 +1154,32 @@ TEST(Eip712Stream, RejectingAnEmptyArrayCancelsTheSignature) {
   EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_CANCELLED);
   eip712_stream_abort();
 }
+
+// "uint256" is a legal struct name and spells exactly like the atomic type,
+// so the replay check must bind the member's kind, not just its spelling. A
+// host switching UINT to STRUCT after hashing would otherwise display nested
+// fields and sign their digest as the integer the type hash declared.
+TEST(Eip712Stream, ReplayBindsMemberKindNotOnlySpelling) {
+  EthereumSignTypedData begin{};
+  strcpy(begin.primary_type, "M");
+  ASSERT_TRUE(eip712_stream_begin(&begin, false));
+  EthereumTypedDataStructAck empty{};
+  for (int i = 0; i < 3; i++) ASSERT_TRUE(eip712_stream_on_struct(&empty));
+  ASSERT_STREQ(eip712_stream_next()->struct_name, "M");
+
+  EthereumTypedDataStructAck as_uint{};
+  addMember(as_uint, "amount",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  EthereumTypedDataStructAck as_struct{};
+  addMember(as_struct, "amount", structField("uint256"));
+  ASSERT_EQ(nameOf(as_uint.members[0].type), nameOf(as_struct.members[0].type));
+
+  ASSERT_TRUE(eip712_stream_on_struct(&as_uint));  // discover
+  ASSERT_TRUE(eip712_stream_on_struct(&as_uint));  // hash M(uint256 amount)
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_STRUCT);
+  EXPECT_FALSE(eip712_stream_on_struct(&as_struct));  // member walk
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
+  EXPECT_STREQ(eip712_stream_next()->error,
+               "EIP-712 schema changed during signing");
+  eip712_stream_abort();
+}
