@@ -36,7 +36,7 @@
 #define THOR_ROUTER "d37bbe5744d730a1d98d8dc97c42f0ca46ad7146"
 
 /* THORChain deploys its Router at a DIFFERENT address on every EVM chain, so
- * the pin must be chain-scoped (see thor_router_label): a deposit on any
+ * the pin must be chain-scoped (see thor_router_pins): a deposit on any
  * chain but mainnet can never match THOR_ROUTER and would fall to the
  * blind-sign gate. Avalanche C-Chain router, verified live against THORChain
  * /inbound_addresses via a Pioneer quote (2026-07). Lowercase, no 0x, to match
@@ -71,6 +71,9 @@ bool thor_is_expiry_variant(const EthereumSignTx* msg);
 bool thor_isThorchainTx(const EthereumSignTx* msg);
 bool thor_assetIsNative(const uint8_t asset_address[20]);
 bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg);
+/* Why the pinned router this deposit goes to can only revert it, or NULL.
+ * Checked before any screen so a doomed deposit is refused, not signed. */
+const char* thor_depositRefusal(const EthereumSignTx* msg);
 bool thor_formatUnknownAssetAmount(const uint8_t word[32], char* out,
                                    size_t out_len);
 

@@ -41,35 +41,34 @@ bool thor_is_expiry_variant(const EthereumSignTx* msg) {
                 THOR_SELECTOR_DEPOSIT_WITH_EXPIRY, 4) == 0;
 }
 
-/* The label for the pinned deposit router this tx is addressed to, or NULL if
- * it is addressed anywhere else (then the deposit is not clear-signed and falls
- * to the blind-sign gate). Each router address is a per-chain identity -- the
- * same address on another chain may hold unrelated attacker code -- so the pin
- * is (chain_id, address) together, and a tx with NO chain_id matches nothing.
- * Both protocols deposit with the same calldata shape and are narrated by the
- * same screens, so both routers are pinned here. */
-static const char* thor_router_label(const EthereumSignTx* msg,
-                                     const char toStr[41]) {
-  if (!msg->has_chain_id) return NULL;
-  if (msg->chain_id == 1) {
-    if (strncmp(toStr, THOR_ROUTER, 40) == 0) return "Thorchain router";
-    if (strncmp(toStr, MAYA_ROUTER, 40) == 0) return "Mayachain router";
-    return NULL;
-  }
-  if (msg->chain_id == 43114 && strncmp(toStr, THOR_ROUTER_AVAX, 40) == 0) {
-    return "Thorchain router"; /* Avalanche C-Chain */
-  }
-  if (msg->chain_id == 56 && strncmp(toStr, THOR_ROUTER_BSC, 40) == 0) {
-    return "Thorchain router"; /* BNB Smart Chain */
-  }
-  if (msg->chain_id == 8453 && strncmp(toStr, THOR_ROUTER_BASE, 40) == 0) {
-    return "Thorchain router"; /* Base */
-  }
-  if (msg->chain_id == 42161 && strncmp(toStr, MAYA_ROUTER_ARB, 40) == 0) {
-    return "Mayachain router"; /* Arbitrum One */
-  }
-  return NULL;
-}
+/* Which router contract a pin is. The two families disagree on the two words
+ * this decoder narrates, so the screens and refusals depend on it:
+ *   CLASSIC (THORChain_Router on ETH/BSC, MAYAChain_Router, Maya ArbRouter):
+ *     depositWithExpiry() requires block.timestamp < expiration, so 0 always
+ *     reverts; a native deposit forwards msg.value and ignores the amount.
+ *   V6 (THORChain_RouterV6 on Avalanche and Base): expiration 0 means no
+ *     expiry; a native deposit requires msg.value == amount or reverts. */
+typedef enum { THOR_KIND_CLASSIC, THOR_KIND_V6 } ThorRouterKind;
+
+/* Each router address is a per-chain identity -- the same address on another
+ * chain may hold unrelated attacker code -- so the pin is (chain_id, address)
+ * together, and a tx with NO chain_id matches nothing. Both protocols deposit
+ * with the same calldata shape and are narrated by the same screens. */
+typedef struct {
+  uint32_t chain_id;
+  const char* address;
+  const char* label;
+  ThorRouterKind kind;
+} ThorRouterPin;
+
+static const ThorRouterPin thor_router_pins[] = {
+    {1, THOR_ROUTER, "Thorchain router", THOR_KIND_CLASSIC},
+    {1, MAYA_ROUTER, "Mayachain router", THOR_KIND_CLASSIC},
+    {43114, THOR_ROUTER_AVAX, "Thorchain router", THOR_KIND_V6},
+    {56, THOR_ROUTER_BSC, "Thorchain router", THOR_KIND_CLASSIC},
+    {8453, THOR_ROUTER_BASE, "Thorchain router", THOR_KIND_V6},
+    {42161, MAYA_ROUTER_ARB, "Mayachain router", THOR_KIND_CLASSIC},
+};
 
 static void thor_format_to_addr(const EthereumSignTx* msg, char out[41]) {
   for (uint32_t i = 0; i < 20; i++) {
@@ -77,17 +76,66 @@ static void thor_format_to_addr(const EthereumSignTx* msg, char out[41]) {
   }
 }
 
+/* The pinned deposit router this tx is addressed to, or NULL if it is
+ * addressed anywhere else (then the deposit is not clear-signed and falls to
+ * the blind-sign gate). */
+static const ThorRouterPin* thor_router_pin(const EthereumSignTx* msg) {
+  if (!msg->has_to || msg->to.size != 20 || !msg->has_chain_id) return NULL;
+  char toStr[41];
+  thor_format_to_addr(msg, toStr);
+  for (size_t i = 0; i < sizeof(thor_router_pins) / sizeof(thor_router_pins[0]);
+       i++) {
+    const ThorRouterPin* pin = &thor_router_pins[i];
+    if (pin->chain_id == msg->chain_id &&
+        strncmp(toStr, pin->address, 40) == 0) {
+      return pin;
+    }
+  }
+  return NULL;
+}
+
 bool thor_isThorchainTx(const EthereumSignTx* msg) {
-  if (!msg->has_to || msg->to.size != 20) return false;
   if (!thor_has_deposit_selector(msg)) return false;
   /* Pin to the THORChain router FOR THIS CHAIN. Without the pin, ANY contract
    * carrying the deposit selector would get the THORChain clear-sign UX and
    * bypass the AdvancedMode blind-sign gate, letting an attacker contract
    * drain funds while the device shows a benign deposit. Without the chain
    * scope, only mainnet deposits ever match (the AVAX->ETH blind-sign bug). */
-  char toStr[41];
-  thor_format_to_addr(msg, toStr);
-  return thor_router_label(msg, toStr) != NULL;
+  return thor_router_pin(msg) != NULL;
+}
+
+const char* thor_depositRefusal(const EthereumSignTx* msg) {
+  if (!thor_has_deposit_selector(msg)) return NULL;
+  const ThorRouterPin* pin = thor_router_pin(msg);
+  if (!pin) return NULL;
+  const uint8_t* d = msg->data_initial_chunk.bytes;
+  const size_t size = msg->data_initial_chunk.size;
+
+  if (pin->kind == THOR_KIND_V6) {
+    /* RouterV6 _executeTransfer(): require(msg.value == amount) for the native
+     * asset. Every real host sends amount == value; anything else, including
+     * amount 0, can only revert. Token deposits are unaffected. */
+    if (size < 4 + 3 * 32 || !thor_assetIsNative(d + 4 + 32 + 12)) return NULL;
+    bignum256 amount, value;
+    bn_from_bytes(d + 4 + 2 * 32, 32, &amount);
+    bn_from_bytes(msg->value.bytes, msg->value.size, &value);
+    if (!bn_is_equal(&amount, &value)) {
+      return "Router would revert: native amount must equal value";
+    }
+    return NULL;
+  }
+
+  /* Classic routers: require(block.timestamp < expiration), so expiry 0 can
+   * only revert. No real host (Pioneer, KeepKey Desktop, xchainjs, SwapKit,
+   * ShapeShift) sends it; they all send a future timestamp. */
+  if (thor_is_expiry_variant(msg) && size >= 4 + 5 * 32) {
+    const uint8_t* expiry_word = d + 4 + 4 * 32;
+    for (size_t i = 0; i < 32; i++) {
+      if (expiry_word[i] != 0) return NULL;
+    }
+    return "Router would revert: deposit expiry is 0";
+  }
+  return NULL;
 }
 
 bool thor_assetIsNative(const uint8_t asset_address[20]) {
@@ -104,6 +152,10 @@ bool thor_formatUnknownAssetAmount(const uint8_t word[32], char* out,
 }
 
 bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
+  /* ethereum.c refuses these with their reason before dispatching here; this
+   * keeps the decoder from narrating a deposit its router can only revert. */
+  if (thor_depositRefusal(msg)) return false;
+
   /* Minimum calldata: selector(4) + vault(32) + asset(32) + amount(32) +
    * memo_offset(32) + memo_length(32) = 164 bytes for deposit(),
    * + expiry(32) = 196 bytes for depositWithExpiry(). */
@@ -233,11 +285,13 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
   }
 
   /* The native branch above shows msg.value, but the ABI amount word is signed
-   * too. The router ignores it for native deposits, so it moves nothing, but
-   * two calldatas differing only in that word must not render identically.
+   * too. A classic router ignores it for native deposits, so it moves nothing,
+   * but two calldatas differing only in that word must not render identically.
    * Every host we know of (Pioneer, KeepKey Desktop, xchainjs, SwapKit,
    * ShapeShift) sends amount == value; 0 is the other harmless encoding. Show
-   * any other word rather than refuse it, formatted before any approval. */
+   * any other word rather than refuse it, formatted before any approval. A V6
+   * router never gets here with a mismatch: thor_depositRefusal() refused it
+   * above, because V6 reverts unless amount == value. */
   char routerAmountStr[96];
   const bool show_router_amount =
       is_native && !bn_is_zero(&Amount) && !bn_is_equal(&Amount, &Value);
@@ -260,6 +314,7 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
    * screen at all -- it reads as "already expired" when it means the
    * opposite. */
   char expiry_str[21] = {0};
+  bool no_expiry = false;
   if (is_expiry) {
     const uint8_t* expiry_word = msg->data_initial_chunk.bytes + 4 + 4 * 32;
     for (size_t i = 0; i < 24; i++) {
@@ -270,15 +325,15 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
       expiry = (expiry << 8) | expiry_word[i];
     }
 
+    /* 0 reaches here only on a V6 router, where it means no expiry;
+     * thor_depositRefusal() refused it above on the routers it reverts on. */
+    no_expiry = expiry == 0;
+
     char tmp[21];
     int len = 0;
-    if (expiry == 0) {
-      tmp[len++] = '0';
-    } else {
-      while (expiry > 0 && len < (int)sizeof(tmp)) {
-        tmp[len++] = (char)('0' + (int)(expiry % 10));
-        expiry /= 10;
-      }
+    while (expiry > 0 && len < (int)sizeof(tmp)) {
+      tmp[len++] = (char)('0' + (int)(expiry % 10));
+      expiry /= 10;
     }
     for (int i = 0; i < len; i++) {
       expiry_str[i] = tmp[len - 1 - i];
@@ -291,9 +346,9 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
   }
   /* Each router address is an identity on ONE chain, so the trusted label is
    * bound to the chain; otherwise a host-chosen chain_id borrows it. */
-  const char* pinned_label = thor_router_label(msg, confStr);
-  if (pinned_label) {
-    conf = pinned_label;
+  const ThorRouterPin* pin = thor_router_pin(msg);
+  if (pin) {
+    conf = pin->label;
   } else {
     conf = confStr;
   }
@@ -340,9 +395,13 @@ bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg) {
     return false;
   }
 
-  if (is_expiry && !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                            "Thorchain data", "Expiry epoch %s", expiry_str)) {
-    return false;
+  if (is_expiry) {
+    const bool ok =
+        no_expiry ? confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                            "Thorchain data", "No expiry")
+                  : confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                            "Thorchain data", "Expiry epoch %s", expiry_str);
+    if (!ok) return false;
   }
 
   /* Pass the memo's true ABI length, not a fixed 64. There is no raw-memo
