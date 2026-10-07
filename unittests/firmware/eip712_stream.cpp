@@ -4,6 +4,7 @@ extern "C" {
 #include "keepkey/board/layout.h"
 #include "keepkey/firmware/eip712_stream.h"
 #include "keepkey/firmware/eip712_stream.h"  // Public declarations stay guarded.
+#include "keepkey/firmware/erc7730_format.h"
 #include "messages-ethereum.pb.h"
 #include "trezor/crypto/address.h"
 #include "trezor/crypto/sha3.h"
@@ -807,15 +808,49 @@ Bytes word(uint8_t low) {
   return b;
 }
 
+// The host half of a value: whole up to EIP712_MAX_LEAF; longer, in chunks of
+// that size, the first naming the total and each later one echoing the
+// offset the device asked for. g_tamper, when set, may then alter the answer.
+void (*g_tamper)(EthereumTypedDataValueAck* ack) = nullptr;
+int g_first_chunks;  // answers that carried value_total_length
+int g_later_chunks;  // answers that carried value_offset
+
+EthereumTypedDataValueAck valueAck(const Bytes& v, const Eip712Next* next) {
+  EthereumTypedDataValueAck ack{};
+  size_t at = 0, n = v.size();
+  if (next->has_value_offset) {
+    at = std::min<size_t>(next->value_offset, v.size());
+    n = std::min<size_t>(v.size() - at, EIP712_MAX_LEAF);
+    ack.has_value_offset = true;
+    ack.value_offset = next->value_offset;
+    g_later_chunks++;
+  } else if (v.size() > EIP712_MAX_LEAF) {
+    n = EIP712_MAX_LEAF;
+    ack.has_value_total_length = true;
+    ack.value_total_length = (uint32_t)v.size();
+    g_first_chunks++;
+  }
+  ack.value.size = (pb_size_t)n;
+  if (n) memcpy(ack.value.bytes, v.data() + at, n);
+  if (g_tamper) g_tamper(&ack);
+  return ack;
+}
+
 // Drive the walk to its end, answering every request from `types` and
 // `value(path)`, with `screens` accepted confirmations available. Returns how
-// many were used; -1 means more screens were shown than were accepted.
+// many were used; -1 means more screens were shown than were accepted. With
+// `topup`, every value answer first queues that many more acceptances (and no
+// rejection sentinel), for documents with thousands of screens; count those
+// from the captured screens instead.
 int walk(const char* primary, const std::map<std::string, Struct>& types,
          Bytes (*value)(const std::vector<uint32_t>&), int screens,
-         bool certified = false) {
+         bool certified = false, int topup = 0) {
   EthereumSignTypedData begin{};
   strcpy(begin.primary_type, primary);
-  if (!kkconfirm_preload(screens, 0)) return -2;
+  g_first_chunks = g_later_chunks = 0;
+  if (!(topup ? kkconfirm_preload_no_sentinel(screens, 0)
+              : kkconfirm_preload(screens, 0)))
+    return -2;
   if (!eip712_stream_begin(&begin, certified))
     return screens - kkconfirm_drain() / 2;
   for (;;) {
@@ -827,10 +862,8 @@ int walk(const char* primary, const std::map<std::string, Struct>& types,
     } else if (next->kind == EIP712_REQ_VALUE) {
       std::vector<uint32_t> path(next->member_path,
                                  next->member_path + next->member_path_len);
-      Bytes v = value(path);
-      EthereumTypedDataValueAck ack{};
-      ack.value.size = v.size();
-      memcpy(ack.value.bytes, v.data(), v.size());
+      EthereumTypedDataValueAck ack = valueAck(value(path), next);
+      if (topup && !kkconfirm_preload_no_sentinel(topup, 0)) return -2;
       eip712_stream_on_value(&ack);
     } else {
       break;
@@ -1550,7 +1583,7 @@ Bytes corpusValue(const std::vector<uint32_t>& path) {
 }  // namespace
 
 TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
-  EXPECT_GE(kCorpus.size(), 55u);
+  EXPECT_GE(kCorpus.size(), 57u);
   // Max approvals sign, with the warning on the value's own screen.
   const std::map<std::string, std::string> unlimited = {
       {"permit2-PermitSingle-unlimited", "details.amount\nuint160: UNLIMITED"},
@@ -1571,9 +1604,13 @@ TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
     }
     g_doc = &doc;
     g_missing_value = false;
-    // A long value is reviewed in parts, so allow several screens per leaf.
+    // A long value is reviewed in parts, so allow several screens per leaf,
+    // and one per eight bytes of a value long enough to be chunked.
+    size_t value_bytes = 0;
+    for (const CorpusValue& v : doc.values) value_bytes += strlen(v.hex) / 2;
     kkconfirm_capture_start();
-    const int used = walk(doc.primary, types, corpusValue, 4 * doc.leaves + 8);
+    const int used = walk(doc.primary, types, corpusValue,
+                          4 * doc.leaves + 8 + (int)(value_bytes / 8));
     const std::vector<std::string> bodies = kkconfirm_capture_finish();
     const std::vector<std::string> titles = kkconfirm_captured_titles();
     std::vector<std::string> warned;
@@ -1597,6 +1634,12 @@ TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
       continue;
     }
     EXPECT_GE(used, doc.leaves);
+    // Values over one ValueAck (Safe MultiSend data, a Snapshot body) were
+    // sent in chunks.
+    size_t widest = 0;
+    for (const CorpusValue& v : doc.values)
+      widest = std::max(widest, strlen(v.hex) / 2);
+    EXPECT_EQ(g_first_chunks > 0, widest > EIP712_MAX_LEAF);
     EXPECT_FALSE(next->message_empty);
     EXPECT_STREQ(next->primary_type, doc.primary);
     EXPECT_EQ(hexOf(next->domain_separator, 32), doc.domain_separator);
@@ -1946,4 +1989,438 @@ TEST(Eip712Stream, StreamedArraysPastTwoHundredFiftyFiveElementsComplete) {
   EXPECT_EQ(bodies[1 + 255], "v[255]\nuint256: 255");
   EXPECT_EQ(bodies[1 + 256], "v[256]\nuint256: 256");
   EXPECT_EQ(bodies[1 + 299], "v[299]\nuint256: 299");
+}
+
+// ── Values longer than one ValueAck ─────────────────────────────────
+// A `bytes` or `string` leaf over EIP712_MAX_LEAF arrives in chunks, each
+// hashed and shown as it comes, under a part counter for the whole value.
+namespace {
+
+Bytes g_long;
+
+// Msg {bytes data | string data; uint256 n} under EIP712Domain(uint256
+// chainId), or with the long value as the domain's `name` when `in_domain`.
+std::map<std::string, Struct> longTypes(bool text, bool in_domain = false) {
+  std::map<std::string, Struct> types;
+  Field u256 = mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32);
+  Field data = mk(text ? EthereumTypedDataStructAck_EthereumDataType_STRING
+                       : EthereumTypedDataStructAck_EthereumDataType_BYTES);
+  addMember(types["EIP712Domain"], in_domain ? "name" : "chainId",
+            in_domain ? data : u256);
+  addMember(types["Msg"], "data", data);
+  addMember(types["Msg"], "n", u256);
+  return types;
+}
+
+Bytes longMessageValue(const std::vector<uint32_t>& path) {
+  if (path[0] == 0) return word(1);
+  return path[1] == 0 ? g_long : word(7);
+}
+
+Bytes longDomainValue(const std::vector<uint32_t>& path) {
+  return path[0] == 0 ? g_long : word(7);
+}
+
+struct LongRun {
+  Eip712ReqKind kind;
+  std::string error;
+  std::string message_hash;
+  std::vector<std::string> titles, bodies;
+};
+
+LongRun signLong(const Bytes& v, bool text, int topup = 0,
+                 bool in_domain = false) {
+  g_long = v;
+  kkconfirm_capture_start();
+  walk("Msg", longTypes(text, in_domain),
+       in_domain ? longDomainValue : longMessageValue, topup ? 64 : 400, false,
+       topup);
+  LongRun r;
+  r.bodies = kkconfirm_capture_finish();
+  r.titles = kkconfirm_captured_titles();
+  const Eip712Next* next = eip712_stream_next();
+  r.kind = next->kind;
+  if (next->kind == EIP712_REQ_FAIL && next->error) r.error = next->error;
+  if (next->kind == EIP712_REQ_DONE) r.message_hash = hexOf(next->message_hash, 32);
+  eip712_stream_abort();
+  return r;
+}
+
+// hashStruct(Msg), straight from the specification.
+std::string expectedLongHash(const Bytes& v, bool text) {
+  const std::string type =
+      text ? "Msg(string data,uint256 n)" : "Msg(bytes data,uint256 n)";
+  Bytes enc(64);
+  keccak_256(reinterpret_cast<const uint8_t*>(type.data()), type.size(),
+             enc.data());
+  keccak_256(v.data(), v.size(), enc.data() + 32);
+  const Bytes n = word(7);
+  enc.insert(enc.end(), n.begin(), n.end());
+  uint8_t out[32];
+  keccak_256(enc.data(), enc.size(), out);
+  return hexOf(out, 32);
+}
+
+// The `data` parts, which must count 1..N in order with one N, joined. A
+// part longer than the display is paged by confirm(); its later pages follow
+// it, up to the next part or the `n` leaf. Nothing here has a space, which
+// the pager may drop at a page edge.
+std::string joinParts(const LongRun& r, const std::string& type,
+                      unsigned* parts) {
+  std::string joined;
+  unsigned next = 1, total = 0;
+  bool in_part = false;
+  *parts = 0;
+  for (const std::string& body : r.bodies) {
+    if (body.compare(0, 6, "data (") != 0) {
+      in_part = in_part && body.compare(0, 2, "n\n") != 0;
+      if (in_part) joined += body;
+      continue;
+    }
+    unsigned i = 0, n = 0;
+    int used = 0;
+    if (sscanf(body.c_str(), "data (%u/%u)\n%n", &i, &n, &used) != 2 ||
+        used == 0 || i != next++ || (total && n != total))
+      return "<misnumbered: " + body.substr(0, 40) + ">";
+    total = n;
+    const std::string label = type + ": ";
+    if (body.compare(used, label.size(), label) != 0) return "<unlabelled>";
+    joined += body.substr(used + label.size());
+    in_part = true;
+  }
+  if (next - 1 != total) return "<missing parts>";
+  *parts = total;
+  return joined;
+}
+
+std::string hexText(const Bytes& v) {
+  return "0x" + hexOf(v.data(), v.size());
+}
+
+std::string escapedText(const Bytes& v) {
+  std::string out(4 * v.size() + 1, '\0');
+  EXPECT_TRUE(erc7730_format_text(v.data(), v.size(), &out[0], out.size()));
+  out.resize(strlen(out.c_str()));
+  return out;
+}
+
+Bytes letters(size_t n) {
+  Bytes v(n);
+  for (size_t i = 0; i < n; i++) v[i] = (uint8_t)('a' + i % 26);
+  return v;
+}
+
+}  // namespace
+
+// 1024 bytes still go in one ValueAck; past that the host chunks. The
+// digest is the specification's, every byte is shown once and in order, and
+// the counter names the whole value's part count from its first screen.
+TEST(Eip712Stream, ChunkedValuesSignAtEveryBoundaryLength) {
+  for (bool text : {false, true}) {
+    for (size_t len : {1024u, 1025u, 2048u, 3000u}) {
+      SCOPED_TRACE(std::string(text ? "string " : "bytes ") +
+                   std::to_string(len));
+      Bytes v = letters(len);
+      if (!text) v[len - 1] = 0xfe;
+      const LongRun r = signLong(v, text);
+      ASSERT_EQ(r.kind, EIP712_REQ_DONE) << r.error;
+      EXPECT_EQ(r.message_hash, expectedLongHash(v, text));
+      const size_t chunks = (len + EIP712_MAX_LEAF - 1) / EIP712_MAX_LEAF;
+      EXPECT_EQ(g_first_chunks, len > EIP712_MAX_LEAF ? 1 : 0);
+      // A string is read twice: counted, then shown from offset 0.
+      EXPECT_EQ(g_later_chunks,
+                len > EIP712_MAX_LEAF ? (int)(text ? 2 * chunks - 1
+                                                   : chunks - 1)
+                                      : 0);
+      unsigned parts = 0;
+      EXPECT_EQ(joinParts(r, text ? "string" : "bytes", &parts),
+                text ? escapedText(v) : hexText(v));
+      EXPECT_GT(parts, 1u);
+    }
+  }
+}
+
+// Exactly EIP712_MAX_VALUE signs; one byte more is refused before any of it
+// is shown.
+TEST(Eip712Stream, ChunkedValuesSignAtTheCapAndNotPastIt) {
+  for (bool text : {false, true}) {
+    SCOPED_TRACE(text ? "string" : "bytes");
+    Bytes v = letters(EIP712_MAX_VALUE);
+    LongRun r = signLong(v, text, 64);
+    ASSERT_EQ(r.kind, EIP712_REQ_DONE) << r.error;
+    EXPECT_EQ(r.message_hash, expectedLongHash(v, text));
+    unsigned parts = 0;
+    EXPECT_EQ(joinParts(r, text ? "string" : "bytes", &parts),
+              text ? escapedText(v) : hexText(v));
+    EXPECT_GT(parts, 3000u);
+
+    v.push_back('z');
+    r = signLong(v, text, 64);
+    EXPECT_EQ(r.kind, EIP712_REQ_FAIL);
+    EXPECT_EQ(r.error, "EIP-712 value too long for this device");
+    EXPECT_EQ(r.bodies.size(), 1u);  // the domain's chainId only
+    EXPECT_EQ(eip712_stream_waiting(), EIP712_IDLE);
+  }
+}
+
+// UTF-8 is checked across chunk boundaries, and a string is checked whole
+// before its first screen: a bad byte at 2,000 is refused unseen.
+TEST(Eip712Stream, ChunkedStringsCheckUtf8AcrossChunks) {
+  // U+20AC split 1/2 across the first boundary signs and shows escaped.
+  Bytes euro = letters(EIP712_MAX_LEAF - 1);
+  for (uint8_t b : {0xe2, 0x82, 0xac}) euro.push_back(b);
+  Bytes tail = letters(500);
+  euro.insert(euro.end(), tail.begin(), tail.end());
+  LongRun r = signLong(euro, true);
+  ASSERT_EQ(r.kind, EIP712_REQ_DONE) << r.error;
+  EXPECT_EQ(r.message_hash, expectedLongHash(euro, true));
+  unsigned parts = 0;
+  const std::string shown = joinParts(r, "string", &parts);
+  EXPECT_NE(shown.find("\\xe2\\x82\\xac"), std::string::npos);
+
+  struct Bad {
+    const char* what;
+    Bytes v;
+  };
+  std::vector<Bad> bad;
+  Bytes broken = letters(EIP712_MAX_LEAF - 1);  // continuation is not one
+  for (uint8_t b : {0xe2, 0x82, 0x58}) broken.push_back(b);  // 'X'
+  bad.push_back({"split sequence broken", broken});
+  Bytes truncated = letters(1500);  // ends inside a sequence
+  truncated.push_back(0xe2);
+  truncated.push_back(0x82);
+  bad.push_back({"value ends mid-sequence", truncated});
+  Bytes deep = letters(3000);
+  deep[2000] = 0xff;
+  bad.push_back({"bad byte at 2000", deep});
+  Bytes overlong = letters(EIP712_MAX_LEAF - 1);  // "/" as two bytes
+  overlong.push_back(0xc0);
+  overlong.push_back(0xaf);
+  overlong.push_back('a');
+  bad.push_back({"overlong across the boundary", overlong});
+  for (const Bad& b : bad) {
+    SCOPED_TRACE(b.what);
+    r = signLong(b.v, true);
+    EXPECT_EQ(r.kind, EIP712_REQ_FAIL);
+    EXPECT_EQ(r.error, "EIP-712 value does not match its declared type");
+    EXPECT_EQ(r.bodies.size(), 1u);  // nothing of the string was shown
+  }
+}
+
+namespace {
+
+int g_tamper_mode;
+
+void tamperChunk(EthereumTypedDataValueAck* ack) {
+  const bool first = ack->has_value_total_length;
+  const bool later = ack->has_value_offset;
+  switch (g_tamper_mode) {
+    case 0:  // a later chunk names the wrong offset
+      if (later) ack->value_offset += 1;
+      break;
+    case 1:  // a later chunk does not name its offset
+      if (later) ack->has_value_offset = false;
+      break;
+    case 2:  // a later chunk names a total again
+      if (later) {
+        ack->has_value_total_length = true;
+        ack->value_total_length = 3000;
+      }
+      break;
+    case 3:  // a later chunk runs past the total
+      if (later) ack->value.size = EIP712_MAX_LEAF;
+      break;
+    case 4:  // a chunk short of a full one before the last
+      if (later) ack->value.size -= 24;
+      break;
+    case 5:  // the first chunk is short
+      if (first) ack->value.size = 1000;
+      break;
+    case 6:  // a total that fits one ValueAck
+      if (first) ack->value_total_length = EIP712_MAX_LEAF;
+      break;
+    case 7:  // the first answer names an offset
+      if (first) {
+        ack->has_value_offset = true;
+        ack->value_offset = 0;
+      }
+      break;
+    case 8:  // the first chunk again, in place of the second
+      if (later && ack->value_offset == EIP712_MAX_LEAF) {
+        ack->value_offset = 0;
+      }
+      break;
+    case 9:  // the string differs on its second reading
+      if (later && ack->value_offset == 0) ack->value.bytes[5] ^= 1;
+      break;
+  }
+}
+
+}  // namespace
+
+// Chunks come exactly as asked: offset echoed, full size until the last, no
+// byte past the total. Anything else is refused and the session wiped.
+TEST(Eip712Stream, ChunkedValuesRefuseMisframedChunks) {
+  struct Case {
+    int mode;
+    size_t len;
+    bool text;
+    const char* error;
+  };
+  const Case cases[] = {
+      {0, 3000, false, "EIP-712 value chunk out of order"},
+      {1, 3000, false, "EIP-712 value chunk out of order"},
+      {2, 3000, false, "EIP-712 value chunk out of order"},
+      {3, 1500, false, "EIP-712 value chunk has the wrong length"},
+      {4, 3000, false, "EIP-712 value chunk has the wrong length"},
+      {5, 3000, false, "EIP-712 value chunk has the wrong length"},
+      {6, 3000, false, "EIP-712 value chunk has the wrong length"},
+      {7, 3000, false, "EIP-712 value chunk out of order"},
+      {8, 3000, true, "EIP-712 value chunk out of order"},
+      {9, 3000, true, "EIP-712 value changed while it was shown"},
+  };
+  g_tamper = tamperChunk;
+  for (const Case& c : cases) {
+    SCOPED_TRACE(c.mode);
+    g_tamper_mode = c.mode;
+    const LongRun r = signLong(letters(c.len), c.text);
+    EXPECT_EQ(r.kind, EIP712_REQ_FAIL);
+    EXPECT_EQ(r.error, c.error);
+    EXPECT_EQ(eip712_stream_waiting(), EIP712_IDLE);
+  }
+  g_tamper = nullptr;
+}
+
+namespace {
+
+// Chunk the answer to whatever is asked next, though it is no long value.
+void chunkEverything(EthereumTypedDataValueAck* ack) {
+  if (ack->has_value_total_length || ack->has_value_offset) return;
+  ack->has_value_total_length = true;
+  ack->value_total_length = 3000;
+}
+
+}  // namespace
+
+// Only a message's dynamic `bytes` or `string` may be chunked: not a fixed
+// width, not an array length, not a domain member, and never past the cap.
+TEST(Eip712Stream, OnlyDynamicMessageValuesAreChunked) {
+  std::map<std::string, Struct> types;
+  Field u256 = mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32);
+  addMember(types["EIP712Domain"], "chainId", u256);
+  Field list = u256;
+  list.array_levels_count = 1;
+  addMember(types["Msg"], "n", u256);
+  addMember(types["Msg"], "list", list);
+  g_tamper = chunkEverything;
+  walk("Msg", types,
+       [](const std::vector<uint32_t>& path) -> Bytes {
+         return path.size() == 2 && path[1] == 1 ? Bytes{0, 1} : word(1);
+       },
+       10);
+  EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
+  // The domain's chainId is the first answer, refused as a fixed width.
+  EXPECT_STREQ(eip712_stream_next()->error, "EIP-712 value cannot be chunked");
+  g_tamper = nullptr;
+
+  // An array length, chunked.
+  types["EIP712Domain"] = Struct{};
+  addMember(types["EIP712Domain"], "chainId", u256);
+  types["Msg"] = Struct{};
+  addMember(types["Msg"], "list", list);
+  g_tamper = [](EthereumTypedDataValueAck* ack) {
+    if (ack->value.size == 2) chunkEverything(ack);
+  };
+  walk("Msg", types,
+       [](const std::vector<uint32_t>& path) -> Bytes {
+         return path[0] == 1 && path.size() == 2 ? Bytes{0, 1} : word(1);
+       },
+       10);
+  EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
+  EXPECT_STREQ(eip712_stream_next()->error,
+               "EIP-712 array length must be two bytes");
+  g_tamper = nullptr;
+  eip712_stream_abort();
+
+  // A domain string over 1 KB.
+  const LongRun r = signLong(letters(2000), true, 0, true);
+  EXPECT_EQ(r.kind, EIP712_REQ_FAIL);
+  EXPECT_EQ(r.error, "EIP-712 domain value too long");
+  EXPECT_TRUE(r.bodies.empty());
+}
+
+namespace {
+
+bool g_abort_mid_value;
+
+void abortAtSecondChunk(EthereumTypedDataValueAck* ack) {
+  // The FSM wipes the walk on a host Cancel, Initialize or a PIN clear.
+  if (g_abort_mid_value && ack->has_value_offset) {
+    eip712_stream_abort();
+    g_abort_mid_value = false;
+  }
+}
+
+}  // namespace
+
+// A walk ended mid-value (host abort, or the user declining a part) leaves
+// nothing behind: the next chunk is refused and the next document signs with
+// its own digest.
+TEST(Eip712Stream, ChunkedValueAbortWipesTheSession) {
+  const Bytes v = letters(3000);
+  g_tamper = abortAtSecondChunk;
+  g_abort_mid_value = true;
+  LongRun r = signLong(v, false);
+  g_tamper = nullptr;
+  EXPECT_EQ(r.kind, EIP712_REQ_FAIL);
+  EXPECT_EQ(r.error, "Unexpected EIP-712 value");
+  EXPECT_EQ(eip712_stream_waiting(), EIP712_IDLE);
+
+  // Declined on the second part: cancelled, nothing pending.
+  g_long = v;
+  kkconfirm_capture_start();
+  walk("Msg", longTypes(false), longMessageValue, 2);
+  kkconfirm_capture_finish();
+  EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_CANCELLED);
+  EXPECT_EQ(eip712_stream_waiting(), EIP712_IDLE);
+
+  r = signLong(v, false);
+  ASSERT_EQ(r.kind, EIP712_REQ_DONE) << r.error;
+  EXPECT_EQ(r.message_hash, expectedLongHash(v, false));
+}
+
+// An approve() at the head of a chunked `data` is read from the first chunk:
+// its UNLIMITED warning comes before any screen of the bytes, and a dirty
+// spender word is refused before any.
+TEST(Eip712Stream, ChunkedEmbeddedApproveWarnsBeforeTheBytes) {
+  Bytes call = approveCall(0, 0xff);
+  call.resize(3000, 0x5a);
+  for (bool data_first : {false, true}) {
+    SCOPED_TRACE(data_first);
+    std::vector<std::string> titles, bodies;
+    EXPECT_EQ(walkSafeTx(call, data_first, 200, &titles, &bodies),
+              EIP712_REQ_DONE);
+    size_t warning = titles.size(), first_data = titles.size();
+    for (size_t i = 0; i < titles.size(); i++) {
+      if (titles[i] == "UNLIMITED approval" && warning == titles.size())
+        warning = i;
+      if (bodies[i].compare(0, 6, "data (") == 0 && first_data == titles.size())
+        first_data = i;
+    }
+    EXPECT_EQ(std::count(titles.begin(), titles.end(), "UNLIMITED approval"),
+              1);
+    ASSERT_LT(first_data, titles.size());
+    EXPECT_LT(warning, first_data);
+    EXPECT_EQ(bodies[first_data].compare(0, 8, "data (1/"), 0);
+    // The rest of the bytes were read and shown too.
+    EXPECT_EQ(g_first_chunks, 1);
+    EXPECT_EQ(g_later_chunks, 2);
+  }
+
+  Bytes dirty = approveCall(0x01, 0xff);
+  dirty.resize(3000, 0x5a);
+  std::vector<std::string> titles, bodies;
+  EXPECT_EQ(walkSafeTx(dirty, false, 200, &titles, &bodies), EIP712_REQ_FAIL);
+  for (const std::string& body : bodies)
+    EXPECT_NE(body.compare(0, 4, "data"), 0) << body;
 }

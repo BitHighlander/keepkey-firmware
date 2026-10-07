@@ -54,10 +54,16 @@
  * takes one slot per element. */
 #define EIP712_MAX_SLOTS 24
 
-/* Widest single leaf the device will absorb. Each EthereumTypedDataValueAck
- * carries one complete value, so this bounds a whole dynamic `bytes` or
- * `string` value (it is hashed, not kept). */
+/* Widest value one EthereumTypedDataValueAck carries, and the chunk size of a
+ * longer one. */
 #define EIP712_MAX_LEAF 1024
+
+/* Longest dynamic `bytes` or `string` value, sent in EIP712_MAX_LEAF chunks
+ * that are hashed and shown as they arrive, never held whole. Real documents
+ * run past 64 KB: Safe MultiSend data to 174,084 B (ENS endowment Safe) and
+ * Snapshot bodies to 50,000 characters, up to 150,000 B of UTF-8. 1 MiB is
+ * more than a mainnet block's worth of non-zero calldata. */
+#define EIP712_MAX_VALUE (1024u * 1024u)
 
 /* Distinct struct types one primary type may reference, including itself.
  * Permit2's PermitSingle needs 2, Seaport's OrderComponents 3, Across 4, a
@@ -165,6 +171,9 @@ typedef struct {
   char struct_name[EIP712_MAX_STRUCT_NAME];
   uint32_t member_path[EIP712_MAX_DEPTH + 2];
   uint8_t member_path_len;
+  /* A chunked value: the offset of the bytes wanted next. */
+  bool has_value_offset;
+  uint32_t value_offset;
   const char* error;
   uint8_t domain_separator[32];
   uint8_t message_hash[32];

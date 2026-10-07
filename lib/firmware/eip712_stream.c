@@ -210,43 +210,49 @@ bool eip712_encode_leaf(const Eip712FieldType* field, const uint8_t* value,
 /* Leaf validation: runs before display AND encoding. Control bytes such as
  * a newline in a Snapshot vote's reason are valid: the review escapes every
  * byte outside 0x21-0x7e as \xNN and a backslash as \\, so no two strings
- * draw the same screen. */
-static bool is_valid_utf8(const uint8_t* s, uint16_t len) {
-  uint16_t i = 0;
-  while (i < len) {
-    uint8_t c = s[i];
-    uint8_t extra;
-    uint32_t cp;
-    if (c < 0x80) {
-      i++;
+ * draw the same screen. Incremental, so a string sent in chunks is checked
+ * by the same rules across chunk boundaries. */
+typedef struct {
+  uint32_t cp;   /* the code point decoded so far */
+  uint8_t need;  /* continuation bytes still owed */
+  uint8_t extra; /* continuation bytes of the sequence being decoded */
+} Eip712Utf8;
+
+static bool utf8_feed(Eip712Utf8* st, const uint8_t* s, size_t len) {
+  static const uint32_t min_cp[4] = {0, 0x80, 0x800, 0x10000};
+  for (size_t i = 0; i < len; i++) {
+    const uint8_t c = s[i];
+    if (st->need == 0) {
+      if (c < 0x80) continue;
+      if ((c & 0xE0) == 0xC0) {
+        st->extra = 1;
+        st->cp = c & 0x1F;
+      } else if ((c & 0xF0) == 0xE0) {
+        st->extra = 2;
+        st->cp = c & 0x0F;
+      } else if ((c & 0xF8) == 0xF0) {
+        st->extra = 3;
+        st->cp = c & 0x07;
+      } else {
+        return false;
+      }
+      st->need = st->extra;
       continue;
-    } else if ((c & 0xE0) == 0xC0) {
-      extra = 1;
-      cp = c & 0x1F;
-    } else if ((c & 0xF0) == 0xE0) {
-      extra = 2;
-      cp = c & 0x0F;
-    } else if ((c & 0xF8) == 0xF0) {
-      extra = 3;
-      cp = c & 0x07;
-    } else {
-      return false;
     }
-    if (i + extra >= len) return false;
-    for (uint8_t k = 1; k <= extra; k++) {
-      uint8_t cc = s[i + k];
-      if ((cc & 0xC0) != 0x80) return false;
-      cp = (cp << 6) | (cc & 0x3F);
-    }
+    if ((c & 0xC0) != 0x80) return false;
+    st->cp = (st->cp << 6) | (c & 0x3F);
+    if (--st->need) continue;
     /* Overlongs and surrogates also break injectivity. */
-    if (extra == 1 && cp < 0x80) return false;
-    if (extra == 2 && cp < 0x800) return false;
-    if (extra == 3 && cp < 0x10000) return false;
-    if (cp > 0x10FFFF) return false;
-    if (cp >= 0xD800 && cp <= 0xDFFF) return false;
-    i += extra + 1;
+    if (st->cp < min_cp[st->extra] || st->cp > 0x10FFFF ||
+        (st->cp >= 0xD800 && st->cp <= 0xDFFF))
+      return false;
   }
   return true;
+}
+
+static bool is_valid_utf8(const uint8_t* s, uint16_t len) {
+  Eip712Utf8 st = {0};
+  return utf8_feed(&st, s, len) && st.need == 0;
 }
 
 bool eip712_validate_leaf(const Eip712FieldType* field, const uint8_t* value,
@@ -553,6 +559,19 @@ static struct {
   bool want_array_len;
   uint32_t pending_declared_dim;
 
+  /* A `bytes` or `string` value longer than EIP712_MAX_LEAF, arriving in
+   * chunks hashed into e712.hash, idle while a value is read. A string is
+   * read twice: counted and checked whole, then shown. */
+  struct {
+    uint32_t total;  /* 0 = none in flight */
+    uint32_t offset; /* the next byte wanted */
+    uint32_t parts;  /* screens of the whole value */
+    uint32_t shown;  /* screens shown so far */
+    bool showing;    /* false during a string's counting pass */
+    Eip712Utf8 utf8;
+    uint8_t counted[32]; /* the counting pass's keccak */
+  } chunk;
+
   uint8_t phase;
   /* Every struct named this session (the domain's and the message's), with
    * the schema first supplied for it: a repeated StructAck must match. */
@@ -633,16 +652,17 @@ typedef enum {
   EIP712_RENDER_ESCAPED, /* raw string bytes through erc7730_format_text() */
 } Eip712Render;
 
-/* Render as much of value[offset..len) as fits `budget` characters. */
+/* Render as much of value[offset..len) as fits `budget` characters. `first`:
+ * value[0] is the value's first byte, which hex leads with "0x". */
 static bool render_part(Eip712Render how, const uint8_t* value, size_t len,
-                        size_t offset, char* out, size_t budget,
+                        size_t offset, bool first, char* out, size_t budget,
                         size_t* consumed) {
   const size_t left = len - offset;
   *consumed = 0;
   out[0] = '\0';
   if (how == EIP712_RENDER_HEX) {
     static const char digits[] = "0123456789abcdef";
-    const size_t lead = offset == 0 ? 2 : 0;
+    const size_t lead = first && offset == 0 ? 2 : 0;
     if (budget < lead + 2) return false;
     size_t n = (budget - lead) / 2;
     if (n > left) n = left;
@@ -693,7 +713,7 @@ static Eip712LeafResult confirm_parts(const char* title, const char* path,
   /* " (999/999)" is the widest part counter. */
   if (fixed + 10 + 8 > EIP712_BODY_MAX) return EIP712_LEAF_INVALID;
 
-  if (!render_part(how, value, len, 0, part, EIP712_BODY_MAX - fixed,
+  if (!render_part(how, value, len, 0, true, part, EIP712_BODY_MAX - fixed,
                    &consumed))
     return EIP712_LEAF_INVALID;
   if (consumed == len)
@@ -705,13 +725,13 @@ static Eip712LeafResult confirm_parts(const char* title, const char* path,
   const size_t budget = EIP712_BODY_MAX - fixed - 10;
   size_t parts = 0;
   for (size_t offset = 0; offset < len; offset += consumed) {
-    if (!render_part(how, value, len, offset, part, budget, &consumed) ||
+    if (!render_part(how, value, len, offset, true, part, budget, &consumed) ||
         consumed == 0 || ++parts > 999)
       return EIP712_LEAF_INVALID;
   }
   size_t offset = 0;
   for (size_t i = 1; i <= parts; i++, offset += consumed) {
-    if (!render_part(how, value, len, offset, part, budget, &consumed))
+    if (!render_part(how, value, len, offset, true, part, budget, &consumed))
       return EIP712_LEAF_INVALID;
     if (!confirm(ButtonRequestType_ButtonRequest_Other, title,
                  "%s (%u/%u)\n%s: %s", path, (unsigned)i, (unsigned)parts,
@@ -1528,6 +1548,234 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
   }
 }
 
+/* The pending leaf's type, as the walk recorded it. */
+static void pending_field(Eip712FieldType* field) {
+  memzero(field, sizeof(*field));
+  field->data_type = (Eip712DataType)e712.pending_data_type;
+  field->has_size = e712.pending_has_size;
+  field->size = e712.pending_size;
+}
+
+/* The leaf's encodeData word: into its slot, or the streamed array. */
+static void finish_leaf(const uint8_t word[32]) {
+  Eip712Frame* f = &e712.stack[e712.depth - 1];
+  if (array_streams(f)) {
+    array_sponge_absorb(word);
+  } else {
+    memcpy(e712.pool[f->slot_base + f->member_index], word, 32);
+  }
+  f->member_index++;
+  advance_after_slot();
+}
+
+/* ── Chunked values ──────────────────────────────────────────────────
+ * A dynamic `bytes` or `string` leaf over EIP712_MAX_LEAF arrives in chunks
+ * of that size. Each is hashed as it arrives (the leaf is keccak(value), so
+ * streaming is exact) and shown in numbered parts counted over the WHOLE
+ * value. Hex parts follow from the length alone. A string's do not (one byte
+ * draws as one to four characters), so a string is read twice: the first
+ * pass checks its UTF-8 and counts its parts before anything is shown, the
+ * second shows them, and the two passes must hash alike. */
+
+/* " (99999/99999)": the widest counter of a chunked value. */
+#define EIP712_CHUNK_COUNTER 14
+#define EIP712_MAX_PARTS 99999u
+
+/* The pending leaf's labels, and the characters left for each part. */
+static bool chunk_labels(const Eip712FieldType* field, char* type_name,
+                         char* path, size_t* budget) {
+  if (!eip712_type_name(field, type_name, EIP712_MAX_TYPE_NAME) ||
+      !leaf_path(path, EIP712_MAX_PATH))
+    return false;
+  const size_t fixed =
+      strlen(path) + 1 + strlen(type_name) + 2 + EIP712_CHUNK_COUNTER;
+  if (fixed + 8 > EIP712_BODY_MAX) return false;
+  *budget = EIP712_BODY_MAX - fixed;
+  return true;
+}
+
+/* How many parts render_part() splits `len` bytes of hex into. */
+static uint32_t hex_parts(uint32_t len, bool first, size_t budget) {
+  uint32_t parts = 0;
+  if (first) {
+    const size_t lead = (budget - 2) / 2;
+    parts = 1;
+    len = len > lead ? len - (uint32_t)lead : 0;
+  }
+  const size_t per = budget / 2;
+  return parts + (uint32_t)((len + per - 1) / per);
+}
+
+/* One chunk's parts: counted (string pass one) or shown. */
+static Eip712LeafResult chunk_parts(const char* path, const char* type_name,
+                                    Eip712Render how, const uint8_t* value,
+                                    size_t len, bool first, size_t budget) {
+  char part[BODY_CHAR_MAX];
+  size_t consumed = 0;
+  for (size_t offset = 0; offset < len; offset += consumed) {
+    if (!render_part(how, value, len, offset, first, part, budget, &consumed) ||
+        consumed == 0)
+      return EIP712_LEAF_INVALID;
+    if (!e712.chunk.showing) {
+      if (++e712.chunk.parts > EIP712_MAX_PARTS) return EIP712_LEAF_INVALID;
+      continue;
+    }
+    if (e712.chunk.shown >= e712.chunk.parts) return EIP712_LEAF_INVALID;
+    e712.chunk.shown++;
+    if (!confirm(ButtonRequestType_ButtonRequest_Other, leaf_title(),
+                 "%s (%u/%u)\n%s: %s", path, (unsigned)e712.chunk.shown,
+                 (unsigned)e712.chunk.parts, type_name, part))
+      return EIP712_LEAF_CANCELLED;
+  }
+  return EIP712_LEAF_OK;
+}
+
+static void request_chunk(void) {
+  request_value();
+  next_step.has_value_offset = true;
+  next_step.value_offset = e712.chunk.offset;
+}
+
+/* Count or show one chunk, absorb it, and ask for the next. */
+static bool chunk_absorb(const Eip712FieldType* field, const uint8_t* bytes,
+                         uint16_t len) {
+  const bool text =
+      field->data_type == EthereumTypedDataStructAck_EthereumDataType_STRING;
+  char type_name[EIP712_MAX_TYPE_NAME];
+  char path[EIP712_MAX_PATH];
+  size_t budget;
+  if (!chunk_labels(field, type_name, path, &budget)) {
+    fail("EIP-712 value cannot be displayed");
+    return false;
+  }
+  if (!e712.chunk.showing && !utf8_feed(&e712.chunk.utf8, bytes, len)) {
+    fail("EIP-712 value does not match its declared type");
+    return false;
+  }
+  const Eip712LeafResult parts = chunk_parts(
+      path, type_name, text ? EIP712_RENDER_ESCAPED : EIP712_RENDER_HEX, bytes,
+      len, e712.chunk.offset == 0, budget);
+  if (!e712.chunk.showing && parts != EIP712_LEAF_OK) {
+    fail("EIP-712 value cannot be displayed");
+    return false;
+  }
+  if (e712.chunk.showing && !review_approved(parts)) return false;
+
+  keccak_Update(&e712.hash, bytes, len);
+  e712.chunk.offset += len;
+  if (e712.chunk.offset < e712.chunk.total) {
+    request_chunk();
+    return true;
+  }
+
+  uint8_t word[32];
+  keccak_Final(&e712.hash, word);
+  if (!e712.chunk.showing) {
+    if (e712.chunk.utf8.need != 0) {
+      fail("EIP-712 value does not match its declared type");
+      return false;
+    }
+    /* Counted and checked whole: now show it, from the start. */
+    memcpy(e712.chunk.counted, word, 32);
+    e712.chunk.showing = true;
+    e712.chunk.offset = 0;
+    keccak_256_Init(&e712.hash);
+    request_chunk();
+    return true;
+  }
+  if (text && memcmp(word, e712.chunk.counted, 32) != 0) {
+    fail("EIP-712 value changed while it was shown");
+    return false;
+  }
+  if (e712.chunk.shown != e712.chunk.parts) {
+    fail("EIP-712 value cannot be displayed");
+    return false;
+  }
+  memzero(&e712.chunk, sizeof(e712.chunk));
+  finish_leaf(word);
+  return true;
+}
+
+/* The first chunk: value_total_length names the whole value's length. */
+static bool chunk_begin(const Eip712FieldType* field,
+                        const EthereumTypedDataValueAck* ack) {
+  const bool text =
+      field->data_type == EthereumTypedDataStructAck_EthereumDataType_STRING;
+  if (!text &&
+      !(field->data_type == EthereumTypedDataStructAck_EthereumDataType_BYTES &&
+        !field->has_size)) {
+    fail("EIP-712 value cannot be chunked");
+    return false;
+  }
+  /* The domain's facts are read from whole values; none is ever this long. */
+  if (e712.root == 0) {
+    fail("EIP-712 domain value too long");
+    return false;
+  }
+  if (ack->value_total_length <= EIP712_MAX_LEAF) {
+    fail("EIP-712 value chunk has the wrong length");
+    return false;
+  }
+  if (ack->value_total_length > EIP712_MAX_VALUE) {
+    fail("EIP-712 value too long for this device");
+    return false;
+  }
+  if (ack->value.size != EIP712_MAX_LEAF) {
+    fail("EIP-712 value chunk has the wrong length");
+    return false;
+  }
+  memzero(&e712.chunk, sizeof(e712.chunk));
+  e712.chunk.total = ack->value_total_length;
+  e712.chunk.showing = !text;
+  if (!text) {
+    char type_name[EIP712_MAX_TYPE_NAME];
+    char path[EIP712_MAX_PATH];
+    size_t budget;
+    if (!chunk_labels(field, type_name, path, &budget)) {
+      fail("EIP-712 value cannot be displayed");
+      return false;
+    }
+    for (uint32_t at = 0; at < e712.chunk.total; at += EIP712_MAX_LEAF) {
+      const uint32_t left = e712.chunk.total - at;
+      e712.chunk.parts += hex_parts(
+          left < EIP712_MAX_LEAF ? left : EIP712_MAX_LEAF, at == 0, budget);
+    }
+    if (e712.chunk.parts > EIP712_MAX_PARTS) {
+      fail("EIP-712 value cannot be displayed");
+      return false;
+    }
+    /* An embedded approve needs only its first 68 bytes: refused or warned
+     * about before any screen of the bytes. */
+    if (embedded_approve(field, ack->value.bytes, ack->value.size)) {
+      if (embedded_approve_is_dirty(ack->value.bytes)) {
+        fail("Malformed ERC20 approval");
+        return false;
+      }
+      if (!review_approved(confirm_embedded_unlimited(ack->value.bytes)))
+        return false;
+    }
+  }
+  keccak_256_Init(&e712.hash);
+  return chunk_absorb(field, ack->value.bytes, ack->value.size);
+}
+
+/* A later chunk: exactly the bytes at the offset asked for. */
+static bool chunk_next(const EthereumTypedDataValueAck* ack) {
+  if (!ack->has_value_offset || ack->value_offset != e712.chunk.offset ||
+      ack->has_value_total_length) {
+    fail("EIP-712 value chunk out of order");
+    return false;
+  }
+  const uint32_t left = e712.chunk.total - e712.chunk.offset;
+  if (ack->value.size != (left < EIP712_MAX_LEAF ? left : EIP712_MAX_LEAF)) {
+    fail("EIP-712 value chunk has the wrong length");
+    return false;
+  }
+  Eip712FieldType field;
+  pending_field(&field);
+  return chunk_absorb(&field, ack->value.bytes, ack->value.size);
+}
+
 bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
   if (!e712.active || e712.waiting != EIP712_WANT_VALUE) {
     fail("Unexpected EIP-712 value");
@@ -1535,9 +1783,16 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
   }
   e712.waiting = EIP712_IDLE;
 
+  if (e712.chunk.total != 0) return chunk_next(ack);
+  /* Only a request that names an offset may be answered with one. */
+  if (ack->has_value_offset) {
+    fail("EIP-712 value chunk out of order");
+    return false;
+  }
+
   if (e712.want_array_len) {
     /* Big-endian uint16. Anything else is a host not speaking this protocol. */
-    if (ack->value.size != 2) {
+    if (ack->value.size != 2 || ack->has_value_total_length) {
       fail("EIP-712 array length must be two bytes");
       return false;
     }
@@ -1576,13 +1831,11 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
   }
 
   Eip712FieldType rebuilt;
-  memzero(&rebuilt, sizeof(rebuilt));
-  rebuilt.data_type = (Eip712DataType)e712.pending_data_type;
-  rebuilt.has_size = e712.pending_has_size;
-  rebuilt.size = e712.pending_size;
+  pending_field(&rebuilt);
   const Eip712FieldType* field = &rebuilt;
   const uint8_t* bytes = ack->value.bytes;
   uint16_t len = ack->value.size;
+  if (ack->has_value_total_length) return chunk_begin(field, ack);
 
   /* Validate before drawing and before absorbing. */
   if (!eip712_validate_leaf(field, bytes, len)) {
@@ -1603,23 +1856,18 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
   /* Display and absorb from the SAME buffer: no second read can differ. */
   if (!review_approved(eip712_confirm_leaf(field, bytes, len))) return false;
 
-  Eip712Frame* f = &e712.stack[e712.depth - 1];
+  const Eip712Frame* f = &e712.stack[e712.depth - 1];
   uint8_t word[32];
-  if (!eip712_encode_leaf(field, bytes, len,
-                          array_streams(f)
-                              ? word
-                              : e712.pool[f->slot_base + f->member_index])) {
+  if (!eip712_encode_leaf(field, bytes, len, word)) {
     fail("EIP-712 value could not be encoded");
     return false;
   }
-  if (array_streams(f)) array_sponge_absorb(word);
   if (e712.root == 1 && !f->is_array &&
       field->data_type == EthereumTypedDataStructAck_EthereumDataType_ADDRESS &&
       strcmp(e712.pending_name, "to") == 0 &&
       strcmp(e712.types.names[f->u.s.type], "SafeTx") == 0)
     e712.safe_to_slot = (uint8_t)(f->slot_base + f->member_index + 1);
-  f->member_index++;
-  advance_after_slot();
+  finish_leaf(word);
   return true;
 }
 
