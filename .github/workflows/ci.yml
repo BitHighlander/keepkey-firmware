@@ -882,12 +882,9 @@ jobs:
   # macOS / .so on Linux when supported) and runs the dylib-specific
   # screenshot regression tests in python-keepkey.
   #
-  # macOS-only for now. The Linux build hits a duplicate-symbol link
-  # error: __stack_chk_guard is defined by both lib/board/keepkey_board.c
-  # and lib/emulator/setup.c. The Apple linker silently picks one
-  # (matching local macos arm64 builds); GNU ld is strict and fails.
-  # Fixing requires deduping the symbol — out of scope for this PR.
-  # TODO: enable ubuntu-latest in a follow-up after the symbol cleanup.
+  # macOS-only for now. The duplicate __stack_chk_guard that broke the
+  # GNU ld link is gone (only lib/board/keepkey_board.c defines it), but
+  # a Linux run of this job has not been added yet.
   #
   # Why a separate job from python-integration-tests:
   #   - Different artifact: .dylib (in-process FFI), not the kkemu

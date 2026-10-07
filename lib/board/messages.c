@@ -34,7 +34,8 @@ static const MessagesMap_t* MessagesMap = NULL;
 static size_t map_size = 0;
 static msg_failure_t msg_failure;
 /* A tiny receive failure has already answered the suspended handler. Keep
- * its unwind from producing another reply or waiting for another prompt. */
+ * its unwind from producing another reply or waiting for another prompt.
+ * Cleared at the start of each tiny poll and around each normal frame. */
 static bool tiny_handler_rejected;
 static uint8_t decode_buffer[MAX_DECODE_SIZE] __attribute__((aligned(8)));
 
