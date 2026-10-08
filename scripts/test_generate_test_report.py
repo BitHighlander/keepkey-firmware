@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 import unittest
 import unittest.mock
@@ -412,6 +413,27 @@ class CapabilitySkips(unittest.TestCase):
                  {"hive-release-review", "evm-max-amount-review",
                   "ripple-memo-policy", "osmosis-wire-guards"})
         self.assertLessEqual(named, report.KNOWN_CAPABILITIES)
+
+    def test_every_protocol_census_capability_is_known(self):
+        protocol = (report.ROOT / "deps/device-protocol/messages.proto").read_text()
+        values = re.findall(r"\bCAPABILITY_([A-Z0-9_]+)\s*=\s*(\d+)\s*;", protocol)
+        self.assertTrue(values, "the pinned protocol must define capabilities")
+        named = {name.lower().replace("_", "-") for name, value in values
+                 if int(value) != 0}
+        self.assertLessEqual(named, report.KNOWN_CAPABILITIES)
+
+
+class NativeContractNames(unittest.TestCase):
+    def test_coin_progress_controls_name_existing_native_tests(self):
+        source = (report.ROOT / "unittests/firmware/block13_progress.cpp").read_text()
+        declared = set(re.findall(
+            r"TEST_P\(\s*Block13CoinProgress,\s*(\w+)\s*\)", source))
+        prefix = "Chains/Block13CoinProgress."
+        required = {name[len(prefix):].split("/", 1)[0]
+                    for name in report._BLOCK13_NATIVE_FULL_ONLY
+                    if name.startswith(prefix)}
+        self.assertTrue(required)
+        self.assertLessEqual(required, declared)
 
 
 class RequiredCaseMatching(unittest.TestCase):

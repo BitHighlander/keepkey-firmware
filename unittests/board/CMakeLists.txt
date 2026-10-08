@@ -1,4 +1,5 @@
 set(sources
+    font.cpp
     hw_entropy.cpp
     hw_entropy_probe.c
     memcmp_s.cpp
