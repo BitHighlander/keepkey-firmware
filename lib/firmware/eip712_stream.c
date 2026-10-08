@@ -508,6 +508,18 @@ typedef struct {
   } u;
 } Eip712Frame;
 
+/* A `bytes` leaf calling multiSend(bytes), read a byte at a time so it spans
+ * chunks: only the inner call in progress is kept. */
+typedef struct {
+  uint32_t left; /* packed bytes not yet read; the length word while read */
+  uint32_t need; /* inner data bytes left; dataLength while read */
+  uint8_t phase; /* MS_* */
+  uint8_t at;    /* position in the word or header, or in data (stops at 68) */
+  uint8_t seen;  /* MS_SEEN_* */
+  uint8_t to[20];
+  uint8_t spender[20];
+} Eip712MultiSend;
+
 static struct {
   bool active;
   Eip712Wait waiting;
@@ -545,6 +557,8 @@ static struct {
    * approve() in SafeTx.data calls. Every pop clears it, so it never
    * outlives the frame that read it. */
   uint8_t safe_to_slot;
+
+  Eip712MultiSend multisend;
 
   SHA3_CTX hash;
 
@@ -839,15 +853,19 @@ static bool embedded_approve_is_dirty(const uint8_t* value) {
   return false;
 }
 
+/* The domain's chainId names addresses and tokens; 0 when it has none. */
+static uint32_t domain_chain_id(void) {
+  const uint64_t chain = e712.domain_facts.chain_id;
+  return e712.domain_facts.has_chain_id && chain <= UINT32_MAX ? (uint32_t)chain
+                                                               : 0;
+}
+
 /* An unlimited embedded approve signs only after the UNLIMITED warning,
  * which names the full spender, and the token from SafeTx.to once seen. */
 static Eip712LeafResult confirm_embedded_unlimited(const uint8_t* value) {
   for (size_t i = 36; i < 68; i++)
     if (value[i] != 0xff) return EIP712_LEAF_OK;
-  const uint64_t chain = e712.domain_facts.chain_id;
-  const uint32_t cid = e712.domain_facts.has_chain_id && chain <= UINT32_MAX
-                           ? (uint32_t)chain
-                           : 0;
+  const uint32_t cid = domain_chain_id();
   const Eip712Frame* f = &e712.stack[e712.depth - 1];
   const bool safe_tx =
       !f->is_array && strcmp(e712.types.names[f->u.s.type], "SafeTx") == 0;
@@ -865,6 +883,125 @@ static Eip712LeafResult confirm_embedded_unlimited(const uint8_t* value) {
                  safe_tx ? "the contract in 'to'" : "the contract called")
              ? EIP712_LEAF_OK
              : EIP712_LEAF_CANCELLED;
+}
+
+/* ── Approves inside a MultiSend ──────────────────────────────────────
+ * Safe's MultiSend and MultiSendCallOnly take multiSend(bytes transactions),
+ * each call packed as operation(1) | to(20) | value(32) | dataLength(32) |
+ * data. An approve(spender, 2^256-1) or increaseAllowance(spender, 2^256-1)
+ * among them gets the top-level policy: a dirty spender word is refused, and
+ * the UNLIMITED warning, naming the spender and the inner `to` as the token,
+ * comes as soon as its 68 bytes are read. Matched by selector, not address:
+ * the device cannot tell which contract SafeTx.to is, and another contract
+ * with this selector costs at most an extra warning.
+ *
+ * MultiSend reads the packed bytes with no bounds checks: past `length` it
+ * reads zeroed memory. A call cut short is scanned as far as its bytes go
+ * (its zero tail can only make an amount finite), and scanning stops at
+ * `length`; the bytes themselves are always shown in full. */
+enum { MS_OFF, MS_SELECTOR, MS_OFFSET, MS_LENGTH, MS_HEADER, MS_DATA };
+#define MS_HEADER_LEN 85
+#define MS_SEEN_APPROVE 1  /* data so far starts 0x095ea7b3 */
+#define MS_SEEN_INCREASE 2 /* data so far starts 0x39509351 */
+#define MS_SEEN_DIRTY 4    /* the spender word has high bytes set */
+#define MS_SEEN_FINITE 8   /* the amount word is not all ones */
+#define MS_SEEN_HUGE 16    /* dataLength exceeds 32 bits */
+
+typedef enum {
+  MS_SCAN_OK,
+  MS_SCAN_CANCELLED,
+  MS_SCAN_NONCANONICAL, /* the ABI offset word is not 0x20 */
+  MS_SCAN_DIRTY,        /* an inner approve's spender word is dirty */
+} MultisendScan;
+
+/* Every leaf starts here, whole or chunked, before any of its bytes is fed. */
+static void multisend_begin(const Eip712FieldType* field, const uint8_t* value,
+                            size_t len) {
+  memzero(&e712.multisend, sizeof(e712.multisend));
+  if (field->data_type == EthereumTypedDataStructAck_EthereumDataType_BYTES &&
+      !field->has_size && len >= 4 && memcmp(value, "\x8d\x80\xff\x0a", 4) == 0)
+    e712.multisend.phase = MS_SELECTOR;
+}
+
+static void multisend_phase(uint8_t phase) {
+  e712.multisend.phase = phase;
+  e712.multisend.at = 0;
+}
+
+static MultisendScan multisend_byte(uint8_t b) {
+  static const uint8_t approve[4] = {0x09, 0x5e, 0xa7, 0xb3};
+  static const uint8_t increase[4] = {0x39, 0x50, 0x93, 0x51};
+  Eip712MultiSend* ms = &e712.multisend;
+  const uint8_t at = ms->at++;
+  switch (ms->phase) {
+    case MS_SELECTOR:
+      if (at == 3) multisend_phase(MS_OFFSET);
+      return MS_SCAN_OK;
+    case MS_OFFSET:
+      if (b != (at == 31 ? 0x20 : 0)) return MS_SCAN_NONCANONICAL;
+      if (at == 31) multisend_phase(MS_LENGTH);
+      return MS_SCAN_OK;
+    case MS_LENGTH:
+      if (at < 28 && b != 0) {
+        ms->phase = MS_OFF; /* longer than any calldata: it reverts */
+        return MS_SCAN_OK;
+      }
+      ms->left = (ms->left << 8) | b;
+      if (at == 31) multisend_phase(ms->left ? MS_HEADER : MS_OFF);
+      return MS_SCAN_OK;
+    case MS_HEADER:
+      if (at >= 1 && at <= 20) {
+        ms->to[at - 1] = b;
+      } else if (at >= 53 && at < 81) {
+        if (b != 0) ms->seen |= MS_SEEN_HUGE;
+      } else if (at >= 81) {
+        ms->need = (ms->need << 8) | b;
+      }
+      if (at == MS_HEADER_LEN - 1) {
+        if (ms->seen & MS_SEEN_HUGE) ms->need = UINT32_MAX;
+        ms->seen = ms->need ? MS_SEEN_APPROVE | MS_SEEN_INCREASE : 0;
+        multisend_phase(ms->need ? MS_DATA : MS_HEADER);
+      }
+      break;
+    default: { /* MS_DATA */
+      MultisendScan result = MS_SCAN_OK;
+      if (at < 4) {
+        if (b != approve[at]) ms->seen &= ~MS_SEEN_APPROVE;
+        if (b != increase[at]) ms->seen &= ~MS_SEEN_INCREASE;
+      } else if (at < 16) {
+        if (b != 0) ms->seen |= MS_SEEN_DIRTY;
+      } else if (at < 36) {
+        ms->spender[at - 16] = b;
+      } else if (at < 68) {
+        if (b != 0xff) ms->seen |= MS_SEEN_FINITE;
+      } else {
+        ms->at = 68;
+      }
+      if (at == 67 && (ms->seen & (MS_SEEN_APPROVE | MS_SEEN_INCREASE))) {
+        if (ms->seen & MS_SEEN_DIRTY) return MS_SCAN_DIRTY;
+        if (!(ms->seen & MS_SEEN_FINITE) &&
+            !ethereum_confirmUnlimitedApproval(domain_chain_id(), ms->spender,
+                                               ms->to))
+          result = MS_SCAN_CANCELLED;
+      }
+      if (--ms->need == 0) {
+        ms->seen = 0;
+        multisend_phase(MS_HEADER);
+      }
+      if (--ms->left == 0) ms->phase = MS_OFF;
+      return result;
+    }
+  }
+  if (--ms->left == 0) ms->phase = MS_OFF;
+  return MS_SCAN_OK;
+}
+
+static MultisendScan multisend_feed(const uint8_t* bytes, size_t len) {
+  for (size_t i = 0; i < len && e712.multisend.phase != MS_OFF; i++) {
+    const MultisendScan step = multisend_byte(bytes[i]);
+    if (step != MS_SCAN_OK) return step;
+  }
+  return MS_SCAN_OK;
 }
 
 static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
@@ -972,6 +1109,23 @@ static bool review_approved(Eip712LeafResult shown) {
   }
   if (e712.root == 1) e712.message_value_confirmed = true;
   return true;
+}
+
+/* Scan the next bytes of a multiSend leaf, before any screen of them. True
+ * to go on; otherwise the walk has ended. */
+static bool multisend_reviewed(const uint8_t* bytes, size_t len) {
+  switch (multisend_feed(bytes, len)) {
+    case MS_SCAN_OK:
+      return true;
+    case MS_SCAN_CANCELLED:
+      return review_approved(EIP712_LEAF_CANCELLED);
+    case MS_SCAN_DIRTY:
+      fail("Malformed ERC20 approval");
+      return false;
+    default:
+      fail("Malformed MultiSend");
+      return false;
+  }
 }
 
 static void request_struct(uint8_t type) {
@@ -1652,6 +1806,7 @@ static bool chunk_absorb(const Eip712FieldType* field, const uint8_t* bytes,
     fail("EIP-712 value does not match its declared type");
     return false;
   }
+  if (e712.chunk.showing && !multisend_reviewed(bytes, len)) return false;
   const Eip712LeafResult parts = chunk_parts(
       path, type_name, text ? EIP712_RENDER_ESCAPED : EIP712_RENDER_HEX, bytes,
       len, e712.chunk.offset == 0, budget);
@@ -1755,6 +1910,7 @@ static bool chunk_begin(const Eip712FieldType* field,
         return false;
     }
   }
+  multisend_begin(field, ack->value.bytes, ack->value.size);
   keccak_256_Init(&e712.hash);
   return chunk_absorb(field, ack->value.bytes, ack->value.size);
 }
@@ -1852,6 +2008,9 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
     fail("EIP-712 domain binding is invalid");
     return false;
   }
+
+  multisend_begin(field, bytes, len);
+  if (!multisend_reviewed(bytes, len)) return false;
 
   /* Display and absorb from the SAME buffer: no second read can differ. */
   if (!review_approved(eip712_confirm_leaf(field, bytes, len))) return false;

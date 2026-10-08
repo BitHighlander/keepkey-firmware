@@ -1583,7 +1583,7 @@ Bytes corpusValue(const std::vector<uint32_t>& path) {
 }  // namespace
 
 TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
-  EXPECT_GE(kCorpus.size(), 57u);
+  EXPECT_GE(kCorpus.size(), 58u);
   // Max approvals sign, with the warning on the value's own screen.
   const std::map<std::string, std::string> unlimited = {
       {"permit2-PermitSingle-unlimited", "details.amount\nuint160: UNLIMITED"},
@@ -1592,6 +1592,10 @@ TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
       {"safe-SafeTx-approve-unlimited",
        "Allow 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45 to spend ALL your "
        "USDC"},
+      // A real MultiSend: approve(max) inside, then a CoW swap order.
+      {"safe-SafeTx-multisend-approve-unlimited",
+       "Allow 0xC92E8bdf79f0507f65a392b0ab4667716BFE0110 to spend ALL your "
+       "WETH"},
   };
   size_t warned_docs = 0;
   for (const CorpusDoc& doc : kCorpus) {
@@ -2423,4 +2427,290 @@ TEST(Eip712Stream, ChunkedEmbeddedApproveWarnsBeforeTheBytes) {
   EXPECT_EQ(walkSafeTx(dirty, false, 200, &titles, &bodies), EIP712_REQ_FAIL);
   for (const std::string& body : bodies)
     EXPECT_NE(body.compare(0, 4, "data"), 0) << body;
+}
+
+// ── Approves inside a MultiSend ─────────────────────────────────────
+// SafeTx.data = multiSend(bytes transactions), each call packed as
+// operation | to | value | dataLength | data. An approve(spender, 2^256-1)
+// among them gets the top-level policy: the UNLIMITED warning, naming the
+// spender and the inner `to` as the token, before the bytes that follow it.
+namespace {
+
+const char* const kDai = "6b175474e89094c44da98b954eedeac495271d0f";
+const char* const kUsdc = "a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+
+Bytes be32(uint32_t v) {
+  Bytes w(32, 0);
+  for (int i = 0; i < 4; i++) w[31 - i] = (uint8_t)(v >> (8 * i));
+  return w;
+}
+
+void append(Bytes* out, const Bytes& more) {
+  out->insert(out->end(), more.begin(), more.end());
+}
+
+// operation 0, `to`, value 0, then `data` under its own length (or `len`).
+Bytes packedCall(const char* to, const Bytes& data, int64_t len = -1) {
+  Bytes b = {0};
+  append(&b, fromHex(to));
+  append(&b, Bytes(32, 0));
+  append(&b, be32(len < 0 ? (uint32_t)data.size() : (uint32_t)len));
+  append(&b, data);
+  return b;
+}
+
+// multiSend(packed), ABI-encoded and padded; `length` overrides the length
+// word.
+Bytes multiSendCall(const Bytes& packed, int64_t length = -1) {
+  Bytes b = {0x8d, 0x80, 0xff, 0x0a};
+  append(&b, be32(0x20));
+  append(&b, be32(length < 0 ? (uint32_t)packed.size() : (uint32_t)length));
+  append(&b, packed);
+  b.resize(4 + 32 * ((b.size() - 4 + 31) / 32), 0);
+  return b;
+}
+
+// A router call of `n` bytes that is no approve.
+Bytes swapCall(size_t n) {
+  Bytes b = {0x41, 0x4b, 0xf3, 0x89};  // exactInputSingle
+  for (size_t i = 4; i < n; i++) b.push_back((uint8_t)(i * 7));
+  return b;
+}
+
+std::string allowText(const Bytes& call, const char* token) {
+  char checksummed[41];
+  ethereum_address_checksum(call.data() + 16, checksummed, false, 1);
+  return std::string("Allow 0x") + checksummed + " to spend ALL your " + token;
+}
+
+struct MsRun {
+  Eip712ReqKind kind;
+  std::string error;
+  std::vector<std::string> titles, bodies;
+  std::vector<size_t> warned;  // indexes of the UNLIMITED screens
+  size_t first_data = SIZE_MAX, last_data = SIZE_MAX;
+};
+
+MsRun signMultiSend(const Bytes& data, int screens = 400) {
+  MsRun r;
+  r.kind = walkSafeTx(data, false, screens, &r.titles, &r.bodies);
+  // The abort that ends walkSafeTx() leaves the last request in place.
+  if (r.kind == EIP712_REQ_FAIL && eip712_stream_next()->error)
+    r.error = eip712_stream_next()->error;
+  for (size_t i = 0; i < r.titles.size(); i++) {
+    if (r.titles[i] == "UNLIMITED approval") r.warned.push_back(i);
+    if (r.bodies[i].compare(0, 5, "data\n") == 0 ||
+        r.bodies[i].compare(0, 6, "data (") == 0) {
+      if (r.first_data == SIZE_MAX) r.first_data = i;
+      r.last_data = i;
+    }
+  }
+  return r;
+}
+
+}  // namespace
+
+TEST(Eip712Stream, MultiSendUnlimitedApproveWarnsBeforeTheBytes) {
+  const Bytes approve = approveCall(0, 0xff);
+  Bytes packed = packedCall(kDai, approve);
+  append(&packed, packedCall(kUsdc, swapCall(260)));
+  const Bytes data = multiSendCall(packed);
+  ASSERT_LE(data.size(), (size_t)EIP712_MAX_LEAF);
+  const MsRun r = signMultiSend(data);
+  ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+  ASSERT_EQ(r.warned.size(), 1u);
+  // The inner `to` is the token, not SafeTx.to (USDC).
+  EXPECT_EQ(r.bodies[r.warned[0]], allowText(approve, "DAI"));
+  ASSERT_NE(r.first_data, SIZE_MAX);
+  EXPECT_LT(r.warned[0], r.first_data);
+}
+
+TEST(Eip712Stream, MultiSendChunkedApproveWarnsBeforeTheBytes) {
+  const Bytes approve = approveCall(0, 0xff);
+  Bytes packed = packedCall(kDai, approve);
+  append(&packed, packedCall(kUsdc, swapCall(2000)));
+  const Bytes data = multiSendCall(packed);
+  const MsRun r = signMultiSend(data);
+  ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+  EXPECT_EQ(g_first_chunks, 1);
+  EXPECT_EQ(g_later_chunks, 2);
+  ASSERT_EQ(r.warned.size(), 1u);
+  EXPECT_EQ(r.bodies[r.warned[0]], allowText(approve, "DAI"));
+  EXPECT_LT(r.warned[0], r.first_data);
+  EXPECT_EQ(r.bodies[r.first_data].compare(0, 8, "data (1/"), 0);
+}
+
+// An approve whose 68 bytes straddle the first chunk boundary is warned
+// about once its last byte arrives: after the first chunk's parts, before
+// the second's.
+TEST(Eip712Stream, MultiSendApproveSplitAcrossChunksWarnsWhenComplete) {
+  const Bytes approve = approveCall(0, 0xff);
+  // 68 header bytes + 85 + filler + 85 puts the approve's data at 1000.
+  const size_t filler = 1000 - 68 - 85 - 85;
+  Bytes packed = packedCall(kUsdc, swapCall(filler));
+  append(&packed, packedCall(kDai, approve));
+  append(&packed, packedCall(kUsdc, swapCall(600)));
+  const Bytes data = multiSendCall(packed);
+  ASSERT_EQ(Bytes(data.begin() + 1000, data.begin() + 1068), approve);
+  const MsRun r = signMultiSend(data);
+  ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+  ASSERT_EQ(r.warned.size(), 1u);
+  EXPECT_EQ(r.bodies[r.warned[0]], allowText(approve, "DAI"));
+  // The first chunk's parts came first; the second chunk's follow.
+  EXPECT_GT(r.warned[0], r.first_data);
+  EXPECT_LT(r.warned[0], r.last_data);
+  // Every part before the warning is from the first 1024 bytes: the hex
+  // shown so far ends exactly at the boundary.
+  std::string before;
+  for (size_t i = r.first_data; i < r.warned[0]; i++) {
+    const size_t colon = r.bodies[i].find("bytes: ");
+    before += colon == std::string::npos ? r.bodies[i]
+                                         : r.bodies[i].substr(colon + 7);
+  }
+  EXPECT_EQ(before, "0x" + hexOf(data.data(), EIP712_MAX_LEAF));
+}
+
+TEST(Eip712Stream, MultiSendTwoUnlimitedApprovesWarnTwice) {
+  const Bytes first = approveCall(0, 0xff);
+  Bytes second = approveCall(0, 0xff);
+  second[16] = 0x77;  // another spender
+  Bytes packed = packedCall(kDai, first);
+  append(&packed, packedCall(kUsdc, second));
+  append(&packed, packedCall(kUsdc, swapCall(100)));
+  for (bool chunked : {false, true}) {
+    SCOPED_TRACE(chunked);
+    Bytes all = packed;
+    if (chunked) append(&all, packedCall(kUsdc, swapCall(1500)));
+    const MsRun r = signMultiSend(multiSendCall(all));
+    ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+    ASSERT_EQ(r.warned.size(), 2u);
+    EXPECT_EQ(r.bodies[r.warned[0]], allowText(first, "DAI"));
+    EXPECT_EQ(r.bodies[r.warned[1]], allowText(second, "USDC"));
+  }
+}
+
+TEST(Eip712Stream, MultiSendUnlimitedIncreaseAllowanceWarns) {
+  Bytes increase = approveCall(0, 0xff);
+  const uint8_t selector[4] = {0x39, 0x50, 0x93, 0x51};
+  std::copy(selector, selector + 4, increase.begin());
+  const MsRun r = signMultiSend(multiSendCall(packedCall(kDai, increase)));
+  ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+  ASSERT_EQ(r.warned.size(), 1u);
+  EXPECT_EQ(r.bodies[r.warned[0]], allowText(increase, "DAI"));
+}
+
+TEST(Eip712Stream, MultiSendFiniteApproveHasNoWarning) {
+  Bytes packed = packedCall(kDai, approveCall(0, 0x01));
+  append(&packed, packedCall(kUsdc, swapCall(1500)));
+  Bytes almost = approveCall(0, 0xff);
+  almost[67] = 0xfe;
+  append(&packed, packedCall(kDai, almost));
+  const MsRun r = signMultiSend(multiSendCall(packed));
+  ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+  EXPECT_TRUE(r.warned.empty());
+}
+
+TEST(Eip712Stream, MultiSendDirtySpenderIsRefused) {
+  for (bool chunked : {false, true}) {
+    SCOPED_TRACE(chunked);
+    Bytes packed = packedCall(kDai, approveCall(0x01, 0x01));
+    if (chunked) {
+      packed = packedCall(kUsdc, swapCall(1500));
+      append(&packed, packedCall(kDai, approveCall(0x01, 0xff)));
+    }
+    const MsRun r = signMultiSend(multiSendCall(packed));
+    EXPECT_EQ(r.kind, EIP712_REQ_FAIL);
+    EXPECT_EQ(r.error, "Malformed ERC20 approval");
+    EXPECT_TRUE(r.warned.empty());
+    // Whole, it is refused before any screen of the bytes.
+    if (!chunked) EXPECT_EQ(r.first_data, SIZE_MAX);
+  }
+}
+
+TEST(Eip712Stream, MultiSendDecliningTheWarningSignsNothing) {
+  for (bool chunked : {false, true}) {
+    SCOPED_TRACE(chunked);
+    Bytes packed = packedCall(kDai, approveCall(0, 0xff));
+    if (chunked) append(&packed, packedCall(kUsdc, swapCall(1500)));
+    // Four screens accepted (the domain, `to` in two pages, `value`); the
+    // warning is the next, declined, and the walk ends with no byte of
+    // `data` shown.
+    const MsRun r = signMultiSend(multiSendCall(packed), 4);
+    EXPECT_EQ(r.kind, EIP712_REQ_CANCELLED);
+    ASSERT_EQ(r.warned.size(), 1u);
+    EXPECT_EQ(r.warned[0], r.titles.size() - 1);
+    EXPECT_EQ(r.bodies[r.warned[0] - 1].compare(0, 6, "value\n"), 0);
+    EXPECT_EQ(r.first_data, SIZE_MAX);
+    EXPECT_EQ(eip712_stream_waiting(), EIP712_IDLE);
+  }
+}
+
+// MultiSend reads its packed bytes unchecked, past `length` as zeroed
+// memory. Malformed packing is still shown in full and signs; a call cut
+// short is scanned as far as its bytes go, and nothing past `length` is.
+TEST(Eip712Stream, MultiSendMalformedPackingShowsTheBytes) {
+  const Bytes approve = approveCall(0, 0xff);
+  struct Case {
+    const char* what;
+    Bytes data;
+    size_t warnings;
+  };
+  std::vector<Case> cases;
+  Bytes packed = packedCall(kDai, approve);
+  // dataLength runs past `length`: the 68 bytes are all there, so the
+  // approve executes (zeros follow it) and is warned about.
+  cases.push_back({"dataLength past length",
+                   multiSendCall(packedCall(kDai, approve, 5000)), 1});
+  cases.push_back({"dataLength over 32 bits", [&] {
+                     Bytes b = multiSendCall(packed);
+                     b[4 + 64 + 53] = 0x01;  // the dataLength word's top byte
+                     return b;
+                   }(), 1});
+  // The approve's amount is cut short by `length`: it reads zeros.
+  cases.push_back(
+      {"length cuts the amount", multiSendCall(packed, 85 + 67), 0});
+  // The approve lies past `length`: MultiSend never reaches it.
+  Bytes past = packedCall(kUsdc, swapCall(10));
+  const size_t first = past.size();
+  append(&past, packed);
+  cases.push_back({"approve past length", multiSendCall(past, first), 0});
+  cases.push_back({"header cut short", multiSendCall(packed, 40), 0});
+  cases.push_back({"length longer than the value",
+                   multiSendCall(packedCall(kUsdc, swapCall(10)), 900), 0});
+  cases.push_back({"length over 32 bits", [&] {
+                     Bytes b = multiSendCall(packed);
+                     b[4 + 32] = 0x01;
+                     return b;
+                   }(), 0});
+  cases.push_back({"selector and offset only", [] {
+                     Bytes b = {0x8d, 0x80, 0xff, 0x0a};
+                     append(&b, be32(0x20));
+                     return b;
+                   }(), 0});
+  cases.push_back({"selector only", Bytes{0x8d, 0x80, 0xff, 0x0a}, 0});
+  cases.push_back({"empty", multiSendCall(Bytes{}), 0});
+  cases.push_back({"chunked, cut mid-call", [&] {
+                     Bytes p = packedCall(kUsdc, swapCall(1500));
+                     return multiSendCall(p, 1200);
+                   }(), 0});
+  for (const Case& c : cases) {
+    SCOPED_TRACE(c.what);
+    const MsRun r = signMultiSend(c.data);
+    ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+    EXPECT_EQ(r.warned.size(), c.warnings);
+    ASSERT_NE(r.first_data, SIZE_MAX);
+    EXPECT_GT(r.first_data, r.warned.empty() ? 0 : r.warned.back());
+  }
+}
+
+// The offset word must be the canonical 0x20: any other moves where a
+// decoder reads `transactions` from, past the scan.
+TEST(Eip712Stream, MultiSendNonCanonicalOffsetIsRefused) {
+  Bytes data = multiSendCall(packedCall(kDai, approveCall(0, 0xff)));
+  data[4 + 31] = 0x40;
+  const MsRun r = signMultiSend(data);
+  EXPECT_EQ(r.kind, EIP712_REQ_FAIL);
+  EXPECT_EQ(r.error, "Malformed MultiSend");
+  EXPECT_TRUE(r.warned.empty());
+  EXPECT_EQ(r.first_data, SIZE_MAX);
 }
