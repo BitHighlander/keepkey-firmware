@@ -50,8 +50,10 @@
  * one digest in its parent's slot. Only ONE SHA3_CTX (~400 B) is ever live,
  * which is what fits SRAM. Struct widths along a path add up. The outermost
  * open array hashes its elements as they arrive and takes no slots, so
- * Seaport needs 11 + 6 whatever its item counts; an array nested inside it
- * takes one slot per element. */
+ * Seaport needs 11 + 6 whatever its item counts. An array of fixed-size
+ * leaves nested inside it hashes into that one SHA3_CTX, so a UniswapX V3
+ * curve inside baseOutputs[] takes none; any other nested array takes one
+ * slot per element. */
 #define EIP712_MAX_SLOTS 24
 
 /* Widest value one EthereumTypedDataValueAck carries, and the chunk size of a

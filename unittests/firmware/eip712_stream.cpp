@@ -1332,11 +1332,15 @@ TEST(Eip712Stream, FixedDimensionsAreCheckedOutermostFirst) {
   EXPECT_EQ(walkMatrix({2, 4}, 4, 4), EIP712_REQ_FAIL);
 }
 
-// Only the outermost array streams. An array nested inside it keeps one pool
-// slot per element: Matrix takes one slot, leaving 23.
+// The outermost array streams, and so does an array of fixed-size leaves
+// nested inside it (a UniswapX V3 curve's relativeAmounts). Any other nested
+// array keeps one pool slot per element: Matrix takes one slot, leaving 23.
 TEST(Eip712Stream, ArraysInsideAStreamedArrayStillUseThePool) {
   EXPECT_EQ(walkMatrix({0, 0}, 1, EIP712_MAX_SLOTS - 1), EIP712_REQ_DONE);
-  EXPECT_EQ(walkMatrix({0, 0}, 1, EIP712_MAX_SLOTS), EIP712_REQ_FAIL);
+  EXPECT_EQ(walkMatrix({0, 0}, 1, EIP712_MAX_SLOTS), EIP712_REQ_DONE);
+  EXPECT_EQ(walkMatrix({0, 0}, 1, 2 * EIP712_MAX_SLOTS), EIP712_REQ_DONE);
+  EXPECT_EQ(walkMatrix({0, 0, 0}, 1, EIP712_MAX_SLOTS - 1), EIP712_REQ_DONE);
+  EXPECT_EQ(walkMatrix({0, 0, 0}, 1, EIP712_MAX_SLOTS), EIP712_REQ_FAIL);
   EXPECT_EQ(walkMatrix({0}, 60, 0), EIP712_REQ_DONE);
 }
 
@@ -1656,7 +1660,7 @@ Bytes corpusValue(const std::vector<uint32_t>& path) {
 }  // namespace
 
 TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
-  EXPECT_GE(kCorpus.size(), 60u);
+  EXPECT_GE(kCorpus.size(), 61u);
   // Max approvals sign, with the warning on the value's own screen.
   const std::map<std::string, std::string> unlimited = {
       {"permit2-PermitSingle-unlimited", "details.amount\nuint160: UNLIMITED"},

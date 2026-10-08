@@ -556,6 +556,9 @@ static struct {
   uint64_t array_sponge[25];
   uint8_t array_sponge_bytes; /* absorbed since the last permutation */
   uint8_t array_owner;        /* 1 + stack index of that array, 0 = none */
+  /* 1 + stack index of an array of fixed-size leaves nested inside it, whose
+   * words go straight into the idle e712.hash: no slots either. */
+  uint8_t hash_owner;
 
   /* 1 + the pool slot holding SafeTx.to, 0 = none: the token an embedded
    * approve() in SafeTx.data calls. Every pop clears it, so it never
@@ -1360,6 +1363,7 @@ static bool begin_root(const char* name) {
   e712.depth = 1;
   e712.slots_used = 0;
   e712.array_owner = 0;
+  e712.hash_owner = 0;
   e712.safe_to_slot = 0;
   begin_type_hash();
   return true;
@@ -1369,9 +1373,25 @@ static bool array_streams(const Eip712Frame* f) {
   return e712.array_owner != 0 && f == &e712.stack[e712.array_owner - 1];
 }
 
+static bool array_hashes(const Eip712Frame* f) {
+  return e712.hash_owner != 0 && f == &e712.stack[e712.hash_owner - 1];
+}
+
+/* Its elements are leaves of a fixed width, never chunked: nothing else uses
+ * e712.hash until the array closes. */
+static bool array_of_fixed_leaves(const Eip712Frame* arr) {
+  const uint8_t type = arr->u.a.elem_data_type;
+  return arr->u.a.level_index + 1 == arr->u.a.levels_total &&
+         type != EthereumTypedDataStructAck_EthereumDataType_STRUCT &&
+         type != EthereumTypedDataStructAck_EthereumDataType_STRING &&
+         (type != EthereumTypedDataStructAck_EthereumDataType_BYTES ||
+          arr->u.a.elem_has_size);
+}
+
 /* Width of a frame's own region in the pool: a streamed array has none. */
 static uint8_t array_slots(const Eip712Frame* arr) {
-  return array_streams(arr) ? 0 : (uint8_t)arr->u.a.array_len;
+  return array_streams(arr) || array_hashes(arr) ? 0
+                                                 : (uint8_t)arr->u.a.array_len;
 }
 
 /* Keccak-f on the bare state. Absorbing a zero block XORs nothing in, so
@@ -1416,8 +1436,13 @@ static bool fold_frame(uint8_t out[32]) {
   const Eip712Frame* f = &e712.stack[e712.depth - 1];
   /* A later frame may reuse this one's slots: its `to` is gone with it. */
   e712.safe_to_slot = 0;
-  if (array_streams(f)) {
-    array_sponge_final(out);
+  if (array_streams(f) || array_hashes(f)) {
+    if (array_hashes(f)) {
+      keccak_Final(&e712.hash, out);
+      e712.hash_owner = 0;
+    } else {
+      array_sponge_final(out);
+    }
     e712.slots_used = f->slot_base;
     e712.depth--;
     return true;
@@ -1894,6 +1919,8 @@ static void finish_leaf(const uint8_t word[32]) {
   Eip712Frame* f = &e712.stack[e712.depth - 1];
   if (array_streams(f)) {
     array_sponge_absorb(word);
+  } else if (array_hashes(f)) {
+    keccak_Update(&e712.hash, word, 32);
   } else {
     memcpy(e712.pool[f->slot_base + f->member_index], word, 32);
   }
@@ -2151,6 +2178,10 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
       memzero(e712.array_sponge, sizeof(e712.array_sponge));
       e712.array_sponge_bytes = 0;
       e712.array_owner = (uint8_t)(e712.depth + 1);
+    } else if (e712.hash_owner == 0 && array_of_fixed_leaves(arr)) {
+      /* UniswapX V3 curve points: relativeAmounts inside baseOutputs[]. */
+      keccak_256_Init(&e712.hash);
+      e712.hash_owner = (uint8_t)(e712.depth + 1);
     } else if ((uint32_t)arr->slot_base + len > EIP712_MAX_SLOTS) {
       fail("EIP-712 array is too long for this device");
       return false;

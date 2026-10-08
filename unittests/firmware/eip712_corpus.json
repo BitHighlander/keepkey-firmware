@@ -5728,6 +5728,264 @@
   }
  },
  {
+  "id": "uniswapx-V3DutchOrder-arbitrum-curve16",
+  "source": [
+   "https://github.com/Uniswap/permit2/blob/cc56ad0f3439c502c246fc5cfcc3db92bb8b7219/src/libraries/PermitHash.sol",
+   "https://github.com/Uniswap/UniswapX/blob/eb7ce077036258b9510b42ad37aa920cf3aaf308/src/lib/V3DutchOrderLib.sol",
+   "https://github.com/Uniswap/UniswapX/blob/eb7ce077036258b9510b42ad37aa920cf3aaf308/src/lib/OrderInfoLib.sol",
+   "https://github.com/Uniswap/UniswapX/blob/eb7ce077036258b9510b42ad37aa920cf3aaf308/src/lib/DutchOrderLib.sol",
+   "https://arbiscan.io/tx/0x1f2f270bf65d2b7f02b2a141f71e23bfcc3a84b37c9a0921577516c58031678d",
+   "https://github.com/Uniswap/UniswapX/blob/eb7ce077036258b9510b42ad37aa920cf3aaf308/src/lib/NonlinearDutchDecayLib.sol",
+   "https://github.com/Uniswap/UniswapX/blob/eb7ce077036258b9510b42ad37aa920cf3aaf308/src/types/Uint16Array.sol"
+  ],
+  "requires_capability": "eip712-chunked-values",
+  "doc": {
+   "types": {
+    "EIP712Domain": [
+     {
+      "name": "name",
+      "type": "string"
+     },
+     {
+      "name": "chainId",
+      "type": "uint256"
+     },
+     {
+      "name": "verifyingContract",
+      "type": "address"
+     }
+    ],
+    "PermitWitnessTransferFrom": [
+     {
+      "name": "permitted",
+      "type": "TokenPermissions"
+     },
+     {
+      "name": "spender",
+      "type": "address"
+     },
+     {
+      "name": "nonce",
+      "type": "uint256"
+     },
+     {
+      "name": "deadline",
+      "type": "uint256"
+     },
+     {
+      "name": "witness",
+      "type": "V3DutchOrder"
+     }
+    ],
+    "NonlinearDutchDecay": [
+     {
+      "name": "relativeBlocks",
+      "type": "uint256"
+     },
+     {
+      "name": "relativeAmounts",
+      "type": "int256[]"
+     }
+    ],
+    "OrderInfo": [
+     {
+      "name": "reactor",
+      "type": "address"
+     },
+     {
+      "name": "swapper",
+      "type": "address"
+     },
+     {
+      "name": "nonce",
+      "type": "uint256"
+     },
+     {
+      "name": "deadline",
+      "type": "uint256"
+     },
+     {
+      "name": "additionalValidationContract",
+      "type": "address"
+     },
+     {
+      "name": "additionalValidationData",
+      "type": "bytes"
+     }
+    ],
+    "TokenPermissions": [
+     {
+      "name": "token",
+      "type": "address"
+     },
+     {
+      "name": "amount",
+      "type": "uint256"
+     }
+    ],
+    "V3DutchInput": [
+     {
+      "name": "token",
+      "type": "address"
+     },
+     {
+      "name": "startAmount",
+      "type": "uint256"
+     },
+     {
+      "name": "curve",
+      "type": "NonlinearDutchDecay"
+     },
+     {
+      "name": "maxAmount",
+      "type": "uint256"
+     },
+     {
+      "name": "adjustmentPerGweiBaseFee",
+      "type": "uint256"
+     }
+    ],
+    "V3DutchOrder": [
+     {
+      "name": "info",
+      "type": "OrderInfo"
+     },
+     {
+      "name": "cosigner",
+      "type": "address"
+     },
+     {
+      "name": "startingBaseFee",
+      "type": "uint256"
+     },
+     {
+      "name": "baseInput",
+      "type": "V3DutchInput"
+     },
+     {
+      "name": "baseOutputs",
+      "type": "V3DutchOutput[]"
+     }
+    ],
+    "V3DutchOutput": [
+     {
+      "name": "token",
+      "type": "address"
+     },
+     {
+      "name": "startAmount",
+      "type": "uint256"
+     },
+     {
+      "name": "curve",
+      "type": "NonlinearDutchDecay"
+     },
+     {
+      "name": "recipient",
+      "type": "address"
+     },
+     {
+      "name": "minAmount",
+      "type": "uint256"
+     },
+     {
+      "name": "adjustmentPerGweiBaseFee",
+      "type": "uint256"
+     }
+    ]
+   },
+   "primaryType": "PermitWitnessTransferFrom",
+   "domain": {
+    "name": "Permit2",
+    "chainId": 42161,
+    "verifyingContract": "0x000000000022D473030F116dDEE9F6B43aC78BA3"
+   },
+   "message": {
+    "permitted": {
+     "token": "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f",
+     "amount": "12514477"
+    },
+    "spender": "0xB274d5F4b833b61B340b654d600A864fB604a87c",
+    "nonce": "1993355410060173619975858542007397613024848003638926934372819132074995782145",
+    "deadline": "1791402675",
+    "witness": {
+     "info": {
+      "reactor": "0xB274d5F4b833b61B340b654d600A864fB604a87c",
+      "swapper": "0x7f05C94cE299Eea9FCdAE798Be34E226a0cb1e77",
+      "nonce": "1993355410060173619975858542007397613024848003638926934372819132074995782145",
+      "deadline": "1791402675",
+      "additionalValidationContract": "0x0000000000000000000000000000000000000000",
+      "additionalValidationData": "0x"
+     },
+     "cosigner": "0x4449Cd34d1eb1FEDCF02A1Be3834FfDe8E6A6180",
+     "startingBaseFee": "0",
+     "baseInput": {
+      "token": "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f",
+      "startAmount": "12514477",
+      "curve": {
+       "relativeBlocks": "56539914882827008174051697847791522700364166669018632573655171137406238722",
+       "relativeAmounts": [
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0"
+       ]
+      },
+      "maxAmount": "12514477",
+      "adjustmentPerGweiBaseFee": "0"
+     },
+     "baseOutputs": [
+      {
+       "token": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+       "startAmount": "10407262726",
+       "curve": {
+        "relativeBlocks": "56539914882827008174051697847791522700364166669018632573655171137406238722",
+        "relativeAmounts": [
+         "16261348",
+         "32522696",
+         "48784044",
+         "65045392",
+         "81306740",
+         "97568088",
+         "113829436",
+         "130090784",
+         "146352132",
+         "162613480",
+         "178874828",
+         "195136176",
+         "211397524",
+         "227658872",
+         "243920220",
+         "260181568"
+        ]
+       },
+       "recipient": "0x7f05C94cE299Eea9FCdAE798Be34E226a0cb1e77",
+       "minAmount": "10147081157",
+       "adjustmentPerGweiBaseFee": "0"
+      }
+     ]
+    }
+   }
+  },
+  "expected": {
+   "domain_separator": "8a6e6e19bdfb3db3409910416b47c2f8fc28b49488d6555c7fceaa4479135bc3",
+   "message_hash": "1b7a77c239ffc05a83f3ac787234661b980a447d8791a54a785d9bb8950f3255",
+   "digest": "95fbdb5178abf6c7d90c1f5d463cc767e7b08ae701238bde83b16d002e2d5a5a"
+  }
+ },
+ {
   "id": "uniswapx-V3DutchOrder-arbitrum-fee-output",
   "source": [
    "https://github.com/Uniswap/permit2/blob/cc56ad0f3439c502c246fc5cfcc3db92bb8b7219/src/libraries/PermitHash.sol",
