@@ -61,6 +61,17 @@ class ConditionalCompilation(unittest.TestCase):
                 forbid(call, "pallas_add_mod_q(", "f")
         forbid("pallas_ct_add_mod_q(x)", "pallas_add_mod_q(", "f")
 
+    def test_function_reference_cannot_satisfy_required_call(self):
+        for body in ("(void)pallas_ct_add_mod_q;",
+                     "operation = pallas_ct_add_mod_q; operation(x);",
+                     "operation = &pallas_ct_add_mod_q;"):
+            with self.subTest(body=body):
+                with self.assertRaises(AssertionError):
+                    require(body, "pallas_ct_add_mod_q", "f")
+        for body in ("pallas_ct_add_mod_q(x);",
+                     "pallas_ct_add_mod_q \n (x);"):
+            require(body, "pallas_ct_add_mod_q", "f")
+
     def test_include_of_the_ct_header_is_found_in_every_spelling(self):
         for line in ('#include "pallas_ct.h"', "#include <pallas_ct.h>",
                      '#include "trezor/crypto/pallas_ct.h"',

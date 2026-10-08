@@ -147,6 +147,9 @@ def token_pattern(token):
 
 def require(body, token, where):
     guard(token)
+    # A named operation must be called; taking its address proves nothing.
+    if re.fullmatch(r"[A-Za-z_]\w*", token) and not token.endswith("_"):
+        token += "("
     if not token_pattern(token).search(body):
         raise AssertionError("{} must call {}".format(where, token))
 
