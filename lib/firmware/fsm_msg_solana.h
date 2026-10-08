@@ -331,7 +331,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       char to_str[45];
       solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Withdraw %s\nto %s?", amount_str, to_str);
+                     "Withdraw %s to %s?", amount_str, to_str);
     }
 
     case SOL_INSTR_STAKE_AUTHORIZE: {
@@ -343,7 +343,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       solana_pubkeyToStr(pi->extra, auth_str, sizeof(auth_str));
       const char* role = pi->extra_u8 == 0 ? "staker" : "withdrawer";
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Authorize %s\nto %s?", role, auth_str);
+                     "Authorize %s to %s?", role, auth_str);
     }
 
     case SOL_INSTR_STAKE_SPLIT: {
@@ -355,7 +355,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       char to_str[45];
       solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Split %s\nto %s?", amount_str, to_str);
+                     "Split %s to %s?", amount_str, to_str);
     }
 
     case SOL_INSTR_STAKE_DEACTIVATE:
@@ -384,7 +384,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       solana_pubkeyToStr(pi->extra, auth_str, sizeof(auth_str));
       const char* role = pi->extra_u8 == 0 ? "voter" : "withdrawer";
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Authorize vote %s\nto %s?", role, auth_str);
+                     "Authorize vote %s to %s?", role, auth_str);
     }
 
     case SOL_INSTR_VOTE_WITHDRAW: {
@@ -396,7 +396,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       char to_str[45];
       solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Withdraw vote %s\nto %s?", amount_str, to_str);
+                     "Withdraw vote %s to %s?", amount_str, to_str);
     }
 
     case SOL_INSTR_VOTE_UPDATE_VALIDATOR: {
