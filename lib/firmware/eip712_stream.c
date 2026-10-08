@@ -513,9 +513,11 @@ typedef struct {
 typedef struct {
   uint32_t left; /* packed bytes not yet read; the length word while read */
   uint32_t need; /* inner data bytes left; dataLength while read */
+  uint16_t call; /* the inner call being read, from 1 */
   uint8_t phase; /* MS_* */
   uint8_t at;    /* position in the word or header, or in data (stops at 68) */
   uint8_t seen;  /* MS_SEEN_* */
+  uint8_t facts; /* MS_FACT_*, kept once the scan stops */
   uint8_t to[20];
   uint8_t spender[20];
 } Eip712MultiSend;
@@ -557,6 +559,11 @@ static struct {
    * approve() in SafeTx.data calls. Every pop clears it, so it never
    * outlives the frame that read it. */
   uint8_t safe_to_slot;
+
+  /* What the open SafeTx's `operation` and `data` showed so far (SAFE_*),
+   * for the stack frame safe_frame - 1. Cleared when that frame folds. */
+  uint8_t safe_frame;
+  uint8_t safe_facts;
 
   Eip712MultiSend multisend;
 
@@ -860,19 +867,31 @@ static uint32_t domain_chain_id(void) {
                                                                : 0;
 }
 
+/* True when the open frame is a SafeTx struct. */
+static bool in_safe_tx(void) {
+  const Eip712Frame* f = &e712.stack[e712.depth - 1];
+  return !f->is_array && strcmp(e712.types.names[f->u.s.type], "SafeTx") == 0;
+}
+
+/* The open SafeTx's `to`, once read; NULL before then. */
+static const uint8_t* safe_tx_to(void) {
+  const Eip712Frame* f = &e712.stack[e712.depth - 1];
+  const uint8_t to = e712.safe_to_slot;
+  if (in_safe_tx() && to > f->slot_base && to <= f->slot_base + f->member_index)
+    return e712.pool[to - 1] + 12;
+  return NULL;
+}
+
 /* An unlimited embedded approve signs only after the UNLIMITED warning,
  * which names the full spender, and the token from SafeTx.to once seen. */
 static Eip712LeafResult confirm_embedded_unlimited(const uint8_t* value) {
   for (size_t i = 36; i < 68; i++)
     if (value[i] != 0xff) return EIP712_LEAF_OK;
   const uint32_t cid = domain_chain_id();
-  const Eip712Frame* f = &e712.stack[e712.depth - 1];
-  const bool safe_tx =
-      !f->is_array && strcmp(e712.types.names[f->u.s.type], "SafeTx") == 0;
-  const uint8_t to = e712.safe_to_slot;
-  if (safe_tx && to > f->slot_base && to <= f->slot_base + f->member_index)
-    return ethereum_confirmUnlimitedApproval(cid, value + 16,
-                                             e712.pool[to - 1] + 12)
+  const bool safe_tx = in_safe_tx();
+  const uint8_t* to = safe_tx_to();
+  if (to)
+    return ethereum_confirmUnlimitedApproval(cid, value + 16, to)
                ? EIP712_LEAF_OK
                : EIP712_LEAF_CANCELLED;
   char spender[43] = "0x";
@@ -885,6 +904,20 @@ static Eip712LeafResult confirm_embedded_unlimited(const uint8_t* value) {
              : EIP712_LEAF_CANCELLED;
 }
 
+/* A delegatecall runs `target`'s code as the Safe: say so, naming it. */
+static bool confirm_delegatecall(const char* title, const char* who,
+                                 const uint8_t* target) {
+  char code[43] = "the contract in 'to'";
+  if (target) {
+    code[0] = '0';
+    code[1] = 'x';
+    ethereum_address_checksum(target, code + 2, false, domain_chain_id());
+  }
+  return confirm(ButtonRequestType_ButtonRequest_Other, title,
+                 "%s gives %s your Safe's full authority. Not checked.", who,
+                 code);
+}
+
 /* ── Approves inside a MultiSend ──────────────────────────────────────
  * Safe's MultiSend and MultiSendCallOnly take multiSend(bytes transactions),
  * each call packed as operation(1) | to(20) | value(32) | dataLength(32) |
@@ -895,17 +928,26 @@ static Eip712LeafResult confirm_embedded_unlimited(const uint8_t* value) {
  * the device cannot tell which contract SafeTx.to is, and another contract
  * with this selector costs at most an extra warning.
  *
- * MultiSend reads the packed bytes with no bounds checks: past `length` it
- * reads zeroed memory. A call cut short is scanned as far as its bytes go
- * (its zero tail can only make an amount finite), and scanning stops at
- * `length`; the bytes themselves are always shown in full. */
+ * An inner delegatecall (operation 1) runs code the device does not read,
+ * with the Safe's authority: it is warned about before its data. A
+ * multiSend inside it is not scanned, since its target need not be
+ * MultiSend.
+ *
+ * Only the canonical packing (MultiSend 1.1.1 on) is read: each operation
+ * 0 or 1, each call inside `length`, `length` inside the value. Anything
+ * else (v1.0.0's ABI words, a cut header, a call running past `length`)
+ * stops the scan with the "Batch not checked" warning, before the bytes
+ * that follow; the bytes themselves are always shown in full. */
 enum { MS_OFF, MS_SELECTOR, MS_OFFSET, MS_LENGTH, MS_HEADER, MS_DATA };
 #define MS_HEADER_LEN 85
-#define MS_SEEN_APPROVE 1  /* data so far starts 0x095ea7b3 */
-#define MS_SEEN_INCREASE 2 /* data so far starts 0x39509351 */
-#define MS_SEEN_DIRTY 4    /* the spender word has high bytes set */
-#define MS_SEEN_FINITE 8   /* the amount word is not all ones */
-#define MS_SEEN_HUGE 16    /* dataLength exceeds 32 bits */
+#define MS_SEEN_APPROVE 1   /* data so far starts 0x095ea7b3 */
+#define MS_SEEN_INCREASE 2  /* data so far starts 0x39509351 */
+#define MS_SEEN_DIRTY 4     /* the spender word has high bytes set */
+#define MS_SEEN_FINITE 8    /* the amount word is not all ones */
+#define MS_SEEN_HUGE 16     /* dataLength exceeds 32 bits */
+#define MS_SEEN_DELEGATE 32 /* this call's operation is 1 */
+#define MS_FACT_CLEAN 1     /* read to its end, every call canonical */
+#define MS_FACT_DELEGATE 2  /* some inner call is a delegatecall */
 
 typedef enum {
   MS_SCAN_OK,
@@ -928,6 +970,23 @@ static void multisend_phase(uint8_t phase) {
   e712.multisend.at = 0;
 }
 
+/* The batch was read to its end. */
+static MultisendScan multisend_done(void) {
+  e712.multisend.facts |= MS_FACT_CLEAN;
+  e712.multisend.phase = MS_OFF;
+  return MS_SCAN_OK;
+}
+
+/* The scan stops here: said before any more of the bytes is shown. */
+static MultisendScan multisend_unchecked(void) {
+  e712.multisend.phase = MS_OFF;
+  return confirm(ButtonRequestType_ButtonRequest_Other, "Batch not checked",
+                 "KeepKey could not read this batch's calls; approvals "
+                 "inside it are not shown.")
+             ? MS_SCAN_OK
+             : MS_SCAN_CANCELLED;
+}
+
 static MultisendScan multisend_byte(uint8_t b) {
   static const uint8_t approve[4] = {0x09, 0x5e, 0xa7, 0xb3};
   static const uint8_t increase[4] = {0x39, 0x50, 0x93, 0x51};
@@ -942,27 +1001,41 @@ static MultisendScan multisend_byte(uint8_t b) {
       if (at == 31) multisend_phase(MS_LENGTH);
       return MS_SCAN_OK;
     case MS_LENGTH:
-      if (at < 28 && b != 0) {
-        ms->phase = MS_OFF; /* longer than any calldata: it reverts */
-        return MS_SCAN_OK;
-      }
+      if (at < 28 && b != 0) return multisend_unchecked();
       ms->left = (ms->left << 8) | b;
-      if (at == 31) multisend_phase(ms->left ? MS_HEADER : MS_OFF);
+      if (at == 31) {
+        if (!ms->left) return multisend_done();
+        multisend_phase(MS_HEADER);
+      }
       return MS_SCAN_OK;
     case MS_HEADER:
-      if (at >= 1 && at <= 20) {
+      if (at == 0) {
+        if (b > 1) return multisend_unchecked();
+        ms->call++;
+        ms->seen = b ? MS_SEEN_DELEGATE : 0;
+      } else if (at <= 20) {
         ms->to[at - 1] = b;
       } else if (at >= 53 && at < 81) {
         if (b != 0) ms->seen |= MS_SEEN_HUGE;
       } else if (at >= 81) {
         ms->need = (ms->need << 8) | b;
       }
-      if (at == MS_HEADER_LEN - 1) {
-        if (ms->seen & MS_SEEN_HUGE) ms->need = UINT32_MAX;
-        ms->seen = ms->need ? MS_SEEN_APPROVE | MS_SEEN_INCREASE : 0;
-        multisend_phase(ms->need ? MS_DATA : MS_HEADER);
+      ms->left--;
+      if (at < MS_HEADER_LEN - 1)
+        return ms->left ? MS_SCAN_OK : multisend_unchecked();
+      /* The call's data must end inside the batch. */
+      if ((ms->seen & MS_SEEN_HUGE) || ms->need > ms->left)
+        return multisend_unchecked();
+      if (ms->seen & MS_SEEN_DELEGATE) {
+        char who[16];
+        snprintf(who, sizeof(who), "Call #%u", (unsigned)ms->call);
+        ms->facts |= MS_FACT_DELEGATE;
+        if (!confirm_delegatecall("Delegatecall in batch", who, ms->to))
+          return MS_SCAN_CANCELLED;
       }
-      break;
+      ms->seen = MS_SEEN_APPROVE | MS_SEEN_INCREASE;
+      multisend_phase(ms->need ? MS_DATA : MS_HEADER);
+      return ms->left ? MS_SCAN_OK : multisend_done();
     default: { /* MS_DATA */
       MultisendScan result = MS_SCAN_OK;
       if (at < 4) {
@@ -984,16 +1057,12 @@ static MultisendScan multisend_byte(uint8_t b) {
                                                ms->to))
           result = MS_SCAN_CANCELLED;
       }
-      if (--ms->need == 0) {
-        ms->seen = 0;
-        multisend_phase(MS_HEADER);
-      }
-      if (--ms->left == 0) ms->phase = MS_OFF;
+      if (--ms->need == 0) multisend_phase(MS_HEADER);
+      /* need <= left: the batch ends at a call's end. */
+      if (--ms->left == 0) multisend_done();
       return result;
     }
   }
-  if (--ms->left == 0) ms->phase = MS_OFF;
-  return MS_SCAN_OK;
 }
 
 static MultisendScan multisend_feed(const uint8_t* bytes, size_t len) {
@@ -1002,6 +1071,43 @@ static MultisendScan multisend_feed(const uint8_t* bytes, size_t len) {
     if (step != MS_SCAN_OK) return step;
   }
   return MS_SCAN_OK;
+}
+
+/* ── A SafeTx delegatecall ────────────────────────────────────────────
+ * operation 1 runs SafeTx.to's code as the Safe. A Safe app's batch is the
+ * one case read in full: data a multiSend the scan read to its end, with no
+ * delegatecall inside. Anything else is warned about once both `operation`
+ * and `data` are read, in either order. */
+#define SAFE_DELEGATE 1  /* operation is 1 */
+#define SAFE_DATA 2      /* data has been read */
+#define SAFE_UNCHECKED 4 /* data is not such a batch */
+
+/* After this SafeTx leaf's own checks, before its screen. False to stop. */
+static bool safe_delegate_approved(const Eip712FieldType* field,
+                                   const uint8_t* value, size_t len) {
+  if (e712.root != 1 || !in_safe_tx()) return true;
+  if (e712.safe_frame != e712.depth) {
+    e712.safe_frame = e712.depth;
+    e712.safe_facts = 0;
+  }
+  const uint8_t before = e712.safe_facts;
+  if (field->data_type == EthereumTypedDataStructAck_EthereumDataType_BYTES &&
+      strcmp(e712.pending_name, "data") == 0) {
+    e712.safe_facts |= SAFE_DATA;
+    if ((e712.multisend.facts & (MS_FACT_CLEAN | MS_FACT_DELEGATE)) !=
+        MS_FACT_CLEAN)
+      e712.safe_facts |= SAFE_UNCHECKED;
+  } else if (field->data_type ==
+                 EthereumTypedDataStructAck_EthereumDataType_UINT &&
+             strcmp(e712.pending_name, "operation") == 0 && len > 0 &&
+             value[len - 1] == 1) {
+    for (size_t i = 0; i + 1 < len; i++)
+      if (value[i] != 0) return true;
+    e712.safe_facts |= SAFE_DELEGATE;
+  }
+  const uint8_t all = SAFE_DELEGATE | SAFE_DATA | SAFE_UNCHECKED;
+  if (e712.safe_facts != all || before == all) return true;
+  return confirm_delegatecall("Delegatecall", "SafeTx", safe_tx_to());
 }
 
 static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
@@ -1111,10 +1217,14 @@ static bool review_approved(Eip712LeafResult shown) {
   return true;
 }
 
-/* Scan the next bytes of a multiSend leaf, before any screen of them. True
- * to go on; otherwise the walk has ended. */
-static bool multisend_reviewed(const uint8_t* bytes, size_t len) {
-  switch (multisend_feed(bytes, len)) {
+/* Scan the next bytes of a multiSend leaf, before any screen of them; `last`
+ * when they end the value. True to go on; otherwise the walk has ended. */
+static bool multisend_reviewed(const uint8_t* bytes, size_t len, bool last) {
+  MultisendScan scan = multisend_feed(bytes, len);
+  /* The value ended before the batch did. */
+  if (scan == MS_SCAN_OK && last && e712.multisend.phase != MS_OFF)
+    scan = multisend_unchecked();
+  switch (scan) {
     case MS_SCAN_OK:
       return true;
     case MS_SCAN_CANCELLED:
@@ -1189,6 +1299,7 @@ static bool begin_root(const char* name) {
   e712.slots_used = 0;
   e712.array_owner = 0;
   e712.safe_to_slot = 0;
+  e712.safe_frame = 0;
   begin_type_hash();
   return true;
 }
@@ -1244,6 +1355,7 @@ static bool fold_frame(uint8_t out[32]) {
   const Eip712Frame* f = &e712.stack[e712.depth - 1];
   /* A later frame may reuse this one's slots: its `to` is gone with it. */
   e712.safe_to_slot = 0;
+  if (e712.safe_frame == e712.depth) e712.safe_frame = 0;
   if (array_streams(f)) {
     array_sponge_final(out);
     e712.slots_used = f->slot_base;
@@ -1806,7 +1918,14 @@ static bool chunk_absorb(const Eip712FieldType* field, const uint8_t* bytes,
     fail("EIP-712 value does not match its declared type");
     return false;
   }
-  if (e712.chunk.showing && !multisend_reviewed(bytes, len)) return false;
+  if (e712.chunk.showing) {
+    const bool last = e712.chunk.offset + len == e712.chunk.total;
+    if (!multisend_reviewed(bytes, len, last)) return false;
+    if (last && !review_approved(safe_delegate_approved(field, bytes, len)
+                                     ? EIP712_LEAF_OK
+                                     : EIP712_LEAF_CANCELLED))
+      return false;
+  }
   const Eip712LeafResult parts = chunk_parts(
       path, type_name, text ? EIP712_RENDER_ESCAPED : EIP712_RENDER_HEX, bytes,
       len, e712.chunk.offset == 0, budget);
@@ -2010,7 +2129,11 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
   }
 
   multisend_begin(field, bytes, len);
-  if (!multisend_reviewed(bytes, len)) return false;
+  if (!multisend_reviewed(bytes, len, true)) return false;
+  if (!review_approved(safe_delegate_approved(field, bytes, len)
+                           ? EIP712_LEAF_OK
+                           : EIP712_LEAF_CANCELLED))
+    return false;
 
   /* Display and absorb from the SAME buffer: no second read can differ. */
   if (!review_approved(eip712_confirm_leaf(field, bytes, len))) return false;

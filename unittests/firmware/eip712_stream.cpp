@@ -1620,6 +1620,11 @@ TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
     std::vector<std::string> warned;
     for (size_t i = 0; i < titles.size(); i++)
       if (titles[i] == "UNLIMITED approval") warned.push_back(bodies[i]);
+    // Real Safe batches (operation 1 to MultiSend, inner calls 0) read clean.
+    EXPECT_EQ(std::count(titles.begin(), titles.end(), "Delegatecall"), 0);
+    EXPECT_EQ(std::count(titles.begin(), titles.end(), "Delegatecall in batch"),
+              0);
+    EXPECT_EQ(std::count(titles.begin(), titles.end(), "Batch not checked"), 0);
     const auto expect = unlimited.find(doc.id);
     if (expect == unlimited.end()) {
       EXPECT_TRUE(warned.empty());
@@ -1787,6 +1792,8 @@ namespace {
 
 Bytes g_approve;
 bool g_data_first;
+int g_operation;
+std::vector<std::string> g_safe_members;
 
 Bytes approveCall(uint8_t spender_high, uint8_t amount_fill) {
   Bytes b = {0x09, 0x5e, 0xa7, 0xb3};
@@ -1797,32 +1804,47 @@ Bytes approveCall(uint8_t spender_high, uint8_t amount_fill) {
   return b;
 }
 
-// The domain's chainId, then SafeTx {to, value, data} (or data first).
+// The domain's chainId, then SafeTx {to, value, data} (or data first), and
+// `operation` last (or first) when it is not negative.
 Eip712ReqKind walkSafeTx(const Bytes& data, bool data_first, int screens,
                          std::vector<std::string>* titles,
-                         std::vector<std::string>* bodies) {
+                         std::vector<std::string>* bodies, int operation = -1,
+                         bool operation_first = false) {
   std::map<std::string, Struct> types;
   addMember(types["EIP712Domain"], "chainId",
             mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
-  Field address = mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS);
-  Field bytes = mk(EthereumTypedDataStructAck_EthereumDataType_BYTES);
-  if (data_first) addMember(types["SafeTx"], "data", bytes);
-  addMember(types["SafeTx"], "to", address);
-  addMember(types["SafeTx"], "value",
-            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
-  if (!data_first) addMember(types["SafeTx"], "data", bytes);
+  g_safe_members = {"to", "value"};
+  g_safe_members.insert(
+      data_first ? g_safe_members.begin() : g_safe_members.end(), "data");
+  if (operation >= 0)
+    g_safe_members.insert(
+        operation_first ? g_safe_members.begin() : g_safe_members.end(),
+        "operation");
+  for (const std::string& name : g_safe_members) {
+    if (name == "to")
+      addMember(types["SafeTx"], name.c_str(),
+                mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
+    else if (name == "data")
+      addMember(types["SafeTx"], name.c_str(),
+                mk(EthereumTypedDataStructAck_EthereumDataType_BYTES));
+    else
+      addMember(types["SafeTx"], name.c_str(),
+                mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT,
+                        name == "operation" ? 1 : 32));
+  }
   g_approve = data;
   g_data_first = data_first;
+  g_operation = operation;
   kkconfirm_capture_start();
   walk(
       "SafeTx", types,
       [](const std::vector<uint32_t>& path) -> Bytes {
         if (path[0] == 0) return word(1);
-        const uint32_t data_at = g_data_first ? 0 : 2;
-        const uint32_t to_at = g_data_first ? 1 : 0;
-        if (path[1] == data_at) return g_approve;
-        if (path[1] == to_at)  // USDC on chain 1
+        const std::string& name = g_safe_members[path[1]];
+        if (name == "data") return g_approve;
+        if (name == "to")  // USDC on chain 1
           return fromHex("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+        if (name == "operation") return Bytes{(uint8_t)g_operation};
         return word(0);
       },
       screens);
@@ -2449,9 +2471,10 @@ void append(Bytes* out, const Bytes& more) {
   out->insert(out->end(), more.begin(), more.end());
 }
 
-// operation 0, `to`, value 0, then `data` under its own length (or `len`).
-Bytes packedCall(const char* to, const Bytes& data, int64_t len = -1) {
-  Bytes b = {0};
+// `op`, `to`, value 0, then `data` under its own length (or `len`).
+Bytes packedCall(const char* to, const Bytes& data, int64_t len = -1,
+                 uint8_t op = 0) {
+  Bytes b = {op};
   append(&b, fromHex(to));
   append(&b, Bytes(32, 0));
   append(&b, be32(len < 0 ? (uint32_t)data.size() : (uint32_t)len));
@@ -2487,18 +2510,26 @@ struct MsRun {
   Eip712ReqKind kind;
   std::string error;
   std::vector<std::string> titles, bodies;
-  std::vector<size_t> warned;  // indexes of the UNLIMITED screens
+  std::vector<size_t> warned;          // indexes of the UNLIMITED screens
+  std::vector<size_t> delegated;       // "Delegatecall in batch" screens
+  std::vector<size_t> safe_delegated;  // the SafeTx's "Delegatecall"
+  std::vector<size_t> unchecked;       // "Batch not checked" screens
   size_t first_data = SIZE_MAX, last_data = SIZE_MAX;
 };
 
-MsRun signMultiSend(const Bytes& data, int screens = 400) {
+MsRun signMultiSend(const Bytes& data, int screens = 400, int operation = -1,
+                    bool operation_first = false) {
   MsRun r;
-  r.kind = walkSafeTx(data, false, screens, &r.titles, &r.bodies);
+  r.kind = walkSafeTx(data, false, screens, &r.titles, &r.bodies, operation,
+                      operation_first);
   // The abort that ends walkSafeTx() leaves the last request in place.
   if (r.kind == EIP712_REQ_FAIL && eip712_stream_next()->error)
     r.error = eip712_stream_next()->error;
   for (size_t i = 0; i < r.titles.size(); i++) {
     if (r.titles[i] == "UNLIMITED approval") r.warned.push_back(i);
+    if (r.titles[i] == "Delegatecall in batch") r.delegated.push_back(i);
+    if (r.titles[i] == "Delegatecall") r.safe_delegated.push_back(i);
+    if (r.titles[i] == "Batch not checked") r.unchecked.push_back(i);
     if (r.bodies[i].compare(0, 5, "data\n") == 0 ||
         r.bodies[i].compare(0, 6, "data (") == 0) {
       if (r.first_data == SIZE_MAX) r.first_data = i;
@@ -2645,61 +2676,85 @@ TEST(Eip712Stream, MultiSendDecliningTheWarningSignsNothing) {
   }
 }
 
-// MultiSend reads its packed bytes unchecked, past `length` as zeroed
-// memory. Malformed packing is still shown in full and signs; a call cut
-// short is scanned as far as its bytes go, and nothing past `length` is.
-TEST(Eip712Stream, MultiSendMalformedPackingShowsTheBytes) {
+// Only the canonical packing is read. Anything else is still shown in full
+// and signs, after "Batch not checked" where the scan stops; a batch that
+// ends exactly at a call's end reads clean, whatever follows `length`.
+TEST(Eip712Stream, MultiSendMalformedPackingIsNotChecked) {
   const Bytes approve = approveCall(0, 0xff);
   struct Case {
     const char* what;
     Bytes data;
-    size_t warnings;
+    bool unchecked;
   };
   std::vector<Case> cases;
   Bytes packed = packedCall(kDai, approve);
-  // dataLength runs past `length`: the 68 bytes are all there, so the
-  // approve executes (zeros follow it) and is warned about.
   cases.push_back({"dataLength past length",
-                   multiSendCall(packedCall(kDai, approve, 5000)), 1});
-  cases.push_back({"dataLength over 32 bits", [&] {
+                   multiSendCall(packedCall(kDai, approve, 5000)), true});
+  cases.push_back({"dataLength over 32 bits",
+                   [&] {
                      Bytes b = multiSendCall(packed);
                      b[4 + 64 + 53] = 0x01;  // the dataLength word's top byte
                      return b;
-                   }(), 1});
-  // The approve's amount is cut short by `length`: it reads zeros.
+                   }(),
+                   true});
   cases.push_back(
-      {"length cuts the amount", multiSendCall(packed, 85 + 67), 0});
+      {"length cuts the amount", multiSendCall(packed, 85 + 67), true});
   // The approve lies past `length`: MultiSend never reaches it.
   Bytes past = packedCall(kUsdc, swapCall(10));
   const size_t first = past.size();
   append(&past, packed);
-  cases.push_back({"approve past length", multiSendCall(past, first), 0});
-  cases.push_back({"header cut short", multiSendCall(packed, 40), 0});
+  cases.push_back({"approve past length", multiSendCall(past, first), false});
+  cases.push_back({"header cut short", multiSendCall(packed, 40), true});
   cases.push_back({"length longer than the value",
-                   multiSendCall(packedCall(kUsdc, swapCall(10)), 900), 0});
-  cases.push_back({"length over 32 bits", [&] {
+                   multiSendCall(packedCall(kUsdc, swapCall(10)), 900), true});
+  cases.push_back({"length over 32 bits",
+                   [&] {
                      Bytes b = multiSendCall(packed);
                      b[4 + 32] = 0x01;
                      return b;
-                   }(), 0});
-  cases.push_back({"selector and offset only", [] {
+                   }(),
+                   true});
+  cases.push_back(
+      {"operation 2", multiSendCall(packedCall(kDai, approve, -1, 2)), true});
+  cases.push_back({"selector and offset only",
+                   [] {
                      Bytes b = {0x8d, 0x80, 0xff, 0x0a};
                      append(&b, be32(0x20));
                      return b;
-                   }(), 0});
-  cases.push_back({"selector only", Bytes{0x8d, 0x80, 0xff, 0x0a}, 0});
-  cases.push_back({"empty", multiSendCall(Bytes{}), 0});
-  cases.push_back({"chunked, cut mid-call", [&] {
+                   }(),
+                   true});
+  cases.push_back({"selector only", Bytes{0x8d, 0x80, 0xff, 0x0a}, true});
+  cases.push_back({"empty", multiSendCall(Bytes{}), false});
+  cases.push_back({"chunked, cut mid-call",
+                   [&] {
                      Bytes p = packedCall(kUsdc, swapCall(1500));
                      return multiSendCall(p, 1200);
-                   }(), 0});
+                   }(),
+                   true});
+  cases.push_back({"chunked, value ends first",
+                   [&] {
+                     Bytes b = multiSendCall(packedCall(kUsdc, swapCall(1500)));
+                     b.resize(1300);
+                     return b;
+                   }(),
+                   true});
   for (const Case& c : cases) {
     SCOPED_TRACE(c.what);
     const MsRun r = signMultiSend(c.data);
     ASSERT_EQ(r.kind, EIP712_REQ_DONE);
-    EXPECT_EQ(r.warned.size(), c.warnings);
+    EXPECT_TRUE(r.warned.empty());
+    ASSERT_EQ(r.unchecked.size(), c.unchecked ? 1u : 0u);
     ASSERT_NE(r.first_data, SIZE_MAX);
-    EXPECT_GT(r.first_data, r.warned.empty() ? 0 : r.warned.back());
+    if (c.unchecked) {
+      EXPECT_EQ(r.bodies[r.unchecked[0]],
+                "KeepKey could not read this batch's calls; approvals inside "
+                "it are not shown.");
+      // Before the last of the bytes: before all of them unless the value
+      // ran out first.
+      EXPECT_LT(r.unchecked[0], r.last_data);
+      if (strcmp(c.what, "chunked, value ends first") != 0)
+        EXPECT_LT(r.unchecked[0], r.first_data);
+    }
   }
 }
 
@@ -2713,4 +2768,151 @@ TEST(Eip712Stream, MultiSendNonCanonicalOffsetIsRefused) {
   EXPECT_EQ(r.error, "Malformed MultiSend");
   EXPECT_TRUE(r.warned.empty());
   EXPECT_EQ(r.first_data, SIZE_MAX);
+}
+
+// ── Delegatecalls and batches the scan cannot read ──────────────────
+// A delegatecall runs code the device does not read with the Safe's
+// authority, so it can hide any approval: an inner one is warned about
+// before its data, and so is a SafeTx delegatecall unless its data is a
+// batch read clean to its end. The payloads are the review's (ms_sim.py).
+namespace {
+
+const char* const kWeth = "c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+const char* const kMultiSend = "a238cbeb142c10ef7ad8442c6d1f9e89e07e7761";
+
+Bytes attackerApprove() {
+  Bytes b = {0x09, 0x5e, 0xa7, 0xb3};
+  b.insert(b.end(), 12, 0);
+  b.insert(b.end(), 20, 0x11);
+  b.insert(b.end(), 32, 0xff);
+  return b;
+}
+
+// Attack A: a delegatecall to MultiSend whose data is another multiSend.
+Bytes nestedMultiSend(size_t filler) {
+  Bytes inner = packedCall(kWeth, attackerApprove());
+  if (filler) append(&inner, packedCall(kUsdc, swapCall(filler)));
+  return multiSendCall(
+      packedCall(kMultiSend, multiSendCall(inner), -1, /*op=*/1));
+}
+
+// Attack B: MultiSend v1.0.0's ABI words: operation, to, value, the data's
+// offset and length, then the data padded.
+Bytes legacyMultiSend(const Bytes& data) {
+  Bytes call = be32(0);
+  Bytes to = fromHex(kWeth);
+  call.insert(call.end(), 12, 0);
+  append(&call, to);
+  append(&call, be32(0));
+  append(&call, be32(0x80));
+  append(&call, be32((uint32_t)data.size()));
+  append(&call, data);
+  call.resize(32 * ((call.size() + 31) / 32), 0);
+  return multiSendCall(call);
+}
+
+std::string delegateText(const char* who, const char* target) {
+  char checksummed[41];
+  ethereum_address_checksum(fromHex(target).data(), checksummed, false, 1);
+  return std::string(who) + " gives 0x" + checksummed +
+         " your Safe's full authority. Not checked.";
+}
+
+}  // namespace
+
+TEST(Eip712Stream, MultiSendNestedDelegatecallWarns) {
+  for (size_t filler : {0, 1500}) {
+    for (int operation : {-1, 1}) {
+      SCOPED_TRACE(filler);
+      SCOPED_TRACE(operation);
+      const Bytes data = nestedMultiSend(filler);
+      EXPECT_EQ(data.size() > EIP712_MAX_LEAF, filler != 0);
+      const MsRun r = signMultiSend(data, 400, operation);
+      ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+      ASSERT_EQ(r.delegated.size(), 1u);
+      EXPECT_EQ(r.bodies[r.delegated[0]], delegateText("Call #1", kMultiSend));
+      EXPECT_LT(r.delegated[0], r.first_data);
+      // The SafeTx's own delegatecall is warned about too: its batch holds
+      // one. No `operation`, no SafeTx delegatecall.
+      ASSERT_EQ(r.safe_delegated.size(), operation == 1 ? 1u : 0u);
+      if (operation == 1)
+        EXPECT_EQ(r.bodies[r.safe_delegated[0]], delegateText("SafeTx", kUsdc));
+    }
+  }
+}
+
+TEST(Eip712Stream, MultiSendLegacyLayoutIsNotChecked) {
+  for (size_t filler : {0, 1500}) {
+    SCOPED_TRACE(filler);
+    Bytes inner = attackerApprove();
+    if (filler) append(&inner, swapCall(filler));
+    const Bytes data = legacyMultiSend(inner);
+    const MsRun r = signMultiSend(data, 400, 1);
+    ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+    ASSERT_EQ(r.unchecked.size(), 1u);
+    EXPECT_LT(r.unchecked[0], r.first_data);
+    ASSERT_EQ(r.safe_delegated.size(), 1u);
+    EXPECT_GT(r.safe_delegated[0], r.last_data);
+  }
+}
+
+TEST(Eip712Stream, SafeTxDelegatecallWarnsUnlessACleanBatch) {
+  Bytes clean = packedCall(kDai, approveCall(0, 0x01));
+  append(&clean, packedCall(kUsdc, swapCall(100)));
+  struct Case {
+    const char* what;
+    Bytes data;
+    int operation;
+    bool warns;
+  };
+  const std::vector<Case> cases = {
+      {"plain call", swapCall(100), 1, true},
+      {"plain call, chunked", swapCall(1500), 1, true},
+      {"plain call, operation 0", swapCall(100), 0, false},
+      {"empty data", Bytes{}, 1, true},
+      {"clean batch", multiSendCall(clean), 1, false},
+      {"clean batch, operation 0", multiSendCall(clean), 0, false},
+      {"empty batch", multiSendCall(Bytes{}), 1, false},
+  };
+  for (const Case& c : cases) {
+    for (bool operation_first : {false, true}) {
+      SCOPED_TRACE(c.what);
+      SCOPED_TRACE(operation_first);
+      const MsRun r = signMultiSend(c.data, 400, c.operation, operation_first);
+      ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+      EXPECT_TRUE(r.unchecked.empty());
+      EXPECT_TRUE(r.delegated.empty());
+      ASSERT_EQ(r.safe_delegated.size(), c.warns ? 1u : 0u);
+      if (!c.warns) continue;
+      EXPECT_EQ(r.bodies[r.safe_delegated[0]], delegateText("SafeTx", kUsdc));
+      // Decided when the later of `operation` and `data` is read: after the
+      // bytes, or before the last of them.
+      if (c.data.empty()) continue;
+      if (operation_first)
+        EXPECT_LT(r.safe_delegated[0], r.last_data);
+      else
+        EXPECT_GT(r.safe_delegated[0], r.last_data);
+    }
+  }
+}
+
+TEST(Eip712Stream, DecliningADelegatecallWarningSignsNothing) {
+  for (const char* title :
+       {"Delegatecall", "Delegatecall in batch", "Batch not checked"}) {
+    SCOPED_TRACE(title);
+    const Bytes data = strcmp(title, "Delegatecall") == 0 ? swapCall(100)
+                       : strcmp(title, "Batch not checked") == 0
+                           ? legacyMultiSend(attackerApprove())
+                           : nestedMultiSend(0);
+    const MsRun all = signMultiSend(data, 400, 1);
+    ASSERT_EQ(all.kind, EIP712_REQ_DONE);
+    const auto at = std::find(all.titles.begin(), all.titles.end(), title);
+    ASSERT_NE(at, all.titles.end());
+    const int before = (int)(at - all.titles.begin());
+    const MsRun r = signMultiSend(data, before, 1);
+    EXPECT_EQ(r.kind, EIP712_REQ_CANCELLED);
+    EXPECT_EQ(r.titles.size(), (size_t)before + 1);
+    EXPECT_EQ(r.titles.back(), title);
+    EXPECT_EQ(eip712_stream_waiting(), EIP712_IDLE);
+  }
 }
