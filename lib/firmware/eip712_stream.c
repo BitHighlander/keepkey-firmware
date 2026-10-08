@@ -953,8 +953,7 @@ enum { MS_OFF, MS_SELECTOR, MS_OFFSET, MS_LENGTH, MS_HEADER, MS_DATA };
 typedef enum {
   MS_SCAN_OK,
   MS_SCAN_CANCELLED,
-  MS_SCAN_NONCANONICAL, /* the ABI offset word is not 0x20 */
-  MS_SCAN_DIRTY,        /* an inner approve's spender word is dirty */
+  MS_SCAN_DIRTY, /* an inner approve's spender word is dirty */
 } MultisendScan;
 
 /* Every leaf starts here, whole or chunked, before any of its bytes is fed. */
@@ -998,7 +997,7 @@ static MultisendScan multisend_byte(uint8_t b) {
       if (at == 3) multisend_phase(MS_OFFSET);
       return MS_SCAN_OK;
     case MS_OFFSET:
-      if (b != (at == 31 ? 0x20 : 0)) return MS_SCAN_NONCANONICAL;
+      if (b != (at == 31 ? 0x20 : 0)) return multisend_unchecked();
       if (at == 31) multisend_phase(MS_LENGTH);
       return MS_SCAN_OK;
     case MS_LENGTH:
@@ -1295,11 +1294,8 @@ static bool multisend_reviewed(const uint8_t* bytes, size_t len, bool last) {
       return true;
     case MS_SCAN_CANCELLED:
       return review_approved(EIP712_LEAF_CANCELLED);
-    case MS_SCAN_DIRTY:
+    default: /* MS_SCAN_DIRTY */
       fail("Malformed ERC20 approval");
-      return false;
-    default:
-      fail("Malformed MultiSend");
       return false;
   }
 }

@@ -2847,16 +2847,23 @@ TEST(Eip712Stream, MultiSendMalformedPackingIsNotChecked) {
   }
 }
 
-// The offset word must be the canonical 0x20: any other moves where a
-// decoder reads `transactions` from, past the scan.
-TEST(Eip712Stream, MultiSendNonCanonicalOffsetIsRefused) {
-  Bytes data = multiSendCall(packedCall(kDai, approveCall(0, 0xff)));
-  data[4 + 31] = 0x40;
-  const MsRun r = signMultiSend(data);
-  EXPECT_EQ(r.kind, EIP712_REQ_FAIL);
-  EXPECT_EQ(r.error, "Malformed MultiSend");
-  EXPECT_TRUE(r.warned.empty());
-  EXPECT_EQ(r.first_data, SIZE_MAX);
+// An offset word other than 0x20 moves where a decoder reads `transactions`
+// from, past the scan: like any batch it cannot read, it is shown in full and
+// signs after "Batch not checked", never refused.
+TEST(Eip712Stream, MultiSendNonCanonicalOffsetIsNotChecked) {
+  for (bool chunked : {false, true}) {
+    SCOPED_TRACE(chunked);
+    Bytes packed = packedCall(kDai, approveCall(0, 0xff));
+    if (chunked) append(&packed, packedCall(kUsdc, swapCall(1500)));
+    Bytes data = multiSendCall(packed);
+    data[4 + 31] = 0x40;
+    const MsRun r = signMultiSend(data);
+    ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+    EXPECT_TRUE(r.warned.empty());
+    ASSERT_EQ(r.unchecked.size(), 1u);
+    ASSERT_NE(r.first_data, SIZE_MAX);
+    EXPECT_LT(r.unchecked[0], r.first_data);
+  }
 }
 
 // ── Delegatecalls and batches the scan cannot read ──────────────────
