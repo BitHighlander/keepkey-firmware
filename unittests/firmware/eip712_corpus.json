@@ -6481,5 +6481,230 @@
    "message_hash": "19195d2352d10330a4ad01c832298eea9b353e113154932be82e856eb3aa87c1",
    "digest": "a69fce8c756ac96160ddb6ac09653d3254415d046fdd43e5876663e9f343f183"
   }
+ },
+ {
+  "id": "evmos-MsgSend",
+  "source": [
+   "https://github.com/evmos/evmosjs/blob/e47e44b1683ffa57737cee2f6abbd138436d9fc3/packages/eip712/src/messages/base.ts",
+   "https://github.com/evmos/evmosjs/blob/e47e44b1683ffa57737cee2f6abbd138436d9fc3/packages/eip712/src/messages/bank/send.ts",
+   "https://github.com/evmos/evmosjs/blob/e47e44b1683ffa57737cee2f6abbd138436d9fc3/packages/eip712/src/tests/utils.ts"
+  ],
+  "requires_capability": "eip712-chunked-values",
+  "doc": {
+   "types": {
+    "EIP712Domain": [
+     {
+      "name": "name",
+      "type": "string"
+     },
+     {
+      "name": "version",
+      "type": "string"
+     },
+     {
+      "name": "chainId",
+      "type": "uint256"
+     },
+     {
+      "name": "verifyingContract",
+      "type": "string"
+     },
+     {
+      "name": "salt",
+      "type": "string"
+     }
+    ],
+    "Tx": [
+     {
+      "name": "account_number",
+      "type": "string"
+     },
+     {
+      "name": "chain_id",
+      "type": "string"
+     },
+     {
+      "name": "fee",
+      "type": "Fee"
+     },
+     {
+      "name": "memo",
+      "type": "string"
+     },
+     {
+      "name": "msgs",
+      "type": "Msg[]"
+     },
+     {
+      "name": "sequence",
+      "type": "string"
+     }
+    ],
+    "Fee": [
+     {
+      "name": "feePayer",
+      "type": "string"
+     },
+     {
+      "name": "amount",
+      "type": "Coin[]"
+     },
+     {
+      "name": "gas",
+      "type": "string"
+     }
+    ],
+    "Coin": [
+     {
+      "name": "denom",
+      "type": "string"
+     },
+     {
+      "name": "amount",
+      "type": "string"
+     }
+    ],
+    "Msg": [
+     {
+      "name": "type",
+      "type": "string"
+     },
+     {
+      "name": "value",
+      "type": "MsgValue"
+     }
+    ],
+    "MsgValue": [
+     {
+      "name": "from_address",
+      "type": "string"
+     },
+     {
+      "name": "to_address",
+      "type": "string"
+     },
+     {
+      "name": "amount",
+      "type": "TypeAmount[]"
+     }
+    ],
+    "TypeAmount": [
+     {
+      "name": "denom",
+      "type": "string"
+     },
+     {
+      "name": "amount",
+      "type": "string"
+     }
+    ]
+   },
+   "primaryType": "Tx",
+   "domain": {
+    "name": "Cosmos Web3",
+    "version": "1.0.0",
+    "chainId": 9001,
+    "verifyingContract": "cosmos",
+    "salt": "0"
+   },
+   "message": {
+    "account_number": "10",
+    "chain_id": "evmos_9001-2",
+    "fee": {
+     "feePayer": "evmos1pmk2r32ssqwps42y3c9d4clqlca403yd9wymgr",
+     "amount": [
+      {
+       "denom": "aevmos",
+       "amount": "4000000000000000"
+      }
+     ],
+     "gas": "200000"
+    },
+    "memo": "Transaction Memo",
+    "msgs": [
+     {
+      "type": "cosmos-sdk/MsgSend",
+      "value": {
+       "from_address": "evmos1pmk2r32ssqwps42y3c9d4clqlca403yd9wymgr",
+       "to_address": "evmos12nml2w93uva0smjw3c36stczfay0k67ny94ecz",
+       "amount": [
+        {
+         "denom": "aevmos",
+         "amount": "1000000000000000000"
+        }
+       ]
+      }
+     }
+    ],
+    "sequence": "6"
+   }
+  },
+  "expected": {
+   "domain_separator": "1633cfb1cf33b8790808cb60604cfd1f261c59a367ccb3aaff568a000149ace9",
+   "message_hash": "57c04fd23163cd0f2f0d20d6e9228010f7b111e0a499c208bc798b6e1aae9d0c",
+   "digest": "a475e759cc3637f92de75029aeb2eee6e410efae4a0b1834d8529853f06cf5f8"
+  }
+ },
+ {
+  "id": "injective-MsgSend-v2",
+  "source": [
+   "https://github.com/InjectiveLabs/injective-ts/blob/f8373753d6fe0662c1a8af7fb88192ad126e2e2e/packages/sdk-ts/src/core/tx/eip712/eip712.spec.ts",
+   "https://github.com/InjectiveLabs/injective-ts/blob/f8373753d6fe0662c1a8af7fb88192ad126e2e2e/packages/sdk-ts/src/core/tx/eip712/utils.ts",
+   "https://github.com/InjectiveLabs/injective-ts/blob/f8373753d6fe0662c1a8af7fb88192ad126e2e2e/packages/utils/src/test-utils/mocks/index.ts"
+  ],
+  "requires_capability": "eip712-chunked-values",
+  "doc": {
+   "types": {
+    "EIP712Domain": [
+     {
+      "name": "name",
+      "type": "string"
+     },
+     {
+      "name": "version",
+      "type": "string"
+     },
+     {
+      "name": "chainId",
+      "type": "uint256"
+     },
+     {
+      "name": "verifyingContract",
+      "type": "address"
+     },
+     {
+      "name": "salt",
+      "type": "string"
+     }
+    ],
+    "Tx": [
+     {
+      "name": "context",
+      "type": "string"
+     },
+     {
+      "name": "msgs",
+      "type": "string"
+     }
+    ]
+   },
+   "primaryType": "Tx",
+   "domain": {
+    "name": "Injective Web3",
+    "version": "1.0.0",
+    "chainId": "0x5",
+    "verifyingContract": "0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC",
+    "salt": "0"
+   },
+   "message": {
+    "context": "{\"account_number\":11,\"chain_id\":\"injective-777\",\"fee\":{\"amount\":[{\"denom\":\"inj\",\"amount\":\"64000000000000\"}],\"gas\":400000,\"payer\":\"inj18j2myhaf2at75kwwaqxfstk4q28n4am45nlfg7\",\"granter\":\"inj1granter\"},\"memo\":\"\",\"sequence\":88,\"timeout_height\":1896}",
+    "msgs": "[{\"@type\":\"/cosmos.bank.v1beta1.MsgSend\",\"from_address\":\"inj14au322k9munkmx5wrchz9q30juf5wjgz2cfqku\",\"to_address\":\"inj14au322k9munkmx5wrchz9q30juf5wjgz2cfqku\",\"amount\":[{\"denom\":\"inj\",\"amount\":\"10000000000000000\"}]}]"
+   }
+  },
+  "expected": {
+   "domain_separator": "a908147858193dcbc852a78aa9ab32d35da72e7229292dd41a6d1b02b305d1cd",
+   "message_hash": "699085c19a1eae36c57c33a44f907a1e805ce9f7c5ee1a0cdec62057839e85fb",
+   "digest": "0a599095745e1057fe40b2c5e36bcf753d38d1fcb8106f12c15c51aed3237e2e"
+  }
  }
 ]

@@ -77,6 +77,11 @@
 /* Member names: hashed, and shown in every review path. */
 #define EIP712_MAX_MEMBER_NAME 32
 
+/* A domain member the facts cannot hold (Ethermint's string verifyingContract
+ * and salt, chainId 0, a name that is not a string) is shown and hashed, but
+ * nothing may bind to that domain. */
+#define EIP712_DOMAIN_UNBINDABLE 0x80
+
 typedef struct {
   uint64_t chain_id;
   uint8_t verifying_contract[20];
@@ -85,6 +90,8 @@ typedef struct {
   bool has_verifying_contract;
   bool has_primary_type_hash;
   uint8_t domain_hashes[3][32]; /* name, version, salt */
+  /* Bit i: member i (name, version, salt, chainId, verifyingContract) was
+   * seen, plus EIP712_DOMAIN_UNBINDABLE. */
   uint8_t domain_present;
 } Eip712DomainFacts;
 
@@ -130,7 +137,8 @@ bool eip712_validate_leaf(
     const EthereumTypedDataStructAck_EthereumFieldType* field,
     const uint8_t* value, uint16_t value_len);
 
-/* Keep only facts the domain stream proves; duplicates fail closed. */
+/* Keep only facts the domain stream proves; duplicates fail closed. A member
+ * of a type the facts cannot hold marks them unbindable instead of failing. */
 bool eip712_domain_facts_observe(
     Eip712DomainFacts* facts, const char* member_name,
     const EthereumTypedDataStructAck_EthereumFieldType* field,

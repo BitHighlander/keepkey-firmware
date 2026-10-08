@@ -15,6 +15,7 @@ extern "C" {
 #include <algorithm>
 #include <cstring>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 #include "kkconfirm_driver.h"
@@ -230,20 +231,77 @@ TEST(Eip712Stream, AccumulatesOnlyValidatedDomainBindingFacts) {
       &facts, "name", &name, reinterpret_cast<const uint8_t*>("App"), 3));
 }
 
-TEST(Eip712Stream, RejectsUnrepresentableOrMalformedDomainBindings) {
-  Eip712DomainFacts facts{};
-  Field chain = mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32);
-  uint8_t too_large[32] = {0};
+// Ethermint chains (Evmos, Injective, Canto, Kava, Cronos) declare a string
+// verifyingContract and salt; other domains carry chainId 0 or a name that
+// is not a string. Each member is still shown and hashed: the facts only
+// mark the domain unbindable, so no ERC-7730 definition can bind to it.
+TEST(Eip712Stream, UnrepresentableDomainMembersAreShownAndSignedNotBound) {
+  typedef std::vector<uint8_t> Value;
+  struct Case {
+    const char* member;
+    Field field;
+    Value value;
+  };
+  Value too_large(32, 0);
   too_large[0] = 1;
-  EXPECT_FALSE(eip712_domain_facts_observe(&facts, "chainId", &chain, too_large,
-                                           sizeof(too_large)));
-  uint8_t zero[32] = {0};
-  EXPECT_FALSE(eip712_domain_facts_observe(&facts, "chainId", &chain, zero,
-                                           sizeof(zero)));
-  Field bytes = mkSized(EthereumTypedDataStructAck_EthereumDataType_BYTES, 20);
+  const std::vector<Case> cases = {
+      {"chainId", mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32),
+       too_large},
+      {"chainId", mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32),
+       Value(32, 0)},
+      {"chainId", mk(EthereumTypedDataStructAck_EthereumDataType_STRING),
+       Value{'1'}},
+      {"verifyingContract",
+       mkSized(EthereumTypedDataStructAck_EthereumDataType_BYTES, 20),
+       Value(20, 0)},
+      {"verifyingContract",
+       mk(EthereumTypedDataStructAck_EthereumDataType_STRING),
+       Value{'c', 'o', 's', 'm', 'o', 's'}},
+      {"salt", mk(EthereumTypedDataStructAck_EthereumDataType_STRING),
+       Value{'0'}},
+      {"salt", mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32),
+       Value(32, 0)},
+      {"name", mk(EthereumTypedDataStructAck_EthereumDataType_BYTES),
+       Value{'A'}},
+      {"version", mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 8),
+       Value(8, 1)},
+  };
+  for (const Case& c : cases) {
+    SCOPED_TRACE(c.member);
+    Eip712DomainFacts facts{};
+    EXPECT_TRUE(eip712_domain_facts_observe(&facts, c.member, &c.field,
+                                            c.value.data(), c.value.size()));
+    EXPECT_NE(facts.domain_present & EIP712_DOMAIN_UNBINDABLE, 0);
+    EXPECT_FALSE(facts.has_chain_id);
+    EXPECT_FALSE(facts.has_verifying_contract);
+    const Eip712DomainFacts none{};
+    EXPECT_EQ(memcmp(facts.domain_hashes, none.domain_hashes,
+                     sizeof(none.domain_hashes)),
+              0);
+    // Still one member: a second of the same name is refused.
+    EXPECT_FALSE(eip712_domain_facts_observe(&facts, c.member, &c.field,
+                                             c.value.data(), c.value.size()));
+  }
+}
+
+// A duplicate member, whatever its type, and a value that does not match its
+// declared type are still refused.
+TEST(Eip712Stream, RejectsMalformedDomainMembers) {
+  Eip712DomainFacts facts{};
+  Field text = mk(EthereumTypedDataStructAck_EthereumDataType_STRING);
+  ASSERT_TRUE(eip712_domain_facts_observe(
+      &facts, "verifyingContract", &text,
+      reinterpret_cast<const uint8_t*>("cosmos"), 6));
+  Field address = mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS);
   uint8_t contract[20] = {0};
-  EXPECT_FALSE(eip712_domain_facts_observe(&facts, "verifyingContract", &bytes,
-                                           contract, sizeof(contract)));
+  EXPECT_FALSE(eip712_domain_facts_observe(&facts, "verifyingContract",
+                                           &address, contract, 20));
+  EXPECT_FALSE(facts.has_verifying_contract);
+  Eip712DomainFacts fresh{};
+  EXPECT_FALSE(eip712_domain_facts_observe(&fresh, "verifyingContract",
+                                           &address, contract, 19));
+  const uint8_t bad_utf8[] = {0xff};
+  EXPECT_FALSE(eip712_domain_facts_observe(&fresh, "name", &text, bad_utf8, 1));
 }
 
 TEST(Eip712Stream, CertifiedWalkPausesBeforeMessageValuesUntilAccepted) {
@@ -1572,7 +1630,22 @@ Bytes fromHex(const char* hex) {
 const CorpusDoc* g_doc;
 bool g_missing_value;
 
+// Read at the first message value, once the domain is hashed: whether the
+// domain's facts can bind an ERC-7730 definition.
+int g_bindable;
+
 Bytes corpusValue(const std::vector<uint32_t>& path) {
+  if (g_bindable < 0 && !path.empty() && path[0] == 1) {
+    Eip712DomainFacts facts;
+    g_bindable = eip712_stream_domain_facts(&facts);
+    // An unbindable domain matches nothing, not even an absent member.
+    if (!g_bindable) {
+      const uint8_t chain[2] = {0x23, 0x29};  // 9001
+      EXPECT_FALSE(eip712_stream_domain_matches(3, 7, chain, 2, false));
+      EXPECT_FALSE(eip712_stream_domain_matches(4, 0, nullptr, 0, true));
+      EXPECT_FALSE(eip712_stream_domain_matches(5, 0, nullptr, 0, true));
+    }
+  }
   for (const CorpusValue& v : g_doc->values) {
     if (v.path == path) return fromHex(v.hex);
   }
@@ -1583,7 +1656,7 @@ Bytes corpusValue(const std::vector<uint32_t>& path) {
 }  // namespace
 
 TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
-  EXPECT_GE(kCorpus.size(), 58u);
+  EXPECT_GE(kCorpus.size(), 60u);
   // Max approvals sign, with the warning on the value's own screen.
   const std::map<std::string, std::string> unlimited = {
       {"permit2-PermitSingle-unlimited", "details.amount\nuint160: UNLIMITED"},
@@ -1597,6 +1670,8 @@ TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
        "Allow 0xC92E8bdf79f0507f65a392b0ab4667716BFE0110 to spend ALL your "
        "WETH"},
   };
+  const std::set<std::string> unbindable = {"evmos-MsgSend",
+                                            "injective-MsgSend-v2"};
   size_t warned_docs = 0;
   for (const CorpusDoc& doc : kCorpus) {
     SCOPED_TRACE(doc.id);
@@ -1608,6 +1683,7 @@ TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
     }
     g_doc = &doc;
     g_missing_value = false;
+    g_bindable = -1;
     // A long value is reviewed in parts, so allow several screens per leaf,
     // and one per eight bytes of a value long enough to be chunked.
     size_t value_bytes = 0;
@@ -1634,6 +1710,8 @@ TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
     }
     const Eip712Next* next = eip712_stream_next();
     EXPECT_FALSE(g_missing_value);
+    // Ethermint domains (string verifyingContract and salt) sign, unbound.
+    EXPECT_EQ(g_bindable, unbindable.count(doc.id) ? 0 : 1);
     if (next->kind != EIP712_REQ_DONE) {
       ADD_FAILURE() << "refused: "
                     << (next->kind == EIP712_REQ_FAIL && next->error

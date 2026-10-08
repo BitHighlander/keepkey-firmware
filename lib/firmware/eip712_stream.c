@@ -292,50 +292,51 @@ bool eip712_domain_facts_observe(Eip712DomainFacts* facts,
   if (!facts || !member_name || !field || (!value && value_len != 0) ||
       !eip712_validate_leaf(field, value, value_len))
     return false;
-  const int hash_index = strcmp(member_name, "name") == 0      ? 0
-                         : strcmp(member_name, "version") == 0 ? 1
-                         : strcmp(member_name, "salt") == 0    ? 2
-                                                               : -1;
-  if (hash_index >= 0) {
-    const uint8_t bit = 1u << hash_index;
-    if ((facts->domain_present & bit) != 0 ||
-        (hash_index < 2 &&
-         field->data_type !=
-             EthereumTypedDataStructAck_EthereumDataType_STRING) ||
-        (hash_index == 2 &&
-         (field->data_type !=
-              EthereumTypedDataStructAck_EthereumDataType_BYTES ||
-          !field->has_size || field->size != 32 || value_len != 32)))
-      return false;
-    keccak_256(value, value_len, facts->domain_hashes[hash_index]);
-    facts->domain_present |= bit;
+  static const char* const members[] = {"name", "version", "salt", "chainId",
+                                        "verifyingContract"};
+  int index = 0;
+  while (index < 5 && strcmp(member_name, members[index]) != 0) index++;
+  if (index == 5) return true;
+  const uint8_t bit = 1u << index;
+  if ((facts->domain_present & bit) != 0) return false;
+  facts->domain_present |= bit;
+
+  const uint8_t type = field->data_type;
+  if (index < 3) {
+    if ((index < 2 &&
+         type != EthereumTypedDataStructAck_EthereumDataType_STRING) ||
+        (index == 2 &&
+         (type != EthereumTypedDataStructAck_EthereumDataType_BYTES ||
+          !field->has_size || field->size != 32))) {
+      facts->domain_present |= EIP712_DOMAIN_UNBINDABLE;
+      return true;
+    }
+    keccak_256(value, value_len, facts->domain_hashes[index]);
     return true;
   }
-  if (strcmp(member_name, "chainId") == 0) {
-    if (facts->has_chain_id ||
-        field->data_type != EthereumTypedDataStructAck_EthereumDataType_UINT ||
-        value_len == 0 || value_len > 32)
-      return false;
+  if (index == 3) {
     size_t offset = 0;
     while (offset < value_len && value[offset] == 0) offset++;
-    if (value_len - offset > sizeof(facts->chain_id)) return false;
     uint64_t chain_id = 0;
-    for (; offset < value_len; offset++)
-      chain_id = (chain_id << 8) | value[offset];
-    if (chain_id == 0) return false;
+    if (type == EthereumTypedDataStructAck_EthereumDataType_UINT &&
+        value_len - offset <= sizeof(facts->chain_id))
+      for (size_t i = offset; i < value_len; i++)
+        chain_id = (chain_id << 8) | value[i];
+    /* 0 is also every value too wide for the facts, and every non-uint. */
+    if (chain_id == 0) {
+      facts->domain_present |= EIP712_DOMAIN_UNBINDABLE;
+      return true;
+    }
     facts->chain_id = chain_id;
     facts->has_chain_id = true;
     return true;
   }
-  if (strcmp(member_name, "verifyingContract") == 0) {
-    if (facts->has_verifying_contract ||
-        field->data_type !=
-            EthereumTypedDataStructAck_EthereumDataType_ADDRESS ||
-        value_len != sizeof(facts->verifying_contract))
-      return false;
-    memcpy(facts->verifying_contract, value, sizeof(facts->verifying_contract));
-    facts->has_verifying_contract = true;
+  if (type != EthereumTypedDataStructAck_EthereumDataType_ADDRESS) {
+    facts->domain_present |= EIP712_DOMAIN_UNBINDABLE;
+    return true;
   }
+  memcpy(facts->verifying_contract, value, sizeof(facts->verifying_contract));
+  facts->has_verifying_contract = true;
   return true;
 }
 
@@ -604,10 +605,14 @@ _Static_assert(EIP712_MAX_STRUCTS + 1 <= 8, "schema_known is one byte");
 _Static_assert(EIP712_MAX_STRUCTS + 1 < EIP712_NO_TYPE, "type index range");
 _Static_assert(EIP712_MAX_PATH <= 256, "label_off is one byte");
 
+static bool unbindable(void) {
+  return (e712.domain_facts.domain_present & EIP712_DOMAIN_UNBINDABLE) != 0;
+}
+
 bool eip712_stream_domain_matches(uint8_t field, uint8_t literal_kind,
                                   const uint8_t* value, size_t length,
                                   bool require_absent) {
-  if (!e712.have_domain_separator || field < 1 || field > 5 ||
+  if (!e712.have_domain_separator || unbindable() || field < 1 || field > 5 ||
       (!value && length != 0))
     return false;
   const Eip712DomainFacts* facts = &e712.domain_facts;
@@ -2220,7 +2225,8 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
 }
 
 bool eip712_stream_domain_facts(Eip712DomainFacts* facts) {
-  if (!facts || !e712.active) return false;
+  /* Unbindable facts bind nothing: every ERC-7730 consumer fails closed. */
+  if (!facts || !e712.active || unbindable()) return false;
   memcpy(facts, &e712.domain_facts, sizeof(*facts));
   return true;
 }
@@ -2237,8 +2243,8 @@ bool eip712_stream_signer_path(uint32_t address_n[6], size_t* count) {
 
 bool eip712_stream_definition_accepted(void) {
   if (!e712.active || !e712.require_definition ||
-      !e712.domain_facts.has_primary_type_hash || e712.definition_accepted ||
-      next_step.kind != EIP712_REQ_DEFINITION)
+      !e712.domain_facts.has_primary_type_hash || unbindable() ||
+      e712.definition_accepted || next_step.kind != EIP712_REQ_DEFINITION)
     return false;
   e712.definition_accepted = true;
   e712.phase = PH_MEMBER;
