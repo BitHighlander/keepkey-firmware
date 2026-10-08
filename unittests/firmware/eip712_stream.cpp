@@ -1793,6 +1793,7 @@ namespace {
 Bytes g_approve;
 bool g_data_first;
 int g_operation;
+const char* g_to;
 std::vector<std::string> g_safe_members;
 
 Bytes approveCall(uint8_t spender_high, uint8_t amount_fill) {
@@ -1804,12 +1805,16 @@ Bytes approveCall(uint8_t spender_high, uint8_t amount_fill) {
   return b;
 }
 
+enum ToPlace { TO_FIRST, TO_LAST, TO_ABSENT };
+
 // The domain's chainId, then SafeTx {to, value, data} (or data first), and
-// `operation` last (or first) when it is not negative.
+// `operation` last (or first) when it is not negative. `to` (USDC unless
+// given) moves to the end, or is left out, by `to_place`.
 Eip712ReqKind walkSafeTx(const Bytes& data, bool data_first, int screens,
                          std::vector<std::string>* titles,
                          std::vector<std::string>* bodies, int operation = -1,
-                         bool operation_first = false) {
+                         bool operation_first = false, const char* to = nullptr,
+                         ToPlace to_place = TO_FIRST) {
   std::map<std::string, Struct> types;
   addMember(types["EIP712Domain"], "chainId",
             mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
@@ -1820,6 +1825,12 @@ Eip712ReqKind walkSafeTx(const Bytes& data, bool data_first, int screens,
     g_safe_members.insert(
         operation_first ? g_safe_members.begin() : g_safe_members.end(),
         "operation");
+  if (to_place != TO_FIRST) {
+    g_safe_members.erase(
+        std::find(g_safe_members.begin(), g_safe_members.end(), "to"));
+    if (to_place == TO_LAST) g_safe_members.push_back("to");
+  }
+  g_to = to ? to : "a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";  // USDC
   for (const std::string& name : g_safe_members) {
     if (name == "to")
       addMember(types["SafeTx"], name.c_str(),
@@ -1842,8 +1853,7 @@ Eip712ReqKind walkSafeTx(const Bytes& data, bool data_first, int screens,
         if (path[0] == 0) return word(1);
         const std::string& name = g_safe_members[path[1]];
         if (name == "data") return g_approve;
-        if (name == "to")  // USDC on chain 1
-          return fromHex("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+        if (name == "to") return fromHex(g_to);
         if (name == "operation") return Bytes{(uint8_t)g_operation};
         return word(0);
       },
@@ -2518,10 +2528,11 @@ struct MsRun {
 };
 
 MsRun signMultiSend(const Bytes& data, int screens = 400, int operation = -1,
-                    bool operation_first = false) {
+                    bool operation_first = false, const char* to = nullptr,
+                    ToPlace to_place = TO_FIRST) {
   MsRun r;
   r.kind = walkSafeTx(data, false, screens, &r.titles, &r.bodies, operation,
-                      operation_first);
+                      operation_first, to, to_place);
   // The abort that ends walkSafeTx() leaves the last request in place.
   if (r.kind == EIP712_REQ_FAIL && eip712_stream_next()->error)
     r.error = eip712_stream_next()->error;
@@ -2856,6 +2867,27 @@ TEST(Eip712Stream, MultiSendLegacyLayoutIsNotChecked) {
   }
 }
 
+// Safe's MultiSend and MultiSendCallOnly, every address variant of 1.1.1,
+// 1.3.0, 1.4.1 and 1.5.0 in safe-global/safe-deployments 7b1fb6d6
+// (src/assets/v1.x.x/multi_send*.json).
+const char* const kSafeMultiSends[] = {
+    "8D29bE29923b68abfDD21e541b9374737B49cdAD",  // 1.1.1
+    "A238CBeb142c10Ef7Ad8442C6D1f9E89e07e7761",  // 1.3.0 canonical
+    "998739BFdAAdde7C933B942a68053933098f9EDa",  // 1.3.0 eip155
+    "0dFcccB95225ffB03c6FBB2559B530C2B7C8A912",  // 1.3.0 zksync
+    "40A2aCCbd92BCA938b02010E17A5b8929b49130D",  // 1.3.0 CallOnly canonical
+    "A1dabEF33b3B82c7814B6D82A79e50F4AC44102B",  // 1.3.0 CallOnly eip155
+    "f220D3b4DFb23C4ade8C88E526C1353AbAcbC38F",  // 1.3.0 CallOnly zksync
+    "38869bf66a61cF6bDB996A6aE40D5853Fd43B526",  // 1.4.1 canonical
+    "309D0B190FeCCa8e1D5D8309a16F7e3CB133E885",  // 1.4.1 zksync
+    "9641d764fc13c8B624c04430C7356C1C7C8102e2",  // 1.4.1 CallOnly canonical
+    "0408EF011960d02349d50286D20531229BCef773",  // 1.4.1 CallOnly zksync
+    "218543288004CD07832472D464648173c77D7eB7",  // 1.5.0
+    "A83c336B20401Af773B6219BA5027174338D1836",  // 1.5.0 CallOnly
+};
+
+const char* const kAttacker = "1111111111111111111111111111111111111111";
+
 TEST(Eip712Stream, SafeTxDelegatecallWarnsUnlessACleanBatch) {
   Bytes clean = packedCall(kDai, approveCall(0, 0x01));
   append(&clean, packedCall(kUsdc, swapCall(100)));
@@ -2865,34 +2897,107 @@ TEST(Eip712Stream, SafeTxDelegatecallWarnsUnlessACleanBatch) {
     int operation;
     bool warns;
   };
+  // SafeTx.to is USDC, no MultiSend: every delegatecall is warned about.
   const std::vector<Case> cases = {
       {"plain call", swapCall(100), 1, true},
       {"plain call, chunked", swapCall(1500), 1, true},
       {"plain call, operation 0", swapCall(100), 0, false},
       {"empty data", Bytes{}, 1, true},
-      {"clean batch", multiSendCall(clean), 1, false},
+      {"clean batch", multiSendCall(clean), 1, true},
       {"clean batch, operation 0", multiSendCall(clean), 0, false},
-      {"empty batch", multiSendCall(Bytes{}), 1, false},
+      {"empty batch", multiSendCall(Bytes{}), 1, true},
   };
   for (const Case& c : cases) {
     for (bool operation_first : {false, true}) {
-      SCOPED_TRACE(c.what);
-      SCOPED_TRACE(operation_first);
-      const MsRun r = signMultiSend(c.data, 400, c.operation, operation_first);
-      ASSERT_EQ(r.kind, EIP712_REQ_DONE);
-      EXPECT_TRUE(r.unchecked.empty());
-      EXPECT_TRUE(r.delegated.empty());
-      ASSERT_EQ(r.safe_delegated.size(), c.warns ? 1u : 0u);
-      if (!c.warns) continue;
-      EXPECT_EQ(r.bodies[r.safe_delegated[0]], delegateText("SafeTx", kUsdc));
-      // Decided when the later of `operation` and `data` is read: after the
-      // bytes, or before the last of them.
-      if (c.data.empty()) continue;
-      if (operation_first)
-        EXPECT_LT(r.safe_delegated[0], r.last_data);
-      else
-        EXPECT_GT(r.safe_delegated[0], r.last_data);
+      for (ToPlace place : {TO_FIRST, TO_LAST}) {
+        SCOPED_TRACE(c.what);
+        SCOPED_TRACE(operation_first);
+        SCOPED_TRACE(place);
+        const MsRun r = signMultiSend(c.data, 400, c.operation, operation_first,
+                                      nullptr, place);
+        ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+        EXPECT_TRUE(r.unchecked.empty());
+        EXPECT_TRUE(r.delegated.empty());
+        ASSERT_EQ(r.safe_delegated.size(), c.warns ? 1u : 0u);
+        if (!c.warns) continue;
+        EXPECT_EQ(r.bodies[r.safe_delegated[0]], delegateText("SafeTx", kUsdc));
+        // Decided when the last of `to`, `operation` and `data` is read:
+        // after the bytes, or before the last of them.
+        if (c.data.empty()) continue;
+        if (operation_first && place == TO_FIRST)
+          EXPECT_LT(r.safe_delegated[0], r.last_data);
+        else
+          EXPECT_GT(r.safe_delegated[0], r.last_data);
+      }
     }
+  }
+
+  // The same clean batch to a Safe MultiSend keeps its screens, in any
+  // member order.
+  for (const char* multisend : kSafeMultiSends) {
+    for (bool operation_first : {false, true}) {
+      for (ToPlace place : {TO_FIRST, TO_LAST}) {
+        SCOPED_TRACE(multisend);
+        SCOPED_TRACE(operation_first);
+        SCOPED_TRACE(place);
+        const MsRun r = signMultiSend(multiSendCall(clean), 400, 1,
+                                      operation_first, multisend, place);
+        ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+        EXPECT_TRUE(r.unchecked.empty());
+        EXPECT_TRUE(r.delegated.empty());
+        EXPECT_TRUE(r.safe_delegated.empty());
+      }
+    }
+  }
+}
+
+// A delegatecall to any contract runs it as the Safe: a clean (or empty)
+// multiSend in `data` says nothing about what `to` does with it.
+TEST(Eip712Stream, SafeTxDelegatecallToAnAttackerWithACleanBatchWarns) {
+  const Bytes harmless = multiSendCall(packedCall(kUsdc, swapCall(100)));
+  for (const Bytes& data : {multiSendCall(Bytes{}), harmless}) {
+    for (bool operation_first : {false, true}) {
+      for (ToPlace place : {TO_FIRST, TO_LAST}) {
+        SCOPED_TRACE(data.size());
+        SCOPED_TRACE(operation_first);
+        SCOPED_TRACE(place);
+        const MsRun r =
+            signMultiSend(data, 400, 1, operation_first, kAttacker, place);
+        ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+        EXPECT_TRUE(r.unchecked.empty());
+        EXPECT_TRUE(r.delegated.empty());
+        ASSERT_EQ(r.safe_delegated.size(), 1u);
+        EXPECT_EQ(r.bodies[r.safe_delegated[0]],
+                  delegateText("SafeTx", kAttacker));
+      }
+    }
+  }
+  // Declining it signs nothing.
+  const MsRun all = signMultiSend(harmless, 400, 1, false, kAttacker);
+  ASSERT_EQ(all.safe_delegated.size(), 1u);
+  const MsRun r =
+      signMultiSend(harmless, (int)all.safe_delegated[0], 1, false, kAttacker);
+  EXPECT_EQ(r.kind, EIP712_REQ_CANCELLED);
+  EXPECT_EQ(r.titles.size(), all.safe_delegated[0] + 1);
+}
+
+// No `to` in the SafeTx: nothing names the code, so the delegatecall is
+// warned about when the SafeTx ends.
+TEST(Eip712Stream, SafeTxDelegatecallWithoutToWarns) {
+  Bytes clean = packedCall(kUsdc, swapCall(100));
+  for (bool operation_first : {false, true}) {
+    SCOPED_TRACE(operation_first);
+    const MsRun r = signMultiSend(multiSendCall(clean), 400, 1, operation_first,
+                                  nullptr, TO_ABSENT);
+    ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+    ASSERT_EQ(r.safe_delegated.size(), 1u);
+    EXPECT_EQ(r.bodies[r.safe_delegated[0]],
+              "SafeTx gives the contract in 'to' your Safe's full authority. "
+              "Not checked.");
+    EXPECT_GT(r.safe_delegated[0], r.last_data);
+    const MsRun none = signMultiSend(multiSendCall(clean), 400, 0,
+                                     operation_first, nullptr, TO_ABSENT);
+    EXPECT_TRUE(none.safe_delegated.empty());
   }
 }
 

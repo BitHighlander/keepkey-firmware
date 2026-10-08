@@ -494,6 +494,7 @@ typedef struct {
       uint8_t type_hash[32]; /* lives exactly as long as the frame */
       uint8_t type;          /* index into e712.types */
       bool have_type_hash;
+      uint8_t safe_facts; /* a SafeTx's SAFE_*, read so far */
     } s;
     struct {
       uint32_t elem_size;
@@ -559,11 +560,6 @@ static struct {
    * approve() in SafeTx.data calls. Every pop clears it, so it never
    * outlives the frame that read it. */
   uint8_t safe_to_slot;
-
-  /* What the open SafeTx's `operation` and `data` showed so far (SAFE_*),
-   * for the stack frame safe_frame - 1. Cleared when that frame folds. */
-  uint8_t safe_frame;
-  uint8_t safe_facts;
 
   Eip712MultiSend multisend;
 
@@ -1075,39 +1071,104 @@ static MultisendScan multisend_feed(const uint8_t* bytes, size_t len) {
 
 /* ── A SafeTx delegatecall ────────────────────────────────────────────
  * operation 1 runs SafeTx.to's code as the Safe. A Safe app's batch is the
- * one case read in full: data a multiSend the scan read to its end, with no
- * delegatecall inside. Anything else is warned about once both `operation`
- * and `data` are read, in either order. */
-#define SAFE_DELEGATE 1  /* operation is 1 */
-#define SAFE_DATA 2      /* data has been read */
-#define SAFE_UNCHECKED 4 /* data is not such a batch */
+ * one case read in full: `to` a Safe MultiSend deployment and `data` a
+ * multiSend the scan read to its end, with no delegatecall inside. Anything
+ * else is warned about when the last of `to`, `operation` and `data` is
+ * read, in any order, or when the SafeTx ends without one of them. */
+#define SAFE_DELEGATE 1   /* operation is 1 */
+#define SAFE_DATA 2       /* data has been read */
+#define SAFE_UNCHECKED 4  /* data is not such a batch */
+#define SAFE_TO 8         /* to has been read */
+#define SAFE_MULTISEND 16 /* to is a MultiSend deployment */
+#define SAFE_DECIDED 32
+
+/* MultiSend and MultiSendCallOnly, every address variant of each release
+ * that packs its calls (1.1.1 on; 1.0.0 takes ABI words), from
+ * safe-global/safe-deployments 7b1fb6d6, src/assets/v1.x.x/multi_send*.json.
+ * Each address holds the same code on every chain that has it, so the
+ * list is not per chain. */
+static const uint8_t safe_multisend[][20] = {
+    /* 1.1.1 MultiSend */
+    {0x8d, 0x29, 0xbe, 0x29, 0x92, 0x3b, 0x68, 0xab, 0xfd, 0xd2,
+     0x1e, 0x54, 0x1b, 0x93, 0x74, 0x73, 0x7b, 0x49, 0xcd, 0xad},
+    /* 1.3.0 MultiSend: canonical, eip155, zksync */
+    {0xa2, 0x38, 0xcb, 0xeb, 0x14, 0x2c, 0x10, 0xef, 0x7a, 0xd8,
+     0x44, 0x2c, 0x6d, 0x1f, 0x9e, 0x89, 0xe0, 0x7e, 0x77, 0x61},
+    {0x99, 0x87, 0x39, 0xbf, 0xda, 0xad, 0xde, 0x7c, 0x93, 0x3b,
+     0x94, 0x2a, 0x68, 0x05, 0x39, 0x33, 0x09, 0x8f, 0x9e, 0xda},
+    {0x0d, 0xfc, 0xcc, 0xb9, 0x52, 0x25, 0xff, 0xb0, 0x3c, 0x6f,
+     0xbb, 0x25, 0x59, 0xb5, 0x30, 0xc2, 0xb7, 0xc8, 0xa9, 0x12},
+    /* 1.3.0 MultiSendCallOnly: canonical, eip155, zksync */
+    {0x40, 0xa2, 0xac, 0xcb, 0xd9, 0x2b, 0xca, 0x93, 0x8b, 0x02,
+     0x01, 0x0e, 0x17, 0xa5, 0xb8, 0x92, 0x9b, 0x49, 0x13, 0x0d},
+    {0xa1, 0xda, 0xbe, 0xf3, 0x3b, 0x3b, 0x82, 0xc7, 0x81, 0x4b,
+     0x6d, 0x82, 0xa7, 0x9e, 0x50, 0xf4, 0xac, 0x44, 0x10, 0x2b},
+    {0xf2, 0x20, 0xd3, 0xb4, 0xdf, 0xb2, 0x3c, 0x4a, 0xde, 0x8c,
+     0x88, 0xe5, 0x26, 0xc1, 0x35, 0x3a, 0xba, 0xcb, 0xc3, 0x8f},
+    /* 1.4.1 MultiSend: canonical, zksync */
+    {0x38, 0x86, 0x9b, 0xf6, 0x6a, 0x61, 0xcf, 0x6b, 0xdb, 0x99,
+     0x6a, 0x6a, 0xe4, 0x0d, 0x58, 0x53, 0xfd, 0x43, 0xb5, 0x26},
+    {0x30, 0x9d, 0x0b, 0x19, 0x0f, 0xec, 0xca, 0x8e, 0x1d, 0x5d,
+     0x83, 0x09, 0xa1, 0x6f, 0x7e, 0x3c, 0xb1, 0x33, 0xe8, 0x85},
+    /* 1.4.1 MultiSendCallOnly: canonical, zksync */
+    {0x96, 0x41, 0xd7, 0x64, 0xfc, 0x13, 0xc8, 0xb6, 0x24, 0xc0,
+     0x44, 0x30, 0xc7, 0x35, 0x6c, 0x1c, 0x7c, 0x81, 0x02, 0xe2},
+    {0x04, 0x08, 0xef, 0x01, 0x19, 0x60, 0xd0, 0x23, 0x49, 0xd5,
+     0x02, 0x86, 0xd2, 0x05, 0x31, 0x22, 0x9b, 0xce, 0xf7, 0x73},
+    /* 1.5.0 MultiSend, MultiSendCallOnly */
+    {0x21, 0x85, 0x43, 0x28, 0x80, 0x04, 0xcd, 0x07, 0x83, 0x24,
+     0x72, 0xd4, 0x64, 0x64, 0x81, 0x73, 0xc7, 0x7d, 0x7e, 0xb7},
+    {0xa8, 0x3c, 0x33, 0x6b, 0x20, 0x40, 0x1a, 0xf7, 0x73, 0xb6,
+     0x21, 0x9b, 0xa5, 0x02, 0x71, 0x74, 0x33, 0x8d, 0x18, 0x36},
+};
+
+static bool is_safe_multisend(const uint8_t* to) {
+  for (size_t i = 0; i < sizeof(safe_multisend) / 20; i++)
+    if (memcmp(to, safe_multisend[i], 20) == 0) return true;
+  return false;
+}
+
+/* Decide once all three are read, or, `closing`, once the SafeTx ends.
+ * False to stop. */
+static bool safe_delegate_decide(uint8_t* facts, bool closing,
+                                 const uint8_t* to) {
+  const uint8_t read = SAFE_DELEGATE | SAFE_DATA | SAFE_TO;
+  if (!(*facts & SAFE_DELEGATE) || (*facts & SAFE_DECIDED)) return true;
+  if ((*facts & read) != read && !closing) return true;
+  *facts |= SAFE_DECIDED;
+  if ((*facts & (read | SAFE_MULTISEND | SAFE_UNCHECKED)) ==
+      (read | SAFE_MULTISEND))
+    return true;
+  return confirm_delegatecall("Delegatecall", "SafeTx", to);
+}
 
 /* After this SafeTx leaf's own checks, before its screen. False to stop. */
 static bool safe_delegate_approved(const Eip712FieldType* field,
                                    const uint8_t* value, size_t len) {
   if (e712.root != 1 || !in_safe_tx()) return true;
-  if (e712.safe_frame != e712.depth) {
-    e712.safe_frame = e712.depth;
-    e712.safe_facts = 0;
-  }
-  const uint8_t before = e712.safe_facts;
+  uint8_t* facts = &e712.stack[e712.depth - 1].u.s.safe_facts;
+  const uint8_t* to = safe_tx_to();
   if (field->data_type == EthereumTypedDataStructAck_EthereumDataType_BYTES &&
       strcmp(e712.pending_name, "data") == 0) {
-    e712.safe_facts |= SAFE_DATA;
+    *facts |= SAFE_DATA;
     if ((e712.multisend.facts & (MS_FACT_CLEAN | MS_FACT_DELEGATE)) !=
         MS_FACT_CLEAN)
-      e712.safe_facts |= SAFE_UNCHECKED;
+      *facts |= SAFE_UNCHECKED;
+  } else if (field->data_type ==
+                 EthereumTypedDataStructAck_EthereumDataType_ADDRESS &&
+             strcmp(e712.pending_name, "to") == 0) {
+    *facts |= SAFE_TO;
+    if (is_safe_multisend(value)) *facts |= SAFE_MULTISEND;
+    to = value;
   } else if (field->data_type ==
                  EthereumTypedDataStructAck_EthereumDataType_UINT &&
              strcmp(e712.pending_name, "operation") == 0 && len > 0 &&
              value[len - 1] == 1) {
     for (size_t i = 0; i + 1 < len; i++)
       if (value[i] != 0) return true;
-    e712.safe_facts |= SAFE_DELEGATE;
+    *facts |= SAFE_DELEGATE;
   }
-  const uint8_t all = SAFE_DELEGATE | SAFE_DATA | SAFE_UNCHECKED;
-  if (e712.safe_facts != all || before == all) return true;
-  return confirm_delegatecall("Delegatecall", "SafeTx", safe_tx_to());
+  return safe_delegate_decide(facts, false, to);
 }
 
 static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
@@ -1299,7 +1360,6 @@ static bool begin_root(const char* name) {
   e712.slots_used = 0;
   e712.array_owner = 0;
   e712.safe_to_slot = 0;
-  e712.safe_frame = 0;
   begin_type_hash();
   return true;
 }
@@ -1355,7 +1415,6 @@ static bool fold_frame(uint8_t out[32]) {
   const Eip712Frame* f = &e712.stack[e712.depth - 1];
   /* A later frame may reuse this one's slots: its `to` is gone with it. */
   e712.safe_to_slot = 0;
-  if (e712.safe_frame == e712.depth) e712.safe_frame = 0;
   if (array_streams(f)) {
     array_sponge_final(out);
     e712.slots_used = f->slot_base;
@@ -1381,6 +1440,13 @@ static void advance_after_slot(void);
 /* A container finished. Give its digest to the parent, or finish the root. */
 static void complete_frame(void) {
   uint8_t digest[32];
+  /* A SafeTx with operation 1 but no `to` or `data` is warned about now. */
+  if (e712.root == 1 && in_safe_tx() &&
+      !safe_delegate_decide(&e712.stack[e712.depth - 1].u.s.safe_facts, true,
+                            safe_tx_to())) {
+    review_approved(EIP712_LEAF_CANCELLED);
+    return;
+  }
   if (!fold_frame(digest)) {
     fail("EIP-712 internal hash state lost");
     return;
