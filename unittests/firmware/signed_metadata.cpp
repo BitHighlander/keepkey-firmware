@@ -1808,17 +1808,16 @@ TEST(SolanaTokenDef, TrustedOnlyWithValidAttestation) {
 }
 
 /* ===================================================================== *
- *  Clearsign attestor: the issuer/verifier digest contract
+ *  Externally issued schema: the verifier's digest contract
  *
- *  fsm_msgClearsignAttestorSign signs sha256(payload) as a 64-byte compact
- *  ECDSA signature; verifying devices check it through
- *  signed_metadata_verify_attestation. Those two constructions living in
- *  different files is exactly how SignIdentity ended up unusable for this
- *  (Bitcoin message header + double hash, 65 bytes). This pins the contract
- *  so a change on either side fails here rather than in the field.
+ *  This build verifies schemas issued outside the device; it has no
+ *  ClearsignAttestorSign handler or wire mapping. The fixture signs the
+ *  single SHA256(payload) with a test key and exercises the production
+ *  verifier. It does not cover a device-side issuer. SignIdentity's Bitcoin
+ *  message framing and 65-byte signature are not this attestation format.
  * ===================================================================== */
 
-TEST(ClearsignAttestor, SignedSchemaVerifiesOnTheVerifyingDevice) {
+TEST(SignedMetadataAttestation, ExternallySignedSchemaVerifies) {
   set_advanced_mode_for_test(true);
   /* Smallest valid KKSOLSC1 payload: no args, no accounts. What matters here
    * is the digest construction, not the schema body. */
@@ -1841,9 +1840,9 @@ TEST(ClearsignAttestor, SignedSchemaVerifiesOnTheVerifyingDevice) {
 
   SolanaInstrSchema schema;
   ASSERT_TRUE(solana_parseInstrSchema(payload.data(), payload.size(), &schema))
-      << "the attestor refuses to sign what it cannot parse";
+      << "the fixture must be a valid schema";
 
-  /* Issuer side, byte for byte what the handler does. */
+  /* External issuer fixture: compact ECDSA over a single SHA256. */
   uint8_t digest[32];
   sha256_Raw(payload.data(), payload.size(), digest);
   uint8_t sig[64];
@@ -1857,7 +1856,7 @@ TEST(ClearsignAttestor, SignedSchemaVerifiesOnTheVerifyingDevice) {
   EXPECT_TRUE(signed_metadata_verify_attestation(
       TEST_KEY_ID, payload.data(), payload.size(), sig, sizeof(sig)));
 
-  /* A schema the attestor never saw must not ride the same signature. */
+  /* A schema the issuer never signed must not ride the same signature. */
   payload[9] ^= 0x01; /* first byte of the program id */
   EXPECT_FALSE(signed_metadata_verify_attestation(
       TEST_KEY_ID, payload.data(), payload.size(), sig, sizeof(sig)));
