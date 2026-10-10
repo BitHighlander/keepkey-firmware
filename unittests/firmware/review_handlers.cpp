@@ -1060,8 +1060,8 @@ TEST_F(ReviewHandlers, ZcashZeroValuePaddingOutputIsNotShown) {
 // any other output. The zero-valued memo-only send carries the address the
 // user entered and is shown with it at 0 ZEC; without a user_address the same
 // output is taken for padding and not shown. A change output whose cmx does
-// not match its note is refused before any output screen, and declining the
-// change total releases nothing.
+// not match its note is refused when it streams, after the screens of the
+// outputs before it, and declining the change total releases nothing.
 TEST_F(ReviewHandlers, ZcashOnlyProvenChangeIsFoldedAndMemoSendIsShown) {
   ZcashOrchardKeys keys;
   ASSERT_TRUE(storage_zcashOrchardKeys(0, true, &keys));

@@ -2153,7 +2153,7 @@ TEST(Zcash, ComputeShieldedSighash_KnownVector) {
    * ZIP-244 sighash test vector.
    *
    * The sighash personalization is "ZcashTxHash_" || branch_id_LE.
-   * For NU5 (branch_id = 0x37519621):
+   * For branch_id = 0x37519621 (not the NU5 id, which is 0xc2d6d0b4):
    *   personalization = "ZcashTxHash_" || 0x21965137
    *
    * Input: BLAKE2b-256(personalization, header || transparent || sapling ||
@@ -2171,7 +2171,8 @@ TEST(Zcash, ComputeShieldedSighash_KnownVector) {
 
   /*
    * BLAKE2b-256 with personalization "ZcashTxHash_\x21\x96\x51\x37" over
-   * 128 zero bytes, computed offline: a change detector, not a spec vector.
+   * 128 zero bytes, recomputed here: it checks the construction, and is not
+   * a stored vector. Zip244OfficialVectors_V5Sighash holds the spec vectors.
    */
   uint8_t expected[32];
   BLAKE2B_CTX ctx;
