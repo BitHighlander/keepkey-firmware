@@ -913,19 +913,25 @@ int walk(const char* primary, const std::map<std::string, Struct>& types,
     return screens - kkconfirm_drain() / 2;
   for (;;) {
     const Eip712Next* next = eip712_stream_next();
+    bool alive = false;
     if (next->kind == EIP712_REQ_STRUCT) {
       auto it = types.find(next->struct_name);
       Struct empty{};
-      eip712_stream_on_struct(it == types.end() ? &empty : &it->second);
+      alive = eip712_stream_on_struct(it == types.end() ? &empty : &it->second);
     } else if (next->kind == EIP712_REQ_VALUE) {
       std::vector<uint32_t> path(next->member_path,
                                  next->member_path + next->member_path_len);
       EthereumTypedDataValueAck ack = valueAck(value(path), next);
       if (topup && !kkconfirm_preload_no_sentinel(topup, 0)) return -2;
-      eip712_stream_on_value(&ack);
+      alive = eip712_stream_on_value(&ack);
     } else {
       break;
     }
+    // A handler returns false exactly when it ended the walk without a
+    // result.
+    const Eip712ReqKind kind = eip712_stream_next()->kind;
+    EXPECT_EQ(alive, kind != EIP712_REQ_FAIL && kind != EIP712_REQ_CANCELLED)
+        << "after " << kind;
   }
   // Two messages per screen; negative means the rejection sentinel was used.
   const int unused = kkconfirm_drain();
@@ -1271,6 +1277,29 @@ TEST(Eip712Stream, NestsSixFramesDeepButNotSeven) {
     }
     eip712_stream_abort();
   }
+}
+
+// An array's elements are frames too. Five structs deep, an array of structs
+// has no frame left for an element: its length answer ends the walk, and the
+// handler says so.
+TEST(Eip712Stream, ArrayOfStructsPastTheDepthLimitEndsTheWalk) {
+  const char* chain[] = {"L1", "L2", "L3", "L4", "L5"};
+  std::map<std::string, Struct> types;
+  for (size_t i = 0; i + 1 < 5; i++)
+    addMember(types[chain[i]], "next", structField(chain[i + 1]));
+  Field items = structField("Item");
+  items.array_levels_count = 1;
+  addMember(types["L5"], "items", items);
+  addMember(types["Item"], "v",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  const int used = walk(
+      "L1", types,
+      [](const std::vector<uint32_t>&) -> Bytes { return Bytes{0, 1}; }, 1);
+  EXPECT_EQ(used, 0);
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
+  EXPECT_STREQ(eip712_stream_next()->error,
+               "EIP-712 document nests too deeply for this device");
+  EXPECT_EQ(eip712_stream_waiting(), EIP712_IDLE);
 }
 
 // The open frames' member names share one EIP712_MAX_PATH buffer. Whatever

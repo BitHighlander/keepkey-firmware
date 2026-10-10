@@ -1278,6 +1278,13 @@ static void fail(const char* why) {
   next_step.error = why;
 }
 
+/* What a handler returns after a step that cannot report its own failure:
+ * false once a failure or a cancel is staged, when the session is gone. */
+static bool walk_continues(void) {
+  return next_step.kind != EIP712_REQ_FAIL &&
+         next_step.kind != EIP712_REQ_CANCELLED;
+}
+
 /* True when the user approved the screen; otherwise the walk has ended. */
 static bool review_approved(Eip712LeafResult shown) {
   if (shown == EIP712_LEAF_INVALID) {
@@ -1829,7 +1836,7 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
       }
       if (f->member_index >= f->member_count) {
         complete_frame();
-        return true;
+        return walk_continues();
       }
       if (f->slot_base + f->member_count > EIP712_MAX_SLOTS) {
         fail("EIP-712 document too wide for this device");
@@ -2088,7 +2095,7 @@ static bool chunk_absorb(const Eip712FieldType* field, const uint8_t* bytes,
   }
   memzero(&e712.chunk, sizeof(e712.chunk));
   finish_leaf(word);
-  return true;
+  return walk_continues();
 }
 
 /* The first chunk: value_total_length names the whole value's length. */
@@ -2224,10 +2231,10 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
     if (len == 0) {
       /* An empty array still hashes -- keccak of no bytes at all. */
       complete_frame();
-      return true;
+      return walk_continues();
     }
     drive_array_element();
-    return true;
+    return walk_continues();
   }
 
   Eip712FieldType rebuilt;
@@ -2275,7 +2282,7 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
       strcmp(e712.types.names[f->u.s.type], "SafeTx") == 0)
     e712.safe_to_slot = (uint8_t)(f->slot_base + f->member_index + 1);
   finish_leaf(word);
-  return true;
+  return walk_continues();
 }
 
 bool eip712_stream_domain_facts(Eip712DomainFacts* facts) {
