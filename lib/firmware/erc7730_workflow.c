@@ -995,11 +995,12 @@ bool erc7730_workflow_field_embedded(Erc7730Workflow* workflow) {
     return false;
   }
   Erc7730Field* field = &workflow->field;
-  /* An inner approve() gets the top-level policy (ethereum.c): a dirty
-   * spender word is refused, and 2^256-1 signs only after the UNLIMITED
-   * warning. */
+  /* An inner approve() or increaseAllowance() gets the top-level policy
+   * (ethereum.c): a dirty spender word is refused, and 2^256-1 signs only
+   * after the UNLIMITED warning. */
   if (capture.length == ERC7730_ABI_LOCATE_PREFIX &&
-      memcmp(capture.data, "\x09\x5e\xa7\xb3", 4) == 0) {
+      (memcmp(capture.data, "\x09\x5e\xa7\xb3", 4) == 0 ||
+       memcmp(capture.data, "\x39\x50\x93\x51", 4) == 0)) {
     bool unlimited = true;
     for (size_t i = 4; i < 68; i++) {
       if (i < 16 && capture.data[i] != 0) {

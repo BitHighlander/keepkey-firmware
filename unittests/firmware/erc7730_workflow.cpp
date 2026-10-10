@@ -350,6 +350,14 @@ TEST(Erc7730Workflow, EmbeddedApproveIsClassifiedLikeATopLevelOne) {
   dirty[15] = 1;  // pre-0.8 tokens mask it and still grant the allowance
   EXPECT_FALSE(locateEmbedded(&workflow, dirty));
 
+  // increaseAllowance grants the same allowance and is classified the same.
+  auto increase = innerApprove(0xff);
+  const uint8_t selector[4] = {0x39, 0x50, 0x93, 0x51};
+  std::copy(selector, selector + 4, increase.begin());
+  ASSERT_TRUE(locateEmbedded(&workflow, increase));
+  EXPECT_TRUE(workflow.field.unlimited_approve);
+  EXPECT_EQ(0, memcmp(workflow.field.approve_spender, spender, 20));
+
   // Another call keeps only its selector.
   auto transfer = innerApprove(0xff);
   transfer[0] = 0xa9;
