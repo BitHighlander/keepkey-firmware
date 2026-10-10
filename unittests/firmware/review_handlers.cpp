@@ -8,6 +8,7 @@ extern "C" {
 #include "keepkey/firmware/ripple.h"
 #include "keepkey/firmware/tron.h"
 #include "keepkey/firmware/mayachain.h"
+#include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/thorchain.h"
 #include "keepkey/firmware/bip85.h"
 #include "keepkey/firmware/signed_metadata.h"
@@ -159,9 +160,15 @@ TEST_F(ReviewHandlers, RippleMemoReachesReviewBeforeSigning) {
   strcpy(msg.memo, "Memo review must be reached");
   ASSERT_TRUE(kkconfirm_preload(1, 1));
   fsm_test_clearLastFailure();
+  kkconfirm_capture_start();
   fsm_msgRippleSignTx(&msg);
+  const auto screens = kkconfirm_capture_finish();
   EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
   EXPECT_EQ(0, kkconfirm_drain());
+  // The declined screen is the memo's own, not the final "Transaction" one.
+  ASSERT_EQ(2u, screens.size());
+  // (The memo page shows each space as \x20.)
+  EXPECT_EQ("Memo\\x20review\\x20must\\x20be\\x20reached", screens[1]);
 }
 
 static const uint8_t review_pubkey[33] = {
@@ -458,6 +465,7 @@ TEST_F(ReviewHandlers, ThorchainSignScreenNamesTheSentDenom) {
 TEST_F(ReviewHandlers, MayaDepositGrammarRejectedBeforeConsent) {
   HDNode node = {};
   ASSERT_TRUE(storage_getRootNode("secp256k1", true, &node));
+  hdnode_fill_public_key(&node);
   MayachainSignTx tx = {};
   tx.has_chain_id = tx.has_msg_count = true;
   strcpy(tx.chain_id, "mayachain");
@@ -468,7 +476,9 @@ TEST_F(ReviewHandlers, MayaDepositGrammarRejectedBeforeConsent) {
   ack.deposit.has_asset = ack.deposit.has_amount = ack.deposit.has_memo =
       ack.deposit.has_signer = true;
   strcpy(ack.deposit.asset, "MAYA:CACAO");
-  strcpy(ack.deposit.signer, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k");
+  // The signer is the session's own account, so only the asset can refuse.
+  ASSERT_TRUE(tendermint_getAddress(&node, "maya", ack.deposit.signer));
+  ASSERT_TRUE(mayachain_addressIsSigner(ack.deposit.signer));
   ASSERT_TRUE(kkconfirm_preload(0, 1));
   fsm_test_clearLastFailure();
   fsm_msgMayachainMsgAck(&ack);
