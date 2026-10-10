@@ -37,7 +37,8 @@ bool msg_handler_rejected(void);
 void keepkey_idle_clock_sample(void);
 /* Reject a decoded tiny reply that does not belong to the waiting handler. */
 void msg_reject_unexpected_tiny(void);
-/* Short main/debug USB packets terminate a tiny wait; normal mode is inert. */
+/* A short main/debug USB packet drops any partly reassembled message and,
+ * inside a tiny wait, fails that wait. */
 void msg_reject_short_tiny_packet(void);
 
 /* Dense entries, linear lookup. Field order must match MessagesMap_t;
