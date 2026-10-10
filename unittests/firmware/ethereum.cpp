@@ -8,6 +8,7 @@ extern "C" {
 #include "keepkey/firmware/ethereum_contracts/thortx.h"
 #include "keepkey/firmware/ethereum_contracts/zxtransERC20.h"
 #include "keepkey/firmware/ethereum_tokens.h"
+#include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/tron.h"
 #include "trezor/crypto/address.h"
 #include "trezor/crypto/bip32.h"
@@ -26,6 +27,7 @@ extern "C" {
 
 void kkconfirm_capture_start(void);
 std::vector<std::string> kkconfirm_capture_finish(void);
+std::vector<std::string> kkconfirm_captured_titles(void);
 
 static uint8_t bin_from_ascii(char c) {
   if ('a' <= c && c <= 'f') return c - 'a' + 0xa;
@@ -1015,10 +1017,21 @@ TEST(Ethereum, DirectSigningEntryRejectsChainIdAboveMaximum) {
   msg.chain_id = 2147483630u;
   EXPECT_FALSE(ethereum_chainIdIsValid(&msg));
   HDNode node{};
+  fsm_test_clearLastFailure();
   ethereum_signing_init(&msg, &node, false);
   EXPECT_FALSE(ethereum_signing_isInProgress());
+  EXPECT_STREQ("Chain Id out of bounds", fsm_test_lastFailureMessage());
+
+  // The largest id is let through: the same message, which names no gas
+  // price, is refused by the next check instead.
   msg.chain_id--;
   EXPECT_TRUE(ethereum_chainIdIsValid(&msg));
+  fsm_test_clearLastFailure();
+  ethereum_signing_init(&msg, &node, false);
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  EXPECT_STREQ("Legacy transactions require gas_price",
+               fsm_test_lastFailureMessage());
+  EXPECT_EQ(0, kkconfirm_drain());
 }
 
 static const uint8_t DAI_MAINNET_ADDRESS[20] = {
@@ -1500,6 +1513,28 @@ TEST(Ethereum, LastScreenTitleNamesTheChain) {
     EXPECT_EQ(1u, calc_str_line(get_title_font(), title(true, chain).c_str(),
                                 TITLE_WIDTH))
         << title(true, chain);
+  }
+}
+
+// The amounts of a liquidity call do not say which way they move, so the
+// first screen of either flow names the operation, in a title that fits a row.
+TEST(Ethereum, LiquidityFirstScreenNamesTheOperation) {
+  for (bool add : {true, false}) {
+    EthereumSignTx msg = liquidity_tx(true, add);
+    // Decline the first screen, so it is the only one drawn.
+    ASSERT_TRUE(kkconfirm_preload(0, 1));
+    kkconfirm_capture_start();
+    EXPECT_FALSE(
+        zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg, nullptr));
+    kkconfirm_capture_finish();
+    EXPECT_EQ(0, kkconfirm_drain());
+    const std::vector<std::string> titles = kkconfirm_captured_titles();
+    ASSERT_EQ(1u, titles.size());
+    EXPECT_EQ(add ? "Uniswap Add Liquidity" : "Uniswap LP Burn", titles[0]);
+    std::string drawn = titles[0];
+    for (char& ch : drawn) ch = (char)toupper((unsigned char)ch);
+    EXPECT_EQ(1u, calc_str_line(get_title_font(), drawn.c_str(), TITLE_WIDTH))
+        << drawn;
   }
 }
 

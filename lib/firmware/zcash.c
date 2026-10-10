@@ -414,20 +414,11 @@ bool zcash_orchard_derive_unified_address(const ZcashOrchardKeys* keys,
                                           size_t address_out_len) {
   if (!keys || !index_le || !hrp || !address_out) return false;
 
-  bignum256 ask_scalar;
-  curve_point ak_point;
-  bignum256 ak_x;
-  uint8_t ak[32];
   uint8_t receiver[43];
 
-  bn_read_le(keys->ask, &ask_scalar);
-  redpallas_scalar_mult_spendauth_G_progress(&ask_scalar, &ak_point, NULL,
-                                             NULL);
-  bn_copy(&ak_point.x, &ak_x);
-  bn_write_le(&ak_x, ak);
-
-  bool ok = zcash_orchard_derive_receiver(ak, keys->nk, keys->rivk, keys->dk,
-                                          index_le, receiver);
+  /* The cached ak: an address needs no operation on the spending key. */
+  bool ok = zcash_orchard_derive_receiver(keys->ak, keys->nk, keys->rivk,
+                                          keys->dk, index_le, receiver);
   if (ok) {
     ok = zcash_zip316_encode_orchard_unified_address(hrp, receiver, address_out,
                                                      address_out_len) == 0;
@@ -436,10 +427,6 @@ bool zcash_orchard_derive_unified_address(const ZcashOrchardKeys* keys,
     address_out[0] = '\0';
   }
 
-  memzero(&ask_scalar, sizeof(ask_scalar));
-  memzero(&ak_point, sizeof(ak_point));
-  memzero(&ak_x, sizeof(ak_x));
-  memzero(ak, sizeof(ak));
   memzero(receiver, sizeof(receiver));
   return ok;
 }
@@ -1247,7 +1234,7 @@ bool zcash_compute_transparent_digest(
 }
 
 /* ZIP-244 transparent_sig_digest for Orchard spend auth: S.2 form with an
- * EMPTY txin_sig_digest when n_inputs > 0, else T.1 (txid) form. */
+ * EMPTY txin_sig_digest when n_inputs > 0, else T.2 (txid) form. */
 bool zcash_compute_orchard_transparent_sig_digest(
     const ZcashTransparentInputDigestInfo* inputs, size_t n_inputs,
     const ZcashTransparentOutputDigestInfo* outputs, size_t n_outputs,
