@@ -49,8 +49,12 @@ static uint32_t saturating_add(uint32_t a, uint32_t b) {
  * unsigned difference survives the ms counter's ~49.7-day wrap as long as
  * samples are taken less than that far apart. */
 static void update_idle_time(void) {
+  /* The button ISR runs this too. Read the last sample before the clock: an
+   * ISR that lands between the two reads then only makes `now` later, so the
+   * difference cannot wrap and saturate both ages. */
+  const uint32_t last = idle_clock;
   const uint32_t now = home_clock_ms();
-  increment_idle_time(now - idle_clock);
+  increment_idle_time(now - last);
   idle_clock = now;
   drop_workflow_progress_if_idle();
 }
