@@ -5,6 +5,7 @@ import unittest
 from check_pallas_api_boundary import (GUARDED, PALLAS_CT_INCLUDE,
                                        alias_scan_texts,
                                        check_address_derivation, check_aliases,
+                                       check_signing_sites,
                                        check_wide_reductions, forbid,
                                        function_body, require, source)
 
@@ -196,6 +197,48 @@ class MacroAliases(unittest.TestCase):
                 mutated[path] = self.ALIAS + texts[path]
                 with self.assertRaisesRegex(AssertionError, path):
                     check_aliases(mutated)
+
+
+class SigningSites(unittest.TestCase):
+    """The handlers sign only where the handler tests count it."""
+
+    FSM = source("lib/firmware/fsm_msg_zcash.h")
+
+    def in_function(self, signature, statement):
+        start = self.FSM.index(signature)
+        brace = self.FSM.index("{", start) + 1
+        return self.FSM[:brace] + "\n  " + statement + self.FSM[brace:]
+
+    def test_shipped_handlers_pass(self):
+        check_signing_sites(self.FSM)
+
+    def test_signing_while_streaming_is_refused(self):
+        for signature in ("void fsm_msgZcashPCZTAction(",
+                          "void fsm_msgZcashTransparentInput(",
+                          "static void zcash_final_gate("):
+            for statement in (
+                    "redpallas_sign_digest_with_ak(a, b, c, d, e, f, g, h, i);",
+                    "redpallas_sign_digest(a, b, c, d, e);",
+                    "hdnode_sign_digest(node, digest, sig, NULL, NULL);",
+                    "ecdsa_sign_digest(curve, key, digest, sig, NULL, NULL);",
+                    "sign = hdnode_sign_digest;"):
+                with self.subTest(signature=signature, statement=statement):
+                    with self.assertRaisesRegex(AssertionError,
+                                                "outside the final-gate"):
+                        check_signing_sites(
+                            self.in_function(signature, statement))
+
+    def test_uncounted_signing_call_is_refused(self):
+        for signature in ("static bool zcash_sign_transparent_inputs(",
+                          "static bool zcash_sign_orchard_spends("):
+            with self.subTest(signature=signature):
+                with self.assertRaisesRegex(AssertionError, "must count"):
+                    check_signing_sites(self.in_function(
+                        signature, "hdnode_sign_digest(n, d, s, NULL, NULL);"))
+        uncounted = self.FSM.replace("ZCASH_TEST_COUNT_SIGN();", ";")
+        self.assertNotEqual(uncounted, self.FSM)
+        with self.assertRaisesRegex(AssertionError, "must count"):
+            check_signing_sites(uncounted)
 
 
 class AddressDerivation(unittest.TestCase):

@@ -1344,6 +1344,9 @@ TEST_F(ReviewHandlers, ZcashHybridReleasesTransparentSignaturesLast) {
 // the final gate has recomputed the bundle digest, so a host whose claimed
 // orchard_digest differs from the streamed actions gets no signature and no
 // signing operation at all. The accepted control signs only at the gate.
+// The count is taken beside each signing call in the two final-gate signers;
+// tools/check_pallas_api_boundary.py refuses a signing call anywhere else in
+// the handlers, so a count of zero means none ran.
 TEST_F(ReviewHandlers, ZcashSignsNothingBeforeTheFinalGate) {
   ZcashOrchardKeys keys;
   ASSERT_TRUE(storage_zcashOrchardKeys(0, true, &keys));

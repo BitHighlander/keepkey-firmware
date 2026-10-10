@@ -196,6 +196,32 @@ def check_address_derivation(zcash):
         forbid(body, token, where)
 
 
+# The two functions the final gate signs through. The handler tests count
+# their signing operations to show that nothing is signed while a transaction
+# streams, which holds only while no other code in the file can sign.
+FINAL_GATE_SIGNERS = ("zcash_sign_transparent_inputs",
+                      "zcash_sign_orchard_spends")
+SIGNING_NAME = r"\b(?:redpallas_sign|hdnode_sign|ecdsa_sign)\w*"
+
+
+def check_signing_sites(zcash_fsm):
+    """Every RedPallas or ECDSA signing call in the Zcash handlers sits in a
+    final-gate signer, each beside one ZCASH_TEST_COUNT_SIGN()."""
+    rest = code_only(splice(zcash_fsm))
+    for name in FINAL_GATE_SIGNERS:
+        body = function_body(zcash_fsm, name)
+        calls = len(re.findall(SIGNING_NAME + r"\s*\(", body))
+        counts = len(re.findall(r"\bZCASH_TEST_COUNT_SIGN\s*\(", body))
+        if calls == 0 or calls != counts:
+            raise AssertionError(
+                "{} must count each of its signing calls".format(name))
+        rest = rest.replace(body, "")
+    found = re.search(SIGNING_NAME, rest)
+    if found:
+        raise AssertionError(
+            "{} is named outside the final-gate signers".format(found.group(0)))
+
+
 # Sources read whole for macro aliases, beside every header: the files checked
 # in main(), and fsm.c, the translation unit fsm_msg_zcash.h is compiled in.
 ALIAS_SCAN_SOURCES = (
@@ -381,6 +407,7 @@ def main():
                         (final_gate, "Zcash final gate"),
                         (spend_signer, "Orchard spend signer")):
         forbid(body, "redpallas_sign_digest_for_rk(", where)
+    check_signing_sites(zcash_fsm)
     require(action_handler, "signatures[zcash_signing.signature_count]",
             "compact PCZT signature collection")
     require(action_handler, "zcash_signing.signature_count++",
