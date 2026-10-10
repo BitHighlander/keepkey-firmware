@@ -1191,8 +1191,10 @@ TEST(Solana, ParserCountsLookupLoadedAccounts) {
   EXPECT_EQ(0u, tx.num_loaded_accounts);
 }
 
-// A lookup-account attestation is shown only when it lists exactly the
-// accounts the message loads: a partial or padded list would mislead.
+// A lookup-account attestation is shown only when it attests as many accounts
+// as the message loads: a partial or padded list would mislead. Only the count
+// is checked here; the account keys are bound by the attestation signature
+// check, solana_lut_accounts_trusted().
 TEST(Solana, LookupAttestationMustCoverEveryLoadedAccount) {
   SolanaParsedTx tx;
   memset(&tx, 0, sizeof(tx));
