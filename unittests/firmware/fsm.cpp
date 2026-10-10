@@ -2395,6 +2395,27 @@ TEST(Fsm, DecliningTheUnlimitedWarningSignsNothing) {
   EXPECT_EQ("UNLIMITED approval", shown.titles[0]);
 }
 
+// increaseAllowance(spender, 2^256-1) grants the same allowance as an
+// unlimited approve, so it gets the same warning, first. A finite one does not.
+TEST(Fsm, UnlimitedIncreaseAllowanceShowsTheWarningFirst) {
+  EthereumSignTx msg = usdcApproval(0xff);
+  memcpy(msg.data_initial_chunk.bytes, "\x39\x50\x93\x51", 4);
+  Shown shown = signApproval(&msg, 0);
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  ASSERT_EQ(1u, shown.titles.size());
+  EXPECT_EQ("UNLIMITED approval", shown.titles[0]);
+  EXPECT_EQ(std::string("Allow ") + kSpender + " to spend ALL your USDC",
+            shown.bodies[0]);
+
+  msg = usdcApproval(0x00);
+  memcpy(msg.data_initial_chunk.bytes, "\x39\x50\x93\x51", 4);
+  msg.data_initial_chunk.bytes[67] = 1;
+  shown = signApproval(&msg, 0);
+  EXPECT_EQ(0, std::count(shown.titles.begin(), shown.titles.end(),
+                          "UNLIMITED approval"));
+}
+
 // Control: a finite approve has no warning and reads as before.
 TEST(Fsm, FiniteApprovalHasNoUnlimitedWarning) {
   EthereumSignTx msg = usdcApproval(0x00);
