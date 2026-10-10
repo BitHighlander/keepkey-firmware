@@ -134,11 +134,16 @@ static CONFIDENTIAL struct {
   ZcashTransparentSigned pending_transparent;
 } zcash_signing;
 
+/* The decrypted memo of the output under review. Static because 512 bytes
+ * are too many for the handler's stack; wiped with the session. */
+static CONFIDENTIAL uint8_t zcash_memo[ZCASH_MEMO_SIZE];
+
 /* Public API; declared in keepkey/firmware/zcash.h. */
 void zcash_signing_abort(void) {
   /* Every abort path must stop the trickle animation. */
   layoutProgressTrickleStop();
   memzero(&zcash_signing, sizeof(zcash_signing));
+  memzero(zcash_memo, sizeof(zcash_memo));
 }
 
 bool zcash_signing_is_active(void) { return zcash_signing.active; }
@@ -344,11 +349,14 @@ static bool zcash_verify_and_confirm_orchard_output(
 
   /* cmx alone does not reach the recipient: a corrupted epk or ciphertext
    * leaves a valid note that normal wallet scanning can never find. */
+  /* The memo is signed and the recipient reads it, so it is decrypted here
+   * and shown below. */
+  uint8_t* const memo = zcash_memo;
   if (!zcash_orchard_note_ciphertext_valid(
           msg->recipient.bytes, msg->value, msg->nullifier.bytes,
           msg->rseed.bytes, zcash_signing.is_ironwood, msg->epk.bytes,
           msg->enc_compact.bytes, msg->enc_memo.bytes,
-          msg->enc_noncompact.bytes)) {
+          msg->enc_noncompact.bytes, memo)) {
     fsm_sendFailure(FailureType_Failure_Other,
                     _("Shielded note ciphertext mismatch"));
     return false;
@@ -401,6 +409,8 @@ static bool zcash_verify_and_confirm_orchard_output(
       return false;
     }
     zcash_signing.change_value += msg->value;
+    /* A note to self: nobody else reads its memo. */
+    memzero(zcash_memo, sizeof(zcash_memo));
     return true;
   }
 
@@ -436,8 +446,31 @@ static bool zcash_verify_and_confirm_orchard_output(
     memzero(address, sizeof(address));
     return false;
   }
-
   memzero(address, sizeof(address));
+
+  /* The recipient acts on the memo (a deposit tag, an order id, a refund
+   * address). Text (ZIP 302: a first byte up to 0xF4) is paged in full, as
+   * for other chains' memos. Anything else is nothing a person can read, so
+   * it is named by its hash instead of twenty pages of escapes. */
+  const size_t memo_length = zcash_memo_shown_length(zcash_memo);
+  bool memo_approved = true;
+  if (memo_length != 0 && zcash_memo[0] <= 0xF4) {
+    memo_approved = confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                                  "Zcash Memo", zcash_memo, memo_length);
+  } else if (memo_length != 0) {
+    uint8_t digest[32];
+    char digest_hex[65];
+    sha256_Raw(zcash_memo, sizeof(zcash_memo), digest);
+    data2hex(digest, sizeof(digest), digest_hex);
+    memo_approved = confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                            "Zcash Memo", "Not text. SHA-256:\n%s", digest_hex);
+  }
+  memzero(zcash_memo, sizeof(zcash_memo));
+  if (!memo_approved) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    _("Signing cancelled"));
+    return false;
+  }
   return true;
 }
 

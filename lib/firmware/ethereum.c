@@ -127,6 +127,31 @@ bool ethereum_isStandardERC20Transfer(const EthereumSignTx* msg) {
   return false;
 }
 
+/* The chain id is signed, and the amount screens cannot tell chains apart:
+ * Ethereum, Optimism, Base and Arbitrum all read "ETH", and every chain
+ * without an entry reads "Wei". So the last screen's title names the chain.
+ * Mainnet, and a legacy transaction with no chain id, keep "Transaction". */
+void ethereum_transactionTitle(const EthereumSignTx* msg, char* title,
+                               size_t title_len) {
+  static const struct {
+    uint32_t chain_id;
+    const char* name;
+  } chains[] = {{10, "Optimism"},    {56, "BNB Chain"}, {100, "Gnosis"},
+                {137, "Polygon"},    {8453, "Base"},    {42161, "Arbitrum"},
+                {43114, "Avalanche"}};
+  if (!msg->has_chain_id || msg->chain_id == 0 || msg->chain_id == 1) {
+    strlcpy(title, "Transaction", title_len);
+    return;
+  }
+  for (size_t i = 0; i < sizeof(chains) / sizeof(chains[0]); i++) {
+    if (chains[i].chain_id == msg->chain_id) {
+      snprintf(title, title_len, "Tx on %s", chains[i].name);
+      return;
+    }
+  }
+  snprintf(title, title_len, "Tx on chain %" PRIu32, msg->chain_id);
+}
+
 static bool ethereum_isERC20ApproveCall(const EthereumSignTx* msg) {
   if (msg->has_to && msg->to.size == 20 && msg->data_initial_chunk.size >= 68 &&
       memcmp(msg->data_initial_chunk.bytes,
@@ -1231,7 +1256,9 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     ethereum_signing_abort();
     return;
   }
-  if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Transaction", "%s",
+  char transaction_title[24];
+  ethereum_transactionTitle(msg, transaction_title, sizeof(transaction_title));
+  if (!confirm(ButtonRequestType_ButtonRequest_SignTx, transaction_title, "%s",
                confirm_body_message)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     "Signing cancelled by user");

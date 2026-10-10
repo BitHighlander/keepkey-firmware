@@ -1062,7 +1062,47 @@ static void decode_note(const ZcashNoteVector& v, DecodedNote* n) {
 static bool note_ciphertext_valid(const DecodedNote& n, bool ironwood) {
   return zcash_orchard_note_ciphertext_valid(n.receiver, n.value, n.rho,
                                              n.rseed, ironwood, n.epk, n.c_enc,
-                                             n.c_enc + 52, n.c_enc + 564);
+                                             n.c_enc + 52, n.c_enc + 564,
+                                             nullptr);
+}
+
+// The memo is signed, and the host can compute the key that authenticates
+// it, so the check hands back the plaintext for the screen. These are the
+// official vectors' own memos, not values this code produced.
+TEST(Zcash, OrchardNoteCiphertext_ReturnsTheMemo) {
+  for (const auto& vector : kZcashOrchardNoteVectors) {
+    DecodedNote n;
+    decode_note(vector, &n);
+    uint8_t expected[ZCASH_MEMO_SIZE], memo[ZCASH_MEMO_SIZE];
+    decode_hex(vector.memo, expected, sizeof(expected));
+    memset(memo, 0xAB, sizeof(memo));
+    ASSERT_TRUE(zcash_orchard_note_ciphertext_valid(
+        n.receiver, n.value, n.rho, n.rseed, false, n.epk, n.c_enc,
+        n.c_enc + 52, n.c_enc + 564, memo));
+    EXPECT_EQ(0, memcmp(expected, memo, sizeof(memo)));
+
+    // A refused note hands back nothing.
+    n.c_enc[100] ^= 1;
+    EXPECT_FALSE(zcash_orchard_note_ciphertext_valid(
+        n.receiver, n.value, n.rho, n.rseed, false, n.epk, n.c_enc,
+        n.c_enc + 52, n.c_enc + 564, memo));
+    const uint8_t zeros[ZCASH_MEMO_SIZE] = {};
+    EXPECT_EQ(0, memcmp(zeros, memo, sizeof(memo)));
+  }
+}
+
+TEST(Zcash, MemoShownLengthFollowsZip302) {
+  uint8_t memo[ZCASH_MEMO_SIZE] = {};
+  EXPECT_EQ(0u, zcash_memo_shown_length(memo));  // all zero
+  memo[0] = 0xF6;
+  EXPECT_EQ(0u, zcash_memo_shown_length(memo));  // "no memo"
+  memo[5] = 1;
+  EXPECT_EQ(6u, zcash_memo_shown_length(memo));  // 0xF6 with a tail is data
+  memset(memo, 0, sizeof(memo));
+  memcpy(memo, "thanks for lunch!", 17);
+  EXPECT_EQ(17u, zcash_memo_shown_length(memo));
+  memset(memo, 0xFF, sizeof(memo));
+  EXPECT_EQ((size_t)ZCASH_MEMO_SIZE, zcash_memo_shown_length(memo));
 }
 
 TEST(Zcash, OrchardNoteCiphertext_ReferenceVectors) {
