@@ -454,6 +454,7 @@ RELEASE_CAPABILITIES = {
             "session-trust-lifetime", "legacy-evm-router-signing",
             "thor-deposit-review", "evm-max-amount-review",
             "evm-unknown-token-review", "evm-tx-metadata",
+            "erc20-unlimited-approve-review", "erc20-unlimited-permit-review",
             "erc7730-runtime-review", "osmosis-wire-guards",
             "ripple-memo-policy", "hive-release-review",
             "solana-runtime-review", "maya-single-message",

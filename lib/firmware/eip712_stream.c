@@ -846,14 +846,16 @@ static const char* leaf_title(void) {
   return e712.root == 0 ? "EIP-712 Domain" : "EIP-712 Message";
 }
 
-/* approve(spender, amount) carried in a dynamic `bytes` leaf, such as a
- * Safe transaction's data: the policy of a top-level approve. */
+/* approve(spender, amount) or increaseAllowance(spender, amount) carried in
+ * a dynamic `bytes` leaf, such as a Safe transaction's data: the policy of a
+ * top-level approve, the same as inside a batch. */
 static bool embedded_approve(const Eip712FieldType* field, const uint8_t* value,
                              uint16_t len) {
   return field->data_type ==
              EthereumTypedDataStructAck_EthereumDataType_BYTES &&
          !field->has_size && len >= 68 &&
-         memcmp(value, "\x09\x5e\xa7\xb3", 4) == 0;
+         (memcmp(value, "\x09\x5e\xa7\xb3", 4) == 0 ||
+          memcmp(value, "\x39\x50\x93\x51", 4) == 0);
 }
 
 /* Pre-0.8 Solidity masks the spender word's high bytes, so a dirty one

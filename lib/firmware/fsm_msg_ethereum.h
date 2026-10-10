@@ -2398,9 +2398,15 @@ void fsm_msgEthereumTypedDataValueAck(const EthereumTypedDataValueAck* msg) {
     return;
   }
   Erc7730Workflow* workflow = erc7730_workflow_state();
+  /* The stream accepted this ack, so an offset marks a later chunk of a long
+   * value and a total length marks its first. */
   if (workflow->phase == ERC7730_WORKFLOW_TYPED_DATA &&
       !erc7730_workflow_eip712_observe(workflow, member_path, member_path_count,
-                                       msg->value.bytes, msg->value.size)) {
+                                       msg->value.bytes, msg->value.size,
+                                       msg->has_value_total_length
+                                           ? msg->value_total_length
+                                           : msg->value.size,
+                                       msg->has_value_offset)) {
     memzero(member_path, sizeof(member_path));
     eip712_stream_abort();
     erc7730_workflow_abort(workflow);
