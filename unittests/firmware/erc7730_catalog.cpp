@@ -569,15 +569,22 @@ TEST(Erc7730Catalog, RejectsOutOfOrderAndDuplicateChunks) {
             ERC7730_CATALOG_BAD_SEQUENCE);
 }
 
+// The declared id must be the envelope's own hash. The envelope here is
+// validly signed, so the id comparison is the only thing that can refuse it.
 TEST(Erc7730Catalog, RejectsDefinitionIdMismatch) {
-  auto e = envelope(minimalProgram());
-  auto id = digest(e);
-  id[0] ^= 1;
-  Erc7730CatalogVerifier verifier;
-  Erc7730CatalogIdentity identity = {};
-  erc7730_catalog_begin(&verifier, id.data(), (uint32_t)e.size());
-  EXPECT_EQ(erc7730_catalog_feed(&verifier, 0, e.data(), e.size(), &identity),
-            ERC7730_CATALOG_UNTRUSTED);
+  SignedFixture fixture;
+  loadRuntimeSigner(&fixture, "Approved signer");
+  const auto e = signedEnvelope(fixture, minimalProgram());
+  for (bool wrong : {false, true}) {
+    auto id = digest(e);
+    if (wrong) id[0] ^= 1;
+    Erc7730CatalogVerifier verifier;
+    Erc7730CatalogIdentity identity = {};
+    erc7730_catalog_begin(&verifier, id.data(), (uint32_t)e.size());
+    EXPECT_EQ(erc7730_catalog_feed(&verifier, 0, e.data(), e.size(), &identity),
+              wrong ? ERC7730_CATALOG_UNTRUSTED : ERC7730_CATALOG_COMPLETE);
+    erc7730_catalog_abort(&verifier);
+  }
 }
 
 TEST(Erc7730Catalog, RejectsNonCanonicalProgramHeaderAndSections) {
@@ -751,6 +758,14 @@ TEST(Erc7730Catalog, ValidatesFormatterOperandsAndDisplayProgram) {
   auto bad_formatter = formatter;
   bad_formatter[4] = 3;
   bad_formatter[6] = 1;  // value operand claims a missing string index
+  p = programWithPaths(path, 1);
+  p = replaceTable(p, 6, bad_formatter, 1);
+  EXPECT_EQ(feedAll(envelope(p), 31), ERC7730_CATALOG_BAD_PROGRAM);
+
+  // The same operand with its source left a path: index 1 of one path. Only
+  // the index bound can refuse this one.
+  bad_formatter = formatter;
+  bad_formatter[6] = 1;
   p = programWithPaths(path, 1);
   p = replaceTable(p, 6, bad_formatter, 1);
   EXPECT_EQ(feedAll(envelope(p), 31), ERC7730_CATALOG_BAD_PROGRAM);
