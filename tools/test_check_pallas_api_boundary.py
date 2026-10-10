@@ -141,6 +141,19 @@ class WideReductions(unittest.TestCase):
                         check_wide_reductions(self.substituted(
                             function, ct, ct.replace("pallas_ct_", "pallas_")))
 
+    def test_added_variable_time_reduction_is_refused(self):
+        # Every constant-time call stays, so only the ban on its
+        # variable-time twin can refuse these.
+        for function, field in (("to_scalar", "q"), ("to_base", "p")):
+            for operation in ("mod_", "mul_mod_", "add_mod_"):
+                ct = "pallas_ct_{}{}(".format(operation, field)
+                twin = ct.replace("pallas_ct_", "pallas_")
+                with self.subTest(function=function, operation=twin):
+                    with self.assertRaisesRegex(AssertionError,
+                                                "must not call"):
+                        check_wide_reductions(self.substituted(
+                            function, ct, twin + "x);\n  " + ct))
+
     def test_full_names_are_guarded_against_aliases(self):
         check_wide_reductions(self.ZCASH)
         for name in ("pallas_ct_mod_q", "pallas_mod_q", "pallas_ct_mod_p",
