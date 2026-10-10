@@ -1111,8 +1111,8 @@ TEST(Erc7730Catalog, VerifierRejectsDuplicateDomainFieldLikeLoader) {
 
 // The preload verifier and the runtime consult one capability table, so
 // every shape the runtime cannot execute is refused before the first screen.
-// Each refusal below is paired with the runtime predicate that would have
-// refused it mid-review.
+// Each refusal below is paired with the runtime check that would have refused
+// it mid-review.
 TEST(Erc7730Catalog, PreloadRefusesDisplayInstructionsTheRuntimeCannotRun) {
   const std::vector<uint8_t> path = {1, 1, 0xff, 0xff, 1, 0, 0, 0, 0};
   EXPECT_EQ(feedAll(envelope(rawFieldProgram(path)), 7),
@@ -1144,20 +1144,29 @@ TEST(Erc7730Catalog, PreloadRefusesDisplayInstructionsTheRuntimeCannotRun) {
       feedAll(envelope(replaceTable(rawFieldProgram(path), 7, interpolated, 5)),
               7),
       ERC7730_CATALOG_UNTRUSTED);
+  // An intent part after a field. The capability predicate sees one
+  // instruction at a time and accepts it; the runtime refuses it because its
+  // index lies beyond the intent run the replay reader counted.
+  for (uint8_t opcode : {2, 3}) {
+    const std::vector<uint8_t> late = {
+        1,      0, 0,    0,    0xff, 0xff, 0xff, 0xff,  // intent
+        4,      0, 0,    0,    0,    0,    0xff, 0xff,  // field
+        opcode, 0, 0,    0,    0xff, 0xff, 0xff, 0xff,  // part
+        10,     0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+    const auto p = replaceTable(rawFieldProgram(path), 7, late, 4);
+    EXPECT_EQ(feedAll(envelope(p), 7), ERC7730_CATALOG_BAD_PROGRAM)
+        << (int)opcode;
+    const Erc7730DisplayInstruction part = {opcode, 0, 0, UINT16_MAX,
+                                            UINT16_MAX};
+    EXPECT_TRUE(erc7730_cap_display(&part, 2)) << (int)opcode;
+    Erc7730ProgramDisplay reader{};
+    const size_t payload = 2u + late.size();
+    erc7730_program_display_begin(&reader, payload, 2);
+    ASSERT_TRUE(erc7730_program_display_feed(
+        &reader, 0, p.data() + sectionOffset(p, 7) + 5, payload));
+    EXPECT_LT(reader.intent_parts, 2) << (int)opcode;
+  }
   const Case cases[] = {
-      // an intent part after a field
-      {{1,    0,    0,  0,    0xff, 0xff, 0xff, 0xff, 4,    0,    0,
-        0,    0,    0,  0xff, 0xff, 2,    0,    0,    0,    0xff, 0xff,
-        0xff, 0xff, 10, 0,    0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
-       4,
-       {2, 0, 0, UINT16_MAX, 0},
-       2},
-      {{1,    0,    0,  0,    0xff, 0xff, 0xff, 0xff, 4,    0,    0,
-        0,    0,    0,  0xff, 0xff, 3,    0,    0,    0,    0xff, 0xff,
-        0xff, 0xff, 10, 0,    0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
-       4,
-       {3, 0, 0, 0, UINT16_MAX},
-       2},
       // a group end that names no group
       {{1,    0,    0,    0,    0xff, 0xff, 0xff, 0xff, 6,    0,    0xff, 0xff,
         0xff, 0xff, 0xff, 0xff, 10,   0,    0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
