@@ -285,6 +285,15 @@ bool eip712_validate_leaf(const Eip712FieldType* field, const uint8_t* value,
   }
 }
 
+/* The facts' index of a domain member, 5 for a name they do not hold. */
+static int domain_member_index(const char* member_name) {
+  static const char* const members[] = {"name", "version", "salt", "chainId",
+                                        "verifyingContract"};
+  int index = 0;
+  while (index < 5 && strcmp(member_name, members[index]) != 0) index++;
+  return index;
+}
+
 bool eip712_domain_facts_observe(Eip712DomainFacts* facts,
                                  const char* member_name,
                                  const Eip712FieldType* field,
@@ -292,10 +301,7 @@ bool eip712_domain_facts_observe(Eip712DomainFacts* facts,
   if (!facts || !member_name || !field || (!value && value_len != 0) ||
       !eip712_validate_leaf(field, value, value_len))
     return false;
-  static const char* const members[] = {"name", "version", "salt", "chainId",
-                                        "verifyingContract"};
-  int index = 0;
-  while (index < 5 && strcmp(member_name, members[index]) != 0) index++;
+  const int index = domain_member_index(member_name);
   if (index == 5) return true;
   const uint8_t bit = 1u << index;
   if ((facts->domain_present & bit) != 0) return false;
@@ -540,6 +546,7 @@ static struct {
   uint8_t root;
   uint8_t domain_separator[32];
   bool have_domain_separator;
+  bool domain_value_confirmed;
   bool message_value_confirmed;
 
   Eip712Frame stack[EIP712_MAX_DEPTH];
@@ -1271,6 +1278,13 @@ static void fail(const char* why) {
   next_step.error = why;
 }
 
+/* What a handler returns after a step that cannot report its own failure:
+ * false once a failure or a cancel is staged, when the session is gone. */
+static bool walk_continues(void) {
+  return next_step.kind != EIP712_REQ_FAIL &&
+         next_step.kind != EIP712_REQ_CANCELLED;
+}
+
 /* True when the user approved the screen; otherwise the walk has ended. */
 static bool review_approved(Eip712LeafResult shown) {
   if (shown == EIP712_LEAF_INVALID) {
@@ -1283,7 +1297,11 @@ static bool review_approved(Eip712LeafResult shown) {
     next_step.kind = EIP712_REQ_CANCELLED;
     return false;
   }
-  if (e712.root == 1) e712.message_value_confirmed = true;
+  if (e712.root == 1) {
+    e712.message_value_confirmed = true;
+  } else {
+    e712.domain_value_confirmed = true;
+  }
   return true;
 }
 
@@ -1512,6 +1530,7 @@ static void complete_frame(void) {
    * primary type is the domain itself: there is no message hash. */
   next_step.domain_only = domain_only;
   next_step.message_empty = domain_only || !e712.message_value_confirmed;
+  next_step.domain_empty = !e712.domain_value_confirmed;
   if (!domain_only) memcpy(next_step.message_hash, digest, 32);
   strlcpy(next_step.primary_type, e712.primary_type,
           sizeof(next_step.primary_type));
@@ -1817,7 +1836,7 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
       }
       if (f->member_index >= f->member_count) {
         complete_frame();
-        return true;
+        return walk_continues();
       }
       if (f->slot_base + f->member_count > EIP712_MAX_SLOTS) {
         fail("EIP-712 document too wide for this device");
@@ -1830,6 +1849,19 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
       e712.pending_has_size = m->type.has_size;
       e712.pending_size = m->type.size;
       strlcpy(e712.pending_name, m->name, sizeof(e712.pending_name));
+
+      /* The facts hold one leaf per domain member. An array or a struct
+       * under one of their names is shown and hashed like any other, but
+       * nothing may bind to that domain. */
+      if (e712.root == 0 && e712.depth == 1 &&
+          (m->type.array_levels_count > 0 ||
+           m->type.data_type ==
+               EthereumTypedDataStructAck_EthereumDataType_STRUCT)) {
+        const int index = domain_member_index(m->name);
+        if (index < 5)
+          e712.domain_facts.domain_present |=
+              (uint8_t)(1u << index) | EIP712_DOMAIN_UNBINDABLE;
+      }
 
       if (m->type.array_levels_count > 0) {
         if (e712.depth >= EIP712_MAX_DEPTH || m->type.array_levels_count > 4) {
@@ -2063,7 +2095,7 @@ static bool chunk_absorb(const Eip712FieldType* field, const uint8_t* bytes,
   }
   memzero(&e712.chunk, sizeof(e712.chunk));
   finish_leaf(word);
-  return true;
+  return walk_continues();
 }
 
 /* The first chunk: value_total_length names the whole value's length. */
@@ -2199,10 +2231,10 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
     if (len == 0) {
       /* An empty array still hashes -- keccak of no bytes at all. */
       complete_frame();
-      return true;
+      return walk_continues();
     }
     drive_array_element();
-    return true;
+    return walk_continues();
   }
 
   Eip712FieldType rebuilt;
@@ -2250,7 +2282,7 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
       strcmp(e712.types.names[f->u.s.type], "SafeTx") == 0)
     e712.safe_to_slot = (uint8_t)(f->slot_base + f->member_index + 1);
   finish_leaf(word);
-  return true;
+  return walk_continues();
 }
 
 bool eip712_stream_domain_facts(Eip712DomainFacts* facts) {
