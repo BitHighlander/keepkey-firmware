@@ -1990,10 +1990,19 @@ TEST(Eip712Stream, EmbeddedUnlimitedApproveSignsAfterTheWarning) {
             EIP712_REQ_DONE);
   EXPECT_EQ(std::count(titles.begin(), titles.end(), "UNLIMITED approval"), 0);
 
-  // Declining the warning signs nothing: only the domain and `to`, `value`
-  // screens are accepted.
-  EXPECT_EQ(walkSafeTx(approveCall(0, 0xff), false, 3, &titles, &bodies),
+  // Declining the warning signs nothing. Four screens are accepted (the
+  // domain, `to` in two pages, `value`); the warning is the one declined.
+  EXPECT_EQ(walkSafeTx(approveCall(0, 0xff), false, 4, &titles, &bodies),
             EIP712_REQ_CANCELLED);
+  ASSERT_FALSE(titles.empty());
+  EXPECT_EQ(titles.back(), "UNLIMITED approval");
+
+  // increaseAllowance grants the same allowance and gets the same warning.
+  Bytes increase = approveCall(0, 0xff);
+  const uint8_t selector[4] = {0x39, 0x50, 0x93, 0x51};
+  std::copy(selector, selector + 4, increase.begin());
+  EXPECT_EQ(walkSafeTx(increase, false, 20, &titles, &bodies), EIP712_REQ_DONE);
+  EXPECT_EQ(std::count(titles.begin(), titles.end(), "UNLIMITED approval"), 1);
 
   // A dirty spender word is refused before any screen of it.
   EXPECT_EQ(walkSafeTx(approveCall(0x01, 0xff), false, 20, &titles, &bodies),

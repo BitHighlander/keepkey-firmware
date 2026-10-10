@@ -1725,6 +1725,28 @@ TEST(Fsm, TypedDataStreamRefusesMetadataAndSignerLoads) {
   }
 }
 
+// An ordinary Ping between typed-data acks is answered without ending the
+// stream, so it must not draw home over the review while the stream is live.
+TEST(Fsm, PingDuringTypedDataStreamKeepsTheSigningScreen) {
+  kk_test_board_init();
+  fsm_init();
+  keepkey_user_activity();
+  EthereumSignTypedData start{};
+  std::strcpy(start.primary_type, "Mail");
+  ASSERT_TRUE(eip712_stream_begin(&start, false));
+  leave_home();
+  Ping ping = {};
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+  EXPECT_EQ(eip712_stream_waiting(), EIP712_WANT_STRUCT);
+  EXPECT_EQ(AWAY_FROM_HOME, home_get_state());
+
+  // With no stream waiting, the same Ping does go home.
+  eip712_stream_abort();
+  leave_home();
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+  EXPECT_EQ(AT_HOME, home_get_state());
+}
+
 // The final screen names the action being authorised. A primary type longer
 // than a row (Hyperliquid's are up to 40 characters) is paged, never cut.
 TEST(Fsm, TypedDataFinalScreenShowsTheWholePrimaryType) {
@@ -2543,6 +2565,27 @@ TEST(Fsm, DecliningTheUnlimitedWarningSignsNothing) {
   EXPECT_EQ("UNLIMITED approval", shown.titles[0]);
 }
 
+// increaseAllowance(spender, 2^256-1) grants the same allowance as an
+// unlimited approve, so it gets the same warning, first. A finite one does not.
+TEST(Fsm, UnlimitedIncreaseAllowanceShowsTheWarningFirst) {
+  EthereumSignTx msg = usdcApproval(0xff);
+  memcpy(msg.data_initial_chunk.bytes, "\x39\x50\x93\x51", 4);
+  Shown shown = signApproval(&msg, 0);
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  ASSERT_EQ(1u, shown.titles.size());
+  EXPECT_EQ("UNLIMITED approval", shown.titles[0]);
+  EXPECT_EQ(std::string("Allow ") + kSpender + " to spend ALL your USDC",
+            shown.bodies[0]);
+
+  msg = usdcApproval(0x00);
+  memcpy(msg.data_initial_chunk.bytes, "\x39\x50\x93\x51", 4);
+  msg.data_initial_chunk.bytes[67] = 1;
+  shown = signApproval(&msg, 0);
+  EXPECT_EQ(0, std::count(shown.titles.begin(), shown.titles.end(),
+                          "UNLIMITED approval"));
+}
+
 // Control: a finite approve has no warning and reads as before.
 TEST(Fsm, FiniteApprovalHasNoUnlimitedWarning) {
   EthereumSignTx msg = usdcApproval(0x00);
@@ -3009,6 +3052,41 @@ TEST(DiceCeremonyPrivacy, AbortAtEveryPhaseWipesAndAllowsOrdinaryRestart) {
     ASSERT_EQ(32u, reset_get_int_entropy(bytes));
     for (unsigned i = 0; i < 32; ++i) EXPECT_EQ(i, bytes[i]);
   }
+}
+
+// Gated tests key on Features.capabilities: one that stops being reported
+// turns its tests into accepted skips. Dropping a capability therefore has to
+// be a visible edit here. A block that adds a capability appends it.
+TEST(Fsm, FeaturesReportExactlyTheStagedCapabilities) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  fsm_msgGetFeatures(nullptr);
+  size_t size = 0;
+  Features features;
+  ASSERT_GE((fsm_test_responseArena(&size), size), sizeof(features));
+  std::memcpy(&features, fsm_test_responseArena(&size), sizeof(features));
+  const std::vector<Features_Capability> expected = {
+      Features_Capability_CAPABILITY_ENTROPY_AUDIT_BUDGET,
+      Features_Capability_CAPABILITY_PROMPT_WORKFLOW_UNWIND,
+      Features_Capability_CAPABILITY_PROTECTED_PING_PRESENCE,
+      Features_Capability_CAPABILITY_SAFE_RESET_CEREMONY,
+      Features_Capability_CAPABILITY_SESSION_TRUST_LIFETIME,
+#if !BITCOIN_ONLY
+      Features_Capability_CAPABILITY_LEGACY_EVM_ROUTER_SIGNING,
+      Features_Capability_CAPABILITY_THOR_DEPOSIT_REVIEW,
+      Features_Capability_CAPABILITY_EVM_MAX_AMOUNT_REVIEW,
+      Features_Capability_CAPABILITY_EVM_UNKNOWN_TOKEN_REVIEW,
+      Features_Capability_CAPABILITY_EVM_TX_METADATA,
+      Features_Capability_CAPABILITY_ERC20_UNLIMITED_APPROVE_REVIEW,
+      Features_Capability_CAPABILITY_ERC20_UNLIMITED_PERMIT_REVIEW,
+      Features_Capability_CAPABILITY_EIP712_CHUNKED_VALUES,
+      Features_Capability_CAPABILITY_ERC7730_RUNTIME_REVIEW,
+#endif
+  };
+  EXPECT_EQ(expected, std::vector<Features_Capability>(
+                          features.capabilities,
+                          features.capabilities + features.capabilities_count));
 }
 
 // DebugLinkGetState is also serviced inside the PIN, passphrase and confirm
