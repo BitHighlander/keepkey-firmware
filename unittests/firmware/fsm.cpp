@@ -2106,6 +2106,48 @@ TEST(Fsm, CrossWorkflowAcknowledgementsTerminateTheActiveSigner) {
   EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
 }
 
+// The Binance abort only clears state, so the gate itself has to take the
+// aborted transaction's approval screen down. An armed ceremony keeps its own.
+TEST(Fsm, StaleAckTakesTheAbortedSignersScreenDown) {
+  kk_test_board_init();
+  fsm_init();
+  fsm_abort_workflows();
+  layoutHomeForced();
+  keepkey_user_activity();  // or a due auto-lock takes the screen instead
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+
+  BinanceSignTx binance = {};
+  binance.has_msg_count = true;
+  binance.msg_count = 1;
+  binance.has_account_number = true;
+  binance.has_chain_id = true;
+  std::strcpy(binance.chain_id, "Binance-Chain-Nile");
+  binance.has_sequence = true;
+  binance.has_source = true;
+  ASSERT_TRUE(binance_signTxInit(&node, &binance));
+  leave_home();  // its last approval screen is still up
+  ASSERT_EQ(AWAY_FROM_HOME, home_get_state());
+
+  TxAck stale = {};
+  stale.has_tx = true;
+  receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &stale);
+  EXPECT_FALSE(binance_signingIsInited());
+  EXPECT_EQ(AT_HOME, home_get_state())
+      << "the aborted transaction is still on screen";
+
+  ASSERT_TRUE(setup_stage(false, "english", "reset", 0, 0, false));
+  setup_arm(SETUP_RESET);
+  leave_home();
+  receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &stale);
+  EXPECT_TRUE(setup_isArmedAs(SETUP_RESET));
+  EXPECT_EQ(AWAY_FROM_HOME, home_get_state())
+      << "a stale ACK drew home over an armed ceremony";
+
+  setup_abort();
+  layoutHomeForced();
+}
+
 TEST(Fsm, StaleEthereumAckCannotReplaceARecoveryCeremony) {
   kk_test_board_init();
   fsm_init();
@@ -2455,6 +2497,33 @@ TEST(DiceCeremonyPrivacy, AbortAtEveryPhaseWipesAndAllowsOrdinaryRestart) {
     ASSERT_EQ(32u, reset_get_int_entropy(bytes));
     for (unsigned i = 0; i < 32; ++i) EXPECT_EQ(i, bytes[i]);
   }
+}
+
+// Gated tests key on Features.capabilities: one that stops being reported
+// turns its tests into accepted skips. Dropping a capability therefore has to
+// be a visible edit here. A block that adds a capability appends it.
+TEST(Fsm, FeaturesReportExactlyTheStagedCapabilities) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  fsm_msgGetFeatures(nullptr);
+  size_t size = 0;
+  Features features;
+  ASSERT_GE((fsm_test_responseArena(&size), size), sizeof(features));
+  std::memcpy(&features, fsm_test_responseArena(&size), sizeof(features));
+  const std::vector<Features_Capability> expected = {
+      Features_Capability_CAPABILITY_ENTROPY_AUDIT_BUDGET,
+      Features_Capability_CAPABILITY_PROMPT_WORKFLOW_UNWIND,
+      Features_Capability_CAPABILITY_PROTECTED_PING_PRESENCE,
+      Features_Capability_CAPABILITY_SAFE_RESET_CEREMONY,
+#if !BITCOIN_ONLY
+      Features_Capability_CAPABILITY_LEGACY_EVM_ROUTER_SIGNING,
+      Features_Capability_CAPABILITY_THOR_DEPOSIT_REVIEW,
+#endif
+  };
+  EXPECT_EQ(expected, std::vector<Features_Capability>(
+                          features.capabilities,
+                          features.capabilities + features.capabilities_count));
 }
 
 // DebugLinkGetState is also serviced inside the PIN, passphrase and confirm
