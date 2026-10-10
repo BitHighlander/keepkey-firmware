@@ -566,12 +566,15 @@ TEST(Zcash, DeriveOrchardKeys_ReferenceVector_Account0) {
   curve_point ak_point;
   redpallas_scalar_mult_spendauth_G(&ask_scalar, &ak_point);
 
+  /* The sign of ak is the parity of y; the x encoding below never carries
+   * it. */
+  EXPECT_FALSE(bn_is_odd(&ak_point.y))
+      << "ak sign bit must be 0 after ask normalization";
+
   uint8_t ak_bytes[32];
   bignum256 x_copy;
   bn_copy(&ak_point.x, &x_copy);
   bn_write_le(&x_copy, ak_bytes);
-  EXPECT_EQ(ak_bytes[31] & 0x80, 0)
-      << "ak sign bit must be 0 after ask normalization";
 
   EXPECT_TRUE(memcmp(ak_bytes, EXPECTED_AK_ALL_0, 32) == 0)
       << "ak mismatch for all-mnemonic account 0";
@@ -1730,15 +1733,6 @@ TEST(Zcash, AkSignBit_AlwaysClear) {
     /* Check y parity: must be even (sign bit = 0) */
     EXPECT_FALSE(bn_is_odd(&ak_point.y))
         << "ak y-coordinate must be even for account " << account;
-
-    /* Check serialized sign bit */
-    uint8_t ak_bytes[32];
-    bignum256 x_copy;
-    bn_copy(&ak_point.x, &x_copy);
-    bn_write_le(&x_copy, ak_bytes);
-
-    EXPECT_EQ(ak_bytes[31] & 0x80, 0)
-        << "ak sign bit must be clear for account " << account;
 
     memzero(&keys, sizeof(keys));
   }
