@@ -72,9 +72,11 @@ def splice(text):
 
 
 def includes_pallas_ct(text):
-    """True when the text #includes pallas_ct.h, with continuations joined as
-    the compiler joins them."""
-    return bool(PALLAS_CT_INCLUDE.search(splice(text)))
+    """True when the text #includes pallas_ct.h, with continuations joined
+    and comments removed as the compiler does both before it reads a
+    directive. The quoted file name is kept."""
+    return bool(PALLAS_CT_INCLUDE.search(
+        code_only(splice(text), keep_literals=True)))
 
 
 def function_body(text, name):
@@ -112,9 +114,10 @@ def function_body(text, name):
     raise AssertionError("unterminated function: " + name)
 
 
-def code_only(text):
+def code_only(text, keep_literals=False):
     """Blank comments and string/char literals so neither can satisfy a token
-    check or unbalance the brace count. Literals keep their quotes."""
+    check or unbalance the brace count. Literals keep their quotes, and their
+    text too when keep_literals is set."""
     out = []
     i, n = 0, len(text)
     while i < n:
@@ -127,11 +130,12 @@ def code_only(text):
             i = n if end < 0 else end
         elif text[i] in "\"'":
             quote = text[i]
+            start = i
             i += 1
             while i < n and text[i] != quote and text[i] != "\n":
                 i += 2 if text[i] == "\\" else 1
             i += 1
-            out.append(quote + quote)
+            out.append(text[start:i] if keep_literals else quote + quote)
         else:
             out.append(text[i])
             i += 1

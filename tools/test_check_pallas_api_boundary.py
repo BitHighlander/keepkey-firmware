@@ -88,6 +88,16 @@ class ConditionalCompilation(unittest.TestCase):
                      "#include <pallas_\\\r\nct.h>"):
             self.assertTrue(includes_pallas_ct(line + "\n"), line)
 
+    def test_include_after_a_comment_is_found(self):
+        for line in ('/*x*/#include "pallas_ct.h"',
+                     "/* a */ /* b */ # /* c */ include <pallas_ct.h>",
+                     '/* spans\nlines */ #include "crypto/pallas_ct.h"'):
+            self.assertTrue(includes_pallas_ct(line + "\n"), line)
+        for line in ('// #include "pallas_ct.h"',
+                     '/* #include "pallas_ct.h" */',
+                     'const char *s = "\\n#include <pallas_ct.h>";'):
+            self.assertFalse(includes_pallas_ct(line + "\n"), line)
+
     def test_caller_cannot_stand_in_for_the_definition(self):
         source = ("void caller(void) {\n  if (sign(x)) {\n    pallas_ct_add_mod_q();\n"
                   "  }\n}\n\nstatic bool sign(int x) {\n  pallas_add_mod_q();\n}\n")
