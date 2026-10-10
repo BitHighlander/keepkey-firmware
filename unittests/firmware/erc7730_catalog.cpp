@@ -1746,9 +1746,11 @@ TEST(Erc7730Catalog, OnlyARawFieldShowsASignerConstant) {
 }
 
 TEST(Erc7730Catalog, AnEnumMapsADecodedValueNeverAConstant) {
-  // literal 0 = 1 (the constant, also the map's key); literal 1 = a
-  // one-entry map. Path 2 is literal 0, path 1 the uint256 argument.
-  const std::vector<uint8_t> literals = {1, 0, 1, 1,  //
+  // literal 0 = 256 (the constant, also the map's key); literal 1 = a
+  // one-entry map. Path 2 is literal 0, path 1 the uint256 argument. Two
+  // bytes give the constant the class of a decoded uint256, so only the
+  // signer-constant rule tells the two programs apart.
+  const std::vector<uint8_t> literals = {1, 0, 2, 1, 0,  //
                                          8, 0, 6, 0, 1, 0, 0, 0, 0};
   EXPECT_EQ(feedAll(envelope(tokenProgram({8, 0, 2, 1, 1, 0, 1, 10, 2, 0, 1},
                                           literals, 2)),
