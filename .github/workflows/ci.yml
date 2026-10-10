@@ -279,7 +279,7 @@ jobs:
         run: |
           python3 -B -m unittest scripts/test_preflight_cppcheck.py
           # The SRAM gate must keep refusing unbounded (dynamic) stack frames.
-          pip install --quiet pyelftools
+          pip install --quiet --require-hashes -r tools/requirements-sram.txt
           PYTHONPATH=tools python3 -B -m unittest tools/test_check_sram_budget.py
 
       - name: Verify submodules are declared
@@ -550,7 +550,7 @@ jobs:
       # (tools/sram-budgets.json).
       - name: SRAM budget gate (${{ matrix.variant }})
         run: |
-          pip install --quiet pyelftools
+          pip install --quiet --require-hashes -r tools/requirements-sram.txt
           python3 tools/check_sram_budget.py \
             --elf bin/firmware.keepkey.elf \
             --su-tar bin/stack-usage.tgz \

@@ -8,6 +8,7 @@ extern "C" {
 #include "keepkey/firmware/ripple.h"
 #include "keepkey/firmware/tron.h"
 #include "keepkey/firmware/mayachain.h"
+#include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/thorchain.h"
 #include "keepkey/firmware/bip85.h"
 #include "keepkey/firmware/signed_metadata.h"
@@ -183,9 +184,15 @@ TEST_F(ReviewHandlers, RippleMemoReachesReviewBeforeSigning) {
   strcpy(msg.memo, "Memo review must be reached");
   ASSERT_TRUE(kkconfirm_preload(1, 1));
   fsm_test_clearLastFailure();
+  kkconfirm_capture_start();
   fsm_msgRippleSignTx(&msg);
+  const auto screens = kkconfirm_capture_finish();
   EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
   EXPECT_EQ(0, kkconfirm_drain());
+  // The declined screen is the memo's own, not the final "Transaction" one.
+  ASSERT_EQ(2u, screens.size());
+  // (The memo page shows each space as \x20.)
+  EXPECT_EQ("Memo\\x20review\\x20must\\x20be\\x20reached", screens[1]);
 }
 
 static const uint8_t review_pubkey[33] = {
@@ -594,8 +601,9 @@ TEST_F(ReviewHandlers, ZcashSessionCompletesOnlyPastTheDigestAndFeeGates) {
         zcashSignRequest(1, digest, 0, c == kFeeMismatch ? 1000 : 0);
     if (c == kTamperedDigest) msg.orchard_digest.bytes[0] ^= 1;
 
-    // Summary, the two output screens, then the fee screen if it is reached.
-    ASSERT_TRUE(kkconfirm_preload(4, 0));
+    // Summary, the output's amount, address and memo screens, then the fee
+    // screen if it is reached.
+    ASSERT_TRUE(kkconfirm_preload(5, 0));
     fsm_test_clearLastFailure();
     kkconfirm_capture_start();
     fsm_msgZcashSignPCZT(&msg);
@@ -620,7 +628,7 @@ TEST_F(ReviewHandlers, ZcashSessionCompletesOnlyPastTheDigestAndFeeGates) {
                                      : "Shielded note ciphertext mismatch",
                    fsm_test_lastFailureMessage());
       EXPECT_EQ(1u, screens.size());
-      EXPECT_EQ(6, kkconfirm_drain());  // three unused screens' pairs
+      EXPECT_EQ(8, kkconfirm_drain());  // four unused screens' pairs
     } else if (c != kAccepted) {
       EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
       EXPECT_EQ(c == kFeeMismatch,
@@ -629,12 +637,12 @@ TEST_F(ReviewHandlers, ZcashSessionCompletesOnlyPastTheDigestAndFeeGates) {
                 std::string(fsm_test_lastFailureMessage())
                         .find("Shielded digest mismatch") == 0);
       EXPECT_FALSE(fee_screen);
-      EXPECT_EQ(3u, screens.size());
+      EXPECT_EQ(4u, screens.size());
       EXPECT_EQ(2, kkconfirm_drain());  // the fee screen's pair, unused
     } else {
       EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
       EXPECT_TRUE(fee_screen);
-      EXPECT_EQ(4u, screens.size());
+      EXPECT_EQ(5u, screens.size());
       EXPECT_EQ(0, kkconfirm_drain());
     }
   }
@@ -651,8 +659,8 @@ TEST_F(ReviewHandlers, ZcashPingBetweenActionsKeepsTheSigningScreen) {
   zcashBundleDigest(actions, 0, digest);
   ZcashSignPCZT msg = zcashSignRequest(2, digest, 0, 0);
 
-  // Summary, two screens per output, then the fee.
-  ASSERT_TRUE(kkconfirm_preload(6, 0));
+  // Summary, three screens per output (amount, address, memo), then the fee.
+  ASSERT_TRUE(kkconfirm_preload(8, 0));
   fsm_test_clearLastFailure();
   fsm_msgZcashSignPCZT(&msg);
   ZcashPCZTAction first = actions[0];
@@ -742,7 +750,7 @@ TEST_F(ReviewHandlers, ZcashUserAddressIsCheckedThenShown) {
     zcashBundleDigest({action}, 0, digest);
     ZcashSignPCZT msg = zcashSignRequest(1, digest, 0, 0);
 
-    ASSERT_TRUE(kkconfirm_preload(8, 0));
+    ASSERT_TRUE(kkconfirm_preload(10, 0));
     fsm_test_clearLastFailure();
     fsm_msgZcashSignPCZT(&msg);
     ASSERT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
@@ -815,8 +823,9 @@ TEST_F(ReviewHandlers, ZcashRealSpendsReleaseOnlyCompactVerifiedSignatures) {
     zcashBundleDigest(actions, 0, digest);
     ZcashSignPCZT msg = zcashSignRequest(3, digest, 0, 0);
 
-    // Summary, two screens per output, then the fee.
-    ASSERT_TRUE(kkconfirm_preload(8, 0));
+    // Summary, three screens per output (amount, address, memo), then the
+    // fee.
+    ASSERT_TRUE(kkconfirm_preload(11, 0));
     fsm_test_clearLastFailure();
     fsm_msgZcashSignPCZT(&msg);
     ASSERT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
@@ -1052,8 +1061,8 @@ TEST_F(ReviewHandlers, ZcashZeroValuePaddingOutputIsNotShown) {
 // any other output. The zero-valued memo-only send carries the address the
 // user entered and is shown with it at 0 ZEC; without a user_address the same
 // output is taken for padding and not shown. A change output whose cmx does
-// not match its note is refused before any output screen, and declining the
-// change total releases nothing.
+// not match its note is refused when it streams, after the screens of the
+// outputs before it, and declining the change total releases nothing.
 TEST_F(ReviewHandlers, ZcashOnlyProvenChangeIsFoldedAndMemoSendIsShown) {
   ZcashOrchardKeys keys;
   ASSERT_TRUE(storage_zcashOrchardKeys(0, true, &keys));
@@ -1083,8 +1092,10 @@ TEST_F(ReviewHandlers, ZcashOnlyProvenChangeIsFoldedAndMemoSendIsShown) {
     ZcashSignPCZT msg = zcashSignRequest(4, digest, 10000, 10000);
 
     // Summary; self-send; another account's change; the memo send (only with
-    // its user_address); the change total; the fee.
-    const size_t expected = c == kNoUserAddress ? 7u : 9u;
+    // its user_address); the change total; the fee. Each shown output is an
+    // amount, an address and its memo: the first two carry the generator's
+    // filler (0xF6 repeated), which is not text and is named by its hash.
+    const size_t expected = c == kNoUserAddress ? 9u : 12u;
     if (c == kChangeDeclined) {
       ASSERT_TRUE(kkconfirm_preload(static_cast<int>(expected) - 2, 1));
     } else {
@@ -1114,7 +1125,7 @@ TEST_F(ReviewHandlers, ZcashOnlyProvenChangeIsFoldedAndMemoSendIsShown) {
       EXPECT_STREQ("Shielded note commitment mismatch",
                    fsm_test_lastFailureMessage());
       // The summary and the two outputs streamed before the change.
-      EXPECT_EQ(5u, screens.size());
+      EXPECT_EQ(7u, screens.size());
       EXPECT_FALSE(zcashSignatureEmitted(kkconfirm_readResponseIds()));
       (void)kkconfirm_drain();
       continue;
@@ -1133,14 +1144,18 @@ TEST_F(ReviewHandlers, ZcashOnlyProvenChangeIsFoldedAndMemoSendIsShown) {
       ASSERT_LT(i, screens.size());
       EXPECT_NE(std::string::npos, screens[i].find(text)) << screens[i];
     };
-    ASSERT_EQ(expected, screens.size());
+    ASSERT_EQ(expected, screens.size()) << ::testing::PrintToString(screens);
     shows(1, "0.00020000 ZEC");
     shows(2, self_ua);
-    shows(3, "0.00030000 ZEC");
-    shows(4, other_change_ua);
+    shows(3, "Not text. SHA-256:");
+    shows(4, "0.00030000 ZEC");
+    shows(5, other_change_ua);
+    shows(6, "Not text. SHA-256:");
     if (c == kAccepted) {
-      shows(5, "0.00000000 ZEC");
-      shows(6, kZcashMemoUserAddress);
+      shows(7, "0.00000000 ZEC");
+      shows(8, kZcashMemoUserAddress);
+      // The memo is signed and the recipient reads it: it has its own screen.
+      shows(9, "thanks\\x20for\\x20lunch!");
     }
     shows(expected - 2, "Change back to your wallet:\n0.00040000 ZEC");
     shows(expected - 1, "0.00010000 ZEC");
@@ -1265,8 +1280,9 @@ TEST_F(ReviewHandlers, ZcashHybridReleasesTransparentSignaturesLast) {
       zcashSet(input.script_pubkey, script);
     }
 
-    // The two-page summary, the two output screens, the fee, then the input.
-    ASSERT_TRUE(kkconfirm_preload(c == kFeeCancelled ? 4 : 6,
+    // The two-page summary, the output's amount, address and memo screens,
+    // the fee, then the input.
+    ASSERT_TRUE(kkconfirm_preload(c == kFeeCancelled ? 5 : 7,
                                   c == kFeeCancelled ? 1 : 0));
     fsm_test_clearLastFailure();
     fsm_msgZcashSignPCZT(&msg);
@@ -1329,6 +1345,9 @@ TEST_F(ReviewHandlers, ZcashHybridReleasesTransparentSignaturesLast) {
 // the final gate has recomputed the bundle digest, so a host whose claimed
 // orchard_digest differs from the streamed actions gets no signature and no
 // signing operation at all. The accepted control signs only at the gate.
+// The count is taken beside each signing call in the two final-gate signers;
+// tools/check_pallas_api_boundary.py refuses a signing call anywhere else in
+// the handlers, so a count of zero means none ran.
 TEST_F(ReviewHandlers, ZcashSignsNothingBeforeTheFinalGate) {
   ZcashOrchardKeys keys;
   ASSERT_TRUE(storage_zcashOrchardKeys(0, true, &keys));
@@ -1387,8 +1406,9 @@ TEST_F(ReviewHandlers, ZcashSignsNothingBeforeTheFinalGate) {
     input.sequence = info.sequence;
     zcashSet(input.script_pubkey, script);
 
-    // Two-page summary, two screens per output, the fee, then the input.
-    ASSERT_TRUE(kkconfirm_preload(8, 0));
+    // Two-page summary, three screens per output (amount, address, memo),
+    // the fee, then the input.
+    ASSERT_TRUE(kkconfirm_preload(10, 0));
     fsm_test_clearLastFailure();
     zcash_test_clearSignOperations();
     fsm_msgZcashSignPCZT(&msg);
@@ -1781,7 +1801,9 @@ bool zcashShown(const ZcashTexRun& run, const std::string& text) {
 // transfer to yourself, not a payment; without it, a normal send to the same
 // t1 address. A path that does not pay the script, is not the one-time
 // scope, belongs to another account, or claims to be a TEX is refused before
-// any signature. The Orchard signature verifies under librustzcash's sighash.
+// any signature. So is the same output marked is_tex without a path: a TEX
+// address cannot be paid by a transaction with a shielded action. The Orchard
+// signature verifies under librustzcash's sighash.
 TEST_F(ReviewHandlers, ZcashTexStep1PaysTheOwnOneTimeAddress) {
   const auto pubkey = zcashTransparentPubkey(0, 2);
   ASSERT_EQ(zcashHex(kZcashTexEphemeralPubkey), pubkey);
@@ -1800,8 +1822,17 @@ TEST_F(ReviewHandlers, ZcashTexStep1PaysTheOwnOneTimeAddress) {
   info.script_pubkey = script.data();
   info.script_pubkey_size = script.size();
 
-  enum Case { kOwn, kNoPath, kOtherIndex, kExternal, kOtherAccount, kTex };
-  for (Case c : {kOwn, kNoPath, kOtherIndex, kExternal, kOtherAccount, kTex}) {
+  enum Case {
+    kOwn,
+    kNoPath,
+    kOtherIndex,
+    kExternal,
+    kOtherAccount,
+    kTex,
+    kTexNoPath
+  };
+  for (Case c : {kOwn, kNoPath, kOtherIndex, kExternal, kOtherAccount, kTex,
+                 kTexNoPath}) {
     SCOPED_TRACE(c);
     ZcashSignPCZT msg = zcashV6Request(2, digest, 0x03,
                                        kZcashTexStep1ValueBalance,
@@ -1812,11 +1843,11 @@ TEST_F(ReviewHandlers, ZcashTexStep1PaysTheOwnOneTimeAddress) {
     ASSERT_TRUE(zcash_compute_orchard_transparent_sig_digest(
         NULL, 0, &info, 1, msg.transparent_digest.bytes));
     ZcashTransparentOutput out = zcashOutput(script, kZcashTexStep1OutputValue);
-    if (c != kNoPath)
+    if (c != kNoPath && c != kTexNoPath)
       zcashSetPath(out.address_n, &out.address_n_count,
                    c == kOtherAccount ? 1 : 0, c == kExternal ? 0 : 2,
                    c == kOtherIndex ? 1 : 0);
-    if (c == kTex) out.has_is_tex = out.is_tex = true;
+    if (c == kTex || c == kTexNoPath) out.has_is_tex = out.is_tex = true;
 
     const auto run = zcashRunTex(msg, {out}, {}, actions);
     if (c == kOwn || c == kNoPath) {
@@ -1838,9 +1869,12 @@ TEST_F(ReviewHandlers, ZcashTexStep1PaysTheOwnOneTimeAddress) {
                  : c == kExternal ? "Output path must be a one-time address"
                  : c == kOtherAccount
                      ? "Account does not match approved session"
-                     : "A one-time address is not a TEX",
+                 : c == kTex
+                     ? "A one-time address is not a TEX"
+                     : "A TEX output needs a transparent-only transaction",
                  fsm_test_lastFailureMessage());
     EXPECT_FALSE(zcashShown(run, t1));
+    EXPECT_FALSE(zcashShown(run, "TEX"));
     EXPECT_TRUE(run.orchard.empty());
   }
 }
@@ -2274,6 +2308,7 @@ TEST_F(ReviewHandlers, ThorchainSignScreenNamesTheSentDenom) {
 TEST_F(ReviewHandlers, MayaDepositGrammarRejectedBeforeConsent) {
   HDNode node = {};
   ASSERT_TRUE(storage_getRootNode("secp256k1", true, &node));
+  hdnode_fill_public_key(&node);
   MayachainSignTx tx = {};
   tx.has_chain_id = tx.has_msg_count = true;
   strcpy(tx.chain_id, "mayachain");
@@ -2284,7 +2319,9 @@ TEST_F(ReviewHandlers, MayaDepositGrammarRejectedBeforeConsent) {
   ack.deposit.has_asset = ack.deposit.has_amount = ack.deposit.has_memo =
       ack.deposit.has_signer = true;
   strcpy(ack.deposit.asset, "MAYA:CACAO");
-  strcpy(ack.deposit.signer, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k");
+  // The signer is the session's own account, so only the asset can refuse.
+  ASSERT_TRUE(tendermint_getAddress(&node, "maya", ack.deposit.signer));
+  ASSERT_TRUE(mayachain_addressIsSigner(ack.deposit.signer));
   ASSERT_TRUE(kkconfirm_preload(0, 1));
   fsm_test_clearLastFailure();
   fsm_msgMayachainMsgAck(&ack);

@@ -206,7 +206,8 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
         return false;
       }
 
-      /* Firmware table or valid attestation only; NULL -> base units. */
+      /* Firmware table or valid attestation only; NULL -> the amount is
+       * still scaled by the signed decimals, labelled "tokens". */
       const char* symbol = solana_displaySymbol(ti, known, pi->extra_u8);
       const bool symbol_verified = symbol && !known;
 
