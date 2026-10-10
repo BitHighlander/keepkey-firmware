@@ -173,6 +173,10 @@ bool msg_take_tiny_rejection(void);
 /* For the same wait: the tiny message received since the last call, without
  * its payload, or MSG_TINY_TYPE_ERROR. Nothing else reads it there. */
 MessageType msg_take_tiny_id(void);
+/* The firmware's authorization boundary, run before a message is dispatched;
+ * false means it was refused and answered. Board-only targets default to
+ * true. */
+bool keepkey_before_message_dispatch(MessageType msg_id);
 
 uint32_t parse_pb_varint(RawMessage* msg, uint8_t varint_count);
 int encode_pb(const void* source_ptr, const pb_field_t* fields, uint8_t* buffer,
