@@ -2284,11 +2284,18 @@ static void eip712_pump(void) {
       ethereum_address_checksum(pubkeyhash, address + 2, false, 0);
 
       /* The one screen that names the action being authorised and the
-       * account authorising it; every leaf before it was part of the review. */
+       * account authorising it; every leaf before it was part of the review.
+       * A message or a domain with no member had no screen, so it is named
+       * here as empty. */
       if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Sign Typed Data",
                    "Sign %s%s%s\nfrom %s?",
-                   done.message_empty && !done.domain_only ? "EMPTY " : "",
-                   done.primary_type, done.domain_only ? " (domain only)" : "",
+                   (done.domain_only ? done.domain_empty : done.message_empty)
+                       ? "EMPTY "
+                       : "",
+                   done.primary_type,
+                   done.domain_only    ? " (domain only)"
+                   : done.domain_empty ? " (EMPTY domain)"
+                                       : "",
                    address)) {
         fsm_sendFailure(FailureType_Failure_ActionCancelled,
                         _("Signing cancelled by user"));
