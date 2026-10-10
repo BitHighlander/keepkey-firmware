@@ -26,6 +26,7 @@ extern "C" {
 
 void kkconfirm_capture_start(void);
 std::vector<std::string> kkconfirm_capture_finish(void);
+std::vector<std::string> kkconfirm_captured_titles(void);
 
 static uint8_t bin_from_ascii(char c) {
   if ('a' <= c && c <= 'f') return c - 'a' + 0xa;
@@ -1500,6 +1501,28 @@ TEST(Ethereum, LastScreenTitleNamesTheChain) {
     EXPECT_EQ(1u, calc_str_line(get_title_font(), title(true, chain).c_str(),
                                 TITLE_WIDTH))
         << title(true, chain);
+  }
+}
+
+// The amounts of a liquidity call do not say which way they move, so the
+// first screen of either flow names the operation, in a title that fits a row.
+TEST(Ethereum, LiquidityFirstScreenNamesTheOperation) {
+  for (bool add : {true, false}) {
+    EthereumSignTx msg = liquidity_tx(true, add);
+    // Decline the first screen, so it is the only one drawn.
+    ASSERT_TRUE(kkconfirm_preload(0, 1));
+    kkconfirm_capture_start();
+    EXPECT_FALSE(
+        zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg, nullptr));
+    kkconfirm_capture_finish();
+    EXPECT_EQ(0, kkconfirm_drain());
+    const std::vector<std::string> titles = kkconfirm_captured_titles();
+    ASSERT_EQ(1u, titles.size());
+    EXPECT_EQ(add ? "Uniswap Add Liquidity" : "Uniswap LP Burn", titles[0]);
+    std::string drawn = titles[0];
+    for (char& ch : drawn) ch = (char)toupper((unsigned char)ch);
+    EXPECT_EQ(1u, calc_str_line(get_title_font(), drawn.c_str(), TITLE_WIDTH))
+        << drawn;
   }
 }
 
