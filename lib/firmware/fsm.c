@@ -381,11 +381,9 @@ void fsm_init(void) {
  * not authority to preserve some other signer.
  *
  * Deliberately NOT session_clear(true): that is a LOCK. It would drop the PIN,
- * passphrase and seed cache, disarm AdvancedMode and revoke ClearSign signers
- * on every request, so ApplyPolicies/LoadClearsignSigner could never reach the
- * EthereumSignTx that needs them. Idle locking stays with auto_lock_if_due().
- * Metadata loaded before a sign survives: ethereum_signing_abort() only clears
- * it while a stream is active. */
+ * passphrase and seed cache on every request, so a host that unlocks with
+ * Ping(pin_protection) could never reach the request it unlocked for. Idle
+ * locking stays with auto_lock_if_due(). */
 static bool fsm_dispatchGate(MessageType msg_id) {
   switch (msg_id) {
     case MessageType_MessageType_GetFeatures:
@@ -457,8 +455,14 @@ static bool fsm_dispatchGate(MessageType msg_id) {
         case MessageType_MessageType_SolanaSignMessage:
         case MessageType_MessageType_SolanaSignOffchainMessage:
 #endif
+        {
+          const bool was_armed = setup_isArmed();
           setup_abort();
+          /* The handler may fail before it draws anything, which would leave
+           * the ended ceremony's screen up. */
+          if (was_armed) layoutHome();
           break;
+        }
         case MessageType_MessageType_Initialize:
         case MessageType_MessageType_Cancel:
         case MessageType_MessageType_ClearSession:
