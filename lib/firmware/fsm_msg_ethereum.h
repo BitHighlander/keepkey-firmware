@@ -2284,11 +2284,18 @@ static void eip712_pump(void) {
       ethereum_address_checksum(pubkeyhash, address + 2, false, 0);
 
       /* The one screen that names the action being authorised and the
-       * account authorising it; every leaf before it was part of the review. */
+       * account authorising it; every leaf before it was part of the review.
+       * A message or a domain with no member had no screen, so it is named
+       * here as empty. */
       if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Sign Typed Data",
                    "Sign %s%s%s\nfrom %s?",
-                   done.message_empty && !done.domain_only ? "EMPTY " : "",
-                   done.primary_type, done.domain_only ? " (domain only)" : "",
+                   (done.domain_only ? done.domain_empty : done.message_empty)
+                       ? "EMPTY "
+                       : "",
+                   done.primary_type,
+                   done.domain_only    ? " (domain only)"
+                   : done.domain_empty ? " (EMPTY domain)"
+                                       : "",
                    address)) {
         fsm_sendFailure(FailureType_Failure_ActionCancelled,
                         _("Signing cancelled by user"));
@@ -2398,9 +2405,15 @@ void fsm_msgEthereumTypedDataValueAck(const EthereumTypedDataValueAck* msg) {
     return;
   }
   Erc7730Workflow* workflow = erc7730_workflow_state();
+  /* The stream accepted this ack, so an offset marks a later chunk of a long
+   * value and a total length marks its first. */
   if (workflow->phase == ERC7730_WORKFLOW_TYPED_DATA &&
       !erc7730_workflow_eip712_observe(workflow, member_path, member_path_count,
-                                       msg->value.bytes, msg->value.size)) {
+                                       msg->value.bytes, msg->value.size,
+                                       msg->has_value_total_length
+                                           ? msg->value_total_length
+                                           : msg->value.size,
+                                       msg->has_value_offset)) {
     memzero(member_path, sizeof(member_path));
     eip712_stream_abort();
     erc7730_workflow_abort(workflow);

@@ -1752,6 +1752,28 @@ TEST(Fsm, TypedDataStreamRefusesMetadataAndSignerLoads) {
   }
 }
 
+// An ordinary Ping between typed-data acks is answered without ending the
+// stream, so it must not draw home over the review while the stream is live.
+TEST(Fsm, PingDuringTypedDataStreamKeepsTheSigningScreen) {
+  kk_test_board_init();
+  fsm_init();
+  keepkey_user_activity();
+  EthereumSignTypedData start{};
+  std::strcpy(start.primary_type, "Mail");
+  ASSERT_TRUE(eip712_stream_begin(&start, false));
+  leave_home();
+  Ping ping = {};
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+  EXPECT_EQ(eip712_stream_waiting(), EIP712_WANT_STRUCT);
+  EXPECT_EQ(AWAY_FROM_HOME, home_get_state());
+
+  // With no stream waiting, the same Ping does go home.
+  eip712_stream_abort();
+  leave_home();
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+  EXPECT_EQ(AT_HOME, home_get_state());
+}
+
 // The final screen names the action being authorised. A primary type longer
 // than a row (Hyperliquid's are up to 40 characters) is paged, never cut.
 TEST(Fsm, TypedDataFinalScreenShowsTheWholePrimaryType) {
@@ -1801,8 +1823,81 @@ TEST(Fsm, TypedDataFinalScreenShowsTheWholePrimaryType) {
     final_screen += bodies[i];
   }
   EXPECT_NE(std::string::npos,
-            final_screen.find(std::string("Sign ") + primary + "\nfrom 0x"))
+            final_screen.find(std::string("Sign ") + primary +
+                              " (EMPTY domain)\nfrom 0x"))
       << final_screen;
+}
+
+// A domain with no member has no screen of its own, so the final screen says
+// it is empty, in the pages it already takes.
+TEST(Fsm, TypedDataFinalScreenFlagsAnEmptyDomain) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  loadAllWallet();
+  EthereumTypedDataStructAck empty{};
+  EthereumTypedDataStructAck named{};
+  named.members_count = 1;
+  std::strcpy(named.members[0].name, "name");
+  named.members[0].type.data_type =
+      EthereumTypedDataStructAck_EthereumDataType_STRING;
+  EthereumTypedDataStructAck message{};
+  message.members_count = 1;
+  std::strcpy(message.members[0].name, "nonce");
+  message.members[0].type.data_type =
+      EthereumTypedDataStructAck_EthereumDataType_UINT;
+  message.members[0].type.has_size = true;
+  message.members[0].type.size = 8;
+  struct Case {
+    const char* primary;
+    const EthereumTypedDataStructAck* domain;
+    size_t leaves;
+    const char* final_screen;
+  };
+  const Case cases[] = {
+      {"Mail", &named, 2, "Sign Mail\nfrom 0x"},
+      {"Mail", &empty, 1, "Sign Mail (EMPTY domain)\nfrom 0x"},
+      {"EIP712Domain", &named, 1, "Sign EIP712Domain (domain only)\nfrom 0x"},
+      {"EIP712Domain", &empty, 0,
+       "Sign EMPTY EIP712Domain (domain only)\nfrom 0x"},
+  };
+  for (const Case& c : cases) {
+    SCOPED_TRACE(c.final_screen);
+    ASSERT_TRUE(kkconfirm_preload(10, 0));
+    kkconfirm_capture_start();
+    EthereumSignTypedData start{};
+    std::strcpy(start.primary_type, c.primary);
+    receiveMessage(MessageType_MessageType_EthereumSignTypedData,
+                   EthereumSignTypedData_fields, &start);
+    for (int step = 0; step < 20 && eip712_stream_waiting() != EIP712_IDLE;
+         step++) {
+      const Eip712Next* next = eip712_stream_next();
+      if (eip712_stream_waiting() == EIP712_WANT_STRUCT) {
+        const bool is_domain =
+            std::strcmp(next->struct_name, "EIP712Domain") == 0;
+        receiveMessage(MessageType_MessageType_EthereumTypedDataStructAck,
+                       EthereumTypedDataStructAck_fields,
+                       is_domain ? c.domain : &message);
+      } else {
+        EthereumTypedDataValueAck value{};
+        if (next->member_path[0] == 0) {
+          value.value.size = 3;
+          std::memcpy(value.value.bytes, "App", 3);
+        } else {
+          value.value.size = 8;
+          value.value.bytes[7] = 1;
+        }
+        receiveMessage(MessageType_MessageType_EthereumTypedDataValueAck,
+                       EthereumTypedDataValueAck_fields, &value);
+      }
+    }
+    const std::vector<std::string> bodies = kkconfirm_capture_finish();
+    kkconfirm_drain();
+    // The leaves, then the final screen: two pages with or without the flag.
+    ASSERT_EQ(bodies.size(), c.leaves + 2);
+    EXPECT_EQ(0u, bodies[c.leaves].rfind(c.final_screen, 0))
+        << bodies[c.leaves];
+  }
 }
 
 // Ping between typed-data acks must not draw home over a live stream.
@@ -1824,8 +1919,6 @@ TEST(Fsm, PingKeepsAWaitingTypedDataStreamOnScreen) {
   layoutHomeForced();
 }
 
-// A definition chunk refused for AdvancedMode ends the certified workflow
-// (and the typed-data stream it belongs to) instead of leaving it armed.
 // Every ERC-7730 phase is driven by the host between screens, so a Ping in
 // any of them must not draw home over the live workflow.
 TEST(Fsm, PingKeepsALiveErc7730WorkflowOnScreen) {
@@ -1846,6 +1939,8 @@ TEST(Fsm, PingKeepsALiveErc7730WorkflowOnScreen) {
   }
 }
 
+// A definition chunk refused for AdvancedMode ends the certified workflow
+// (and the typed-data stream it belongs to) instead of leaving it armed.
 TEST(Fsm, Erc7730ChunkRefusedWithoutAdvancedModeEndsTheWorkflow) {
   kk_test_board_init();
   fsm_init();
@@ -2337,6 +2432,48 @@ TEST(Fsm, CrossWorkflowAcknowledgementsTerminateTheActiveSigner) {
   EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
 }
 
+// The Binance abort only clears state, so the gate itself has to take the
+// aborted transaction's approval screen down. An armed ceremony keeps its own.
+TEST(Fsm, StaleAckTakesTheAbortedSignersScreenDown) {
+  kk_test_board_init();
+  fsm_init();
+  fsm_abort_workflows();
+  layoutHomeForced();
+  keepkey_user_activity();  // or a due auto-lock takes the screen instead
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+
+  BinanceSignTx binance = {};
+  binance.has_msg_count = true;
+  binance.msg_count = 1;
+  binance.has_account_number = true;
+  binance.has_chain_id = true;
+  std::strcpy(binance.chain_id, "Binance-Chain-Nile");
+  binance.has_sequence = true;
+  binance.has_source = true;
+  ASSERT_TRUE(binance_signTxInit(&node, &binance));
+  leave_home();  // its last approval screen is still up
+  ASSERT_EQ(AWAY_FROM_HOME, home_get_state());
+
+  TxAck stale = {};
+  stale.has_tx = true;
+  receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &stale);
+  EXPECT_FALSE(binance_signingIsInited());
+  EXPECT_EQ(AT_HOME, home_get_state())
+      << "the aborted transaction is still on screen";
+
+  ASSERT_TRUE(setup_stage(false, "english", "reset", 0, 0, false));
+  setup_arm(SETUP_RESET);
+  leave_home();
+  receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &stale);
+  EXPECT_TRUE(setup_isArmedAs(SETUP_RESET));
+  EXPECT_EQ(AWAY_FROM_HOME, home_get_state())
+      << "a stale ACK drew home over an armed ceremony";
+
+  setup_abort();
+  layoutHomeForced();
+}
+
 TEST(Fsm, StaleEthereumAckCannotReplaceARecoveryCeremony) {
   kk_test_board_init();
   fsm_init();
@@ -2568,6 +2705,27 @@ TEST(Fsm, DecliningTheUnlimitedWarningSignsNothing) {
   EXPECT_FALSE(ethereum_signing_isInProgress());
   ASSERT_EQ(1u, shown.titles.size());
   EXPECT_EQ("UNLIMITED approval", shown.titles[0]);
+}
+
+// increaseAllowance(spender, 2^256-1) grants the same allowance as an
+// unlimited approve, so it gets the same warning, first. A finite one does not.
+TEST(Fsm, UnlimitedIncreaseAllowanceShowsTheWarningFirst) {
+  EthereumSignTx msg = usdcApproval(0xff);
+  memcpy(msg.data_initial_chunk.bytes, "\x39\x50\x93\x51", 4);
+  Shown shown = signApproval(&msg, 0);
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  ASSERT_EQ(1u, shown.titles.size());
+  EXPECT_EQ("UNLIMITED approval", shown.titles[0]);
+  EXPECT_EQ(std::string("Allow ") + kSpender + " to spend ALL your USDC",
+            shown.bodies[0]);
+
+  msg = usdcApproval(0x00);
+  memcpy(msg.data_initial_chunk.bytes, "\x39\x50\x93\x51", 4);
+  msg.data_initial_chunk.bytes[67] = 1;
+  shown = signApproval(&msg, 0);
+  EXPECT_EQ(0, std::count(shown.titles.begin(), shown.titles.end(),
+                          "UNLIMITED approval"));
 }
 
 // Control: a finite approve has no warning and reads as before.
@@ -3036,6 +3194,48 @@ TEST(DiceCeremonyPrivacy, AbortAtEveryPhaseWipesAndAllowsOrdinaryRestart) {
     ASSERT_EQ(32u, reset_get_int_entropy(bytes));
     for (unsigned i = 0; i < 32; ++i) EXPECT_EQ(i, bytes[i]);
   }
+}
+
+// Gated tests key on Features.capabilities: one that stops being reported
+// turns its tests into accepted skips. Dropping a capability therefore has to
+// be a visible edit here. A block that adds a capability appends it.
+TEST(Fsm, FeaturesReportExactlyTheStagedCapabilities) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  fsm_msgGetFeatures(nullptr);
+  size_t size = 0;
+  Features features;
+  ASSERT_GE((fsm_test_responseArena(&size), size), sizeof(features));
+  std::memcpy(&features, fsm_test_responseArena(&size), sizeof(features));
+  const std::vector<Features_Capability> expected = {
+      Features_Capability_CAPABILITY_ENTROPY_AUDIT_BUDGET,
+      Features_Capability_CAPABILITY_PROMPT_WORKFLOW_UNWIND,
+      Features_Capability_CAPABILITY_PROTECTED_PING_PRESENCE,
+      Features_Capability_CAPABILITY_SAFE_RESET_CEREMONY,
+      Features_Capability_CAPABILITY_SESSION_TRUST_LIFETIME,
+#if !BITCOIN_ONLY
+      Features_Capability_CAPABILITY_LEGACY_EVM_ROUTER_SIGNING,
+      Features_Capability_CAPABILITY_THOR_DEPOSIT_REVIEW,
+      Features_Capability_CAPABILITY_EVM_MAX_AMOUNT_REVIEW,
+      Features_Capability_CAPABILITY_EVM_UNKNOWN_TOKEN_REVIEW,
+      Features_Capability_CAPABILITY_EVM_TX_METADATA,
+      Features_Capability_CAPABILITY_ERC20_UNLIMITED_APPROVE_REVIEW,
+      Features_Capability_CAPABILITY_ERC20_UNLIMITED_PERMIT_REVIEW,
+      Features_Capability_CAPABILITY_EIP712_CHUNKED_VALUES,
+      Features_Capability_CAPABILITY_ERC7730_RUNTIME_REVIEW,
+      Features_Capability_CAPABILITY_OSMOSIS_WIRE_GUARDS,
+      Features_Capability_CAPABILITY_RIPPLE_MEMO_POLICY,
+      Features_Capability_CAPABILITY_HIVE_RELEASE_REVIEW,
+      Features_Capability_CAPABILITY_SOLANA_RUNTIME_REVIEW,
+      Features_Capability_CAPABILITY_MAYA_SINGLE_MESSAGE,
+      Features_Capability_CAPABILITY_TENDERMINT_PROGRESS,
+      Features_Capability_CAPABILITY_TRON_TRC20_REVIEW,
+#endif
+  };
+  EXPECT_EQ(expected, std::vector<Features_Capability>(
+                          features.capabilities,
+                          features.capabilities + features.capabilities_count));
 }
 
 // DebugLinkGetState is also serviced inside the PIN, passphrase and confirm
