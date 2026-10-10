@@ -3081,6 +3081,7 @@ TEST(Fsm, FeaturesReportExactlyTheStagedCapabilities) {
       Features_Capability_CAPABILITY_ERC20_UNLIMITED_APPROVE_REVIEW,
       Features_Capability_CAPABILITY_ERC20_UNLIMITED_PERMIT_REVIEW,
       Features_Capability_CAPABILITY_EIP712_CHUNKED_VALUES,
+      Features_Capability_CAPABILITY_ERC7730_RUNTIME_REVIEW,
 #endif
   };
   EXPECT_EQ(expected, std::vector<Features_Capability>(
