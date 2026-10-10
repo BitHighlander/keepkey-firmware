@@ -1796,8 +1796,81 @@ TEST(Fsm, TypedDataFinalScreenShowsTheWholePrimaryType) {
     final_screen += bodies[i];
   }
   EXPECT_NE(std::string::npos,
-            final_screen.find(std::string("Sign ") + primary + "\nfrom 0x"))
+            final_screen.find(std::string("Sign ") + primary +
+                              " (EMPTY domain)\nfrom 0x"))
       << final_screen;
+}
+
+// A domain with no member has no screen of its own, so the final screen says
+// it is empty, in the pages it already takes.
+TEST(Fsm, TypedDataFinalScreenFlagsAnEmptyDomain) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  loadAllWallet();
+  EthereumTypedDataStructAck empty{};
+  EthereumTypedDataStructAck named{};
+  named.members_count = 1;
+  std::strcpy(named.members[0].name, "name");
+  named.members[0].type.data_type =
+      EthereumTypedDataStructAck_EthereumDataType_STRING;
+  EthereumTypedDataStructAck message{};
+  message.members_count = 1;
+  std::strcpy(message.members[0].name, "nonce");
+  message.members[0].type.data_type =
+      EthereumTypedDataStructAck_EthereumDataType_UINT;
+  message.members[0].type.has_size = true;
+  message.members[0].type.size = 8;
+  struct Case {
+    const char* primary;
+    const EthereumTypedDataStructAck* domain;
+    size_t leaves;
+    const char* final_screen;
+  };
+  const Case cases[] = {
+      {"Mail", &named, 2, "Sign Mail\nfrom 0x"},
+      {"Mail", &empty, 1, "Sign Mail (EMPTY domain)\nfrom 0x"},
+      {"EIP712Domain", &named, 1, "Sign EIP712Domain (domain only)\nfrom 0x"},
+      {"EIP712Domain", &empty, 0,
+       "Sign EMPTY EIP712Domain (domain only)\nfrom 0x"},
+  };
+  for (const Case& c : cases) {
+    SCOPED_TRACE(c.final_screen);
+    ASSERT_TRUE(kkconfirm_preload(10, 0));
+    kkconfirm_capture_start();
+    EthereumSignTypedData start{};
+    std::strcpy(start.primary_type, c.primary);
+    receiveMessage(MessageType_MessageType_EthereumSignTypedData,
+                   EthereumSignTypedData_fields, &start);
+    for (int step = 0; step < 20 && eip712_stream_waiting() != EIP712_IDLE;
+         step++) {
+      const Eip712Next* next = eip712_stream_next();
+      if (eip712_stream_waiting() == EIP712_WANT_STRUCT) {
+        const bool is_domain =
+            std::strcmp(next->struct_name, "EIP712Domain") == 0;
+        receiveMessage(MessageType_MessageType_EthereumTypedDataStructAck,
+                       EthereumTypedDataStructAck_fields,
+                       is_domain ? c.domain : &message);
+      } else {
+        EthereumTypedDataValueAck value{};
+        if (next->member_path[0] == 0) {
+          value.value.size = 3;
+          std::memcpy(value.value.bytes, "App", 3);
+        } else {
+          value.value.size = 8;
+          value.value.bytes[7] = 1;
+        }
+        receiveMessage(MessageType_MessageType_EthereumTypedDataValueAck,
+                       EthereumTypedDataValueAck_fields, &value);
+      }
+    }
+    const std::vector<std::string> bodies = kkconfirm_capture_finish();
+    kkconfirm_drain();
+    // The leaves, then the final screen: two pages with or without the flag.
+    ASSERT_EQ(bodies.size(), c.leaves + 2);
+    EXPECT_EQ(0u, bodies[c.leaves].rfind(c.final_screen, 0))
+        << bodies[c.leaves];
+  }
 }
 
 // Ping between typed-data acks must not draw home over a live stream.
@@ -1819,8 +1892,6 @@ TEST(Fsm, PingKeepsAWaitingTypedDataStreamOnScreen) {
   layoutHomeForced();
 }
 
-// A definition chunk refused for AdvancedMode ends the certified workflow
-// (and the typed-data stream it belongs to) instead of leaving it armed.
 // Every ERC-7730 phase is driven by the host between screens, so a Ping in
 // any of them must not draw home over the live workflow.
 TEST(Fsm, PingKeepsALiveErc7730WorkflowOnScreen) {
@@ -1841,6 +1912,8 @@ TEST(Fsm, PingKeepsALiveErc7730WorkflowOnScreen) {
   }
 }
 
+// A definition chunk refused for AdvancedMode ends the certified workflow
+// (and the typed-data stream it belongs to) instead of leaving it armed.
 TEST(Fsm, Erc7730ChunkRefusedWithoutAdvancedModeEndsTheWorkflow) {
   kk_test_board_init();
   fsm_init();
@@ -2330,6 +2403,48 @@ TEST(Fsm, CrossWorkflowAcknowledgementsTerminateTheActiveSigner) {
   receiveMessage(MessageType_MessageType_BinanceTransferMsg,
                  BinanceTransferMsg_fields, &binance_ack);
   EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
+}
+
+// The Binance abort only clears state, so the gate itself has to take the
+// aborted transaction's approval screen down. An armed ceremony keeps its own.
+TEST(Fsm, StaleAckTakesTheAbortedSignersScreenDown) {
+  kk_test_board_init();
+  fsm_init();
+  fsm_abort_workflows();
+  layoutHomeForced();
+  keepkey_user_activity();  // or a due auto-lock takes the screen instead
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+
+  BinanceSignTx binance = {};
+  binance.has_msg_count = true;
+  binance.msg_count = 1;
+  binance.has_account_number = true;
+  binance.has_chain_id = true;
+  std::strcpy(binance.chain_id, "Binance-Chain-Nile");
+  binance.has_sequence = true;
+  binance.has_source = true;
+  ASSERT_TRUE(binance_signTxInit(&node, &binance));
+  leave_home();  // its last approval screen is still up
+  ASSERT_EQ(AWAY_FROM_HOME, home_get_state());
+
+  TxAck stale = {};
+  stale.has_tx = true;
+  receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &stale);
+  EXPECT_FALSE(binance_signingIsInited());
+  EXPECT_EQ(AT_HOME, home_get_state())
+      << "the aborted transaction is still on screen";
+
+  ASSERT_TRUE(setup_stage(false, "english", "reset", 0, 0, false));
+  setup_arm(SETUP_RESET);
+  leave_home();
+  receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &stale);
+  EXPECT_TRUE(setup_isArmedAs(SETUP_RESET));
+  EXPECT_EQ(AWAY_FROM_HOME, home_get_state())
+      << "a stale ACK drew home over an armed ceremony";
+
+  setup_abort();
+  layoutHomeForced();
 }
 
 TEST(Fsm, StaleEthereumAckCannotReplaceARecoveryCeremony) {
