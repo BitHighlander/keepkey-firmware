@@ -457,8 +457,14 @@ static bool fsm_dispatchGate(MessageType msg_id) {
         case MessageType_MessageType_SolanaSignMessage:
         case MessageType_MessageType_SolanaSignOffchainMessage:
 #endif
+        {
+          const bool was_armed = setup_isArmed();
           setup_abort();
+          /* The handler may fail before it draws anything, which would leave
+           * the ended ceremony's screen up. */
+          if (was_armed) layoutHome();
           break;
+        }
         case MessageType_MessageType_Initialize:
         case MessageType_MessageType_Cancel:
         case MessageType_MessageType_ClearSession:
