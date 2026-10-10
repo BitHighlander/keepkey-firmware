@@ -1234,7 +1234,7 @@ bool zcash_compute_transparent_digest(
 }
 
 /* ZIP-244 transparent_sig_digest for Orchard spend auth: S.2 form with an
- * EMPTY txin_sig_digest when n_inputs > 0, else T.1 (txid) form. */
+ * EMPTY txin_sig_digest when n_inputs > 0, else T.2 (txid) form. */
 bool zcash_compute_orchard_transparent_sig_digest(
     const ZcashTransparentInputDigestInfo* inputs, size_t n_inputs,
     const ZcashTransparentOutputDigestInfo* outputs, size_t n_outputs,

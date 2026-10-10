@@ -165,7 +165,7 @@ bool zcash_compute_transparent_digest(
     uint8_t digest_out[32]);
 
 /* ZIP-244 §4.9 transparent_sig_digest as consensus verifies Orchard sigs:
- * S.2 with EMPTY txin_sig_digest if n_inputs > 0, else T.1. */
+ * S.2 with EMPTY txin_sig_digest if n_inputs > 0, else T.2. */
 bool zcash_compute_orchard_transparent_sig_digest(
     const ZcashTransparentInputDigestInfo* inputs, size_t n_inputs,
     const ZcashTransparentOutputDigestInfo* outputs, size_t n_outputs,
