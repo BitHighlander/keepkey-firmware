@@ -2923,9 +2923,16 @@ TEST(Fsm, FeaturesReportExactlyTheStagedCapabilities) {
       Features_Capability_CAPABILITY_PROMPT_WORKFLOW_UNWIND,
       Features_Capability_CAPABILITY_PROTECTED_PING_PRESENCE,
       Features_Capability_CAPABILITY_SAFE_RESET_CEREMONY,
+      Features_Capability_CAPABILITY_SESSION_TRUST_LIFETIME,
 #if !BITCOIN_ONLY
       Features_Capability_CAPABILITY_LEGACY_EVM_ROUTER_SIGNING,
       Features_Capability_CAPABILITY_THOR_DEPOSIT_REVIEW,
+      Features_Capability_CAPABILITY_EVM_MAX_AMOUNT_REVIEW,
+      Features_Capability_CAPABILITY_EVM_UNKNOWN_TOKEN_REVIEW,
+      Features_Capability_CAPABILITY_EVM_TX_METADATA,
+      Features_Capability_CAPABILITY_ERC20_UNLIMITED_APPROVE_REVIEW,
+      Features_Capability_CAPABILITY_ERC20_UNLIMITED_PERMIT_REVIEW,
+      Features_Capability_CAPABILITY_EIP712_CHUNKED_VALUES,
 #endif
   };
   EXPECT_EQ(expected, std::vector<Features_Capability>(
