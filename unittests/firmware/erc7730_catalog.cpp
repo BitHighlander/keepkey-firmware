@@ -610,10 +610,38 @@ TEST(Erc7730Catalog, RejectsMalformedOrAliasedAbiGraphsWhileStreaming) {
   p[kFirstNode + 4] = 2;  // tuple child begins beyond the two-node table
   EXPECT_EQ(feedAll(envelope(p), 19), ERC7730_CATALOG_BAD_PROGRAM);
 
-  p = minimalProgram();
-  p[kSecondNode] = 8;      // tuple
-  p[kSecondNode + 4] = 1;  // backwards/self edge
-  p[kSecondNode + 6] = 1;
+  // root -> tuple -> uint256, each child after its parent: accepted.
+  p = withAbi(minimalProgram(),
+              {8, 0, 0, 0, 1, 0, 1, 0, 0,   // root -> node 1
+               8, 0, 0, 0, 2, 0, 1, 0, 0,   // tuple -> node 2
+               1, 1, 0, 0, 0, 0, 0, 0, 0},  // uint256
+              3);
+  EXPECT_EQ(feedAll(envelope(p), 43), ERC7730_CATALOG_UNTRUSTED);
+
+  // The same tree with the child before its parent. Every node still has
+  // exactly one parent, so only the forward-edge rule refuses it.
+  p = withAbi(minimalProgram(),
+              {8, 0, 0, 0, 2, 0, 1, 0, 0,   // root -> node 2
+               1, 1, 0, 0, 0, 0, 0, 0, 0,   // uint256
+               8, 0, 0, 0, 1, 0, 1, 0, 0},  // tuple -> node 1: backwards
+              3);
+  EXPECT_EQ(feedAll(envelope(p), 43), ERC7730_CATALOG_BAD_PROGRAM);
+
+  // A tuple that is its own only parent.
+  p = withAbi(minimalProgram(),
+              {8, 0, 0, 0, 1, 0, 1, 0, 0,   // root -> node 1
+               1, 1, 0, 0, 0, 0, 0, 0, 0,   // uint256
+               8, 0, 0, 0, 2, 0, 1, 0, 0},  // tuple -> itself
+              2);
+  EXPECT_EQ(feedAll(envelope(p), 43), ERC7730_CATALOG_BAD_PROGRAM);
+
+  // Two parents share a child: the edges all point forward, so only the
+  // one-parent rule refuses it.
+  p = withAbi(minimalProgram(),
+              {8, 0, 0, 0, 1, 0, 2, 0, 0,   // root -> nodes 1 and 2
+               8, 0, 0, 0, 2, 0, 1, 0, 0,   // tuple -> node 2 again
+               1, 1, 0, 0, 0, 0, 0, 0, 0},  // uint256
+              3);
   EXPECT_EQ(feedAll(envelope(p), 43), ERC7730_CATALOG_BAD_PROGRAM);
 }
 
