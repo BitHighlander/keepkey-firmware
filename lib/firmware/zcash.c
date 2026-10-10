@@ -749,7 +749,9 @@ bool zcash_orchard_note_ciphertext_valid(
     const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
     const uint8_t rho[32], const uint8_t rseed[32], bool ironwood,
     const uint8_t epk[32], const uint8_t enc_compact[52],
-    const uint8_t enc_memo[512], const uint8_t enc_tag[16]) {
+    const uint8_t enc_memo[ZCASH_MEMO_SIZE], const uint8_t enc_tag[16],
+    uint8_t memo_out[ZCASH_MEMO_SIZE]) {
+  if (memo_out) memzero(memo_out, ZCASH_MEMO_SIZE);
   if (!receiver || !rho || !rseed || !epk || !enc_compact || !enc_memo ||
       !enc_tag) {
     return false;
@@ -785,15 +787,24 @@ bool zcash_orchard_note_ciphertext_valid(
   blake2b_Update(&kdf, epk, 32);
   blake2b_Final(&kdf, key, 32);
 
-  /* AEAD_CHACHA20_POLY1305, zero nonce, no AD, over compact || memo. */
+  /* AEAD_CHACHA20_POLY1305, zero nonce, no AD, over compact || memo. The
+   * cipher only keeps its place across whole 64-byte blocks, so the first
+   * block is the 52 compact bytes and the memo's first 12. */
   static const uint8_t nonce[12] = {0};
   chacha20poly1305_ctx aead;
-  uint8_t compact[52], tag[16];
+  uint8_t first[64], plain[64], tag[16];
+  memcpy(first, enc_compact, 52);
+  memcpy(first + 52, enc_memo, sizeof(first) - 52);
   rfc7539_init(&aead, key, nonce);
-  chacha20poly1305_decrypt(&aead, enc_compact, compact, sizeof(compact));
-  chacha20poly1305_auth(&aead, enc_memo, 512);
-  rfc7539_finish(&aead, 0, sizeof(compact) + 512, tag);
-  if (memcmp(tag, enc_tag, sizeof(tag)) != 0) return false;
+  chacha20poly1305_decrypt(&aead, first, plain, sizeof(first));
+  if (memo_out) {
+    memcpy(memo_out, plain + 52, sizeof(plain) - 52);
+    chacha20poly1305_decrypt(&aead, enc_memo + 12, memo_out + 12,
+                             ZCASH_MEMO_SIZE - 12);
+  } else {
+    chacha20poly1305_auth(&aead, enc_memo + 12, ZCASH_MEMO_SIZE - 12);
+  }
+  rfc7539_finish(&aead, 0, 52 + ZCASH_MEMO_SIZE, tag);
 
   uint8_t expected[52];
   expected[0] = ironwood ? 0x03 : 0x02;
@@ -802,7 +813,17 @@ bool zcash_orchard_note_ciphertext_valid(
     expected[12 + i] = (uint8_t)(value >> (8 * i));
   }
   memcpy(expected + 20, rseed, 32);
-  return memcmp(compact, expected, sizeof(expected)) == 0;
+  const bool valid = memcmp(tag, enc_tag, sizeof(tag)) == 0 &&
+                     memcmp(plain, expected, sizeof(expected)) == 0;
+  memzero(plain, sizeof(plain));
+  if (!valid && memo_out) memzero(memo_out, ZCASH_MEMO_SIZE);
+  return valid;
+}
+
+size_t zcash_memo_shown_length(const uint8_t memo[ZCASH_MEMO_SIZE]) {
+  size_t length = ZCASH_MEMO_SIZE;
+  while (length > 0 && memo[length - 1] == 0) length--;
+  return length == 1 && memo[0] == 0xF6 ? 0 : length;
 }
 
 bool zcash_derive_orchard_keys_with_progress(

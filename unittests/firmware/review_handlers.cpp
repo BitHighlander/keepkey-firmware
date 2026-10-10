@@ -600,8 +600,9 @@ TEST_F(ReviewHandlers, ZcashSessionCompletesOnlyPastTheDigestAndFeeGates) {
         zcashSignRequest(1, digest, 0, c == kFeeMismatch ? 1000 : 0);
     if (c == kTamperedDigest) msg.orchard_digest.bytes[0] ^= 1;
 
-    // Summary, the two output screens, then the fee screen if it is reached.
-    ASSERT_TRUE(kkconfirm_preload(4, 0));
+    // Summary, the output's amount, address and memo screens, then the fee
+    // screen if it is reached.
+    ASSERT_TRUE(kkconfirm_preload(5, 0));
     fsm_test_clearLastFailure();
     kkconfirm_capture_start();
     fsm_msgZcashSignPCZT(&msg);
@@ -626,7 +627,7 @@ TEST_F(ReviewHandlers, ZcashSessionCompletesOnlyPastTheDigestAndFeeGates) {
                                      : "Shielded note ciphertext mismatch",
                    fsm_test_lastFailureMessage());
       EXPECT_EQ(1u, screens.size());
-      EXPECT_EQ(6, kkconfirm_drain());  // three unused screens' pairs
+      EXPECT_EQ(8, kkconfirm_drain());  // four unused screens' pairs
     } else if (c != kAccepted) {
       EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
       EXPECT_EQ(c == kFeeMismatch,
@@ -635,12 +636,12 @@ TEST_F(ReviewHandlers, ZcashSessionCompletesOnlyPastTheDigestAndFeeGates) {
                 std::string(fsm_test_lastFailureMessage())
                         .find("Shielded digest mismatch") == 0);
       EXPECT_FALSE(fee_screen);
-      EXPECT_EQ(3u, screens.size());
+      EXPECT_EQ(4u, screens.size());
       EXPECT_EQ(2, kkconfirm_drain());  // the fee screen's pair, unused
     } else {
       EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
       EXPECT_TRUE(fee_screen);
-      EXPECT_EQ(4u, screens.size());
+      EXPECT_EQ(5u, screens.size());
       EXPECT_EQ(0, kkconfirm_drain());
     }
   }
@@ -657,8 +658,8 @@ TEST_F(ReviewHandlers, ZcashPingBetweenActionsKeepsTheSigningScreen) {
   zcashBundleDigest(actions, 0, digest);
   ZcashSignPCZT msg = zcashSignRequest(2, digest, 0, 0);
 
-  // Summary, two screens per output, then the fee.
-  ASSERT_TRUE(kkconfirm_preload(6, 0));
+  // Summary, three screens per output (amount, address, memo), then the fee.
+  ASSERT_TRUE(kkconfirm_preload(8, 0));
   fsm_test_clearLastFailure();
   fsm_msgZcashSignPCZT(&msg);
   ZcashPCZTAction first = actions[0];
@@ -748,7 +749,7 @@ TEST_F(ReviewHandlers, ZcashUserAddressIsCheckedThenShown) {
     zcashBundleDigest({action}, 0, digest);
     ZcashSignPCZT msg = zcashSignRequest(1, digest, 0, 0);
 
-    ASSERT_TRUE(kkconfirm_preload(8, 0));
+    ASSERT_TRUE(kkconfirm_preload(10, 0));
     fsm_test_clearLastFailure();
     fsm_msgZcashSignPCZT(&msg);
     ASSERT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
@@ -821,8 +822,9 @@ TEST_F(ReviewHandlers, ZcashRealSpendsReleaseOnlyCompactVerifiedSignatures) {
     zcashBundleDigest(actions, 0, digest);
     ZcashSignPCZT msg = zcashSignRequest(3, digest, 0, 0);
 
-    // Summary, two screens per output, then the fee.
-    ASSERT_TRUE(kkconfirm_preload(8, 0));
+    // Summary, three screens per output (amount, address, memo), then the
+    // fee.
+    ASSERT_TRUE(kkconfirm_preload(11, 0));
     fsm_test_clearLastFailure();
     fsm_msgZcashSignPCZT(&msg);
     ASSERT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()));
@@ -1089,8 +1091,10 @@ TEST_F(ReviewHandlers, ZcashOnlyProvenChangeIsFoldedAndMemoSendIsShown) {
     ZcashSignPCZT msg = zcashSignRequest(4, digest, 10000, 10000);
 
     // Summary; self-send; another account's change; the memo send (only with
-    // its user_address); the change total; the fee.
-    const size_t expected = c == kNoUserAddress ? 7u : 9u;
+    // its user_address); the change total; the fee. Each shown output is an
+    // amount, an address and its memo: the first two carry the generator's
+    // filler (0xF6 repeated), which is not text and is named by its hash.
+    const size_t expected = c == kNoUserAddress ? 9u : 12u;
     if (c == kChangeDeclined) {
       ASSERT_TRUE(kkconfirm_preload(static_cast<int>(expected) - 2, 1));
     } else {
@@ -1120,7 +1124,7 @@ TEST_F(ReviewHandlers, ZcashOnlyProvenChangeIsFoldedAndMemoSendIsShown) {
       EXPECT_STREQ("Shielded note commitment mismatch",
                    fsm_test_lastFailureMessage());
       // The summary and the two outputs streamed before the change.
-      EXPECT_EQ(5u, screens.size());
+      EXPECT_EQ(7u, screens.size());
       EXPECT_FALSE(zcashSignatureEmitted(kkconfirm_readResponseIds()));
       (void)kkconfirm_drain();
       continue;
@@ -1139,14 +1143,18 @@ TEST_F(ReviewHandlers, ZcashOnlyProvenChangeIsFoldedAndMemoSendIsShown) {
       ASSERT_LT(i, screens.size());
       EXPECT_NE(std::string::npos, screens[i].find(text)) << screens[i];
     };
-    ASSERT_EQ(expected, screens.size());
+    ASSERT_EQ(expected, screens.size()) << ::testing::PrintToString(screens);
     shows(1, "0.00020000 ZEC");
     shows(2, self_ua);
-    shows(3, "0.00030000 ZEC");
-    shows(4, other_change_ua);
+    shows(3, "Not text. SHA-256:");
+    shows(4, "0.00030000 ZEC");
+    shows(5, other_change_ua);
+    shows(6, "Not text. SHA-256:");
     if (c == kAccepted) {
-      shows(5, "0.00000000 ZEC");
-      shows(6, kZcashMemoUserAddress);
+      shows(7, "0.00000000 ZEC");
+      shows(8, kZcashMemoUserAddress);
+      // The memo is signed and the recipient reads it: it has its own screen.
+      shows(9, "thanks\\x20for\\x20lunch!");
     }
     shows(expected - 2, "Change back to your wallet:\n0.00040000 ZEC");
     shows(expected - 1, "0.00010000 ZEC");
@@ -1271,8 +1279,9 @@ TEST_F(ReviewHandlers, ZcashHybridReleasesTransparentSignaturesLast) {
       zcashSet(input.script_pubkey, script);
     }
 
-    // The two-page summary, the two output screens, the fee, then the input.
-    ASSERT_TRUE(kkconfirm_preload(c == kFeeCancelled ? 4 : 6,
+    // The two-page summary, the output's amount, address and memo screens,
+    // the fee, then the input.
+    ASSERT_TRUE(kkconfirm_preload(c == kFeeCancelled ? 5 : 7,
                                   c == kFeeCancelled ? 1 : 0));
     fsm_test_clearLastFailure();
     fsm_msgZcashSignPCZT(&msg);
@@ -1393,8 +1402,9 @@ TEST_F(ReviewHandlers, ZcashSignsNothingBeforeTheFinalGate) {
     input.sequence = info.sequence;
     zcashSet(input.script_pubkey, script);
 
-    // Two-page summary, two screens per output, the fee, then the input.
-    ASSERT_TRUE(kkconfirm_preload(8, 0));
+    // Two-page summary, three screens per output (amount, address, memo),
+    // the fee, then the input.
+    ASSERT_TRUE(kkconfirm_preload(10, 0));
     fsm_test_clearLastFailure();
     zcash_test_clearSignOperations();
     fsm_msgZcashSignPCZT(&msg);
