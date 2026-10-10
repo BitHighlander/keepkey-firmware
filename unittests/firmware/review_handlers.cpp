@@ -8,6 +8,7 @@ extern "C" {
 #include "keepkey/firmware/ripple.h"
 #include "keepkey/firmware/tron.h"
 #include "keepkey/firmware/mayachain.h"
+#include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/thorchain.h"
 #include "keepkey/firmware/bip85.h"
 #include "keepkey/firmware/signed_metadata.h"
@@ -1060,8 +1061,8 @@ TEST_F(ReviewHandlers, ZcashZeroValuePaddingOutputIsNotShown) {
 // any other output. The zero-valued memo-only send carries the address the
 // user entered and is shown with it at 0 ZEC; without a user_address the same
 // output is taken for padding and not shown. A change output whose cmx does
-// not match its note is refused before any output screen, and declining the
-// change total releases nothing.
+// not match its note is refused when it streams, after the screens of the
+// outputs before it, and declining the change total releases nothing.
 TEST_F(ReviewHandlers, ZcashOnlyProvenChangeIsFoldedAndMemoSendIsShown) {
   ZcashOrchardKeys keys;
   ASSERT_TRUE(storage_zcashOrchardKeys(0, true, &keys));
@@ -1344,6 +1345,9 @@ TEST_F(ReviewHandlers, ZcashHybridReleasesTransparentSignaturesLast) {
 // the final gate has recomputed the bundle digest, so a host whose claimed
 // orchard_digest differs from the streamed actions gets no signature and no
 // signing operation at all. The accepted control signs only at the gate.
+// The count is taken beside each signing call in the two final-gate signers;
+// tools/check_pallas_api_boundary.py refuses a signing call anywhere else in
+// the handlers, so a count of zero means none ran.
 TEST_F(ReviewHandlers, ZcashSignsNothingBeforeTheFinalGate) {
   ZcashOrchardKeys keys;
   ASSERT_TRUE(storage_zcashOrchardKeys(0, true, &keys));
@@ -1797,7 +1801,9 @@ bool zcashShown(const ZcashTexRun& run, const std::string& text) {
 // transfer to yourself, not a payment; without it, a normal send to the same
 // t1 address. A path that does not pay the script, is not the one-time
 // scope, belongs to another account, or claims to be a TEX is refused before
-// any signature. The Orchard signature verifies under librustzcash's sighash.
+// any signature. So is the same output marked is_tex without a path: a TEX
+// address cannot be paid by a transaction with a shielded action. The Orchard
+// signature verifies under librustzcash's sighash.
 TEST_F(ReviewHandlers, ZcashTexStep1PaysTheOwnOneTimeAddress) {
   const auto pubkey = zcashTransparentPubkey(0, 2);
   ASSERT_EQ(zcashHex(kZcashTexEphemeralPubkey), pubkey);
@@ -1816,8 +1822,17 @@ TEST_F(ReviewHandlers, ZcashTexStep1PaysTheOwnOneTimeAddress) {
   info.script_pubkey = script.data();
   info.script_pubkey_size = script.size();
 
-  enum Case { kOwn, kNoPath, kOtherIndex, kExternal, kOtherAccount, kTex };
-  for (Case c : {kOwn, kNoPath, kOtherIndex, kExternal, kOtherAccount, kTex}) {
+  enum Case {
+    kOwn,
+    kNoPath,
+    kOtherIndex,
+    kExternal,
+    kOtherAccount,
+    kTex,
+    kTexNoPath
+  };
+  for (Case c : {kOwn, kNoPath, kOtherIndex, kExternal, kOtherAccount, kTex,
+                 kTexNoPath}) {
     SCOPED_TRACE(c);
     ZcashSignPCZT msg = zcashV6Request(2, digest, 0x03,
                                        kZcashTexStep1ValueBalance,
@@ -1828,11 +1843,11 @@ TEST_F(ReviewHandlers, ZcashTexStep1PaysTheOwnOneTimeAddress) {
     ASSERT_TRUE(zcash_compute_orchard_transparent_sig_digest(
         NULL, 0, &info, 1, msg.transparent_digest.bytes));
     ZcashTransparentOutput out = zcashOutput(script, kZcashTexStep1OutputValue);
-    if (c != kNoPath)
+    if (c != kNoPath && c != kTexNoPath)
       zcashSetPath(out.address_n, &out.address_n_count,
                    c == kOtherAccount ? 1 : 0, c == kExternal ? 0 : 2,
                    c == kOtherIndex ? 1 : 0);
-    if (c == kTex) out.has_is_tex = out.is_tex = true;
+    if (c == kTex || c == kTexNoPath) out.has_is_tex = out.is_tex = true;
 
     const auto run = zcashRunTex(msg, {out}, {}, actions);
     if (c == kOwn || c == kNoPath) {
@@ -1854,9 +1869,12 @@ TEST_F(ReviewHandlers, ZcashTexStep1PaysTheOwnOneTimeAddress) {
                  : c == kExternal ? "Output path must be a one-time address"
                  : c == kOtherAccount
                      ? "Account does not match approved session"
-                     : "A one-time address is not a TEX",
+                 : c == kTex
+                     ? "A one-time address is not a TEX"
+                     : "A TEX output needs a transparent-only transaction",
                  fsm_test_lastFailureMessage());
     EXPECT_FALSE(zcashShown(run, t1));
+    EXPECT_FALSE(zcashShown(run, "TEX"));
     EXPECT_TRUE(run.orchard.empty());
   }
 }
@@ -2290,6 +2308,7 @@ TEST_F(ReviewHandlers, ThorchainSignScreenNamesTheSentDenom) {
 TEST_F(ReviewHandlers, MayaDepositGrammarRejectedBeforeConsent) {
   HDNode node = {};
   ASSERT_TRUE(storage_getRootNode("secp256k1", true, &node));
+  hdnode_fill_public_key(&node);
   MayachainSignTx tx = {};
   tx.has_chain_id = tx.has_msg_count = true;
   strcpy(tx.chain_id, "mayachain");
@@ -2300,7 +2319,9 @@ TEST_F(ReviewHandlers, MayaDepositGrammarRejectedBeforeConsent) {
   ack.deposit.has_asset = ack.deposit.has_amount = ack.deposit.has_memo =
       ack.deposit.has_signer = true;
   strcpy(ack.deposit.asset, "MAYA:CACAO");
-  strcpy(ack.deposit.signer, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k");
+  // The signer is the session's own account, so only the asset can refuse.
+  ASSERT_TRUE(tendermint_getAddress(&node, "maya", ack.deposit.signer));
+  ASSERT_TRUE(mayachain_addressIsSigner(ack.deposit.signer));
   ASSERT_TRUE(kkconfirm_preload(0, 1));
   fsm_test_clearLastFailure();
   fsm_msgMayachainMsgAck(&ack);

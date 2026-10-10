@@ -165,7 +165,7 @@ bool zcash_compute_transparent_digest(
     uint8_t digest_out[32]);
 
 /* ZIP-244 §4.9 transparent_sig_digest as consensus verifies Orchard sigs:
- * S.2 with EMPTY txin_sig_digest if n_inputs > 0, else T.1. */
+ * S.2 with EMPTY txin_sig_digest if n_inputs > 0, else T.2. */
 bool zcash_compute_orchard_transparent_sig_digest(
     const ZcashTransparentInputDigestInfo* inputs, size_t n_inputs,
     const ZcashTransparentOutputDigestInfo* outputs, size_t n_outputs,
@@ -313,6 +313,9 @@ bool zcash_signing_is_active(void);
  * so a test can show that nothing is signed before the final gate. */
 uint32_t zcash_test_signOperations(void);
 void zcash_test_clearSignOperations(void);
+/* The empty-bundle digest the handlers use for a component: 0 transparent,
+ * 1 Sapling, 2 Orchard in v5, 3 Orchard in v6, 4 Ironwood. */
+void zcash_test_emptyDigest(int component, uint8_t out[32]);
 #endif
 
 #endif
