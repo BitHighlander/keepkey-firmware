@@ -891,8 +891,8 @@ def main():
             "merged_sha256": sha256_file(MERGED_JUNIT),
             "skips": [case for case in cases if case["status"] == "skip"],
         },
-        # A staged block may lack capabilities; a release may not.
-        # release.yml refuses evidence where this list is non-empty.
+        # Every capability whose controls skipped, required or not. Recorded
+        # only: release.yml reads release_capability_gaps below instead.
         "missing_capabilities": sorted(missing_capabilities),
         "missing_capabilities_bitcoin_only": sorted(btc_missing_capabilities),
         # Required capabilities skipped (by prefix or by a device flag) or
