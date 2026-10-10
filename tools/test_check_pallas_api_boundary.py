@@ -128,6 +128,19 @@ class EnclosingConditionals(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "else branch"):
             function_body(source, "sign")
 
+    def test_second_definition_is_refused(self):
+        checked = "void sign(void) {\n  pallas_ct_add_mod_q(x);\n}\n"
+        other = "void sign(void) {\n  pallas_add_mod_q(x);\n}\n"
+        for source in (
+                "#if ZCASH_PRIVACY\n" + checked + "#else\n" + other +
+                "#endif\n",
+                "#if ZCASH_PRIVACY\n" + checked + "#endif\n"
+                "#if !ZCASH_PRIVACY\n" + other + "#endif\n",
+                "#if ZCASH_PRIVACY\n" + checked + "#endif\n" + other):
+            with self.subTest(source=source):
+                with self.assertRaisesRegex(AssertionError, "more than once"):
+                    function_body(source, "sign")
+
     def test_production_guard_and_closed_blocks_are_accepted(self):
         source = ("#if 0\nvoid old(void) {}\n#endif\n#if ZCASH_PRIVACY\n"
                   "void sign(void) {\n  g();\n}\n#endif\n")

@@ -84,10 +84,18 @@ def function_body(text, name):
     # A definition: the name starts a line or follows its return type there,
     # and the parameter list holds no ';' or brace. An indented caller such
     # as `if (name(x)) {` can therefore never stand in for the definition.
-    match = re.search(r"^(?:[A-Za-z_][\w \t*]*[ \t*])?" + re.escape(name) +
-                      r"\s*\([^;{}]*\)\s*\{", text, re.M)
-    if not match:
+    matches = list(re.finditer(
+        r"^(?:[A-Za-z_][\w \t*]*[ \t*])?" + re.escape(name) +
+        r"\s*\([^;{}]*\)\s*\{", text, re.M))
+    if not matches:
         raise AssertionError("function not found: " + name)
+    # Two definitions can only be alternatives under the preprocessor, and
+    # checking the first says nothing about the other.
+    if len(matches) > 1:
+        raise AssertionError(
+            name + " is defined more than once; this gate cannot tell which "
+            "is compiled")
+    match = matches[0]
     for directive, branch in enclosing_conditionals(text[:match.start()]):
         if directive not in PRODUCTION_CONDITIONALS or branch != "if":
             raise AssertionError(
