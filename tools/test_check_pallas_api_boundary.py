@@ -2,7 +2,7 @@
 
 import unittest
 
-from check_pallas_api_boundary import (GUARDED, alias_scan_texts,
+from check_pallas_api_boundary import (FORBIDDEN, GUARDED, alias_scan_texts,
                                        check_address_derivation, check_aliases,
                                        check_signing_sites,
                                        check_wide_reductions, forbid,
@@ -198,12 +198,48 @@ class MacroAliases(unittest.TestCase):
     ALIAS = "#define redpallas_sign_digest_with_ak redpallas_sign_digest_for_rk\n"
 
     def setUp(self):
-        # The gate's own require() is what marks an identifier as checked.
+        # Only what this test names is checked, whatever ran before it. The
+        # gate's own require() and forbid() are what mark an identifier.
+        self.saved = set(GUARDED), set(FORBIDDEN)
+        GUARDED.clear()
+        FORBIDDEN.clear()
         require("redpallas_sign_digest_with_ak(x);",
                 "redpallas_sign_digest_with_ak", "f")
+        forbid("", "pallas_mod_q(", "f")
+        forbid("", "pallas_ct_", "f")
 
-    def test_shipped_tree_has_no_alias(self):
-        check_aliases(alias_scan_texts())
+    def tearDown(self):
+        for names, saved in zip((GUARDED, FORBIDDEN), self.saved):
+            names.clear()
+            names.update(saved)
+
+    def test_macro_expanding_to_a_forbidden_call_is_refused(self):
+        for text in ("#define ALT pallas_mod_q\n",
+                     "#define ALT(x) pallas_mod_q(x)\n",
+                     "#define ALT(x) \\\n  (pallas_mod_q (x))\n",
+                     "#define FAST pallas_ct_point_mult\n"):
+            with self.subTest(text=text):
+                with self.assertRaisesRegex(AssertionError, "to forbidden"):
+                    check_aliases({"x.c": text})
+        check_aliases({"x.c": "#define ALT pallas_mod_q_table\n"
+                              "#define OTHER 1 /* pallas_mod_q */\n"
+                              "#define NAME \"pallas_mod_q\"\n"})
+
+    def test_forbidden_call_through_a_macro_in_the_real_source(self):
+        # The body still makes every constant-time call, so the body check
+        # passes; only the macro scan sees the variable-time one.
+        texts = alias_scan_texts()
+        check_aliases(texts)
+        path = "lib/firmware/zcash.c"
+        start = texts[path].index("static void to_scalar(")
+        brace = texts[path].index("{", start) + 1
+        mutated = dict(texts)
+        mutated[path] = (texts[path][:start] + "#define ALT pallas_mod_q\n" +
+                         texts[path][start:brace] + "\n  ALT(x);" +
+                         texts[path][brace:])
+        check_wide_reductions(mutated[path])
+        with self.assertRaisesRegex(AssertionError, path + " #defines ALT"):
+            check_aliases(mutated)
 
     def test_alias_of_a_checked_identifier_is_refused(self):
         for text in (self.ALIAS, "  #  define redpallas_sign_digest_with_ak(a) x\n",
@@ -218,6 +254,7 @@ class MacroAliases(unittest.TestCase):
         # fsm_msg_zcash.h is compiled inside fsm.c, so a macro defined there
         # before the #include renames the calls the handlers make.
         texts = alias_scan_texts()
+        check_aliases(texts)
         for path in ("lib/firmware/fsm.c", "lib/firmware/fsm_msg_zcash.h",
                      "lib/firmware/zcash.c", "include/keepkey/firmware/zcash.h"):
             with self.subTest(path=path):

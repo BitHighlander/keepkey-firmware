@@ -29,6 +29,10 @@ MACRO = re.compile(r"^[ \t]*#[ \t]*(?:define|undef)\b", re.M)
 # gate reads, or `#define pallas_ct_x pallas_x` would satisfy require().
 GUARDED = set()
 
+# Tokens named by forbid(); no macro the gate reads may expand to one, or a
+# checked body could make the forbidden call under the macro's name.
+FORBIDDEN = set()
+
 PALLAS_CT_INCLUDE = re.compile(
     r'^[ \t]*#[ \t]*include[ \t]*[<"](?:[^>"\n]*/)?pallas_ct\.h[>"]', re.M)
 
@@ -174,6 +178,7 @@ def require(body, token, where):
 
 def forbid(body, token, where):
     guard(token)
+    FORBIDDEN.add(token)
     if token.endswith("("):
         # A call: any whitespace may sit between the name and its "(".
         found = re.search(r"\b" + re.escape(token[:-1]) + r"\s*\(", body)
@@ -269,13 +274,29 @@ def alias_scan_texts():
 def check_aliases(texts):
     """No file the gate reads, nor the Pallas headers, may #define a checked
     identifier: an alias would satisfy require() while compiling to another
-    call. Run after the checks above, which fill GUARDED."""
+    call. Nor may any macro there expand to a forbidden one, which a checked
+    body could then call under the macro's name. Run after the checks above,
+    which fill GUARDED and FORBIDDEN."""
     for where, text in sorted(texts.items()):
-        for match in re.finditer(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)",
-                                 code_only(splice(text)), re.M):
-            if match.group(1) in GUARDED:
+        for match in re.finditer(
+                r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)(.*)$",
+                code_only(splice(text)), re.M):
+            name, replacement = match.groups()
+            if name in GUARDED:
                 raise AssertionError("{} #defines checked identifier {}".format(
-                    where, match.group(1)))
+                    where, name))
+            for token in sorted(FORBIDDEN):
+                if token.endswith("("):
+                    # The macro may supply the "(" itself, or leave it to
+                    # the caller.
+                    found = re.search(r"\b" + re.escape(token[:-1]) + r"\b",
+                                      replacement)
+                else:
+                    found = token in replacement
+                if found:
+                    raise AssertionError(
+                        "{} #defines {} to forbidden {}".format(
+                            where, name, token))
 
 
 def main():
