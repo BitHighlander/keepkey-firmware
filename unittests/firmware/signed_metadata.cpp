@@ -1508,6 +1508,34 @@ TEST_F(SignedMetadataTest, V2RejectsSelectorMismatch) {
   EXPECT_FALSE(signed_metadata_matches_tx(&msg));
 }
 
+/* Metadata describes an Ethereum call. A Wanchain transaction (tx_type) on
+ * the same chain id, contract and selector is not one, for either version. */
+TEST_F(SignedMetadataTest, MatchesTxRefusesWanchainTypedTx) {
+  for (uint32_t tx_type : {1u, 6u}) {
+    SCOPED_TRACE(tx_type);
+    std::vector<uint8_t> blob = base_blob();
+    ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+              METADATA_VERIFIED);
+    EthereumSignTx msg;
+    make_matching_msg(&msg);
+    ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+    msg.has_tx_type = true;
+    msg.tx_type = tx_type;
+    EXPECT_FALSE(signed_metadata_matches_tx(&msg));
+
+    blob = v2_base_blob();
+    ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+              METADATA_VERIFIED);
+    std::vector<uint8_t> data = v2_transfer_calldata();
+    make_v2_msg(&msg, CONTRACT_A, data, /*has_len=*/true,
+                (uint32_t)data.size());
+    ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+    msg.has_tx_type = true;
+    msg.tx_type = tx_type;
+    EXPECT_FALSE(signed_metadata_matches_tx(&msg));
+  }
+}
+
 /* An unsupported display format -> MALFORMED.
  *
  * v2 renders fixed single ABI words only: ADDRESS, AMOUNT, BYTES and

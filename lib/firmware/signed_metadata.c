@@ -702,6 +702,12 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
     return false;
   }
 
+  /* Metadata describes an Ethereum call. A Wanchain transaction (tx_type)
+   * with the same chain id, contract and selector is not one. */
+  if (msg->has_tx_type) {
+    return false;
+  }
+
   if (memcmp(stored_metadata.contract_address, msg->to.bytes,
              sizeof(stored_metadata.contract_address)) != 0) {
     return false;
