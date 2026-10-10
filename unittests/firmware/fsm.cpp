@@ -3116,6 +3116,7 @@ TEST(Fsm, FeaturesReportExactlyTheStagedCapabilities) {
       Features_Capability_CAPABILITY_MAYA_SINGLE_MESSAGE,
       Features_Capability_CAPABILITY_TENDERMINT_PROGRESS,
       Features_Capability_CAPABILITY_TRON_TRC20_REVIEW,
+      Features_Capability_CAPABILITY_SOLANA_LUT_ATTESTATION,
 #endif
   };
   EXPECT_EQ(expected, std::vector<Features_Capability>(
