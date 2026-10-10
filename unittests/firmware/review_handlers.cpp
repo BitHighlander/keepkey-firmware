@@ -159,9 +159,15 @@ TEST_F(ReviewHandlers, RippleMemoReachesReviewBeforeSigning) {
   strcpy(msg.memo, "Memo review must be reached");
   ASSERT_TRUE(kkconfirm_preload(1, 1));
   fsm_test_clearLastFailure();
+  kkconfirm_capture_start();
   fsm_msgRippleSignTx(&msg);
+  const auto screens = kkconfirm_capture_finish();
   EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
   EXPECT_EQ(0, kkconfirm_drain());
+  // The declined screen is the memo's own, not the final "Transaction" one.
+  ASSERT_EQ(2u, screens.size());
+  // (The memo page shows each space as \x20.)
+  EXPECT_EQ("Memo\\x20review\\x20must\\x20be\\x20reached", screens[1]);
 }
 
 static const uint8_t review_pubkey[33] = {
