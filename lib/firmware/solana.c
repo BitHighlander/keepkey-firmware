@@ -792,9 +792,9 @@ SolanaTxReview solana_inspectTx(const uint8_t* raw, size_t raw_len,
   size_t msg_len;
   solana_message_slice(raw, raw_len, &msg, &msg_len);
 
-  /* Versioned Solana messages set the top bit in byte 0.
-   * Parse them structurally so malformed v0/ALT payloads fail closed,
-   * but keep the result opaque until the firmware can verify semantics. */
+  /* Versioned Solana messages set the top bit in byte 0. Malformed v0/ALT
+   * payloads fail closed; a v0 message with no lookup tables verifies like
+   * legacy, and a lookup table or any later version keeps it opaque. */
   if (msg[0] & SOL_VERSION_FLAG) {
     return solana_parseVersionedTx(msg, msg_len, tx);
   }
@@ -1243,7 +1243,8 @@ bool solana_token_info_trusted(const SolanaTokenInfo* ti) {
  * to the signed ones authenticates the exponent, not the identity -- an
  * attacker picks a mint whose decimals already match and the label rides
  * through as fact, and a caveat cannot help when the host writes the 12
- * characters beside it. Unattested => base units beside the full mint. */
+ * characters beside it. Unattested => NULL: the caller scales the amount by
+ * the signed decimals, labels it "tokens" and shows the full mint. */
 const char* solana_displaySymbol(const SolanaTokenInfo* ti,
                                  const SolanaKnownToken* known,
                                  uint8_t signed_decimals) {

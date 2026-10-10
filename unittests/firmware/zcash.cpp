@@ -566,12 +566,15 @@ TEST(Zcash, DeriveOrchardKeys_ReferenceVector_Account0) {
   curve_point ak_point;
   redpallas_scalar_mult_spendauth_G(&ask_scalar, &ak_point);
 
+  /* The sign of ak is the parity of y; the x encoding below never carries
+   * it. */
+  EXPECT_FALSE(bn_is_odd(&ak_point.y))
+      << "ak sign bit must be 0 after ask normalization";
+
   uint8_t ak_bytes[32];
   bignum256 x_copy;
   bn_copy(&ak_point.x, &x_copy);
   bn_write_le(&x_copy, ak_bytes);
-  EXPECT_EQ(ak_bytes[31] & 0x80, 0)
-      << "ak sign bit must be 0 after ask normalization";
 
   EXPECT_TRUE(memcmp(ak_bytes, EXPECTED_AK_ALL_0, 32) == 0)
       << "ak mismatch for all-mnemonic account 0";
@@ -927,6 +930,23 @@ TEST(Zcash, OrchardUnifiedAddress_FromDerivedKeys) {
   ASSERT_TRUE(zcash_orchard_derive_unified_address(&keys, index1, "utest",
                                                    address, sizeof(address)));
   EXPECT_STREQ(address, ORCHARD_ONLY_UA_TESTNET_1);
+
+  memzero(address, sizeof(address));
+  memzero(&keys, sizeof(keys));
+}
+
+// An address is built from the cached public ak: with the spending key wiped
+// from the key set it is still the reference address.
+TEST(Zcash, OrchardUnifiedAddress_DoesNotUseTheSpendingKey) {
+  ZcashOrchardKeys keys;
+  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+  memzero(keys.ask, sizeof(keys.ask));
+
+  char address[ZCASH_ZIP316_ORCHARD_ONLY_MAX_ADDRESS_SIZE];
+  const uint8_t index0[11] = {0};
+  ASSERT_TRUE(zcash_orchard_derive_unified_address(&keys, index0, "u", address,
+                                                   sizeof(address)));
+  EXPECT_STREQ(address, ORCHARD_ONLY_UA_MAINNET_0);
 
   memzero(address, sizeof(address));
   memzero(&keys, sizeof(keys));
@@ -1714,15 +1734,6 @@ TEST(Zcash, AkSignBit_AlwaysClear) {
     EXPECT_FALSE(bn_is_odd(&ak_point.y))
         << "ak y-coordinate must be even for account " << account;
 
-    /* Check serialized sign bit */
-    uint8_t ak_bytes[32];
-    bignum256 x_copy;
-    bn_copy(&ak_point.x, &x_copy);
-    bn_write_le(&x_copy, ak_bytes);
-
-    EXPECT_EQ(ak_bytes[31] & 0x80, 0)
-        << "ak sign bit must be clear for account " << account;
-
     memzero(&keys, sizeof(keys));
   }
 }
@@ -2142,7 +2153,7 @@ TEST(Zcash, ComputeShieldedSighash_KnownVector) {
    * ZIP-244 sighash test vector.
    *
    * The sighash personalization is "ZcashTxHash_" || branch_id_LE.
-   * For NU5 (branch_id = 0x37519621):
+   * For branch_id = 0x37519621 (not the NU5 id, which is 0xc2d6d0b4):
    *   personalization = "ZcashTxHash_" || 0x21965137
    *
    * Input: BLAKE2b-256(personalization, header || transparent || sapling ||
@@ -2160,7 +2171,8 @@ TEST(Zcash, ComputeShieldedSighash_KnownVector) {
 
   /*
    * BLAKE2b-256 with personalization "ZcashTxHash_\x21\x96\x51\x37" over
-   * 128 zero bytes, computed offline: a change detector, not a spec vector.
+   * 128 zero bytes, recomputed here: it checks the construction, and is not
+   * a stored vector. Zip244OfficialVectors_V5Sighash holds the spec vectors.
    */
   uint8_t expected[32];
   BLAKE2B_CTX ctx;
@@ -2439,7 +2451,8 @@ TEST(Zcash, RedPallasSign_ProducesVerifiableSignature) {
  * fsm_msg_zcash.h.
  *
  * These expected bytes are NOT taken from our own constants; they are the
- * specification values, so this test catches a mistyped literal as well as a
+ * specification values, and the digest the handlers use for each component is
+ * compared with them, so this test catches a mistyped literal as well as a
  * wrong personalization string. A wrong Orchard value would reject every
  * Ironwood transaction, which is safe but would look like an Ironwood bug.
  */
@@ -2461,12 +2474,19 @@ TEST(Zcash, EmptyBundleDigests_MatchZip244AndZip229) {
        "b9cfe643ce45b28c33190f0d5223e475972f2a149dc54404fd8365521f8416c5"},
   };
 
+  // In the component order of zcash_test_emptyDigest().
+  int component = 0;
   for (const Case& c : cases) {
     BLAKE2B_CTX ctx;
     ASSERT_EQ(blake2b_InitPersonal(&ctx, 32, c.personal, 16), 0)
         << "personalization " << c.personal;
     uint8_t out[32];
     ASSERT_EQ(blake2b_Final(&ctx, out, 32), 0) << c.personal;
+
+    uint8_t device[32];
+    zcash_test_emptyDigest(component++, device);
+    EXPECT_EQ(0, memcmp(device, out, 32))
+        << "the device's empty digest for " << c.personal;
 
     char hex[65];
     for (int i = 0; i < 32; i++) {
