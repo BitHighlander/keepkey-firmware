@@ -8,6 +8,7 @@ extern "C" {
 #include "keepkey/firmware/ethereum_contracts/thortx.h"
 #include "keepkey/firmware/ethereum_contracts/zxtransERC20.h"
 #include "keepkey/firmware/ethereum_tokens.h"
+#include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/tron.h"
 #include "trezor/crypto/address.h"
 #include "trezor/crypto/bip32.h"
@@ -1016,10 +1017,21 @@ TEST(Ethereum, DirectSigningEntryRejectsChainIdAboveMaximum) {
   msg.chain_id = 2147483630u;
   EXPECT_FALSE(ethereum_chainIdIsValid(&msg));
   HDNode node{};
+  fsm_test_clearLastFailure();
   ethereum_signing_init(&msg, &node, false);
   EXPECT_FALSE(ethereum_signing_isInProgress());
+  EXPECT_STREQ("Chain Id out of bounds", fsm_test_lastFailureMessage());
+
+  // The largest id is let through: the same message, which names no gas
+  // price, is refused by the next check instead.
   msg.chain_id--;
   EXPECT_TRUE(ethereum_chainIdIsValid(&msg));
+  fsm_test_clearLastFailure();
+  ethereum_signing_init(&msg, &node, false);
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  EXPECT_STREQ("Legacy transactions require gas_price",
+               fsm_test_lastFailureMessage());
+  EXPECT_EQ(0, kkconfirm_drain());
 }
 
 static const uint8_t DAI_MAINNET_ADDRESS[20] = {
