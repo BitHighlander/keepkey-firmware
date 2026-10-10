@@ -3,6 +3,7 @@
 import unittest
 
 from check_pallas_api_boundary import (GUARDED, PALLAS_CT_INCLUDE,
+                                       check_address_derivation,
                                        check_wide_reductions, forbid,
                                        function_body, require, source)
 
@@ -144,6 +145,31 @@ class WideReductions(unittest.TestCase):
         for name in ("pallas_ct_mod_q", "pallas_mod_q", "pallas_ct_mod_p",
                      "pallas_mod_p"):
             self.assertIn(name, GUARDED)
+
+
+class AddressDerivation(unittest.TestCase):
+    """The unified address comes from the cached ak, never from ask."""
+
+    ZCASH = source("lib/firmware/zcash.c")
+
+    def with_statement(self, statement):
+        start = self.ZCASH.index("bool zcash_orchard_derive_unified_address(")
+        brace = self.ZCASH.index("{", start) + 1
+        return self.ZCASH[:brace] + "\n  " + statement + self.ZCASH[brace:]
+
+    def test_shipped_derivation_passes(self):
+        check_address_derivation(self.ZCASH)
+        check_address_derivation(self.with_statement("(void)keys->ak;"))
+
+    def test_reading_or_multiplying_by_ask_is_refused(self):
+        for statement in (
+                "bn_read_le(keys->ask, &ask_scalar);",
+                "redpallas_scalar_mult_spendauth_G(&ask_scalar, &ak_point);",
+                "redpallas_scalar_mult_spendauth_G_progress(&ask_scalar, "
+                "&ak_point, NULL, NULL);"):
+            with self.subTest(statement=statement):
+                with self.assertRaisesRegex(AssertionError, "must not call"):
+                    check_address_derivation(self.with_statement(statement))
 
 
 if __name__ == "__main__":

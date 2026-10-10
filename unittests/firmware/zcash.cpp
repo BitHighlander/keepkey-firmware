@@ -932,6 +932,23 @@ TEST(Zcash, OrchardUnifiedAddress_FromDerivedKeys) {
   memzero(&keys, sizeof(keys));
 }
 
+// An address is built from the cached public ak: with the spending key wiped
+// from the key set it is still the reference address.
+TEST(Zcash, OrchardUnifiedAddress_DoesNotUseTheSpendingKey) {
+  ZcashOrchardKeys keys;
+  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+  memzero(keys.ask, sizeof(keys.ask));
+
+  char address[ZCASH_ZIP316_ORCHARD_ONLY_MAX_ADDRESS_SIZE];
+  const uint8_t index0[11] = {0};
+  ASSERT_TRUE(zcash_orchard_derive_unified_address(&keys, index0, "u", address,
+                                                   sizeof(address)));
+  EXPECT_STREQ(address, ORCHARD_ONLY_UA_MAINNET_0);
+
+  memzero(address, sizeof(address));
+  memzero(&keys, sizeof(keys));
+}
+
 TEST(Zcash, OrchardUnifiedAddress_RejectsInvalidInputs) {
   ZcashOrchardKeys keys;
   ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));

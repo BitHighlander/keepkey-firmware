@@ -185,6 +185,17 @@ def check_wide_reductions(zcash):
                    name)
 
 
+def check_address_derivation(zcash):
+    """An address is built from the cached public ak. The spend authorizing
+    key takes no part, so nothing here reads it or multiplies by it."""
+    where = "Orchard unified-address derivation"
+    body = code_only(function_body(zcash,
+                                   "zcash_orchard_derive_unified_address"))
+    for token in ("->ask", "redpallas_scalar_mult_spendauth_G(",
+                  "redpallas_scalar_mult_spendauth_G_progress("):
+        forbid(body, token, where)
+
+
 def main():
     pallas = source("deps/crypto/trezor-firmware/crypto/pallas.c")
     sinsemilla = source("deps/crypto/trezor-firmware/crypto/pallas_sinsemilla.c")
@@ -368,12 +379,7 @@ def main():
             "Orchard key derivation")
     forbid(key_derivation, "redpallas_scalar_mult_spendauth_G(",
            "Orchard key derivation")
-    address_derivation = code_only(function_body(
-        zcash, "zcash_orchard_derive_unified_address"))
-    require(address_derivation, "redpallas_scalar_mult_spendauth_G_progress",
-            "Orchard unified-address derivation")
-    forbid(address_derivation, "redpallas_scalar_mult_spendauth_G(",
-           "Orchard unified-address derivation")
+    check_address_derivation(zcash)
     stored_key_derivation = code_only(function_body(
         storage, "storage_zcashOrchardKeys"))
     require(stored_key_derivation, "zcash_derive_orchard_keys_with_progress",
