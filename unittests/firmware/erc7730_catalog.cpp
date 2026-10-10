@@ -1195,6 +1195,25 @@ TEST(Erc7730Catalog, PreloadRefusesDisplayInstructionsTheRuntimeCannotRun) {
     EXPECT_FALSE(erc7730_cap_display(&c.refused, c.pc))
         << (int)c.refused.opcode << "@" << c.pc;
   }
+  // A table that does not end in an end instruction. The runtime leaves the
+  // review only at an end, so it would step past the last instruction, where
+  // the replay reader has nothing to select.
+  const std::vector<std::vector<uint8_t>> unterminated = {
+      {1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff},  // intent
+      {1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff,   // intent
+       4, 0, 0, 0, 0,    0,    0xff, 0xff},  // field
+  };
+  for (const auto& display : unterminated) {
+    const uint16_t count = (uint16_t)(display.size() / 8u);
+    const auto p = replaceTable(rawFieldProgram(path), 7, display, count);
+    EXPECT_EQ(feedAll(envelope(p), 7), ERC7730_CATALOG_BAD_PROGRAM) << count;
+    Erc7730ProgramDisplay reader{};
+    const size_t payload = 2u + display.size();
+    erc7730_program_display_begin(&reader, payload, count);
+    EXPECT_FALSE(erc7730_program_display_feed(
+        &reader, 0, p.data() + sectionOffset(p, 7) + 5, payload))
+        << count;
+  }
   // A field may carry an "optional" condition, which only ever shows it.
   const Erc7730DisplayInstruction conditional = {4, 0, 0, 0, 0};
   EXPECT_TRUE(erc7730_cap_display(&conditional, 1));
