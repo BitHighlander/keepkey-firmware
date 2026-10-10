@@ -153,6 +153,26 @@ static uint32_t zcash_test_sign_operations;
 uint32_t zcash_test_signOperations(void) { return zcash_test_sign_operations; }
 void zcash_test_clearSignOperations(void) { zcash_test_sign_operations = 0; }
 #define ZCASH_TEST_COUNT_SIGN() (zcash_test_sign_operations++)
+
+void zcash_test_emptyDigest(int component, uint8_t out[32]) {
+  switch (component) {
+    case 0:
+      memcpy(out, EMPTY_TRANSPARENT_DIGEST, 32);
+      break;
+    case 1:
+      memcpy(out, EMPTY_SAPLING_DIGEST, 32);
+      break;
+    case 2:
+      zcash_empty_orchard_digest(false, out);
+      break;
+    case 3:
+      zcash_empty_orchard_digest(true, out);
+      break;
+    default:
+      memcpy(out, EMPTY_IRONWOOD_DIGEST_V6, 32);
+      break;
+  }
+}
 #else
 #define ZCASH_TEST_COUNT_SIGN() ((void)0)
 #endif

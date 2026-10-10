@@ -2456,7 +2456,8 @@ TEST(Zcash, RedPallasSign_ProducesVerifiableSignature) {
  * fsm_msg_zcash.h.
  *
  * These expected bytes are NOT taken from our own constants; they are the
- * specification values, so this test catches a mistyped literal as well as a
+ * specification values, and the digest the handlers use for each component is
+ * compared with them, so this test catches a mistyped literal as well as a
  * wrong personalization string. A wrong Orchard value would reject every
  * Ironwood transaction, which is safe but would look like an Ironwood bug.
  */
@@ -2478,12 +2479,19 @@ TEST(Zcash, EmptyBundleDigests_MatchZip244AndZip229) {
        "b9cfe643ce45b28c33190f0d5223e475972f2a149dc54404fd8365521f8416c5"},
   };
 
+  // In the component order of zcash_test_emptyDigest().
+  int component = 0;
   for (const Case& c : cases) {
     BLAKE2B_CTX ctx;
     ASSERT_EQ(blake2b_InitPersonal(&ctx, 32, c.personal, 16), 0)
         << "personalization " << c.personal;
     uint8_t out[32];
     ASSERT_EQ(blake2b_Final(&ctx, out, 32), 0) << c.personal;
+
+    uint8_t device[32];
+    zcash_test_emptyDigest(component++, device);
+    EXPECT_EQ(0, memcmp(device, out, 32))
+        << "the device's empty digest for " << c.personal;
 
     char hex[65];
     for (int i = 0; i < 32; i++) {
