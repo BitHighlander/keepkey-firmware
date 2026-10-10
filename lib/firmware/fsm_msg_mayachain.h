@@ -216,8 +216,9 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
           layoutHome();
           return;
         }
-        /* The amount/recipient layout can clip a long denomination. Show the
-         * complete asset separately before signing its serialized value. */
+        /* Show the asset on its own screen too, apart from the amount it
+         * trails, before signing its serialized value. The amount/recipient
+         * screen is paged, so it does not clip a long denomination. */
         if (!confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmOutput,
                            "Asset", (const uint8_t*)coin_denom,
                            strlen(coin_denom))) {
