@@ -715,12 +715,14 @@ TEST(Erc7730Catalog, ValidatesTypedPathsSlicesAndFullArraySteps) {
   }
 }
 
-// Calldata and typed-data captures refuse ERC7730_ABI_MAX_DEPTH or more path
-// steps, so the preload verifier must too: a longer signed path would pass
-// preload and then fail after the user had approved earlier screens.
-TEST(Erc7730Catalog, PathStepLimitMatchesExecutionCaptures) {
+// The verifier's path step limit does not cut into the paths an ABI admits:
+// the deepest one, ERC7730_ABI_MAX_DEPTH - 1 steps, passes preload. One step
+// more is refused, but that does not show the limit itself: ABI depth is
+// capped at ERC7730_ABI_MAX_DEPTH and each step descends one level, so the
+// walk has no node left for that step and refuses the path on its own.
+TEST(Erc7730Catalog, PathStepLimitAdmitsTheDeepestAbiPath) {
   // Seven nested tuples above a uint256: depth eight, the ABI maximum, and a
-  // seven-step path to the leaf, the capture maximum.
+  // seven-step path to the leaf.
   std::vector<uint8_t> nodes;
   for (uint8_t i = 0; i < ERC7730_ABI_MAX_DEPTH - 1u; i++)
     nodes.insert(nodes.end(), {8, 0, 0, 0, (uint8_t)(i + 1), 0, 1, 0, 0});
@@ -1353,7 +1355,10 @@ TEST(Erc7730Catalog, RuntimePathPredicateMatchesTheTable) {
   EXPECT_TRUE(erc7730_cap_path(&path));
   path.steps[0].opcode = 3;
   EXPECT_FALSE(erc7730_cap_path(&path));
-  path.steps[0].opcode = 1;
+  // Every step is an index, so only the step count tells these two apart.
+  for (uint8_t i = 0; i < ERC7730_ABI_MAX_DEPTH; i++) path.steps[i].opcode = 1;
+  path.step_count = ERC7730_ABI_MAX_DEPTH - 1u;
+  EXPECT_TRUE(erc7730_cap_path(&path));
   path.step_count = ERC7730_ABI_MAX_DEPTH;
   EXPECT_FALSE(erc7730_cap_path(&path));
   path.step_count = 0;
