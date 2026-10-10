@@ -1819,8 +1819,6 @@ TEST(Fsm, PingKeepsAWaitingTypedDataStreamOnScreen) {
   layoutHomeForced();
 }
 
-// A definition chunk refused for AdvancedMode ends the certified workflow
-// (and the typed-data stream it belongs to) instead of leaving it armed.
 // Every ERC-7730 phase is driven by the host between screens, so a Ping in
 // any of them must not draw home over the live workflow.
 TEST(Fsm, PingKeepsALiveErc7730WorkflowOnScreen) {
@@ -1841,6 +1839,8 @@ TEST(Fsm, PingKeepsALiveErc7730WorkflowOnScreen) {
   }
 }
 
+// A definition chunk refused for AdvancedMode ends the certified workflow
+// (and the typed-data stream it belongs to) instead of leaving it armed.
 TEST(Fsm, Erc7730ChunkRefusedWithoutAdvancedModeEndsTheWorkflow) {
   kk_test_board_init();
   fsm_init();

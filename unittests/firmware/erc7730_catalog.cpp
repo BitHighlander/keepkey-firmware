@@ -647,7 +647,7 @@ TEST(Erc7730Catalog, RejectsMalformedOrAliasedAbiGraphsWhileStreaming) {
 
 TEST(Erc7730Catalog, RecomputesSignedResourceDeclaration) {
   auto p = minimalProgram();
-  p[p.size() - 22] = 1;  // claims 256 strings instead of zero
+  p[p.size() - 22] = 1;  // claims 257 strings instead of one
   EXPECT_EQ(feedAll(envelope(p), 29), ERC7730_CATALOG_BAD_PROGRAM);
 
   p = minimalProgram();
@@ -689,8 +689,6 @@ TEST(Erc7730Catalog, ValidatesTypedPathsSlicesAndFullArraySteps) {
   auto p = programWithPaths({1, 1, 0xff, 0xff, 1, 0, 0, 0, 0}, 1);
   EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_UNTRUSTED);
 
-  // Slices, whole-array steps, container and literal sources are not in the
-  // capability table: the runtime cannot capture them, so preload refuses.
   // @.from, @.to, @.value and a literal are executable value sources.
   for (const auto& entries : std::vector<std::vector<uint8_t>>{
            {2, 0, 0, 1}, {2, 0, 0, 2}, {2, 0, 0, 3}, {3, 0, 0, 0}}) {
@@ -698,8 +696,8 @@ TEST(Erc7730Catalog, ValidatesTypedPathsSlicesAndFullArraySteps) {
     EXPECT_EQ(feedAll(envelope(p), 23), ERC7730_CATALOG_UNTRUSTED);
   }
 
-  // Slices, whole-array steps, the other containers and out-of-table literal
-  // indices are not executed, so preload refuses them.
+  // Slices, a whole-array step on the root tuple, the other containers, a
+  // container with a step and an out-of-range literal index are refused.
   const std::vector<std::vector<uint8_t>> refused = {
       {1, 2, 0xff, 0xff, 1, 0, 0, 0, 0, 3, 1, 0xff, 0xff, 0xff, 0xec},
       {1, 1, 0xff, 0xff, 2},
