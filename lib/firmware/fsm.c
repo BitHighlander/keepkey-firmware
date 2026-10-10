@@ -462,9 +462,9 @@ void fsm_init(void) {
   txin_dgst_initialize();
 }
 
-/* Reject continuation packets unless their signing workflow is active. */
 static void abort_signing_engines(void);
 
+/* Reject continuation packets unless their signing workflow is active. */
 static bool reject_stale_continuation(const char* text) {
   /* A decoded request always gets a terminal response. Silently dropping an
    * inactive ACK leaves the host blocked forever, while dispatching it would
@@ -708,10 +708,8 @@ void fsm_abort_workflows(void) {
   fsm_abort_signing_workflows();
 }
 
-/* The signing half of the above. Clearing PIN authorization revokes retained
- * signing state, but must not discard a setup ceremony: recovery stages its
- * ceremony before prompting for the PIN, and every routine PIN entry clears
- * the session while checking the entered digits against the wipe code. */
+/* End every signing engine. A preloaded ERC-7730 definition that no review
+ * has started on is kept, for the signing request that consumes it. */
 static void abort_signing_engines(void) {
   signing_abort();
 #if !BITCOIN_ONLY
@@ -730,7 +728,13 @@ static void abort_signing_engines(void) {
   drop_workflow_progress_if_idle();
 }
 
-/* A preloaded ERC-7730 definition is consumed only by the signing request that
+/* The signing half of fsm_abort_workflows(). Clearing PIN authorization
+ * revokes retained signing state, but must not discard a setup ceremony:
+ * recovery stages its ceremony before prompting for the PIN, and every routine
+ * PIN entry clears the session while checking the entered digits against the
+ * wipe code.
+ *
+ * A preloaded ERC-7730 definition is consumed only by the signing request that
  * follows it. Every other abort -- Initialize, Cancel, ClearSession, autolock,
  * a rejected frame or any unrelated request -- discards it too. */
 void fsm_abort_signing_workflows(void) {
