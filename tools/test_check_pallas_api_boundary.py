@@ -2,12 +2,12 @@
 
 import unittest
 
-from check_pallas_api_boundary import (GUARDED, PALLAS_CT_INCLUDE,
-                                       alias_scan_texts,
+from check_pallas_api_boundary import (GUARDED, alias_scan_texts,
                                        check_address_derivation, check_aliases,
                                        check_signing_sites,
                                        check_wide_reductions, forbid,
-                                       function_body, require, source)
+                                       function_body, includes_pallas_ct,
+                                       require, source)
 
 
 class ConditionalCompilation(unittest.TestCase):
@@ -79,8 +79,14 @@ class ConditionalCompilation(unittest.TestCase):
         for line in ('#include "pallas_ct.h"', "#include <pallas_ct.h>",
                      '#include "trezor/crypto/pallas_ct.h"',
                      "  #  include <crypto/pallas_ct.h>"):
-            self.assertTrue(PALLAS_CT_INCLUDE.search(line + "\n"), line)
-        self.assertFalse(PALLAS_CT_INCLUDE.search('#include "pallas.h"\n'))
+            self.assertTrue(includes_pallas_ct(line + "\n"), line)
+        self.assertFalse(includes_pallas_ct('#include "pallas.h"\n'))
+
+    def test_include_split_by_a_continuation_is_found(self):
+        for line in ('#inc\\\nlude "pallas_ct.h"',
+                     '#include \\\n  "pallas_ct.h"',
+                     "#include <pallas_\\\r\nct.h>"):
+            self.assertTrue(includes_pallas_ct(line + "\n"), line)
 
     def test_caller_cannot_stand_in_for_the_definition(self):
         source = ("void caller(void) {\n  if (sign(x)) {\n    pallas_ct_add_mod_q();\n"

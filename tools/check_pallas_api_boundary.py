@@ -71,6 +71,12 @@ def splice(text):
     return re.sub(r"\\\r?\n", "", text)
 
 
+def includes_pallas_ct(text):
+    """True when the text #includes pallas_ct.h, with continuations joined as
+    the compiler joins them."""
+    return bool(PALLAS_CT_INCLUDE.search(splice(text)))
+
+
 def function_body(text, name):
     text = code_only(splice(text))
     # A definition: the name starts a line or follows its return type there,
@@ -269,7 +275,7 @@ def main():
     storage = source("lib/firmware/storage.c")
 
     # Public transaction data needs the fast compatibility implementation.
-    if PALLAS_CT_INCLUDE.search(pallas):
+    if includes_pallas_ct(pallas):
         raise AssertionError(
             "pallas.c public compatibility path must not include pallas_ct.h")
     hash_to_point = code_only(function_body(
