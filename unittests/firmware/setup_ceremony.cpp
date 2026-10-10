@@ -247,6 +247,8 @@ TEST_F(SetupCeremony, InvalidRecoveryWordCountDisarmsCeremony) {
   ASSERT_TRUE(setup_stage(false, "english", "recovery", 0, 0, false));
   setup_arm(SETUP_RECOVERY);
   ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+  recovery_cipher_test_set_word_fragments();
+  ASSERT_FALSE(recovery_cipher_test_word_fragments_are_zero());
 
   recovery_cipher_finalize();
 
