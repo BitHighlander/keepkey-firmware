@@ -321,8 +321,8 @@ void fsm_msgPing(Ping* msg) {
   /* A protected Ping can block inside its confirmation or PIN/passphrase
    * prompt while the main-loop auto-lock check is suspended. End any older
    * signing stream before it can wait, so a Cancel cannot resume it. This is
-   * not a lock: PIN, passphrase, AdvancedMode and ClearSign signers stay with
-   * the session (hosts unlock via Ping(pin_protection) and then sign). */
+   * not a lock: the PIN and passphrase stay with the session (hosts unlock
+   * via Ping(pin_protection) and then sign). */
   if (authMsg < NUM_AUTHMESSAGES ||
       (msg->has_button_protection && msg->button_protection) ||
       (msg->has_pin_protection && msg->pin_protection) ||

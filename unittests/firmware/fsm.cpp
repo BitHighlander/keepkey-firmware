@@ -2347,6 +2347,48 @@ TEST(Fsm, CrossWorkflowAcknowledgementsTerminateTheActiveSigner) {
   EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
 }
 
+// The Binance abort only clears state, so the gate itself has to take the
+// aborted transaction's approval screen down. An armed ceremony keeps its own.
+TEST(Fsm, StaleAckTakesTheAbortedSignersScreenDown) {
+  kk_test_board_init();
+  fsm_init();
+  fsm_abort_workflows();
+  layoutHomeForced();
+  keepkey_user_activity();  // or a due auto-lock takes the screen instead
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+
+  BinanceSignTx binance = {};
+  binance.has_msg_count = true;
+  binance.msg_count = 1;
+  binance.has_account_number = true;
+  binance.has_chain_id = true;
+  std::strcpy(binance.chain_id, "Binance-Chain-Nile");
+  binance.has_sequence = true;
+  binance.has_source = true;
+  ASSERT_TRUE(binance_signTxInit(&node, &binance));
+  leave_home();  // its last approval screen is still up
+  ASSERT_EQ(AWAY_FROM_HOME, home_get_state());
+
+  TxAck stale = {};
+  stale.has_tx = true;
+  receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &stale);
+  EXPECT_FALSE(binance_signingIsInited());
+  EXPECT_EQ(AT_HOME, home_get_state())
+      << "the aborted transaction is still on screen";
+
+  ASSERT_TRUE(setup_stage(false, "english", "reset", 0, 0, false));
+  setup_arm(SETUP_RESET);
+  leave_home();
+  receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &stale);
+  EXPECT_TRUE(setup_isArmedAs(SETUP_RESET));
+  EXPECT_EQ(AWAY_FROM_HOME, home_get_state())
+      << "a stale ACK drew home over an armed ceremony";
+
+  setup_abort();
+  layoutHomeForced();
+}
+
 TEST(Fsm, StaleEthereumAckCannotReplaceARecoveryCeremony) {
   kk_test_board_init();
   fsm_init();

@@ -464,10 +464,12 @@ static bool reject_stale_continuation(const char* text) {
   /* A decoded request always gets a terminal response. Silently dropping an
    * inactive ACK leaves the host blocked forever, while dispatching it would
    * let the handler replace an unrelated recovery screen. End signing, keep
-   * any setup ceremony armed, and reject on the wire without changing OLED
-   * state. */
+   * any setup ceremony armed and on its own screen, and reject on the wire.
+   * Several signer aborts only clear state, so with no ceremony armed go home
+   * rather than leave the aborted transaction's approval screen up. */
   fsm_abort_signing_workflows();
   fsm_sendFailure(FailureType_Failure_UnexpectedMessage, text);
+  if (!setup_isArmed()) layoutHome();
   return false;
 }
 
@@ -594,8 +596,14 @@ static bool fsm_dispatchGate(MessageType msg_id) {
 #if ZCASH_PRIVACY
         case MessageType_MessageType_ZcashSignPCZT:
 #endif
+        {
+          const bool was_armed = setup_isArmed();
           setup_abort();
+          /* The handler may fail before it draws anything, which would leave
+           * the ended ceremony's screen up. */
+          if (was_armed) layoutHome();
           break;
+        }
         case MessageType_MessageType_Initialize:
         case MessageType_MessageType_Cancel:
         case MessageType_MessageType_ClearSession:
