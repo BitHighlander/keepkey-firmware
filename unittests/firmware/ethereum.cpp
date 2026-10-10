@@ -8,6 +8,7 @@ extern "C" {
 #include "keepkey/firmware/ethereum_contracts/thortx.h"
 #include "keepkey/firmware/ethereum_contracts/zxtransERC20.h"
 #include "keepkey/firmware/ethereum_tokens.h"
+#include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/tron.h"
 #include "trezor/crypto/address.h"
 #include "trezor/crypto/bip32.h"
@@ -26,6 +27,7 @@ extern "C" {
 
 void kkconfirm_capture_start(void);
 std::vector<std::string> kkconfirm_capture_finish(void);
+std::vector<std::string> kkconfirm_captured_titles(void);
 
 static uint8_t bin_from_ascii(char c) {
   if ('a' <= c && c <= 'f') return c - 'a' + 0xa;
@@ -1015,10 +1017,21 @@ TEST(Ethereum, DirectSigningEntryRejectsChainIdAboveMaximum) {
   msg.chain_id = 2147483630u;
   EXPECT_FALSE(ethereum_chainIdIsValid(&msg));
   HDNode node{};
+  fsm_test_clearLastFailure();
   ethereum_signing_init(&msg, &node, false);
   EXPECT_FALSE(ethereum_signing_isInProgress());
+  EXPECT_STREQ("Chain Id out of bounds", fsm_test_lastFailureMessage());
+
+  // The largest id is let through: the same message, which names no gas
+  // price, is refused by the next check instead.
   msg.chain_id--;
   EXPECT_TRUE(ethereum_chainIdIsValid(&msg));
+  fsm_test_clearLastFailure();
+  ethereum_signing_init(&msg, &node, false);
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  EXPECT_STREQ("Legacy transactions require gas_price",
+               fsm_test_lastFailureMessage());
+  EXPECT_EQ(0, kkconfirm_drain());
 }
 
 static const uint8_t DAI_MAINNET_ADDRESS[20] = {
@@ -1428,4 +1441,166 @@ TEST(Ethereum, ThorchainNativeAssetUsesOnlyItsZeroAddressSentinel) {
     EXPECT_FALSE(thor_confirmThorTx(msg.data_initial_chunk.size, &msg));
     EXPECT_EQ(0, kkconfirm_drain());
   }
+}
+
+extern "C" {
+#include "keepkey/board/font.h"
+#include "keepkey/board/layout.h"
+#include "keepkey/firmware/ethereum_contracts/zxswap.h"
+#include "pb_decode.h"
+}
+
+// A `to` sent twice, the second time empty, decodes to size 0 with the first
+// value's bytes still in place. That is a contract creation, and no decoder
+// may show it as a call to the contract those bytes name.
+TEST(Ethereum, DuplicateEmptyToIsNotClaimedByAContractDecoder) {
+  std::vector<uint8_t> wire;
+  auto field = [&](uint8_t tag, const uint8_t* p, size_t n) {
+    wire.push_back(tag);
+    wire.push_back(static_cast<uint8_t>(n));
+    wire.insert(wire.end(), p, p + n);
+  };
+  const uint8_t gas_price[] = {0x04, 0xa8, 0x17, 0xc8, 0x00};
+  const uint8_t gas_limit[] = {0x0f, 0x42, 0x40};
+  uint8_t data[68] = {0xfe, 0xa7, 0xc5, 0x3f};  // withdrawFromSalary
+  data[35] = 1;
+  data[67] = 1;
+  field(0x1a, gas_price, sizeof(gas_price));
+  field(0x22, gas_limit, sizeof(gas_limit));
+  field(0x2a, reinterpret_cast<const uint8_t*>(SAPROXY_ADDRESS), 20);
+  field(0x2a, data, 0);  // `to` again, empty
+  field(0x3a, data, sizeof(data));
+  wire.push_back(0x40);  // data_length
+  wire.push_back(68);
+  wire.push_back(0x60);  // chain_id
+  wire.push_back(1);
+
+  EthereumSignTx msg = EthereumSignTx{};
+  pb_istream_t in = pb_istream_from_buffer(wire.data(), wire.size());
+  ASSERT_TRUE(pb_decode(&in, EthereumSignTx_fields, &msg));
+  ASSERT_EQ(0u, msg.to.size);
+  ASSERT_EQ(0, std::memcmp(msg.to.bytes, SAPROXY_ADDRESS, 20));
+  EXPECT_FALSE(ethereum_contractHandled(68, &msg, nullptr));
+
+  // Control: the same call with `to` sent once is the Sablier withdrawal.
+  msg.to.size = 20;
+  EXPECT_TRUE(ethereum_contractHandled(68, &msg, nullptr));
+}
+
+// The chain id is signed. Chains that share a ticker draw the same amount
+// screens, so the last screen's title has to tell them apart.
+TEST(Ethereum, LastScreenTitleNamesTheChain) {
+  auto title = [](bool has_chain, uint32_t chain_id) {
+    EthereumSignTx msg = EthereumSignTx{};
+    msg.has_chain_id = has_chain;
+    msg.chain_id = chain_id;
+    char out[24];
+    ethereum_transactionTitle(&msg, out, sizeof(out));
+    return std::string(out);
+  };
+  EXPECT_EQ("Transaction", title(true, 1));
+  EXPECT_EQ("Transaction", title(false, 0));
+  EXPECT_EQ("Tx on Base", title(true, 8453));
+  EXPECT_EQ("Tx on Arbitrum", title(true, 42161));
+  EXPECT_EQ("Tx on Optimism", title(true, 10));
+  EXPECT_EQ("Tx on chain 59144", title(true, 59144));
+  EXPECT_EQ("Tx on chain 11155111", title(true, 11155111));
+  EXPECT_NE(title(true, 1), title(true, 8453));   // both "ETH" chains
+  EXPECT_NE(title(true, 59144), title(true, 11155111));  // both "Wei" chains
+  // A wrapped title draws over the body: every one fits a row.
+  for (uint32_t chain :
+       {10u, 56u, 100u, 137u, 8453u, 42161u, 43114u, 2147483629u}) {
+    EXPECT_EQ(1u, calc_str_line(get_title_font(), title(true, chain).c_str(),
+                                TITLE_WIDTH))
+        << title(true, chain);
+  }
+}
+
+// The amounts of a liquidity call do not say which way they move, so the
+// first screen of either flow names the operation, in a title that fits a row.
+TEST(Ethereum, LiquidityFirstScreenNamesTheOperation) {
+  for (bool add : {true, false}) {
+    EthereumSignTx msg = liquidity_tx(true, add);
+    // Decline the first screen, so it is the only one drawn.
+    ASSERT_TRUE(kkconfirm_preload(0, 1));
+    kkconfirm_capture_start();
+    EXPECT_FALSE(
+        zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg, nullptr));
+    kkconfirm_capture_finish();
+    EXPECT_EQ(0, kkconfirm_drain());
+    const std::vector<std::string> titles = kkconfirm_captured_titles();
+    ASSERT_EQ(1u, titles.size());
+    EXPECT_EQ(add ? "Uniswap Add Liquidity" : "Uniswap LP Burn", titles[0]);
+    std::string drawn = titles[0];
+    for (char& ch : drawn) ch = (char)toupper((unsigned char)ch);
+    EXPECT_EQ(1u, calc_str_line(get_title_font(), drawn.c_str(), TITLE_WIDTH))
+        << drawn;
+  }
+}
+
+// The 0x router reads isSushi as "any non-zero word". Only the low four bytes
+// were checked, so a set upper byte traded on Sushiswap under a "Uniswap"
+// title. Non-canonical words are not claimed.
+TEST(Ethereum, ZxSwapClaimsOnlyCanonicalWords) {
+  static const uint8_t WETH[20] = {0xc0, 0x2a, 0xaa, 0x39, 0xb2, 0x23, 0xfe,
+                                   0x8d, 0x0a, 0x0e, 0x5c, 0x4f, 0x27, 0xea,
+                                   0xd9, 0x08, 0x3c, 0x75, 0x6c, 0xc2};
+  EthereumSignTx msg = EthereumSignTx{};
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.has_to = true;
+  msg.to.size = 20;
+  memcpy(msg.to.bytes, ZXSWAP_ADDRESS, 20);
+  msg.has_data_initial_chunk = true;
+  msg.data_initial_chunk.size = 4 + 7 * 32;
+  uint8_t* d = msg.data_initial_chunk.bytes;
+  memcpy(d, "\xd9\x62\x7a\xa4", 4);
+  d[4 + 31] = 0x80;           // tokens offset
+  d[4 + 32 + 31] = 100;       // sell amount
+  d[4 + 2 * 32 + 31] = 5;     // minimum buy
+  d[4 + 4 * 32 + 31] = 2;     // tokens.length
+  memcpy(d + 4 + 5 * 32 + 12, DAI_MAINNET_ADDRESS, 20);
+  memcpy(d + 4 + 6 * 32 + 12, WETH, 20);
+  ASSERT_TRUE(zx_isZxSwap(&msg));
+
+  for (size_t offset : {size_t{4 + 3 * 32},        // isSushi, top byte
+                        size_t{4 + 3 * 32 + 27},   // isSushi, just above the low four
+                        size_t{4 + 4 * 32},        // tokens.length, top byte
+                        size_t{4 + 5 * 32},        // tokens[0], above the address
+                        size_t{4 + 6 * 32 + 11}}) {  // tokens[1], above the address
+    EthereumSignTx dirty = msg;
+    dirty.data_initial_chunk.bytes[offset] = 1;
+    EXPECT_FALSE(zx_isZxSwap(&dirty)) << offset;
+  }
+  EthereumSignTx sushi = msg;
+  sushi.data_initial_chunk.bytes[4 + 3 * 32 + 31] = 1;
+  EXPECT_TRUE(zx_isZxSwap(&sushi));
+  sushi.data_initial_chunk.bytes[4 + 3 * 32 + 31] = 2;  // not a bool
+  EXPECT_FALSE(zx_isZxSwap(&sushi));
+}
+
+// A router deposit's vault and asset words are addresses: their upper 12
+// bytes are signed, shown nowhere, and zero in a canonical encoding. The
+// vault itself is whatever the host sent, so the screen does not vouch for it.
+TEST(Ethereum, ThorDepositRefusesDirtyAddressWordsAndDoesNotVouchForTheVault) {
+  EthereumSignTx msg;
+  MakeThorDeposit(&msg, THOR_ROUTER, 1);
+  ASSERT_EQ(nullptr, thor_depositRefusal(&msg));
+  for (size_t offset : {size_t{4}, size_t{4 + 11}, size_t{4 + 32},
+                        size_t{4 + 32 + 11}}) {
+    EthereumSignTx dirty = msg;
+    dirty.data_initial_chunk.bytes[offset] = 1;
+    EXPECT_STREQ("Malformed deposit: address word is not canonical",
+                 thor_depositRefusal(&dirty))
+        << offset;
+  }
+
+  bool confirmed = false;
+  const auto screens = ThorFullDepositScreens(THOR_ROUTER, 1, true, &confirmed);
+  EXPECT_TRUE(confirmed);
+  EXPECT_TRUE(HasScreen(
+      screens, "Pays UNVERIFIED vault 2222222222222222222222222222222222222222"))
+      << ::testing::PrintToString(screens);
+  for (const auto& screen : screens)
+    EXPECT_EQ(std::string::npos, screen.find("Asgard")) << screen;
 }

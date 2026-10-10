@@ -913,19 +913,25 @@ int walk(const char* primary, const std::map<std::string, Struct>& types,
     return screens - kkconfirm_drain() / 2;
   for (;;) {
     const Eip712Next* next = eip712_stream_next();
+    bool alive = false;
     if (next->kind == EIP712_REQ_STRUCT) {
       auto it = types.find(next->struct_name);
       Struct empty{};
-      eip712_stream_on_struct(it == types.end() ? &empty : &it->second);
+      alive = eip712_stream_on_struct(it == types.end() ? &empty : &it->second);
     } else if (next->kind == EIP712_REQ_VALUE) {
       std::vector<uint32_t> path(next->member_path,
                                  next->member_path + next->member_path_len);
       EthereumTypedDataValueAck ack = valueAck(value(path), next);
       if (topup && !kkconfirm_preload_no_sentinel(topup, 0)) return -2;
-      eip712_stream_on_value(&ack);
+      alive = eip712_stream_on_value(&ack);
     } else {
       break;
     }
+    // A handler returns false exactly when it ended the walk without a
+    // result.
+    const Eip712ReqKind kind = eip712_stream_next()->kind;
+    EXPECT_EQ(alive, kind != EIP712_REQ_FAIL && kind != EIP712_REQ_CANCELLED)
+        << "after " << kind;
   }
   // Two messages per screen; negative means the rejection sentinel was used.
   const int unused = kkconfirm_drain();
@@ -1137,6 +1143,75 @@ TEST(Eip712Stream, EmptyMessageIsFlaggedForTheFinalScreen) {
   eip712_stream_abort();
 }
 
+// A member-less domain shows no screen either: flagged the same way.
+TEST(Eip712Stream, EmptyDomainIsFlaggedForTheFinalScreen) {
+  for (bool with_member : {false, true}) {
+    SCOPED_TRACE(with_member);
+    std::map<std::string, Struct> types;
+    addMember(types["Mail"], "v",
+              mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+    if (with_member)
+      addMember(types["EIP712Domain"], "name",
+                mk(EthereumTypedDataStructAck_EthereumDataType_STRING));
+    const int used = walk(
+        "Mail", types,
+        [](const std::vector<uint32_t>& path) -> Bytes {
+          return path[0] == 0 ? Bytes{'A', 'p', 'p'} : word(1);
+        },
+        3);
+    EXPECT_EQ(used, with_member ? 2 : 1);
+    ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+    EXPECT_EQ(eip712_stream_next()->domain_empty, !with_member);
+    EXPECT_FALSE(eip712_stream_next()->message_empty);
+    eip712_stream_abort();
+  }
+  std::map<std::string, Struct> types;
+  const int used = walk(
+      "EIP712Domain", types,
+      [](const std::vector<uint32_t>&) -> Bytes { return {}; }, 1);
+  EXPECT_EQ(used, 0);
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  EXPECT_TRUE(eip712_stream_next()->domain_only);
+  EXPECT_TRUE(eip712_stream_next()->domain_empty);
+  eip712_stream_abort();
+}
+
+// A reserved domain member declared as an array or a struct is walked like
+// any other, but the facts hold one leaf per member: the domain binds
+// nothing, and the member is never reported absent.
+TEST(Eip712Stream, ArrayAndStructDomainMembersMakeTheDomainUnbindable) {
+  Field u256 = mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32);
+  Field u256_array = u256;
+  u256_array.array_levels_count = 1;
+  static bool array;
+  for (bool as_array : {true, false}) {
+    SCOPED_TRACE(as_array);
+    array = as_array;
+    std::map<std::string, Struct> types;
+    if (as_array) {
+      addMember(types["EIP712Domain"], "chainId", u256_array);
+    } else {
+      addMember(types["EIP712Domain"], "chainId", structField("Chain"));
+      addMember(types["Chain"], "id", u256);
+    }
+    const int used = walk(
+        "Mail", types,
+        [](const std::vector<uint32_t>& path) -> Bytes {
+          // The array's length, then the one value either shape holds.
+          if (array && path.size() == 2) return Bytes{0, 1};
+          return word(1);
+        },
+        2, true);
+    EXPECT_EQ(used, 1);
+    ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DEFINITION);
+    Eip712DomainFacts facts;
+    EXPECT_FALSE(eip712_stream_domain_facts(&facts));
+    EXPECT_FALSE(eip712_stream_domain_matches(3, 0, nullptr, 0, true));
+    EXPECT_FALSE(eip712_stream_definition_accepted());
+    eip712_stream_abort();
+  }
+}
+
 // Seaport's OrderComponents has 11 members and holds arrays of 5- and
 // 6-member structs, which the former 12-slot pool could never fit.
 // The outermost array hashes its elements as they arrive, so an order's item
@@ -1202,6 +1277,29 @@ TEST(Eip712Stream, NestsSixFramesDeepButNotSeven) {
     }
     eip712_stream_abort();
   }
+}
+
+// An array's elements are frames too. Five structs deep, an array of structs
+// has no frame left for an element: its length answer ends the walk, and the
+// handler says so.
+TEST(Eip712Stream, ArrayOfStructsPastTheDepthLimitEndsTheWalk) {
+  const char* chain[] = {"L1", "L2", "L3", "L4", "L5"};
+  std::map<std::string, Struct> types;
+  for (size_t i = 0; i + 1 < 5; i++)
+    addMember(types[chain[i]], "next", structField(chain[i + 1]));
+  Field items = structField("Item");
+  items.array_levels_count = 1;
+  addMember(types["L5"], "items", items);
+  addMember(types["Item"], "v",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  const int used = walk(
+      "L1", types,
+      [](const std::vector<uint32_t>&) -> Bytes { return Bytes{0, 1}; }, 1);
+  EXPECT_EQ(used, 0);
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
+  EXPECT_STREQ(eip712_stream_next()->error,
+               "EIP-712 document nests too deeply for this device");
+  EXPECT_EQ(eip712_stream_waiting(), EIP712_IDLE);
 }
 
 // The open frames' member names share one EIP712_MAX_PATH buffer. Whatever
@@ -1981,10 +2079,19 @@ TEST(Eip712Stream, EmbeddedUnlimitedApproveSignsAfterTheWarning) {
             EIP712_REQ_DONE);
   EXPECT_EQ(std::count(titles.begin(), titles.end(), "UNLIMITED approval"), 0);
 
-  // Declining the warning signs nothing: only the domain and `to`, `value`
-  // screens are accepted.
-  EXPECT_EQ(walkSafeTx(approveCall(0, 0xff), false, 3, &titles, &bodies),
+  // Declining the warning signs nothing. Four screens are accepted (the
+  // domain, `to` in two pages, `value`); the warning is the one declined.
+  EXPECT_EQ(walkSafeTx(approveCall(0, 0xff), false, 4, &titles, &bodies),
             EIP712_REQ_CANCELLED);
+  ASSERT_FALSE(titles.empty());
+  EXPECT_EQ(titles.back(), "UNLIMITED approval");
+
+  // increaseAllowance grants the same allowance and gets the same warning.
+  Bytes increase = approveCall(0, 0xff);
+  const uint8_t selector[4] = {0x39, 0x50, 0x93, 0x51};
+  std::copy(selector, selector + 4, increase.begin());
+  EXPECT_EQ(walkSafeTx(increase, false, 20, &titles, &bodies), EIP712_REQ_DONE);
+  EXPECT_EQ(std::count(titles.begin(), titles.end(), "UNLIMITED approval"), 1);
 
   // A dirty spender word is refused before any screen of it.
   EXPECT_EQ(walkSafeTx(approveCall(0x01, 0xff), false, 20, &titles, &bodies),
