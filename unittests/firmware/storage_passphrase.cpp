@@ -311,6 +311,8 @@ TEST_F(PassphraseTransition,
   EXPECT_FALSE(signing_is_active());
   EXPECT_TRUE(session_isPinCached());
   EXPECT_FALSE(session_isPassphraseCached());
+}
+
 extern "C" {
 #include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/passphrase_sm.h"
