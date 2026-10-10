@@ -1137,6 +1137,42 @@ TEST(Eip712Stream, EmptyMessageIsFlaggedForTheFinalScreen) {
   eip712_stream_abort();
 }
 
+// A reserved domain member declared as an array or a struct is walked like
+// any other, but the facts hold one leaf per member: the domain binds
+// nothing, and the member is never reported absent.
+TEST(Eip712Stream, ArrayAndStructDomainMembersMakeTheDomainUnbindable) {
+  Field u256 = mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32);
+  Field u256_array = u256;
+  u256_array.array_levels_count = 1;
+  static bool array;
+  for (bool as_array : {true, false}) {
+    SCOPED_TRACE(as_array);
+    array = as_array;
+    std::map<std::string, Struct> types;
+    if (as_array) {
+      addMember(types["EIP712Domain"], "chainId", u256_array);
+    } else {
+      addMember(types["EIP712Domain"], "chainId", structField("Chain"));
+      addMember(types["Chain"], "id", u256);
+    }
+    const int used = walk(
+        "Mail", types,
+        [](const std::vector<uint32_t>& path) -> Bytes {
+          // The array's length, then the one value either shape holds.
+          if (array && path.size() == 2) return Bytes{0, 1};
+          return word(1);
+        },
+        2, true);
+    EXPECT_EQ(used, 1);
+    ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DEFINITION);
+    Eip712DomainFacts facts;
+    EXPECT_FALSE(eip712_stream_domain_facts(&facts));
+    EXPECT_FALSE(eip712_stream_domain_matches(3, 0, nullptr, 0, true));
+    EXPECT_FALSE(eip712_stream_definition_accepted());
+    eip712_stream_abort();
+  }
+}
+
 // Seaport's OrderComponents has 11 members and holds arrays of 5- and
 // 6-member structs, which the former 12-slot pool could never fit.
 // The outermost array hashes its elements as they arrive, so an order's item

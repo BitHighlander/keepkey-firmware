@@ -285,6 +285,15 @@ bool eip712_validate_leaf(const Eip712FieldType* field, const uint8_t* value,
   }
 }
 
+/* The facts' index of a domain member, 5 for a name they do not hold. */
+static int domain_member_index(const char* member_name) {
+  static const char* const members[] = {"name", "version", "salt", "chainId",
+                                        "verifyingContract"};
+  int index = 0;
+  while (index < 5 && strcmp(member_name, members[index]) != 0) index++;
+  return index;
+}
+
 bool eip712_domain_facts_observe(Eip712DomainFacts* facts,
                                  const char* member_name,
                                  const Eip712FieldType* field,
@@ -292,10 +301,7 @@ bool eip712_domain_facts_observe(Eip712DomainFacts* facts,
   if (!facts || !member_name || !field || (!value && value_len != 0) ||
       !eip712_validate_leaf(field, value, value_len))
     return false;
-  static const char* const members[] = {"name", "version", "salt", "chainId",
-                                        "verifyingContract"};
-  int index = 0;
-  while (index < 5 && strcmp(member_name, members[index]) != 0) index++;
+  const int index = domain_member_index(member_name);
   if (index == 5) return true;
   const uint8_t bit = 1u << index;
   if ((facts->domain_present & bit) != 0) return false;
@@ -1830,6 +1836,19 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
       e712.pending_has_size = m->type.has_size;
       e712.pending_size = m->type.size;
       strlcpy(e712.pending_name, m->name, sizeof(e712.pending_name));
+
+      /* The facts hold one leaf per domain member. An array or a struct
+       * under one of their names is shown and hashed like any other, but
+       * nothing may bind to that domain. */
+      if (e712.root == 0 && e712.depth == 1 &&
+          (m->type.array_levels_count > 0 ||
+           m->type.data_type ==
+               EthereumTypedDataStructAck_EthereumDataType_STRUCT)) {
+        const int index = domain_member_index(m->name);
+        if (index < 5)
+          e712.domain_facts.domain_present |=
+              (uint8_t)(1u << index) | EIP712_DOMAIN_UNBINDABLE;
+      }
 
       if (m->type.array_levels_count > 0) {
         if (e712.depth >= EIP712_MAX_DEPTH || m->type.array_levels_count > 4) {
