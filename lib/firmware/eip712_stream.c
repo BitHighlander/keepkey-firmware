@@ -546,6 +546,7 @@ static struct {
   uint8_t root;
   uint8_t domain_separator[32];
   bool have_domain_separator;
+  bool domain_value_confirmed;
   bool message_value_confirmed;
 
   Eip712Frame stack[EIP712_MAX_DEPTH];
@@ -1289,7 +1290,11 @@ static bool review_approved(Eip712LeafResult shown) {
     next_step.kind = EIP712_REQ_CANCELLED;
     return false;
   }
-  if (e712.root == 1) e712.message_value_confirmed = true;
+  if (e712.root == 1) {
+    e712.message_value_confirmed = true;
+  } else {
+    e712.domain_value_confirmed = true;
+  }
   return true;
 }
 
@@ -1518,6 +1523,7 @@ static void complete_frame(void) {
    * primary type is the domain itself: there is no message hash. */
   next_step.domain_only = domain_only;
   next_step.message_empty = domain_only || !e712.message_value_confirmed;
+  next_step.domain_empty = !e712.domain_value_confirmed;
   if (!domain_only) memcpy(next_step.message_hash, digest, 32);
   strlcpy(next_step.primary_type, e712.primary_type,
           sizeof(next_step.primary_type));

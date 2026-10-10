@@ -1784,8 +1784,81 @@ TEST(Fsm, TypedDataFinalScreenShowsTheWholePrimaryType) {
     final_screen += bodies[i];
   }
   EXPECT_NE(std::string::npos,
-            final_screen.find(std::string("Sign ") + primary + "\nfrom 0x"))
+            final_screen.find(std::string("Sign ") + primary +
+                              " (EMPTY domain)\nfrom 0x"))
       << final_screen;
+}
+
+// A domain with no member has no screen of its own, so the final screen says
+// it is empty, in the pages it already takes.
+TEST(Fsm, TypedDataFinalScreenFlagsAnEmptyDomain) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  loadAllWallet();
+  EthereumTypedDataStructAck empty{};
+  EthereumTypedDataStructAck named{};
+  named.members_count = 1;
+  std::strcpy(named.members[0].name, "name");
+  named.members[0].type.data_type =
+      EthereumTypedDataStructAck_EthereumDataType_STRING;
+  EthereumTypedDataStructAck message{};
+  message.members_count = 1;
+  std::strcpy(message.members[0].name, "nonce");
+  message.members[0].type.data_type =
+      EthereumTypedDataStructAck_EthereumDataType_UINT;
+  message.members[0].type.has_size = true;
+  message.members[0].type.size = 8;
+  struct Case {
+    const char* primary;
+    const EthereumTypedDataStructAck* domain;
+    size_t leaves;
+    const char* final_screen;
+  };
+  const Case cases[] = {
+      {"Mail", &named, 2, "Sign Mail\nfrom 0x"},
+      {"Mail", &empty, 1, "Sign Mail (EMPTY domain)\nfrom 0x"},
+      {"EIP712Domain", &named, 1, "Sign EIP712Domain (domain only)\nfrom 0x"},
+      {"EIP712Domain", &empty, 0,
+       "Sign EMPTY EIP712Domain (domain only)\nfrom 0x"},
+  };
+  for (const Case& c : cases) {
+    SCOPED_TRACE(c.final_screen);
+    ASSERT_TRUE(kkconfirm_preload(10, 0));
+    kkconfirm_capture_start();
+    EthereumSignTypedData start{};
+    std::strcpy(start.primary_type, c.primary);
+    receiveMessage(MessageType_MessageType_EthereumSignTypedData,
+                   EthereumSignTypedData_fields, &start);
+    for (int step = 0; step < 20 && eip712_stream_waiting() != EIP712_IDLE;
+         step++) {
+      const Eip712Next* next = eip712_stream_next();
+      if (eip712_stream_waiting() == EIP712_WANT_STRUCT) {
+        const bool is_domain =
+            std::strcmp(next->struct_name, "EIP712Domain") == 0;
+        receiveMessage(MessageType_MessageType_EthereumTypedDataStructAck,
+                       EthereumTypedDataStructAck_fields,
+                       is_domain ? c.domain : &message);
+      } else {
+        EthereumTypedDataValueAck value{};
+        if (next->member_path[0] == 0) {
+          value.value.size = 3;
+          std::memcpy(value.value.bytes, "App", 3);
+        } else {
+          value.value.size = 8;
+          value.value.bytes[7] = 1;
+        }
+        receiveMessage(MessageType_MessageType_EthereumTypedDataValueAck,
+                       EthereumTypedDataValueAck_fields, &value);
+      }
+    }
+    const std::vector<std::string> bodies = kkconfirm_capture_finish();
+    kkconfirm_drain();
+    // The leaves, then the final screen: two pages with or without the flag.
+    ASSERT_EQ(bodies.size(), c.leaves + 2);
+    EXPECT_EQ(0u, bodies[c.leaves].rfind(c.final_screen, 0))
+        << bodies[c.leaves];
+  }
 }
 
 // Ping between typed-data acks must not draw home over a live stream.

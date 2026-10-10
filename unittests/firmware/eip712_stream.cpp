@@ -1137,6 +1137,39 @@ TEST(Eip712Stream, EmptyMessageIsFlaggedForTheFinalScreen) {
   eip712_stream_abort();
 }
 
+// A member-less domain shows no screen either: flagged the same way.
+TEST(Eip712Stream, EmptyDomainIsFlaggedForTheFinalScreen) {
+  for (bool with_member : {false, true}) {
+    SCOPED_TRACE(with_member);
+    std::map<std::string, Struct> types;
+    addMember(types["Mail"], "v",
+              mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+    if (with_member)
+      addMember(types["EIP712Domain"], "name",
+                mk(EthereumTypedDataStructAck_EthereumDataType_STRING));
+    const int used = walk(
+        "Mail", types,
+        [](const std::vector<uint32_t>& path) -> Bytes {
+          return path[0] == 0 ? Bytes{'A', 'p', 'p'} : word(1);
+        },
+        3);
+    EXPECT_EQ(used, with_member ? 2 : 1);
+    ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+    EXPECT_EQ(eip712_stream_next()->domain_empty, !with_member);
+    EXPECT_FALSE(eip712_stream_next()->message_empty);
+    eip712_stream_abort();
+  }
+  std::map<std::string, Struct> types;
+  const int used = walk(
+      "EIP712Domain", types,
+      [](const std::vector<uint32_t>&) -> Bytes { return {}; }, 1);
+  EXPECT_EQ(used, 0);
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  EXPECT_TRUE(eip712_stream_next()->domain_only);
+  EXPECT_TRUE(eip712_stream_next()->domain_empty);
+  eip712_stream_abort();
+}
+
 // A reserved domain member declared as an array or a struct is walked like
 // any other, but the facts hold one leaf per member: the domain binds
 // nothing, and the member is never reported absent.
