@@ -3082,6 +3082,13 @@ TEST(Fsm, FeaturesReportExactlyTheStagedCapabilities) {
       Features_Capability_CAPABILITY_ERC20_UNLIMITED_PERMIT_REVIEW,
       Features_Capability_CAPABILITY_EIP712_CHUNKED_VALUES,
       Features_Capability_CAPABILITY_ERC7730_RUNTIME_REVIEW,
+      Features_Capability_CAPABILITY_OSMOSIS_WIRE_GUARDS,
+      Features_Capability_CAPABILITY_RIPPLE_MEMO_POLICY,
+      Features_Capability_CAPABILITY_HIVE_RELEASE_REVIEW,
+      Features_Capability_CAPABILITY_SOLANA_RUNTIME_REVIEW,
+      Features_Capability_CAPABILITY_MAYA_SINGLE_MESSAGE,
+      Features_Capability_CAPABILITY_TENDERMINT_PROGRESS,
+      Features_Capability_CAPABILITY_TRON_TRC20_REVIEW,
 #endif
   };
   EXPECT_EQ(expected, std::vector<Features_Capability>(
