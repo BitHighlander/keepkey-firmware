@@ -2906,6 +2906,33 @@ TEST(DiceCeremonyPrivacy, AbortAtEveryPhaseWipesAndAllowsOrdinaryRestart) {
   }
 }
 
+// Gated tests key on Features.capabilities: one that stops being reported
+// turns its tests into accepted skips. Dropping a capability therefore has to
+// be a visible edit here. A block that adds a capability appends it.
+TEST(Fsm, FeaturesReportExactlyTheStagedCapabilities) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  fsm_msgGetFeatures(nullptr);
+  size_t size = 0;
+  Features features;
+  ASSERT_GE((fsm_test_responseArena(&size), size), sizeof(features));
+  std::memcpy(&features, fsm_test_responseArena(&size), sizeof(features));
+  const std::vector<Features_Capability> expected = {
+      Features_Capability_CAPABILITY_ENTROPY_AUDIT_BUDGET,
+      Features_Capability_CAPABILITY_PROMPT_WORKFLOW_UNWIND,
+      Features_Capability_CAPABILITY_PROTECTED_PING_PRESENCE,
+      Features_Capability_CAPABILITY_SAFE_RESET_CEREMONY,
+#if !BITCOIN_ONLY
+      Features_Capability_CAPABILITY_LEGACY_EVM_ROUTER_SIGNING,
+      Features_Capability_CAPABILITY_THOR_DEPOSIT_REVIEW,
+#endif
+  };
+  EXPECT_EQ(expected, std::vector<Features_Capability>(
+                          features.capabilities,
+                          features.capabilities + features.capabilities_count));
+}
+
 // DebugLinkGetState is also serviced inside the PIN, passphrase and confirm
 // waits. The suspended outer handler may already hold its pending response in
 // the shared RESP_INIT arena, so the debug reply must not be built there.
