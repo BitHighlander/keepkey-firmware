@@ -1797,7 +1797,9 @@ bool zcashShown(const ZcashTexRun& run, const std::string& text) {
 // transfer to yourself, not a payment; without it, a normal send to the same
 // t1 address. A path that does not pay the script, is not the one-time
 // scope, belongs to another account, or claims to be a TEX is refused before
-// any signature. The Orchard signature verifies under librustzcash's sighash.
+// any signature. So is the same output marked is_tex without a path: a TEX
+// address cannot be paid by a transaction with a shielded action. The Orchard
+// signature verifies under librustzcash's sighash.
 TEST_F(ReviewHandlers, ZcashTexStep1PaysTheOwnOneTimeAddress) {
   const auto pubkey = zcashTransparentPubkey(0, 2);
   ASSERT_EQ(zcashHex(kZcashTexEphemeralPubkey), pubkey);
@@ -1816,8 +1818,17 @@ TEST_F(ReviewHandlers, ZcashTexStep1PaysTheOwnOneTimeAddress) {
   info.script_pubkey = script.data();
   info.script_pubkey_size = script.size();
 
-  enum Case { kOwn, kNoPath, kOtherIndex, kExternal, kOtherAccount, kTex };
-  for (Case c : {kOwn, kNoPath, kOtherIndex, kExternal, kOtherAccount, kTex}) {
+  enum Case {
+    kOwn,
+    kNoPath,
+    kOtherIndex,
+    kExternal,
+    kOtherAccount,
+    kTex,
+    kTexNoPath
+  };
+  for (Case c : {kOwn, kNoPath, kOtherIndex, kExternal, kOtherAccount, kTex,
+                 kTexNoPath}) {
     SCOPED_TRACE(c);
     ZcashSignPCZT msg = zcashV6Request(2, digest, 0x03,
                                        kZcashTexStep1ValueBalance,
@@ -1828,11 +1839,11 @@ TEST_F(ReviewHandlers, ZcashTexStep1PaysTheOwnOneTimeAddress) {
     ASSERT_TRUE(zcash_compute_orchard_transparent_sig_digest(
         NULL, 0, &info, 1, msg.transparent_digest.bytes));
     ZcashTransparentOutput out = zcashOutput(script, kZcashTexStep1OutputValue);
-    if (c != kNoPath)
+    if (c != kNoPath && c != kTexNoPath)
       zcashSetPath(out.address_n, &out.address_n_count,
                    c == kOtherAccount ? 1 : 0, c == kExternal ? 0 : 2,
                    c == kOtherIndex ? 1 : 0);
-    if (c == kTex) out.has_is_tex = out.is_tex = true;
+    if (c == kTex || c == kTexNoPath) out.has_is_tex = out.is_tex = true;
 
     const auto run = zcashRunTex(msg, {out}, {}, actions);
     if (c == kOwn || c == kNoPath) {
@@ -1854,9 +1865,12 @@ TEST_F(ReviewHandlers, ZcashTexStep1PaysTheOwnOneTimeAddress) {
                  : c == kExternal ? "Output path must be a one-time address"
                  : c == kOtherAccount
                      ? "Account does not match approved session"
-                     : "A one-time address is not a TEX",
+                 : c == kTex
+                     ? "A one-time address is not a TEX"
+                     : "A TEX output needs a transparent-only transaction",
                  fsm_test_lastFailureMessage());
     EXPECT_FALSE(zcashShown(run, t1));
+    EXPECT_FALSE(zcashShown(run, "TEX"));
     EXPECT_TRUE(run.orchard.empty());
   }
 }

@@ -1699,6 +1699,14 @@ void fsm_msgZcashTransparentOutput(const ZcashTransparentOutput* msg) {
     }
   }
 
+  /* A TEX address (ZIP 320) may only be paid by a transaction with no
+   * shielded component; n_actions counts both pools. */
+  if (tex && zcash_signing.n_actions > 0) {
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("A TEX output needs a transparent-only transaction"));
+    return;
+  }
+
   /* is_tex is a host hint the chain cannot show: a TEX address (ZIP 320) is
    * the same P2PKH key hash, so the destination shown is the same either
    * way. */
