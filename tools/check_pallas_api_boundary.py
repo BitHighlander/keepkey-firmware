@@ -196,6 +196,44 @@ def check_address_derivation(zcash):
         forbid(body, token, where)
 
 
+# Sources read whole for macro aliases, beside every header: the files checked
+# in main(), and fsm.c, the translation unit fsm_msg_zcash.h is compiled in.
+ALIAS_SCAN_SOURCES = (
+    "deps/crypto/trezor-firmware/crypto/pallas.c",
+    "deps/crypto/trezor-firmware/crypto/pallas_sinsemilla.c",
+    "deps/crypto/trezor-firmware/crypto/redpallas.c",
+    "lib/firmware/zcash.c",
+    "lib/firmware/storage.c",
+    "lib/firmware/fsm.c",
+)
+
+
+def alias_scan_texts():
+    """Path -> text of everything check_aliases() reads: the sources above and
+    every header they can reach inside the tree, the crypto library's and the
+    firmware's own."""
+    header_roots = [ROOT / "deps/crypto/trezor-firmware/crypto",
+                    ROOT / "include", ROOT / "lib"]
+    texts = {str(h.relative_to(ROOT)): h.read_text(encoding="utf-8",
+                                                   errors="replace")
+             for base in header_roots for h in sorted(base.rglob("*.h"))}
+    for path in ALIAS_SCAN_SOURCES:
+        texts[path] = source(path)
+    return texts
+
+
+def check_aliases(texts):
+    """No file the gate reads, nor the Pallas headers, may #define a checked
+    identifier: an alias would satisfy require() while compiling to another
+    call. Run after the checks above, which fill GUARDED."""
+    for where, text in sorted(texts.items()):
+        for match in re.finditer(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)",
+                                 code_only(splice(text)), re.M):
+            if match.group(1) in GUARDED:
+                raise AssertionError("{} #defines checked identifier {}".format(
+                    where, match.group(1)))
+
+
 def main():
     pallas = source("deps/crypto/trezor-firmware/crypto/pallas.c")
     sinsemilla = source("deps/crypto/trezor-firmware/crypto/pallas_sinsemilla.c")
@@ -390,26 +428,7 @@ def main():
     require(transmission, "pallas_ct_point_mult", "Orchard transmission-key derivation")
     forbid(transmission, "pallas_point_mult(", "Orchard transmission-key derivation")
 
-    # No file the gate reads, nor the Pallas headers, may #define a checked
-    # identifier: an alias would satisfy require() while compiling to another
-    # call.
-    # Every header these sources can reach inside the tree: the crypto
-    # library's and the firmware's own.
-    header_roots = [ROOT / "deps/crypto/trezor-firmware/crypto",
-                    ROOT / "include", ROOT / "lib"]
-    headers = {str(h.relative_to(ROOT)): h.read_text(encoding="utf-8",
-                                                     errors="replace")
-               for base in header_roots for h in sorted(base.rglob("*.h"))}
-    checked = dict(headers, **{
-        "pallas.c": pallas, "pallas_sinsemilla.c": sinsemilla,
-        "redpallas.c": redpallas, "zcash.c": zcash,
-        "fsm_msg_zcash.h": zcash_fsm, "storage.c": storage})
-    for where, text in sorted(checked.items()):
-        for match in re.finditer(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)",
-                                 code_only(splice(text)), re.M):
-            if match.group(1) in GUARDED:
-                raise AssertionError("{} #defines checked identifier {}".format(
-                    where, match.group(1)))
+    check_aliases(alias_scan_texts())
 
     print("Pallas API boundary: public Sinsemilla fast path and secret CT path verified")
     return 0

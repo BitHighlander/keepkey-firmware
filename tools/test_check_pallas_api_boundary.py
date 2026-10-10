@@ -3,7 +3,8 @@
 import unittest
 
 from check_pallas_api_boundary import (GUARDED, PALLAS_CT_INCLUDE,
-                                       check_address_derivation,
+                                       alias_scan_texts,
+                                       check_address_derivation, check_aliases,
                                        check_wide_reductions, forbid,
                                        function_body, require, source)
 
@@ -145,6 +146,43 @@ class WideReductions(unittest.TestCase):
         for name in ("pallas_ct_mod_q", "pallas_mod_q", "pallas_ct_mod_p",
                      "pallas_mod_p"):
             self.assertIn(name, GUARDED)
+
+
+class MacroAliases(unittest.TestCase):
+    """A #define of a checked identifier is refused wherever it can reach the
+    checked code."""
+
+    ALIAS = "#define redpallas_sign_digest_with_ak redpallas_sign_digest_for_rk\n"
+
+    def setUp(self):
+        # The gate's own require() is what marks an identifier as checked.
+        require("redpallas_sign_digest_with_ak(x);",
+                "redpallas_sign_digest_with_ak", "f")
+
+    def test_shipped_tree_has_no_alias(self):
+        check_aliases(alias_scan_texts())
+
+    def test_alias_of_a_checked_identifier_is_refused(self):
+        for text in (self.ALIAS, "  #  define redpallas_sign_digest_with_ak(a) x\n",
+                     "#def\\\nine redpallas_sign_digest_with_ak x\n"):
+            with self.subTest(text=text):
+                with self.assertRaisesRegex(AssertionError, "#defines checked"):
+                    check_aliases({"x.c": text})
+        check_aliases({"x.c": "#define redpallas_sign_digest_with_ak_count 1\n"
+                              "// #define redpallas_sign_digest_with_ak x\n"})
+
+    def test_alias_in_the_handlers_translation_unit_is_refused(self):
+        # fsm_msg_zcash.h is compiled inside fsm.c, so a macro defined there
+        # before the #include renames the calls the handlers make.
+        texts = alias_scan_texts()
+        for path in ("lib/firmware/fsm.c", "lib/firmware/fsm_msg_zcash.h",
+                     "lib/firmware/zcash.c", "include/keepkey/firmware/zcash.h"):
+            with self.subTest(path=path):
+                self.assertIn(path, texts)
+                mutated = dict(texts)
+                mutated[path] = self.ALIAS + texts[path]
+                with self.assertRaisesRegex(AssertionError, path):
+                    check_aliases(mutated)
 
 
 class AddressDerivation(unittest.TestCase):
