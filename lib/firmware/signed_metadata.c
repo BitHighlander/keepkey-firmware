@@ -171,6 +171,9 @@ static bool arg_value_ok(uint8_t format, const uint8_t* value, uint16_t len) {
       }
       return true;
     }
+    case ARG_FORMAT_ADDRESS:
+      /* Shown whole as an address: nothing but 20 bytes can be. */
+      return len == 20;
     default:
       return len <= 32;
   }

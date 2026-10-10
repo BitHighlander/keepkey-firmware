@@ -574,6 +574,18 @@ TEST_F(SignedMetadataTest, ArgValueTooLong) {
   ExpectMalformed(sign_body(build_body(s)), TEST_KEY_ID);
 }
 
+/* An ADDRESS arg is drawn as a full 20-byte address, so any other length is
+ * refused at parse, not later in the middle of the review. */
+TEST_F(SignedMetadataTest, AddressArgMustBeTwentyBytes) {
+  const uint8_t word[32] = {0};
+  for (size_t len : {0u, 19u, 21u, 32u}) {
+    SCOPED_TRACE(len);
+    Spec s = base_spec();
+    s.args[0] = mk_arg("to", ARG_FORMAT_ADDRESS, word, len);
+    ExpectMalformed(sign_body(build_body(s)), TEST_KEY_ID);
+  }
+}
+
 TEST_F(SignedMetadataTest, ArgValueLengthOverrun) {
   /* value_len prefix claims 32 but only 4 value bytes follow; the read eats
    * into the fixed tail and parsing misaligns -> MALFORMED. As with the method
