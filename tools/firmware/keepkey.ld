@@ -4,8 +4,11 @@
 
 MEMORY
 {
-    /* Firmware ROM */
-    rom (rx)   : ORIGIN = 0x08060000, LENGTH = 0x00100000 - 0x00060000
+    /* Firmware ROM. The bootloader refuses an upload whose FirmwareUpload
+     * frame (38-byte protobuf prefix + image) is >= the 0xA0000 region
+     * (usb_flash.c raw_handler_upload), so the largest image that installs
+     * is 0xA0000 - 38 - 1 bytes. Link against that, not the whole region. */
+    rom (rx)   : ORIGIN = 0x08060000, LENGTH = 0x00100000 - 0x00060000 - 39
 
     /* ram shared by bootloader and firmware, contains psp */
     ram (rwx) : ORIGIN = 0x20000000, LENGTH = 0x1F800

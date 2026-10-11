@@ -207,3 +207,15 @@ class TestStack10Disclosure(Erc7730Harness, common.KeepKeyTest):
         result, _, _, _ = self._walk(self._tx())
         assert_failure(self, result, types.Failure_ActionCancelled,
                        "Arbitrary contract data signing disabled by policy")
+
+    def test_unlimited_approval_is_reviewed_and_disabled_advanced_mode_still_refuses(self):
+        # D-010: an unlimited approve() is reviewed on screen and signed, not
+        # refused (it was refused before 7.16).
+        result, buttons, _, _ = self._walk(self._tx(True, (1 << 256) - 1))
+        self.assertIsInstance(result, eth.EthereumTxRequest)
+        self.assertTrue(result.HasField("signature_r"))
+        self.assertGreater(buttons, 0)
+        self.client.apply_policy("AdvancedMode", 0)
+        result, _, _, _ = self._walk(self._tx())
+        assert_failure(self, result, types.Failure_ActionCancelled,
+                       "Arbitrary contract data signing disabled by policy")

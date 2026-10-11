@@ -55,6 +55,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       osmosis.cpp
       ripple.cpp
       signed_metadata.cpp
+      uniswap_ur.cpp
       erc7730_abi.cpp
       erc7730_abi_stream.cpp
       erc7730_catalog.cpp

@@ -2903,6 +2903,114 @@ TEST(Fsm, NonStandardUnlimitedApprovalShowsTheWarningFirst) {
     EXPECT_EQ("UNLIMITED approval", shown.titles[0]) << trailing;
   }
 }
+TEST(Fsm, PaddedZeroUnlimitedApprovalIsReviewedNotSigned) {
+  kk_test_board_init();
+  fsm_init();
+  fsm_test_clearLastFailure();
+  kkconfirm_drain();
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+
+  EthereumSignTx msg = {};
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.has_gas_price = msg.has_gas_limit = true;
+  msg.gas_price.size = msg.gas_limit.size = 1;
+  msg.gas_price.bytes[0] = msg.gas_limit.bytes[0] = 1;
+  msg.has_to = true;
+  msg.to.size = 20;
+  msg.to.bytes[0] = 1;
+  msg.has_value = true;
+  msg.value.size = 32;  // Non-canonical spelling of zero.
+  msg.has_data_length = msg.has_data_initial_chunk = true;
+  msg.data_length = msg.data_initial_chunk.size = 68;
+  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
+  memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
+
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+  ethereum_signing_init(&msg, &node, false);
+
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  EXPECT_EQ(0u, msg.value.size)
+      << "the global ERC-20 classifier never saw canonical zero";
+  // Unlimited is reviewed, not refused (owner policy 2026-10-03): the first
+  // review screen consumed the preloaded decline, and nothing was signed.
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_EQ(0, kkconfirm_drain()) << "the approval was never reviewed";
+}
+TEST(Fsm, NativeValueUnlimitedApprovalIsReviewedNotSigned) {
+  kk_test_board_init();
+  fsm_init();
+  fsm_test_clearLastFailure();
+  kkconfirm_drain();
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+
+  EthereumSignTx msg = {};
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.has_gas_price = msg.has_gas_limit = true;
+  msg.gas_price.size = msg.gas_limit.size = 1;
+  msg.gas_price.bytes[0] = msg.gas_limit.bytes[0] = 1;
+  msg.has_to = true;
+  msg.to.size = 20;
+  msg.to.bytes[0] = 1;
+  msg.has_value = true;
+  msg.value.size = 1;
+  msg.value.bytes[0] = 1;  // A payable token may accept value with approve.
+  msg.has_data_length = msg.has_data_initial_chunk = true;
+  msg.data_length = msg.data_initial_chunk.size = 68;
+  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
+  memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
+
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+  ethereum_signing_init(&msg, &node, false);
+
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  EXPECT_EQ(1u, msg.value.size);
+  // Unlimited is reviewed, not refused (owner policy 2026-10-03): the first
+  // review screen consumed the preloaded decline, and nothing was signed.
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_EQ(0, kkconfirm_drain()) << "the approval was never reviewed";
+}
+TEST(Fsm, TrailingCalldataUnlimitedApprovalIsReviewedNotSigned) {
+  kk_test_board_init();
+  fsm_init();
+  fsm_test_clearLastFailure();
+  kkconfirm_drain();
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+
+  EthereumSignTx msg = {};
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.has_gas_price = msg.has_gas_limit = true;
+  msg.gas_price.size = msg.gas_limit.size = 1;
+  msg.gas_price.bytes[0] = msg.gas_limit.bytes[0] = 1;
+  msg.has_to = true;
+  msg.to.size = 20;
+  msg.to.bytes[0] = 1;
+  msg.has_value = true;
+  msg.value.size = 1;
+  msg.value.bytes[0] = 1;  // A payable token may accept value with approve.
+  msg.has_data_length = msg.has_data_initial_chunk = true;
+  msg.data_length = msg.data_initial_chunk.size = 69;
+  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
+  memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
+
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+  ethereum_signing_init(&msg, &node, false);
+
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  EXPECT_EQ(1u, msg.value.size);
+  // Unlimited is reviewed, not refused (owner policy 2026-10-03): the first
+  // review screen consumed the preloaded decline, and nothing was signed.
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_EQ(0, kkconfirm_drain()) << "the approval was never reviewed";
+}
 TEST(Fsm, SplitCalldataCannotBypassUnlimitedApprovalRefusal) {
   for (size_t initial : {1u, 2u, 3u, 4u, 16u, 67u}) {
     kk_test_board_init();

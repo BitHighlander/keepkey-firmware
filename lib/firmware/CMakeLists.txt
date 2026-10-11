@@ -53,6 +53,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       clearsign_root.c
       signed_metadata.c
       contact_book.c
+      uniswap_ur.c
       mayachain.c
       nano.c
       osmosis.c

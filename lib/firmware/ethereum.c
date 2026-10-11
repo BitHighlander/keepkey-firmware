@@ -1154,10 +1154,17 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       signed_metadata_certified_claimed() &&
       !(signed_metadata_available() && signed_metadata_matches_tx(msg) &&
         signed_metadata_may_suppress(chain_id))) {
-    fsm_sendFailure(FailureType_Failure_Other,
-                    _("Certified description invalid or not for this tx"));
-    ethereum_signing_abort();  // clears metadata
-    return;
+    /* A certified Uniswap swap past the first chunk: nothing is shown from
+     * a prefix. Its review follows the fee screen, once every byte is in.
+     * Pending implies a KeepKey-certified entry for this chain. */
+    if (!signed_metadata_ur_pending()) {
+      fsm_sendFailure(FailureType_Failure_Other,
+                      _("Certified description invalid or not for this tx"));
+      ethereum_signing_abort();  // clears metadata
+      return;
+    }
+    needs_confirm = false;
+    data_needs_confirm = false;
   }
 
   // Signed metadata clear signing (backwards compatible).
@@ -1204,7 +1211,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   // Keep metadata only when its decoded screens were approved, so their
   // attestation remains bound to the signature. Otherwise prevent stale reuse
   // when contractHandled / ERC-20 paths bypassed metadata review.
-  if (!signed_metadata_relied()) {
+  if (!signed_metadata_ur_pending() && !signed_metadata_relied()) {
     signed_metadata_clear();
   }
 
@@ -1505,6 +1512,23 @@ void ethereum_signing_txack(EthereumTxAck* tx) {
   hash_data(tx->data_chunk.bytes, tx->data_chunk.size);
 
   data_left -= tx->data_chunk.size;
+
+  /* A certified Uniswap call held since init: decoded at its last byte and
+   * reviewed then. Refused, never downgraded (SRS R-1.4), as at init. */
+  if (signed_metadata_ur_pending()) {
+    if (!signed_metadata_ur_feed(tx->data_chunk.bytes, tx->data_chunk.size)) {
+      fsm_sendFailure(FailureType_Failure_Other,
+                      _("Certified description invalid or not for this tx"));
+      ethereum_signing_abort();
+      return;
+    }
+    if (data_left == 0 && !signed_metadata_confirm()) {
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      "Signing cancelled by user");
+      ethereum_signing_abort();
+      return;
+    }
+  }
 
   if (erc7730->phase == ERC7730_WORKFLOW_CALLDATA && data_left == 0 &&
       erc7730_workflow_calldata_finish(erc7730) != ERC7730_ABI_OK) {
