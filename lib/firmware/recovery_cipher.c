@@ -617,6 +617,21 @@ static void resync_current_word_after_delete(void) {
   }
 }
 
+/* A deleted separator reopens a word: point the indicator at the one before. */
+static void resync_previous_word_after_delete(void) {
+  memzero(last_completed_word, sizeof(last_completed_word));
+  const char* end = strrchr(mnemonic, ' ');
+  if (!end) return;
+  while (end > mnemonic && end[-1] == ' ') end--;
+  const char* start = end;
+  while (start > mnemonic && start[-1] != ' ') start--;
+  const size_t n = (size_t)(end - start);
+  if (n == 0 || n > BIP39_MAX_WORD_LEN) return;
+  memcpy(last_completed_word, start, n);
+  if (!attempt_auto_complete(last_completed_word))
+    memzero(last_completed_word, sizeof(last_completed_word));
+}
+
 /*
  * recovery_delete_character() - Deletes previously received recovery character
  *
@@ -635,13 +650,18 @@ void recovery_delete_character(void) {
   }
 
   size_t len = strlen(mnemonic);
+  bool crossed_word = false;
   if (len > 0) {
-    if (mnemonic[len - 1] == ' ') words_entered--;
+    if (mnemonic[len - 1] == ' ') {
+      words_entered--;
+      crossed_word = true;
+    }
 
     mnemonic[len - 1] = '\0';
   }
 
   resync_current_word_after_delete();
+  if (crossed_word) resync_previous_word_after_delete();
   next_character();
   if (len > 0 && setup_isArmedAs(SETUP_RECOVERY)) note_workflow_progress();
 }

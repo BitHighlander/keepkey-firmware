@@ -156,12 +156,11 @@ TEST(Erc7730ProgramLoader, RefusesMissingOrMalformedAbiSection) {
                                            malformed.size()));
 }
 
-TEST(Erc7730ProgramPath, SelectsStructuredContainerAndSlicePaths) {
+TEST(Erc7730ProgramPath, SelectsStructuredAndContainerPathsRefusesSlices) {
   const std::vector<uint8_t> section = {
-      0, 3, 1, 2,    0xff, 0xff, 1, 0xff, 0xff, 0xff, 0xff, 2, 2, 0, 0,
-      4, 1, 1, 0xff, 0xff, 3,    3, 0xff, 0xff, 0xff, 0xfe, 0, 0, 0, 5,
+      0, 2, 1, 2, 0xff, 0xff, 1, 0xff, 0xff, 0xff, 0xff, 2, 2, 0, 0, 4,
   };
-  for (uint16_t target = 0; target < 3; target++) {
+  for (uint16_t target = 0; target < 2; target++) {
     for (size_t chunk : {1u, 5u, 64u}) {
       Erc7730ProgramPath loader;
       erc7730_program_path_begin(&loader, (uint32_t)section.size(), target);
@@ -178,17 +177,19 @@ TEST(Erc7730ProgramPath, SelectsStructuredContainerAndSlicePaths) {
         EXPECT_EQ(path.step_count, 2);
         EXPECT_EQ(path.steps[0].first, -1);
         EXPECT_EQ(path.steps[1].opcode, 2);
-      } else if (target == 1) {
+      } else {
         EXPECT_EQ(path.source, 2);
         EXPECT_EQ(path.source_index, 4);
-      } else {
-        EXPECT_EQ(path.steps[0].opcode, 3);
-        EXPECT_EQ(path.steps[0].flags, 3);
-        EXPECT_EQ(path.steps[0].first, -2);
-        EXPECT_EQ(path.steps[0].second, 5);
       }
     }
   }
+  // A slice step (opcode 3) is not executed, so it is refused.
+  const std::vector<uint8_t> slice = {0,    1,    1,    1,    0xff, 0xff, 3, 3,
+                                      0xff, 0xff, 0xff, 0xfe, 0,    0,    0, 5};
+  Erc7730ProgramPath loader;
+  erc7730_program_path_begin(&loader, (uint32_t)slice.size(), 0);
+  EXPECT_FALSE(
+      erc7730_program_path_feed(&loader, 0, slice.data(), slice.size()));
 }
 
 TEST(Erc7730ProgramPath, RejectsMissingTargetAndMalformedSteps) {
