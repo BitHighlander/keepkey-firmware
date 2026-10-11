@@ -43,8 +43,10 @@ static bool certified_claimed;
 static bool metadata_schema_moves_value = false;
 static bool metadata_schema_decoded = false;
 static SignedMetadata stored_metadata;
-/* A v0x07 call, held whole until its last byte (signed_metadata_ur_pending). */
-static uint8_t ur_calldata[SIGNED_METADATA_UR_MAX_CALLDATA];
+/* A v0x07 call, decoded as its chunks arrive and matched at its last byte
+ * (signed_metadata_ur_pending). Only the decoder's state is held, never the
+ * call; the plan it builds is stored_metadata.ur_plan. */
+static UrStream ur_stream;
 static uint32_t ur_len, ur_total;
 
 /* Firmware 7.15 ships with NO built-in verification keys: every runtime
@@ -702,6 +704,7 @@ void signed_metadata_clear(void) {
   metadata_schema_decoded = false;
   metadata_schema_moves_value = false;
   ur_len = ur_total = 0;
+  memzero(&ur_stream, sizeof(ur_stream));
 }
 
 void signed_metadata_clear_signers(void) {
@@ -1177,15 +1180,15 @@ static bool store_tx_value(SignedMetadata* md, const EthereumSignTx* msg) {
   return true;
 }
 
-/* Decodes the complete call; md->tx_value must already hold msg.value, and
- * the router is the entry's contract (equal to `to` once matched). */
-static bool decoder_matches(SignedMetadata* md, const uint8_t* data,
-                            uint32_t len) {
+/* Completes the streamed decode once every byte is in; md->tx_value must
+ * already hold msg.value, and the router is the entry's contract (equal to
+ * `to` once matched). */
+static bool decoder_matches(SignedMetadata* md) {
   UrPlan* plan = &md->ur_plan; /* shares RAM with the unused schema args */
   bool ok = false;
   memset(&md->ur, 0, sizeof(md->ur));
-  if (md->decoder == METADATA_DECODER_UNISWAP_UR &&
-      ur_decode(data, len, plan) &&
+  if (ur_stream_finish(&ur_stream) &&
+      md->decoder == METADATA_DECODER_UNISWAP_UR &&
       ur_summarize(plan, md->contract_address, md->tx_value, &md->ur)) {
     /* Every token the review names must carry a certified identity. */
     ok = (md->ur.in_is_eth || metadata_token(md, md->ur.token_in)) &&
@@ -1193,6 +1196,7 @@ static bool decoder_matches(SignedMetadata* md, const uint8_t* data,
          (!md->ur.has_permit || metadata_token(md, md->ur.permit_token));
   }
   memzero(plan, sizeof(*plan));
+  memzero(&ur_stream, sizeof(ur_stream));
   if (!ok) memset(&md->ur, 0, sizeof(md->ur));
   /* ETH in is stated on the Limits screen; any other value was refused. */
   return ok;
@@ -1240,6 +1244,7 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
   metadata_schema_decoded = false;
   metadata_schema_moves_value = false;
   ur_len = ur_total = 0;
+  memzero(&ur_stream, sizeof(ur_stream));
 
   if (!entry_is_for(msg)) return false;
 
@@ -1289,11 +1294,12 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
      * call past the first chunk stays pending until its last byte. */
     const uint32_t initsz = msg->data_initial_chunk.size;
     const uint32_t total = msg->has_data_length ? msg->data_length : initsz;
-    if (metadata_tier != METADATA_TIER_KEEPKEY || total > sizeof(ur_calldata) ||
+    if (metadata_tier != METADATA_TIER_KEEPKEY ||
         !store_tx_value(&stored_metadata, msg)) {
       return false;
     }
-    ur_total = total; /* feed() relies on ur_total <= sizeof(ur_calldata) */
+    ur_stream_begin(&ur_stream, &stored_metadata.ur_plan, total);
+    ur_total = total;
     return signed_metadata_ur_feed(msg->data_initial_chunk.bytes, initsz) &&
            metadata_schema_decoded;
   }
@@ -1310,14 +1316,15 @@ bool signed_metadata_ur_pending(void) { return ur_len < ur_total; }
 bool signed_metadata_ur_feed(const uint8_t* bytes, uint32_t len) {
   if (len > ur_total - ur_len) {
     ur_len = ur_total = 0;
+    memzero(&ur_stream, sizeof(ur_stream));
     return false;
   }
-  memcpy(ur_calldata + ur_len, bytes, len);
+  /* A refusal is latched in the stream and reported at the last byte, as
+   * when the call was held whole: the caller's flow does not change. */
+  ur_stream_feed(&ur_stream, bytes, len);
   ur_len += len;
   if (ur_len < ur_total) return true;
-  /* Calldata is public: no wipe needed, only the state reset. */
-  metadata_schema_decoded =
-      decoder_matches(&stored_metadata, ur_calldata, ur_len);
+  metadata_schema_decoded = decoder_matches(&stored_metadata);
   ur_len = ur_total = 0;
   return metadata_schema_decoded;
 }
@@ -1730,6 +1737,21 @@ bool signed_metadata_build_ur_review(const SignedMetadata* md,
              (unsigned)(u->fee_bips / 100), (unsigned)(u->fee_bips % 100),
              fee_to);
     if (!emit(ctx, "Fee", body, NULL, 0)) return false;
+  }
+  /* V4 pools whose hook contract runs during the swap: every one is shown.
+   * The limits above hold whatever a hook does (the router checks them
+   * after the swap). */
+  for (uint8_t i = 0; i < u->n_hooks && i < UR_MAX_HOOKS; i++) {
+    char hook[43] = "0x", title[24];
+    ethereum_address_checksum(u->hooks[i], hook + 2, false, md->chain_id);
+    if (u->n_hooks > 1) {
+      snprintf(title, sizeof(title), "Pool hook %u/%u", (unsigned)(i + 1),
+               (unsigned)u->n_hooks);
+    } else {
+      snprintf(title, sizeof(title), "Pool hook");
+    }
+    snprintf(body, sizeof(body), "The swap runs this hook contract\n%s", hook);
+    if (!emit(ctx, title, body, NULL, 0)) return false;
   }
   char router[43] = "0x";
   ethereum_address_checksum(md->contract_address, router + 2, false,

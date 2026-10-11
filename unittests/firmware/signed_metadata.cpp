@@ -3257,6 +3257,7 @@ TEST_F(CertifiedMetadataTest, NameRecordParsesTheServerSerializedBody) {
 
 /* ---- v0x07: certified Uniswap Universal Router decoder ------------------- */
 
+#include "uniswap_ur_sample.h"
 #include "uniswap_ur_vectors.h"
 
 namespace {
@@ -3266,6 +3267,16 @@ std::vector<uint8_t> ur_unhex(const std::string& h) {
   for (size_t i = 0; i + 1 < h.size(); i += 2)
     out.push_back((uint8_t)std::stoul(h.substr(i, 2), nullptr, 16));
   return out;
+}
+
+std::string hex_of(const uint8_t* p, size_t n) {
+  static const char* d = "0123456789abcdef";
+  std::string s;
+  for (size_t i = 0; i < n; i++) {
+    s += d[p[i] >> 4];
+    s += d[p[i] & 15];
+  }
+  return s;
 }
 
 /* Real Base call 0xd873988f...: PERMIT2_PERMIT + V3_SWAP_EXACT_IN, an
@@ -3434,7 +3445,6 @@ TEST_F(CertifiedMetadataTest, UniswapTokenToEthIsReviewedAfterTheLastByte) {
   const urv::Vec* v = token_to_eth_over_first_chunk();
   ASSERT_NE(v, nullptr);
   std::vector<uint8_t> data = ur_unhex(v->calldata);
-  ASSERT_LE(data.size(), (size_t)SIGNED_METADATA_UR_MAX_CALLDATA);
   auto e = envelope(
       mint_cert(8453, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
       sign_body(build_decoder_body(ur_unhex(v->router), 8453,
@@ -3495,17 +3505,152 @@ TEST_F(CertifiedMetadataTest, UniswapDeferredReviewRefusesShortLongOrTamperedCal
   EXPECT_NE(0, memcmp(signed_metadata_get()->ur.amount_out,
                       ur_unhex(v->steps[2].amount).data(), 32));
 
-  // Over the buffer: not pending, so SignTx refuses the certified claim.
+  // Past the old 1,472-byte buffer: held and decoded, not refused for its
+  // length. Bytes after the last input are not read (nor by abi.decode).
   std::vector<uint8_t> big = data;
-  big.resize(SIGNED_METADATA_UR_MAX_CALLDATA + 1);
-  EXPECT_FALSE(defer_first_chunk(*v, big, &msg));
-  EXPECT_TRUE(signed_metadata_certified_claimed());
+  big.resize(1473);
+  ASSERT_TRUE(defer_first_chunk(*v, big, &msg));
+  EXPECT_TRUE(signed_metadata_ur_feed(big.data() + 1024,
+                                      (uint32_t)big.size() - 1024));
+  EXPECT_FALSE(signed_metadata_ur_pending());
 
   // A call that fits the first chunk is decoded at once, never pending.
   std::vector<uint8_t> small(data.begin(), data.begin() + 1024);
   make_ur_msg(&msg, ur_unhex(v->router), small);
   EXPECT_FALSE(signed_metadata_matches_tx(&msg));  // truncated: no decode
   EXPECT_FALSE(signed_metadata_ur_pending());
+}
+
+/* D-021: a real split-route call past the old 1,472-byte buffer, which the
+ * device refused for its length. Streamed in SignTx's chunks it is reviewed
+ * like any other. */
+TEST_F(CertifiedMetadataTest, UniswapCallPastTheOldBufferIsReviewed) {
+  const std::vector<uint8_t> router =
+      ur_unhex("d6145b2d3f379919e8cdeda7b97e37c4b2ca9c40");
+  const uint8_t zero[32] = {0};
+  const urs::Call* call = nullptr;
+  UrPlan plan;
+  UrSummary want;
+  for (const auto& c : urs::calls()) {
+    if (c.calldata.size() > 1472 &&
+        ur_decode(c.calldata.data(), c.calldata.size(), &plan) &&
+        ur_summarize(&plan, router.data(), zero, &want)) {
+      call = &c;
+      break;
+    }
+  }
+  ASSERT_NE(call, nullptr) << "no reviewable call over 1,472 B in the sample";
+  const std::vector<uint8_t>& data = call->calldata;
+  std::vector<UrToken> tokens;
+  if (!want.in_is_eth)
+    tokens.push_back({hex_of(want.token_in, 20), "TOKA", 6});
+  if (!want.out_is_eth)
+    tokens.push_back({hex_of(want.token_out, 20), "TOKB", 18});
+  auto e = envelope(
+      mint_cert(8453, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+      sign_body(build_decoder_body(router, 8453, tokens)));
+  ASSERT_EQ(METADATA_VERIFIED, Process(e));
+
+  EthereumSignTx msg;
+  std::vector<uint8_t> first(data.begin(), data.begin() + 1024);
+  make_ur_msg(&msg, router, first);
+  msg.data_length = (uint32_t)data.size();
+  ASSERT_FALSE(signed_metadata_matches_tx(&msg));
+  ASSERT_TRUE(signed_metadata_ur_pending());
+  size_t at = 1024;
+  while (data.size() - at > 200) {  // uneven chunks
+    ASSERT_TRUE(signed_metadata_ur_feed(data.data() + at, 200)) << call->tx;
+    EXPECT_TRUE(signed_metadata_ur_pending());
+    at += 200;
+  }
+  ASSERT_TRUE(signed_metadata_ur_feed(data.data() + at,
+                                      (uint32_t)(data.size() - at)))
+      << call->tx;
+  EXPECT_FALSE(signed_metadata_ur_pending());
+  const SignedMetadata* md = signed_metadata_get();
+  EXPECT_EQ(0, memcmp(&md->ur, &want, sizeof(want))) << call->tx;
+  std::vector<Shown> got;
+  ASSERT_TRUE(signed_metadata_build_ur_review(md, "Test Delegate", "A9531B9D",
+                                              collect_shown, &got));
+  ASSERT_FALSE(got.empty());
+  EXPECT_EQ(got[0].title, "Uniswap");
+}
+
+/* D-019/D-021: real UR 2.1.2 V4 swaps on Base, a plain one and one through a
+ * hooked pool, streamed in 200-byte data chunks after the first 1,024. */
+namespace {
+void review_v4_call(bool hooked, std::vector<Shown>* got) {
+  const std::vector<uint8_t> router =
+      ur_unhex("d6145b2d3f379919e8cdeda7b97e37c4b2ca9c40");
+  const urs::Call* call = nullptr;
+  UrPlan plan;
+  UrSummary want;
+  for (const auto& c : urs::calls()) {
+    bool v4 = false;
+    if (c.calldata.size() <= 1024 || !c.ok ||
+        !ur_decode(c.calldata.data(), c.calldata.size(), &plan))
+      continue;
+    for (size_t i = 0; i < plan.n; i++)
+      v4 = v4 || plan.steps[i].kind == UR_V4_SWAP_EXACT_IN;
+    if (v4 && plan.n == 1 && (plan.n_hooks > 0) == hooked &&
+        ur_summarize(&plan, router.data(), c.value.data(), &want)) {
+      call = &c;
+      break;
+    }
+  }
+  ASSERT_NE(call, nullptr);
+  const std::vector<uint8_t>& data = call->calldata;
+  std::vector<UrToken> tokens;
+  if (!want.in_is_eth) tokens.push_back({hex_of(want.token_in, 20), "TOKA", 6});
+  if (!want.out_is_eth)
+    tokens.push_back({hex_of(want.token_out, 20), "TOKB", 18});
+  auto e = envelope(
+      mint_cert(8453, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+      sign_body(build_decoder_body(router, 8453, tokens)));
+  ASSERT_EQ(METADATA_VERIFIED, signed_metadata_process(e.data(), e.size(),
+                                                       METADATA_KEYID_DELEGATE));
+  EthereumSignTx msg;
+  std::vector<uint8_t> first(data.begin(), data.begin() + 1024);
+  make_ur_msg(&msg, router, first);
+  msg.data_length = (uint32_t)data.size();
+  msg.value.size = 32;
+  memcpy(msg.value.bytes, call->value.data(), 32);
+  ASSERT_FALSE(signed_metadata_matches_tx(&msg));
+  ASSERT_TRUE(signed_metadata_ur_pending());
+  size_t at = 1024;
+  while (data.size() - at > 200) {
+    ASSERT_TRUE(signed_metadata_ur_feed(data.data() + at, 200)) << call->tx;
+    at += 200;
+  }
+  ASSERT_TRUE(signed_metadata_ur_feed(data.data() + at,
+                                      (uint32_t)(data.size() - at)))
+      << call->tx;
+  EXPECT_FALSE(signed_metadata_ur_pending());
+  const SignedMetadata* md = signed_metadata_get();
+  EXPECT_EQ(0, memcmp(&md->ur, &want, sizeof(want))) << call->tx;
+  ASSERT_TRUE(signed_metadata_build_ur_review(md, "Test Delegate", "A9531B9D",
+                                              collect_shown, got));
+  printf("%s (%zu B, %s):\n", call->tx.c_str(), data.size(),
+         hooked ? "hooked pool" : "plain pool");
+  for (const auto& s : *got)
+    printf("  [%s] %s\n", s.title.c_str(), s.body.c_str());
+}
+}  // namespace
+
+TEST_F(CertifiedMetadataTest, UniswapV4SwapIsReviewedFromItsChunks) {
+  std::vector<Shown> got;
+  review_v4_call(false, &got);
+  ASSERT_FALSE(got.empty());
+  EXPECT_EQ(got[0].title, "Uniswap");
+  for (const auto& s : got) EXPECT_EQ(s.title.find("Pool hook"), std::string::npos);
+}
+
+TEST_F(CertifiedMetadataTest, UniswapV4HookIsShown) {
+  std::vector<Shown> got;
+  review_v4_call(true, &got);
+  size_t hooks = 0;
+  for (const auto& s : got) hooks += s.title == "Pool hook";
+  EXPECT_EQ(hooks, 1u);
 }
 
 /* The 2026-10-03 root ceremony (Base, Arbitrum): the device's own verifier,
