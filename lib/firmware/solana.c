@@ -139,17 +139,18 @@ static void copy_account(uint8_t out[SOL_PUBKEY_SIZE], const SolanaParsedTx* tx,
   }
 }
 
-/* allow_external_indices: versioned (v0) messages may reference accounts
- * loaded from address lookup tables — indices at or beyond the static
- * account list. Those accounts are not present in the message, so an
- * instruction touching them cannot be verified on-device: it is left
- * SOL_INSTR_UNKNOWN and the whole tx is forced opaque instead of being
- * rejected as malformed. Legacy messages must never contain such indices. */
+/* allow_external_indices: v0 lookup-table accounts (index >= num_accounts)
+ * cannot be verified, so they force the tx opaque. Never valid in legacy, nor
+ * once a certified parse has appended the attested lookup keys. Program ids
+ * must always be static. *accounts_needed is one past the highest account
+ * operand index, so the caller can bound it once the loaded-account count is
+ * known. */
 static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
                                      size_t* pos_io, SolanaParsedTx* tx,
                                      uint16_t num_accounts, bool* has_unknown,
                                      bool* force_opaque,
-                                     bool allow_external_indices) {
+                                     bool allow_external_indices,
+                                     uint16_t* accounts_needed) {
   size_t pos = *pos_io;
   uint16_t num_instructions;
   int n = read_compact_u16(raw + pos, raw_len - pos, &num_instructions);
@@ -167,15 +168,13 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
 
   bool seen_compute_limit = false;
   bool seen_compute_price = false;
+  *accounts_needed = 0;
 
   for (uint16_t i = 0; i < num_instructions; i++) {
     if (pos >= raw_len) return -1;
     uint8_t program_idx = raw[pos++];
+    if (program_idx >= tx->num_static_accounts) return -1;
     bool external = false;
-    if (program_idx >= num_accounts) {
-      if (!allow_external_indices) return -1;
-      external = true;
-    }
 
     uint16_t num_acct_indices;
     n = read_compact_u16(raw + pos, raw_len - pos, &num_acct_indices);
@@ -187,6 +186,8 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
     pos += num_acct_indices;
 
     for (uint16_t j = 0; j < num_acct_indices; j++) {
+      if (acct_indices[j] >= *accounts_needed)
+        *accounts_needed = (uint16_t)acct_indices[j] + 1;
       if (acct_indices[j] >= num_accounts) {
         if (!allow_external_indices) return -1;
         external = true;
@@ -230,6 +231,41 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
     memcpy(pi->program_id, tx->accounts[program_idx], SOL_PUBKEY_SIZE);
 
     /* Classify and decode */
+    /* Every fixed-layout decoder below matches its data length EXACTLY, never
+     * `>=`.
+     *
+     * A `>=` gate decodes the prefix it understands and lets the rest through:
+     * solana_signTx() signs the whole raw_tx, so trailing bytes on a recognised
+     * instruction were covered by the signature, shown on no screen, and -- the
+     * part that matters -- did NOT set *has_unknown, so the transaction was
+     * never classified opaque and never met the blind-sign gate. The runtime
+     * ignoring those bytes (SPL's unpack reads its fields and drops the tail)
+     * is what makes them attractive rather than harmless: free to append, and
+     * the device vouches for them.
+     *
+     * So the rule is: decode only an encoding this device can account for
+     * byte-for-byte. Anything else is UNKNOWN, which is not a refusal -- it
+     * routes to the opaque path, where the user is told the contents cannot be
+     * verified. An encoder that pads therefore loses clear-signing, not the
+     * ability to sign.
+     *
+     * Each gate is the exact number of bytes that decoder reads and can account
+     * for. Three of them are not merely the old bound tightened, so they are
+     * worth naming:
+     *
+     *   System CreateAccount is 52 (u32 tag + u64 lamports + u64 space +
+     *   Pubkey owner). This code accepted 12 while reading only lamports, so
+     *   the space and owner it never looked at were signed unseen.
+     *
+     *   SPL SetAuthority is 3 or 35, and which one is fixed by its COption
+     *   discriminant: a `Some` with no key, or a `None` carrying 32 bytes, is
+     *   not an encoding this device can claim to have read.
+     *
+     *   Stake Authorize is 40. The old `>= 36` let read_le32(instr_data + 36)
+     *   run off the end of a 36..39-byte field and report whatever followed it
+     *   in the buffer as the authorization type.
+     *
+     * The ATA branch below already worked this way. */
     if (memcmp(pi->program_id, SOL_SYSTEM_PROGRAM, SOL_PUBKEY_SIZE) == 0) {
       /* System program */
       if (data_len >= 4) {
@@ -309,26 +345,13 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
-          /* Unchecked Transfer carries no signed mint, so the device cannot
-           * prove which token is moving — a host can pick any signer-controlled
-           * account. Force the AdvancedMode blind-sign gate; only the *Checked
-           * variant (mint signed + displayed) clear-signs. */
+          /* Unchecked Transfer carries no signed mint or decimals. The device
+           * cannot identify what asset the amount moves. */
           *force_opaque = true;
         } else if (token_instr == SOL_TOKEN_TRANSFER_CHECKED_IX &&
                    data_len == 10 && num_acct_indices >= 4) {
-          /* Canonical TransferChecked ONLY: opcode + amount(8) + decimals(1)
-           * and all four accounts [source, mint, dest, authority]. A 9-byte
-           * encoding (no decimals) or a short account list would otherwise
-           * classify VERIFIED while skipping the mint screen and showing a
-           * zeroed destination — such non-canonical shapes fall through to
-           * UNKNOWN and force the whole tx opaque.
-           *
-           * This is the strict form of the 7.14.2 rule that a TransferChecked
-           * shorter than 10 bytes must not classify as checked: the decimals
-           * byte is the only authoritative scale for the transfer, so a
-           * missing one may never be fabricated as 0. It additionally rejects
-           * data_len > 10 and short account lists, which 7.14.2 still let
-           * through. */
+          /* Canonical data only: opcode + amount(8) + decimals(1). Accounts
+           * [source, mint, dest, authority], then any multisig signers. */
           pi->type = SOL_INSTR_TOKEN_TRANSFER_CHECKED;
           pi->amount = read_le64(instr_data + 1);
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
@@ -338,9 +361,10 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 3);
           /* Decimals live in the signed instruction bytes and are the only
            * authoritative scale for this transfer, so they must never be
-           * fabricated. The data_len == 10 guard above is what makes this read
-           * unconditional and in-bounds; a short encoding falls through to
-           * SOL_INSTR_UNKNOWN and the transaction is treated as opaque. */
+           * fabricated. A real TransferChecked data field is exactly 10 bytes
+           * (tag + u64 amount + decimals); anything else -- short OR long --
+           * falls through to SOL_INSTR_UNKNOWN and the transaction is treated
+           * as opaque. */
           pi->extra_u8 = instr_data[9];
           /* Token-2022 checked transfers may carry an undisclosed transfer hook
            * / fee — do not clear-sign them. */
@@ -354,8 +378,7 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->to, tx, acct_indices, num_acct_indices, 1);
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
-          /* Unchecked Approve hides the mint (which token is being delegated),
-           * same as unchecked Transfer — require AdvancedMode. */
+          /* Unchecked Approve likewise carries no mint. */
           *force_opaque = true;
         } else if (token_instr == SOL_TOKEN_REVOKE_IX && data_len == 1 &&
                    num_acct_indices >= 2) {
@@ -373,11 +396,8 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           if (instr_data[2] == 1) {
             memcpy(pi->extra, instr_data + 3, SOL_PUBKEY_SIZE);
           }
-          /* Authority handover (owner/close/mint/freeze) is an account-takeover
-           * vector, and the "set to None" (clear) case is not distinguished
-           * from an all-zero authority in the parsed struct. Require
-           * AdvancedMode until a full screen (authority type + target +
-           * new/None) exists. */
+          /* The authority role, target and permanent None revocation require a
+           * dedicated complete UX. Until then this is opaque-only. */
           *force_opaque = true;
         } else if (((token_instr == SOL_TOKEN_MINT_TO_IX && data_len == 9) ||
                     (token_instr == SOL_TOKEN_MINT_TO_CHECKED_IX &&
@@ -405,6 +425,7 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
           pi->has_token_decimals = token_instr == SOL_TOKEN_BURN_CHECKED_IX;
           if (pi->has_token_decimals) pi->extra_u8 = instr_data[9];
+          /* As with minting: the authority and opcode are not fully shown. */
           *force_opaque = true;
         } else if (token_instr == SOL_TOKEN_CLOSE_ACCOUNT_IX && data_len == 1 &&
                    num_acct_indices >= 3) {
@@ -617,6 +638,16 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
 /*  Transaction parser                                                 */
 /* ------------------------------------------------------------------ */
 
+/* Solana's message sanitize rules for the header: a writable signer (the fee
+ * payer) exists, and the signer and read-only unsigned ranges fit inside the
+ * static keys without overlapping. Checked before any review classification,
+ * since even an opaque message is signable under AdvancedMode. */
+static bool solana_header_ok(const SolanaParsedTx* tx, uint16_t num_accounts) {
+  return tx->num_readonly_signed < tx->num_required_sigs &&
+         (uint16_t)tx->num_required_sigs + tx->num_readonly_unsigned <=
+             num_accounts;
+}
+
 static SolanaTxReview solana_parseLegacyTx(const uint8_t* raw, size_t raw_len,
                                            SolanaParsedTx* tx) {
   memset(tx, 0, sizeof(*tx));
@@ -635,19 +666,14 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t* raw, size_t raw_len,
   int n = read_compact_u16(raw + pos, raw_len - pos, &num_accounts);
   if (n < 0) return SOL_TX_REVIEW_MALFORMED;
   pos += n;
+  if (!solana_header_ok(tx, num_accounts)) return SOL_TX_REVIEW_MALFORMED;
 
-  /* Auditor-caught defect in an earlier version of this fix: storing a
-     truncated (uint8_t)num_accounts here and returning OPAQUE let
-     solana_signerInTx()'s `i < tx->num_accounts` loop bound exceed the real
-     32-entry tx->accounts[] array (33..255 accounts: genuine OOB read past
-     accounts[31]; 256, 512, ...: wraps to 0, silently reintroducing the
-     original signer-check skip). tx->accounts[] is never populated for this
-     path either way (the account-reading loop below is never reached), so
-     there is no safe count to record short of parsing a bounded signer
-     prefix. Fail closed instead: MALFORMED refuses unconditionally (see the
-     `else` branch in fsm_msgSolanaSignTx), rather than degrading into an
-     OPAQUE blind-sign path with unverifiable signer identity. */
-  if (num_accounts > SOL_MAX_ACCOUNTS) return SOL_TX_REVIEW_MALFORMED;
+  /* More accounts than the parser holds: nothing here can be reviewed, so the
+     message is opaque (blind sign behind AdvancedMode), as on 7.15. Return
+     before recording a count: tx->num_accounts stays 0, so the signer check's
+     loop over tx->accounts[] has nothing to walk. Storing a truncated
+     (uint8_t) count here once let that loop run past accounts[31]. */
+  if (num_accounts > SOL_MAX_ACCOUNTS) return SOL_TX_REVIEW_OPAQUE;
   tx->num_accounts = (uint8_t)num_accounts;
   tx->num_static_accounts = (uint8_t)num_accounts;
 
@@ -663,9 +689,10 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t* raw, size_t raw_len,
   memcpy(tx->recent_blockhash, raw + pos, SOL_PUBKEY_SIZE);
   pos += SOL_PUBKEY_SIZE;
 
-  n = parse_instruction_section(raw, raw_len, &pos, tx, num_accounts,
-                                &has_unknown, &force_opaque,
-                                /*allow_external_indices=*/false);
+  uint16_t accounts_needed;
+  n = parse_instruction_section(
+      raw, raw_len, &pos, tx, num_accounts, &has_unknown, &force_opaque,
+      /*allow_external_indices=*/false, &accounts_needed);
   if (n < 0) return SOL_TX_REVIEW_MALFORMED;
 
   /* Reject if there are unconsumed bytes — prevents hidden trailing data */
@@ -700,20 +727,15 @@ static SolanaTxReview solana_parseVersionedTx(
   int n = read_compact_u16(raw + pos, raw_len - pos, &num_accounts);
   if (n < 0) return SOL_TX_REVIEW_MALFORMED;
   pos += n;
+  if (!solana_header_ok(tx, num_accounts)) return SOL_TX_REVIEW_MALFORMED;
 
-  /* Auditor-caught defect in an earlier version of this fix: storing a
-     truncated (uint8_t)num_accounts here and returning OPAQUE let
-     solana_signerInTx()'s `i < tx->num_accounts` loop bound exceed the real
-     32-entry tx->accounts[] array (33..255 accounts: genuine OOB read past
-     accounts[31]; 256, 512, ...: wraps to 0, silently reintroducing the
-     original signer-check skip). tx->accounts[] is never populated for this
-     path either way (the account-reading loop below is never reached), so
-     there is no safe count to record short of parsing a bounded signer
-     prefix. Fail closed instead: MALFORMED refuses unconditionally (see the
-     `else` branch in fsm_msgSolanaSignTx), rather than degrading into an
-     OPAQUE blind-sign path with unverifiable signer identity. */
-  if (num_accounts > SOL_MAX_ACCOUNTS ||
-      trusted_lut_count > SOL_MAX_LUT_ACCOUNTS ||
+  /* More accounts than the parser holds: nothing here can be reviewed, so the
+     message is opaque (blind sign behind AdvancedMode), as on 7.15. Return
+     before recording a count: tx->num_accounts stays 0, so the signer check's
+     loop over tx->accounts[] has nothing to walk. Storing a truncated
+     (uint8_t) count here once let that loop run past accounts[31]. */
+  if (num_accounts > SOL_MAX_ACCOUNTS) return SOL_TX_REVIEW_OPAQUE;
+  if (trusted_lut_count > SOL_MAX_LUT_ACCOUNTS ||
       num_accounts + trusted_lut_count > SOL_MAX_ACCOUNTS) {
     return SOL_TX_REVIEW_MALFORMED;
   }
@@ -737,10 +759,11 @@ static SolanaTxReview solana_parseVersionedTx(
   memcpy(tx->recent_blockhash, raw + pos, SOL_PUBKEY_SIZE);
   pos += SOL_PUBKEY_SIZE;
 
-  n = parse_instruction_section(raw, raw_len, &pos, tx,
-                                num_accounts + trusted_lut_count, &has_unknown,
-                                &force_opaque,
-                                /*allow_external_indices=*/!has_trusted_lut);
+  uint16_t accounts_needed;
+  n = parse_instruction_section(
+      raw, raw_len, &pos, tx, num_accounts + trusted_lut_count, &has_unknown,
+      &force_opaque, /*allow_external_indices=*/!has_trusted_lut,
+      &accounts_needed);
   if (n < 0) return SOL_TX_REVIEW_MALFORMED;
 
   uint16_t lookup_table_count;
@@ -753,6 +776,7 @@ static SolanaTxReview solana_parseVersionedTx(
      * Even if current instructions appear to use only static accounts, an ALT
      * section requires chain state that this firmware does not resolve. */
     force_opaque = true;
+    tx->has_lookup_tables = true;
   }
 
   size_t serialized_lut_count = 0;
@@ -774,12 +798,18 @@ static SolanaTxReview solana_parseVersionedTx(
     if (pos + readonly_count > raw_len) return SOL_TX_REVIEW_MALFORMED;
     pos += readonly_count;
     serialized_lut_count += readonly_count;
-    if (serialized_lut_count > SOL_MAX_LUT_ACCOUNTS) {
-      return has_trusted_lut ? SOL_TX_REVIEW_MALFORMED : SOL_TX_REVIEW_OPAQUE;
+    tx->num_loaded_accounts += (uint32_t)writable_count + readonly_count;
+    /* A certified resolver names at most SOL_MAX_LUT_ACCOUNTS keys. Without
+     * one the message is opaque either way, and is still walked to its end. */
+    if (has_trusted_lut && serialized_lut_count > SOL_MAX_LUT_ACCOUNTS) {
+      return SOL_TX_REVIEW_MALFORMED;
     }
   }
 
   if (pos != raw_len) return SOL_TX_REVIEW_MALFORMED;
+  /* An operand past the static plus loaded accounts does not exist. */
+  if (accounts_needed > num_accounts + serialized_lut_count)
+    return SOL_TX_REVIEW_MALFORMED;
 
   /* The signed message commits to every lookup index but not to the account
    * stored at that index. A certified resolver supplies exactly one key per
@@ -817,7 +847,7 @@ static void solana_message_slice(const uint8_t* raw, size_t raw_len,
 
 SolanaTxReview solana_inspectTx(const uint8_t* raw, size_t raw_len,
                                 SolanaParsedTx* tx) {
-  if (raw_len == 0) {
+  if (!raw || raw_len == 0) {
     memset(tx, 0, sizeof(*tx));
     return SOL_TX_REVIEW_MALFORMED;
   }
@@ -826,9 +856,9 @@ SolanaTxReview solana_inspectTx(const uint8_t* raw, size_t raw_len,
   size_t msg_len;
   solana_message_slice(raw, raw_len, &msg, &msg_len);
 
-  /* Versioned Solana messages set the top bit in byte 0.
-   * Parse them structurally so malformed v0/ALT payloads fail closed,
-   * but keep the result opaque until the firmware can verify semantics. */
+  /* Versioned Solana messages set the top bit in byte 0. Malformed v0/ALT
+   * payloads fail closed; a v0 message with no lookup tables verifies like
+   * legacy, and a lookup table or any later version keeps it opaque. */
   if (msg[0] & SOL_VERSION_FLAG) {
     return solana_parseVersionedTx(msg, msg_len, NULL, 0, tx);
   }
@@ -1176,6 +1206,9 @@ static bool schema_applies(const SolanaInstrSchema* schema,
                            const SolanaParsedTx* tx, bool certified,
                            uint8_t* out_index) {
   if (!schema || !tx || !out_index) return false;
+  /* An address-table section no certified proof resolved: no schema path,
+   * even when no instruction names a loaded account. */
+  if (tx->has_lookup_tables) return false;
 
   bool found = false;
   uint8_t match = 0;
@@ -1286,6 +1319,26 @@ bool solana_parseTx(const uint8_t* raw, size_t raw_len, SolanaParsedTx* tx) {
 /*  Formatting                                                         */
 /* ------------------------------------------------------------------ */
 
+/* The runtime requests 200,000 CUs per non-builtin instruction and, under
+ * SIMD-0170, 3,000 per builtin; ComputeBudget instructions are builtins and
+ * were free before it. Counting every non-ComputeBudget instruction at 200,000
+ * and every ComputeBudget one at 3,000 is >= the request under either rule (a
+ * builtin counted at 200,000 only widens the margin), so the fee shown stays
+ * an upper bound without quoting the 1.4M cap the transaction cannot reach.
+ * num_instructions is a uint8_t, so this cannot overflow. */
+uint64_t solana_defaultComputeUnitLimit(const SolanaParsedTx* tx) {
+  uint64_t limit = 0;
+  for (uint8_t i = 0; i < tx->num_instructions; i++) {
+    const SolanaInstrType t = tx->instructions[i].type;
+    const bool budget = t == SOL_INSTR_COMPUTE_BUDGET_HEAP_FRAME ||
+                        t == SOL_INSTR_COMPUTE_BUDGET_UNIT_LIMIT ||
+                        t == SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE ||
+                        t == SOL_INSTR_COMPUTE_BUDGET_LOADED_ACCOUNTS_SIZE;
+    limit += budget ? 3000u : 200000u;
+  }
+  return limit;
+}
+
 bool solana_priority_fee_lamports(uint64_t price, uint64_t limit,
                                   uint64_t* out) {
   /* ceil(price * limit / 1e6) with no overflow and no silent wrap. price/limit
@@ -1293,6 +1346,7 @@ bool solana_priority_fee_lamports(uint64_t price, uint64_t limit,
    * u64. Split price = q*D + r and accumulate so every step is checked; return
    * false (do NOT saturate) if the true lamport value exceeds UINT64_MAX. */
   const uint64_t D = 1000000u;
+  if (limit > SOL_MAX_COMPUTE_UNITS) limit = SOL_MAX_COMPUTE_UNITS;
   uint64_t q = price / D;
   uint64_t r = price % D;
   if (limit != 0 && r > UINT64_MAX / limit) {
@@ -1725,6 +1779,11 @@ static bool solana_lut_accounts_preimage(const uint8_t* raw_tx, size_t raw_len,
 
   *blob_len = n;
   return true;
+}
+
+bool solana_lut_attestation_complete(const SolanaParsedTx* tx,
+                                     size_t attested) {
+  return tx && attested > 0 && attested == tx->num_loaded_accounts;
 }
 
 bool solana_lut_accounts_trusted(const uint8_t* raw_tx, size_t raw_len,

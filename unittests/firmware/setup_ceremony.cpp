@@ -29,11 +29,17 @@
 extern "C" {
 #include "keepkey/board/keepkey_board.h"
 #include "keepkey/firmware/fsm.h"
+#include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/recovery_cipher.h"
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/storage.h"
 #include "trezor/crypto/bip39.h"
 }
+
+void kk_test_board_init(void);  // test_board.cpp
+// Firmware's dispatch hook (fsm.c); the board header that declares it in some
+// releases is not part of this test's contract.
+extern "C" bool keepkey_before_message_dispatch(MessageType msg_id);
 
 namespace {
 
@@ -197,10 +203,81 @@ TEST_F(SetupCeremony, AbortWipesBip39MnemonicAndRecoveryFragments) {
   EXPECT_FALSE(setup_isArmed());
 }
 
+// A continuation ACK for a workflow that is not running never reaches its
+// handler, whose kind check or home redraw would end or hide whichever
+// ceremony is armed.
+TEST_F(SetupCeremony, StrayAcksLeaveTheArmedCeremonyAlone) {
+  kk_test_board_init();  // recovery_cipher_redraw() draws on the canvas
+  const MessageType kStray[] = {
+      MessageType_MessageType_TxAck,
+      MessageType_MessageType_EntropyAck,
+      MessageType_MessageType_CharacterAck,
+#if !BITCOIN_ONLY
+      MessageType_MessageType_EthereumTxAck,
+      MessageType_MessageType_CosmosMsgAck,
+      MessageType_MessageType_OsmosisMsgAck,
+      MessageType_MessageType_BinanceTransferMsg,
+      MessageType_MessageType_EosTxActionAck,
+      MessageType_MessageType_ThorchainMsgAck,
+      MessageType_MessageType_MayachainMsgAck,
+#endif
+  };
+  const SetupKind kKinds[] = {SETUP_RECOVERY, SETUP_RESET};
+
+  for (SetupKind kind : kKinds) {
+    for (MessageType id : kStray) {
+      SCOPED_TRACE(::testing::Message() << "kind " << kind << ", id " << id);
+      if ((kind == SETUP_RESET && id == MessageType_MessageType_EntropyAck) ||
+          (kind == SETUP_RECOVERY &&
+           id == MessageType_MessageType_CharacterAck)) {
+        continue;  // the armed ceremony's own continuation
+      }
+      ASSERT_TRUE(setup_stage(false, "english", "armed", 0, 0, false));
+      setup_arm(kind);
+      EXPECT_FALSE(keepkey_before_message_dispatch(id))
+          << "an inactive ACK must not reach its handler";
+      EXPECT_TRUE(setup_isArmedAs(kind));
+      setup_abort();
+    }
+  }
+}
+
+// A signing request ends the ceremony, and its handler may refuse without
+// drawing (an uninitialized device), so the gate itself must take the dead
+// ceremony's screen down.
+TEST_F(SetupCeremony, SigningRequestEndsTheCeremonyAndItsScreen) {
+  kk_test_board_init();
+  reset_idle_time();  // the gate also locks an idle session
+  const MessageType kSigners[] = {
+      MessageType_MessageType_SignTx,
+      MessageType_MessageType_SignMessage,
+      MessageType_MessageType_CipherKeyValue,
+  };
+  for (MessageType id : kSigners) {
+    SCOPED_TRACE(::testing::Message() << "id " << id);
+    ASSERT_TRUE(setup_stage(false, "english", "armed", 0, 0, false));
+    setup_arm(SETUP_RECOVERY);
+    leave_home();  // as drawing the cipher does
+    ASSERT_EQ(AWAY_FROM_HOME, home_get_state());
+
+    EXPECT_TRUE(keepkey_before_message_dispatch(id));
+    EXPECT_FALSE(setup_isArmed());
+    EXPECT_EQ(AT_HOME, home_get_state());
+  }
+
+  // With nothing armed the gate leaves the screen to the handler.
+  leave_home();
+  EXPECT_TRUE(keepkey_before_message_dispatch(MessageType_MessageType_SignTx));
+  EXPECT_EQ(AWAY_FROM_HOME, home_get_state());
+  layoutHomeForced();
+}
+
 TEST_F(SetupCeremony, InvalidRecoveryWordCountDisarmsCeremony) {
   ASSERT_TRUE(setup_stage(false, "english", "recovery", 0, 0, false));
   setup_arm(SETUP_RECOVERY);
   ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+  recovery_cipher_test_set_word_fragments();
+  ASSERT_FALSE(recovery_cipher_test_word_fragments_are_zero());
 
   recovery_cipher_finalize();
 

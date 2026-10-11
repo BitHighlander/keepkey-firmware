@@ -5,8 +5,11 @@ services:
     build:
       context: '../../'
       dockerfile: 'scripts/emulator/Dockerfile'
+      # CI passes the base image it resolved (GHCR mirror, else Docker Hub);
+      # unset, the Dockerfile's digest-pinned default applies.
       args:
-        coinsupport: ${COINSUPPORT:-}
+        - coinsupport=${COINSUPPORT:-}
+        - BASE_IMAGE
     networks:
       - local-net
     ports:
@@ -27,13 +30,17 @@ services:
       retries: 40
       start_period: 3s
   python-keepkey:
-    # Named so CI can build it once (`docker compose build python-keepkey`)
-    # and then `up` without --build, which would otherwise also force a
-    # rebuild of kkemu — the expensive one.
+    # Named so CI can build every service once (`docker compose build`) and
+    # then `up` without --build, which would otherwise rebuild kkemu — the
+    # expensive one.
     image: kktech/kkemu-tests:latest
     build:
       context: '../../'
       dockerfile: 'scripts/emulator/python-keepkey.Dockerfile'
+      # CI passes the base image it resolved (GHCR mirror, else Docker Hub);
+      # unset, the Dockerfile's digest-pinned default applies.
+      args:
+        - BASE_IMAGE
     volumes:
       - test-reports:/kkemu/test-reports:rw
       # firmware-unit publishes the exact binary for this product variant.
@@ -42,9 +49,7 @@ services:
       # cannot prove upgrade preservation.
       - emulator-bin:/kkemu-emulator-bin:ro
     environment:
-      # Staged-capability ledger, shared with the report validator through the
-      # workflow-level env in ci.yml.
-      KK_RELEASE_MISSING_CAPABILITIES: ${KK_RELEASE_MISSING_CAPABILITIES:-}
+      KK_CI_REHEARSAL: ${KK_CI_REHEARSAL:-}
       # full | bitcoin-only, declared by the caller; the test script refuses
       # to run without it rather than inferring it from the device. The report
       # gate reads the same variable, so the product CI intended to build is
@@ -59,14 +64,17 @@ services:
       firmware-unit:
         condition: service_completed_successfully
   firmware-unit:
-    # Local-dev convenience only — CI runs `make xunit` directly against the
-    # image it just built, rather than paying for a second compose build.
+    # CI's python-integration job runs this service for the native unit
+    # reports and to publish the emulator binary the storage tests restart.
     image: kktech/kkemu:latest
     build:
       context: '../../'
       dockerfile: 'scripts/emulator/Dockerfile'
+      # CI passes the base image it resolved (GHCR mirror, else Docker Hub);
+      # unset, the Dockerfile's digest-pinned default applies.
       args:
-        coinsupport: ${COINSUPPORT:-}
+        - coinsupport=${COINSUPPORT:-}
+        - BASE_IMAGE
     volumes:
       - test-reports:/kkemu/test-reports:rw
       - emulator-bin:/kkemu-emulator-bin:rw

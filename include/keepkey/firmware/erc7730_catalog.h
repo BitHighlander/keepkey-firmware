@@ -14,6 +14,27 @@
 #define ERC7730_CATALOG_MAX_PROOF_DEPTH 16u
 #define ERC7730_PROGRAM_HEADER_SIZE 179u
 #define ERC7730_PROGRAM_MAX_SECTIONS 9u
+/* Delegate certificate record (139 bytes, the ClearSign certificate of
+ * clearsign_root.h). Two tiers, tried in this order:
+ *
+ * METADATA_TIER_KEEPKEY (root-certified): clearsign_root_verify_cert() accepts
+ * the whole record under the compiled-in root, it carries MAY_SUPPRESS_RAW,
+ * its scope equals the header chain id, and the envelope signature verifies
+ * under its delegate pubkey. The alias shown is the certificate's.
+ *
+ * METADATA_TIER_RUNTIME, otherwise, where the record is authenticated only as:
+ *   [0]        version, must be 1 (checked, not signed);
+ *   [2..5]     scope, must equal the header chain id (checked, not signed);
+ *   [10..41]   alias, format-checked only; the alias shown to the user is the
+ *              one the user approved when loading the runtime signer;
+ *   [42..74]   delegate pubkey. It must equal a runtime signer the user
+ *              loaded, and the envelope signature must verify under it.
+ * and bytes 1, 6..9 and 75..138 are ignored.
+ *
+ * Both tiers require AdvancedMode, and neither changes the raw-data review:
+ * the tier selects only the provenance screen. The envelope signature covers
+ * only the purpose tag and the Merkle root, which commits to the program; it
+ * does not cover any certificate byte. */
 #define ERC7730_DELEGATE_RECORD_LEN 139u
 #define ERC7730_DELEGATE_ALIAS_LEN 32u
 #define ERC7730_DELEGATE_PUBKEY_LEN 33u
@@ -37,28 +58,6 @@
  * is 0 because the reference compiler (python-keepkey erc7730_compiler)
  * emits issuance epoch 0 by default. */
 #define ERC7730_MIN_ISSUANCE_EPOCH 0u
-
-/* Delegate certificate record (139 bytes, the ClearSign certificate of
- * clearsign_root.h). Two tiers, tried in this order:
- *
- * METADATA_TIER_KEEPKEY (root-certified): clearsign_root_verify_cert() accepts
- * the whole record under the compiled-in root, it carries MAY_SUPPRESS_RAW,
- * its scope equals the header chain id, and the envelope signature verifies
- * under its delegate pubkey. The alias shown is the certificate's.
- *
- * METADATA_TIER_RUNTIME, otherwise, where the record is authenticated only as:
- *   [0]        version, must be 1 (checked, not signed);
- *   [2..5]     scope, must equal the header chain id (checked, not signed);
- *   [10..41]   alias, format-checked only; the alias shown to the user is the
- *              one the user approved when loading the runtime signer;
- *   [42..74]   delegate pubkey. It must equal a runtime signer the user
- *              loaded, and the envelope signature must verify under it.
- * and bytes 1, 6..9 and 75..138 are ignored.
- *
- * Both tiers require AdvancedMode, and neither changes the raw-data review:
- * the tier selects only the provenance screen. The envelope signature covers
- * only the purpose tag and the Merkle root, which commits to the program; it
- * does not cover any certificate byte. */
 
 typedef enum {
   ERC7730_DEFINITION_CALLDATA = 1,

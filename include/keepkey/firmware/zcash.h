@@ -53,6 +53,7 @@ typedef struct {
   size_t transparent_digest_size;
   bool has_sapling_digest;
   size_t sapling_digest_size;
+  const uint8_t* sapling_digest;
   bool has_orchard_digest;
   size_t orchard_digest_size;
   bool is_ironwood;
@@ -96,14 +97,10 @@ typedef struct {
 #define ZCASH_ORCHARD_RAW_RECEIVER_SIZE 43
 #define ZCASH_ORCHARD_UNIFIED_ADDRESS_SIZE 128
 
-/**
- * Validate the clear-signing metadata required before Orchard signatures.
- *
- * This rejects the legacy flow where the host supplied only a per-action
- * sighash. The firmware must assemble the ZIP-244 sighash from transaction
- * component digests and verify the Orchard digest against streamed action data
- * before returning signatures.
- */
+/* Validates the initial ZcashSignPCZT metadata: digest presence and sizes,
+ * header fields, transparent and Orchard metadata, and an empty Sapling
+ * component. Per-action sighashes are refused later, in
+ * fsm_msgZcashPCZTAction(). */
 ZcashPCZTSigningRequestStatus zcash_pczt_signing_request_status(
     const ZcashPCZTSigningRequestMeta* meta);
 
@@ -165,6 +162,27 @@ bool zcash_compute_v6_shielded_sighash(const uint8_t header_digest[32],
                                        uint32_t branch_id,
                                        uint8_t sighash_out[32]);
 
+/* Only v5 (ZIP-225) and v6 pairs; digest selection keys off version, so any
+ * other pair must be refused before confirmation. */
+bool zcash_tx_version_supported(uint32_t version, uint32_t version_group_id);
+
+/* Orchard v6 binds the empty Ironwood digest; a host digest is accepted only
+ * if it equals that, else the device would sign a different sighash. */
+bool zcash_v6_orchard_ironwood_digest_valid(bool present, size_t size,
+                                            const uint8_t* digest);
+
+/* ZIP 320 mainnet TEX address: bech32m, HRP "tex", over a P2PKH key hash.
+ * out_size must be at least 43. */
+bool zcash_tex_address(const uint8_t hash160[20], char* out, size_t out_size);
+
+/* True when script has the P2PKH shape (OP_DUP OP_HASH160 <20> ...). */
+bool zcash_script_is_p2pkh(const uint8_t* script, size_t script_size);
+
+/* True when script is P2PKH paying HASH160(public_key). */
+bool zcash_p2pkh_script_matches_pubkey(const uint8_t* script,
+                                       size_t script_size,
+                                       const uint8_t public_key[33]);
+
 /**
  * Compute ZIP-244 T.1 header_digest from plaintext transaction header fields.
  */
@@ -188,7 +206,7 @@ bool zcash_compute_transparent_digest(
  * Compute ZIP-244 §4.9 transparent_sig_digest for Orchard spend authorization.
  *
  * Uses the S.2 form with EMPTY txin_sig_digest when n_inputs > 0 (shield txs),
- * or falls back to T.1 when n_inputs == 0 (deshield / private-send). This is
+ * or falls back to T.2 when n_inputs == 0 (deshield / private-send). This is
  * what the Zcash consensus node uses to verify Orchard spend auth sigs and the
  * binding signature in a hybrid (transparent + Orchard) transaction.
  */
@@ -217,6 +235,23 @@ bool zcash_compute_transparent_sighash_digest(
 bool zcash_orchard_receiver_to_unified_address(
     const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], const char* hrp,
     char* address_out, size_t address_out_len);
+
+/* Longest ZIP 374 user_address accepted (ZcashPCZTAction.user_address). */
+#define ZCASH_USER_ADDRESS_MAX_LEN 255
+
+typedef enum {
+  ZCASH_USER_ADDRESS_MATCH = 0,
+  ZCASH_USER_ADDRESS_INVALID,     /* not a well-formed ZIP 316 address */
+  ZCASH_USER_ADDRESS_NOT_MAINNET, /* a testnet Unified Address */
+  ZCASH_USER_ADDRESS_UNSUPPORTED, /* MUST-understand metadata, e.g. expiry */
+  ZCASH_USER_ADDRESS_MISMATCH,    /* no Orchard receiver equal to recipient */
+} ZcashUserAddressCheck;
+
+/* ZIP 374: confirm that the mainnet Unified Address the user entered holds
+ * exactly one Orchard receiver and that it equals recipient. */
+ZcashUserAddressCheck zcash_user_address_check(
+    const char* address,
+    const uint8_t recipient[ZCASH_ORCHARD_RAW_RECEIVER_SIZE]);
 
 /**
  * Recompute an Orchard output note commitment x-coordinate (cmx).
@@ -248,6 +283,27 @@ bool zcash_orchard_compute_cmx_with_progress(
     const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
     const uint8_t rho[32], const uint8_t rseed[32], uint8_t cmx_out[32],
     ZcashOrchardProgressCallback progress, void* progress_context);
+
+#define ZCASH_MEMO_SIZE 512
+
+/* True only if epk = [esk] g_d and enc_ciphertext (compact || memo || tag)
+ * authenticates under the recipient's KDF key and decrypts to exactly this
+ * note (lead byte 0x02, or 0x03 for Ironwood). esk derives from rseed and rho,
+ * so a host cannot pair a valid cmx with a note the recipient cannot read.
+ * The host knows that key too, so authenticating the memo says nothing about
+ * its content: memo_out (may be NULL) receives the plaintext to show. It is
+ * zeroed on failure. */
+bool zcash_orchard_note_ciphertext_valid(
+    const uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE], uint64_t value,
+    const uint8_t rho[32], const uint8_t rseed[32], bool ironwood,
+    const uint8_t epk[32], const uint8_t enc_compact[52],
+    const uint8_t enc_memo[ZCASH_MEMO_SIZE], const uint8_t enc_tag[16],
+    uint8_t memo_out[ZCASH_MEMO_SIZE]);
+
+/* How many leading bytes of a decrypted memo carry content (ZIP 302): 0 for
+ * "no memo" (0xF6 then zeros) and for an all-zero memo, otherwise everything
+ * up to the last non-zero byte. */
+size_t zcash_memo_shown_length(const uint8_t memo[ZCASH_MEMO_SIZE]);
 
 /**
  * Derive an Orchard diversifier from a diversifier key and 88-bit index.
@@ -312,6 +368,18 @@ bool zcash_orchard_derive_transmission_key(const uint8_t ivk[32],
  */
 bool zcash_orchard_derive_ivk(const uint8_t ak[32], const uint8_t nk[32],
                               const uint8_t rivk[32], uint8_t ivk_out[32]);
+
+/* ZIP 32 internal-scope (change) ivk: Commit^ivk(ak, nk, rivk_internal), with
+ * rivk_internal = ToScalar(PRF^expand_rivk([0x83] || ak || nk)). */
+bool zcash_orchard_derive_internal_ivk(const uint8_t ak[32],
+                                       const uint8_t nk[32],
+                                       const uint8_t rivk[32],
+                                       uint8_t ivk_out[32]);
+
+/* True only if receiver = d || [ivk] DiversifyHash(d): the address belongs to
+ * the key ivk, whatever its diversifier. */
+bool zcash_orchard_receiver_matches_ivk(const uint8_t ivk[32],
+                                        const uint8_t receiver[43]);
 
 /**
  * Derive a raw Orchard receiver from external FVK components and index.
@@ -380,6 +448,10 @@ bool zcash_calculate_seed_fingerprint(const uint8_t* seed, uint32_t seed_len,
  */
 bool zcash_seed_fingerprint_request_valid(bool present, size_t size);
 
+/* An Orchard nullifier (rho) is a Pallas base-field element: its 32-byte
+ * little-endian encoding is canonical only below the field modulus. */
+bool zcash_orchard_nullifier_canonical(const uint8_t nullifier[32]);
+
 /* ── Storage-scoped wrappers ───────────────────────────────────────────
  *
  * The two functions below own the seed access. Implementations live in
@@ -427,5 +499,15 @@ bool storage_zcashSeedFingerprint(bool usePassphrase,
  */
 void zcash_signing_abort(void);
 bool zcash_signing_is_active(void);
+
+#if DEBUG_LINK
+/* Signing operations (RedPallas and transparent ECDSA) since the last clear,
+ * so a test can show that nothing is signed before the final gate. */
+uint32_t zcash_test_signOperations(void);
+void zcash_test_clearSignOperations(void);
+/* The empty-bundle digest the handlers use for a component: 0 transparent,
+ * 1 Sapling, 2 Orchard in v5, 3 Orchard in v6, 4 Ironwood. */
+void zcash_test_emptyDigest(int component, uint8_t out[32]);
+#endif
 
 #endif

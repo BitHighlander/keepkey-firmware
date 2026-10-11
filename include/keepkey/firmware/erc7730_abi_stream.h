@@ -9,6 +9,9 @@
 
 #define ERC7730_ABI_STREAM_MAX_PENDING ERC7730_ABI_MAX_ARRAY_ELEMENTS
 #define ERC7730_ABI_CAPTURE_MAX 128u
+/* Locate mode keeps this much of an embedded call: its selector and, for an
+ * approve(), both argument words. */
+#define ERC7730_ABI_LOCATE_PREFIX 68u
 
 typedef struct {
   size_t declared_offset;
@@ -58,8 +61,9 @@ typedef struct {
   uint8_t depth;
   uint8_t word_received;
   /* Locate mode (embedded calldata): a captured bytes value keeps only its
-   * first four bytes in `capture`; its full length and the offset of its
-   * payload within the stream are recorded here instead of copied. */
+   * first ERC7730_ABI_LOCATE_PREFIX bytes in `capture`; its full length and
+   * the offset of its payload within the stream are recorded here instead of
+   * copied. */
   size_t located_length;
   size_t located_offset;
   bool capture_locate;

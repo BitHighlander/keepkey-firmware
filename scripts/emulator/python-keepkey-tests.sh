@@ -15,10 +15,11 @@ set -e
 # then FAILS BY NAME and the suite continues. Measured on the known-deadlocking
 # THORChain file: "1 failed, 5 passed in 20.29s" instead of hanging forever.
 #
-# 60s is roughly 30x the slowest healthy file in this suite (multisig, ~2s).
+# 300s: the slowest healthy test (the 32-order Seaport bundle in the EIP-712
+# corpus) takes about 75s locally and longer on a hosted runner.
 # See #466. Applied to the broad suites; the dedicated contract suites below
 # keep the invocation the audit proved.
-PYTEST_TIMEOUT_ARGS="--timeout=60 --timeout-method=signal"
+PYTEST_TIMEOUT_ARGS="--timeout=300 --timeout-method=signal"
 
 # The product under test is declared by the workflow matrix, never inferred
 # from the device, so a regressed full build cannot select the smaller
@@ -49,9 +50,6 @@ if [ "$KK_FIRMWARE_VARIANT" = full ]; then
 else
   export KK_REQUIRE_ERC7730_EVIDENCE=0
 fi
-
-# Dice setup keeps every DebugLinkState field private through commit/abort.
-export KK_DICE_DEBUG_PRIVATE=1
 
 mkdir -p /kkemu/test-reports/python-keepkey
 # This volume can survive retries. Stale frames would make the new report look
@@ -183,9 +181,6 @@ pytest -v $PYTEST_TIMEOUT_ARGS . /kkemu/unittests/host/test_p02_transport.py \
   --junitxml=/kkemu/test-reports/python-keepkey/junit.xml
 PYTEST_RC=$?
 
-# Stack 06 owns legacy runtime metadata and session trust. The later ERC-7730
-# capability must not hide these already implemented contracts.
-KK_RELEASE_MISSING_CAPABILITIES= \
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v --tb=short \

@@ -7,14 +7,39 @@ extern "C" {
 #include "keepkey/firmware/storage.h"
 
 void setup(void);
+void tim4_sighandler(int sig);  // lib/board/timer.c, emulator build
 }
 
 #include "gtest/gtest.h"
 
+#include <csignal>
+#include <unistd.h>
 #include <cstring>
+#include <string>
+#include <vector>
 
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
+void kkconfirm_capture_start(void);
+std::vector<std::string> kkconfirm_capture_finish(void);
+
+/* A released code is shown with a countdown built on delay_ms(), which needs
+ * the 1 ms tick the emulator gets from SIGALRM. The unit-test board does not
+ * start it, so run it for the scope of a releasing request. */
+struct ScopedTick {
+  struct sigaction previous = {};
+  ScopedTick() {
+    struct sigaction action = {};
+    action.sa_handler = tim4_sighandler;
+    action.sa_flags = SA_RESTART;
+    sigaction(SIGALRM, &action, &previous);
+    ualarm(1000, 1000);
+  }
+  ~ScopedTick() {
+    ualarm(0, 0);
+    sigaction(SIGALRM, &previous, nullptr);
+  }
+};
 
 static void ensure_auth_storage_initialized(void) {
   static bool initialized = false;
@@ -129,7 +154,7 @@ TEST(Authenticator, ExactIdentityAndSecretBoundsRejectBeforeReview) {
     SCOPED_TRACE(prefix);
     EXPECT_NE(NOERR, add_credential(std::string(prefix) + strong_secret, 0, 0));
   }
-  for (size_t length : {0u, 1u, 16u, 25u, 27u, 30u, 33u, 34u, 40u}) {
+  for (size_t length : {0u, 1u, 15u, 25u, 27u, 30u, 33u, 34u, 40u}) {
     SCOPED_TRACE(length);
     EXPECT_NE(NOERR, add_credential("example:alice:" + std::string(length, 'A'),
                                     0, 0));
@@ -140,6 +165,15 @@ TEST(Authenticator, ExactIdentityAndSecretBoundsRejectBeforeReview) {
   EXPECT_EQ(TOKERR, removeAuthAccount(nullptr));
   char account[DOMAIN_SIZE + ACCOUNT_SIZE + 2] = {};
   EXPECT_EQ(NOACC, getAuthAccount("0", account));
+}
+
+// 16 Base32 characters (80 bits) is the setup key many services issue.
+TEST(Authenticator, SixteenCharacterSetupKeyIsAccepted) {
+  reset_auth_accounts();
+  EXPECT_EQ(NOERR, add_credential("example:alice:JBSWY3DPEHPK3PXP", 2, 0));
+  authType stored[AUTHDATA_SIZE] = {};
+  ASSERT_TRUE(storage_getAuthData(stored));
+  EXPECT_EQ(10, stored[0].secretSize);
 }
 
 TEST(Authenticator, ExactBoundsPersistAndDuplicateCannotReplaceSecret) {
@@ -195,10 +229,13 @@ TEST(Authenticator, LegacyDuplicatesAreDeletedTogetherOnlyAfterConsent) {
   storage_setAuthData(legacy);
   authenticator_clear_cache();
   // Pre-minimum credentials still generate the independently computed HOTP.
-  char legacy_request[] = "example:alice:1:0";
+  char legacy_request[] = "example:alice:1:5";
   char legacy_otp[9] = {};
-  ASSERT_TRUE(kkconfirm_preload(2, 0));
-  EXPECT_EQ(NOERR, generateOTP(legacy_request, legacy_otp));
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  {
+    ScopedTick tick;
+    EXPECT_EQ(NOERR, generateOTP(legacy_request, legacy_otp));
+  }
   EXPECT_EQ(0, kkconfirm_drain());
   EXPECT_STREQ("356917", legacy_otp);  // HMAC-SHA1: ten 0x01 bytes, counter 1
   char refused[] = "example:alice";
@@ -247,10 +284,13 @@ TEST(Authenticator, ExactOtpIdentityRetainsIndependentCounterVector) {
   reset_auth_accounts();
   EXPECT_EQ(NOERR, add_credential(
                        "example:alice:GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", 2, 0));
-  char request[] = "example:alice:1:0";
+  char request[] = "example:alice:1:5";
   char otp[9] = {};
-  ASSERT_TRUE(kkconfirm_preload(2, 0));
-  EXPECT_EQ(NOERR, generateOTP(request, otp));
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  {
+    ScopedTick tick;
+    EXPECT_EQ(NOERR, generateOTP(request, otp));
+  }
   EXPECT_EQ(0, kkconfirm_drain());
   // HOTP SHA1, ASCII key 12345678901234567890, counter 1, six digits.
   EXPECT_STREQ("287082", otp);
@@ -457,4 +497,58 @@ TEST(Authenticator, CacheClearReloadsPersistentAccounts) {
   ASSERT_TRUE(kkconfirm_preload(1, 0));
   EXPECT_EQ(NOERR, wipeAuthData());
   EXPECT_EQ(0, kkconfirm_drain());
+}
+
+// The one screen that releases a code names the stored account and the UTC
+// start of the host-chosen 30 s window, so a future window is visible.
+TEST(Authenticator, OtpReleaseScreenNamesAccountAndWindow) {
+  reset_auth_accounts();
+  ASSERT_EQ(NOERR, add_credential(std::string("example:alice:") + strong_secret,
+                                  2, 0));
+  const struct {
+    const char* timing;
+    const char* window;
+  } cases[] = {{"56666666:30", "2023-11-14 22:13:00"},
+               {"0:30", "1970-01-01 00:00:00"},
+               {"4294967295:30", "6053-01-23 02:07:30"}};
+  for (const auto& c : cases) {
+    SCOPED_TRACE(c.timing);
+    std::string text = std::string("example:alice:") + c.timing;
+    char request[64] = {};
+    memcpy(request, text.c_str(), text.size());
+    char otp[9] = {};
+    kkconfirm_capture_start();
+    ASSERT_TRUE(kkconfirm_preload(0, 1));
+    EXPECT_EQ(AUTH_CANCELLED, generateOTP(request, otp));
+    EXPECT_EQ(0, kkconfirm_drain());
+    const std::vector<std::string> screens = kkconfirm_capture_finish();
+    ASSERT_EQ(1u, screens.size());
+    EXPECT_EQ(std::string("Account: example:alice\nTime: ") + c.window + " UTC",
+              screens[0]);
+  }
+}
+
+// Too little of the window left after consent: no code. A second accepted
+// screen is queued, as older firmware asked for one and then released the code;
+// it must stay unused.
+TEST(Authenticator, OtpTimeoutReleasesNoCode) {
+  reset_auth_accounts();
+  ASSERT_EQ(NOERR, add_credential(std::string("example:alice:") + strong_secret,
+                                  2, 0));
+  for (const char* timing : {"1:0", "1:3"}) {
+    SCOPED_TRACE(timing);
+    std::string text = std::string("example:alice:") + timing;
+    char request[64] = {};
+    memcpy(request, text.c_str(), text.size());
+    char otp[9];
+    memset(otp, 0xa5, sizeof(otp));
+    ASSERT_TRUE(kkconfirm_preload(2, 0));
+    EXPECT_EQ(OTPTIMEOUT, generateOTP(request, otp));
+    EXPECT_EQ(2, kkconfirm_drain());  // one screen's ButtonAck + decision
+    const char empty[9] = {};
+    EXPECT_EQ(0, memcmp(empty, otp, sizeof(otp)));
+  }
+  char account[DOMAIN_SIZE + ACCOUNT_SIZE + 2] = {};
+  EXPECT_EQ(NOERR, getAuthAccount("0", account));
+  EXPECT_STREQ("example:alice", account);
 }

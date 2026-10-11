@@ -34,6 +34,7 @@
 #include "keepkey/firmware/ethereum_contracts.h"
 #include "keepkey/firmware/erc7730_workflow.h"
 #include "keepkey/firmware/ethereum_contracts/makerdao.h"
+#include "keepkey/firmware/ethereum_contracts/thortx.h"
 #include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/contact_book.h"
 #include "keepkey/firmware/ethereum_tokens.h"
@@ -137,6 +138,31 @@ bool ethereum_isStandardERC20Transfer(const EthereumSignTx* msg) {
   return false;
 }
 
+/* The chain id is signed, and the amount screens cannot tell chains apart:
+ * Ethereum, Optimism, Base and Arbitrum all read "ETH", and every chain
+ * without an entry reads "Wei". So the last screen's title names the chain.
+ * Mainnet, and a legacy transaction with no chain id, keep "Transaction". */
+void ethereum_transactionTitle(const EthereumSignTx* msg, char* title,
+                               size_t title_len) {
+  static const struct {
+    uint32_t chain_id;
+    const char* name;
+  } chains[] = {{10, "Optimism"},    {56, "BNB Chain"}, {100, "Gnosis"},
+                {137, "Polygon"},    {8453, "Base"},    {42161, "Arbitrum"},
+                {43114, "Avalanche"}};
+  if (!msg->has_chain_id || msg->chain_id == 0 || msg->chain_id == 1) {
+    strlcpy(title, "Transaction", title_len);
+    return;
+  }
+  for (size_t i = 0; i < sizeof(chains) / sizeof(chains[0]); i++) {
+    if (chains[i].chain_id == msg->chain_id) {
+      snprintf(title, title_len, "Tx on %s", chains[i].name);
+      return;
+    }
+  }
+  snprintf(title, title_len, "Tx on chain %" PRIu32, msg->chain_id);
+}
+
 static bool ethereum_isERC20ApproveCall(const EthereumSignTx* msg) {
   if (msg->has_to && msg->to.size == 20 && msg->data_initial_chunk.size >= 68 &&
       memcmp(msg->data_initial_chunk.bytes,
@@ -145,6 +171,47 @@ static bool ethereum_isERC20ApproveCall(const EthereumSignTx* msg) {
     return true;
   }
   return false;
+}
+
+/* approve(spender, amount) and increaseAllowance(spender, amount) share a
+ * layout and either can grant everything, so the allowance policy covers
+ * both. len < 4 matches a selector prefix. */
+static bool ethereum_isAllowanceSelector(const uint8_t* data, size_t len) {
+  return memcmp(data, "\x09\x5e\xa7\xb3", len) == 0 ||
+         memcmp(data, "\x39\x50\x93\x51", len) == 0;
+}
+
+/* Both ABI words present, and nothing in the spender word's high bytes. */
+static bool ethereum_allowanceIsWellFormed(const EthereumSignTx* msg) {
+  if (msg->data_initial_chunk.size < 68) return false;
+  for (size_t i = 4; i < 16; ++i)
+    if (msg->data_initial_chunk.bytes[i] != 0) return false;
+  return true;
+}
+
+static bool ethereum_allowanceIsUnlimited(const EthereumSignTx* msg) {
+  for (size_t i = 36; i < 68; ++i)
+    if (msg->data_initial_chunk.bytes[i] != 0xff) return false;
+  return true;
+}
+
+/* An unlimited approve signs only after this warning, with the full spender
+ * and the token named by symbol, or by contract when the table lacks it. */
+bool ethereum_confirmUnlimitedApproval(uint32_t cid,
+                                       const uint8_t* spender_address,
+                                       const uint8_t* token_address) {
+  char spender[43] = "0x";
+  ethereum_address_checksum(spender_address, spender + 2, false, cid);
+  char asset[43] = "0x";
+  const TokenType* token = tokenByChainAddress(cid, token_address);
+  if (token != UnknownToken) {
+    strlcpy(asset, token->ticker + 1, sizeof(asset));
+  } else {
+    ethereum_address_checksum(token_address, asset + 2, false, cid);
+  }
+  return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                 "UNLIMITED approval", "Allow %s to spend ALL your %s", spender,
+                 asset);
 }
 
 bool ethereum_isStandardERC20Approve(const EthereumSignTx* msg) {
@@ -235,15 +302,18 @@ bool ethereumFormatUnknownTokenReview(const EthereumSignTx* msg, char* buf,
   ethereum_address_checksum(msg->data_initial_chunk.bytes + 16,
                             counterparty + 2, false, msg->chain_id);
 
+  const bool approve = ethereum_isStandardERC20Approve(msg);
   bignum256 raw_value;
   bn_from_bytes(msg->data_initial_chunk.bytes + 36, 32, &raw_value);
-  char amount[96];
-  if (bn_format(&raw_value, NULL, " base units", 0, 0, false, amount,
-                sizeof(amount)) == 0) {
+  char amount[96] = "UNLIMITED";
+  /* ERC-7730's threshold: an allowance of 2^255 or more is UNLIMITED. */
+  const bool unlimited =
+      approve && (msg->data_initial_chunk.bytes[36] & 0x80) != 0;
+  if (!unlimited && bn_format(&raw_value, NULL, " base units", 0, 0, false,
+                              amount, sizeof(amount)) == 0) {
     return false;
   }
 
-  const bool approve = ethereum_isStandardERC20Approve(msg);
   const int written =
       approve
           ? snprintf(buf, buflen,
@@ -443,11 +513,13 @@ static void send_signature(void) {
 
   keccak_Final(&keccak_ctx, hash);
 
-  /* Insight clear-signing binding. If a verified metadata blob suppressed the
-   * raw-data confirmation, the actual signed digest MUST equal the tx hash the
-   * metadata committed to. This is the first point that digest exists, so the
-   * check reuses it rather than re-deriving the RLP pre-image. Fail closed —
-   * never emit a signature the displayed decoded screen did not cover. */
+  /* Insight clear-signing binding. Approved decoded screens either replace the
+   * raw-data confirmation (certified describer) or are shown on top of it
+   * (runtime metadata is additive). Either way, when the user approved such
+   * screens, the actual signed digest MUST equal the tx hash the metadata
+   * committed to. This is the first point that digest exists, so the check
+   * reuses it rather than re-deriving the RLP pre-image. Fail closed -- never
+   * sign what the approved decoded screens did not cover. */
   if (!signed_metadata_enforce(hash)) {
     fsm_sendFailure(FailureType_Failure_Other,
                     "Metadata does not match signed transaction");
@@ -647,8 +719,7 @@ static bool layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
                                     const uint8_t* value, uint32_t value_len,
                                     const TokenType* token, char* out_str,
                                     size_t out_str_len, bool approve,
-                                    bool* verified_contact) {
-  if (verified_contact) *verified_contact = false;
+                                    bool* contact) {
   bignum256 val;
   uint8_t pad_val[32];
   memset(pad_val, 0, sizeof(pad_val));
@@ -685,14 +756,15 @@ static bool layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
       memcmp(value + 24, "\xff\xff\xff\xff\xff\xff\xff\xff", 8) == 0;
 
   const char* address = addr;
-  char contact_network[32];
-  snprintf(contact_network, sizeof(contact_network), "eip155:%lu",
-           (unsigned long)chain_id);
-  if (!approve && to_len == 20 &&
-      contact_book_match(contact_network, CONTACT_BOOK_DEST_EVM_ADDRESS, to,
-                         to_len)) {
+  if (contact && *contact) {
+    char network[20];
+    snprintf(network, sizeof(network), "eip155:%lu", (unsigned long)chain_id);
+    *contact =
+        !approve && to_len == 20 &&
+        contact_book_match(network, CONTACT_BOOK_DEST_EVM_ADDRESS, to, 20);
+  }
+  if (contact && *contact) {
     address = contact_book_label();
-    if (verified_contact) *verified_contact = true;
   } else if (to_len && makerdao_isOasisDEXAddress(to, chain_id)) {
     address = "OasisDEX";
   }
@@ -849,21 +921,6 @@ static bool ethereum_signing_check(const EthereumSignTx* msg) {
   size_t fee_per_gas_size = msg->has_max_fee_per_gas ? msg->max_fee_per_gas.size
                                                      : msg->gas_price.size;
   if (fee_per_gas_size + msg->gas_limit.size > 30) {
-    return false;
-  }
-
-  /* The same sanity check, for the field the EIP-1559 fee screen actually
-     multiplies. confirmEthereumTx() feeds max_fee_per_gas into
-     bn_multiply(&val, &gas, &secp256k1.prime), which reduces its product
-     modulo the curve prime. The legacy bound above never reaches it: a 1559
-     transaction carries no gas_price, so gas_price.size is 0 and a 32-byte
-     max_fee_per_gas paired with a 32-byte gas_limit passes untouched. The
-     product then wraps and the approval screen names a gas cost that is not
-     the one being signed -- the display diverges from the signature, which is
-     the one thing this release line exists to prevent. Hold the 1559 pair to
-     the same 30-byte budget. */
-  if (msg->has_max_fee_per_gas &&
-      msg->max_fee_per_gas.size + msg->gas_limit.size > 30) {
     return false;
   }
 
@@ -1033,8 +1090,8 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       msg->data_initial_chunk.size < 4 ? msg->data_initial_chunk.size : 4;
   if (msg->has_to && msg->to.size == 20 && data_total >= 68 &&
       msg->data_initial_chunk.size < 68 &&
-      memcmp(msg->data_initial_chunk.bytes, "\x09\x5e\xa7\xb3",
-             selector_bytes) == 0) {
+      ethereum_isAllowanceSelector(msg->data_initial_chunk.bytes,
+                                   selector_bytes)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Approval requires at least 68 initial bytes"));
     ethereum_signing_abort();
@@ -1044,25 +1101,33 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   // Match the selector alone. Pre-0.8 Solidity masks the spender word's high
   // bytes, so a dirty spender word still grants the allowance on chain.
   if (msg->has_to && msg->to.size == 20 && data_total >= 68 &&
-      memcmp(msg->data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4) == 0) {
-    if (!ethereum_isERC20ApproveCall(msg)) {
+      ethereum_isAllowanceSelector(msg->data_initial_chunk.bytes, 4)) {
+    if (!ethereum_allowanceIsWellFormed(msg)) {
       fsm_sendFailure(FailureType_Failure_SyntaxError,
                       _("Malformed ERC20 approval"));
       ethereum_signing_abort();
       return;
     }
-    // Native value cannot exempt a payable token from this allowance policy.
-    // Unlimited approval grants open-ended authority and is refused before
-    // any generic transaction confirmation can mask this policy decision.
-    const uint8_t* allowance = msg->data_initial_chunk.bytes + 36;
-    bool unlimited = true;
-    for (size_t i = 0; i < 32; ++i) unlimited &= allowance[i] == 0xff;
-    if (unlimited) {
+    // Native value cannot exempt a payable token from this warning. It comes
+    // before any contract, metadata or generic screen, so none can mask it.
+    if (ethereum_allowanceIsUnlimited(msg) &&
+        !ethereum_confirmUnlimitedApproval(
+            msg->has_chain_id ? msg->chain_id : 0,
+            msg->data_initial_chunk.bytes + 16, msg->to.bytes)) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                      _("Unlimited ERC20 approval is disabled"));
+                      "Signing cancelled by user");
       ethereum_signing_abort();
       return;
     }
+  }
+
+  /* A deposit its pinned THORChain/Maya router can only revert is refused
+   * with the reason, before any screen, rather than signed. */
+  const char* thor_refusal = thor_depositRefusal(msg);
+  if (thor_refusal) {
+    fsm_sendFailure(FailureType_Failure_Other, thor_refusal);
+    ethereum_signing_abort();
+    return;
   }
 
   bool data_needs_confirm = true;
@@ -1077,6 +1142,17 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     data_needs_confirm = false;
   }
 
+  /* D-007: a KeepKey-certified ERC-7730 review of this calldata replaces the
+   * raw-data review. This pass re-hashes every byte against the reviewed
+   * digest and send_signature() refuses unless it matched; the amount and
+   * fee screens stay. */
+  const Erc7730Workflow* certified = erc7730_workflow_state();
+  if (data_needs_confirm && certified->signing_pass && !certified->typed_data &&
+      certified->phase == ERC7730_WORKFLOW_CALLDATA &&
+      erc7730_workflow_certified(certified)) {
+    data_needs_confirm = false;
+  }
+
   /* SRS R-1.4: a certified (v3) claim for calldata the device does not decode
    * natively is honoured completely or refused -- never silently downgraded to
    * the additive review. "Completely" means the proof verified, describes this
@@ -1087,10 +1163,17 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       signed_metadata_certified_claimed() &&
       !(signed_metadata_available() && signed_metadata_matches_tx(msg) &&
         signed_metadata_may_suppress(chain_id))) {
-    fsm_sendFailure(FailureType_Failure_Other,
-                    _("Certified description invalid or not for this tx"));
-    ethereum_signing_abort();  // clears metadata
-    return;
+    /* A certified Uniswap swap past the first chunk: nothing is shown from
+     * a prefix. Its review follows the fee screen, once every byte is in.
+     * Pending implies a KeepKey-certified entry for this chain. */
+    if (!signed_metadata_ur_pending()) {
+      fsm_sendFailure(FailureType_Failure_Other,
+                      _("Certified description invalid or not for this tx"));
+      ethereum_signing_abort();  // clears metadata
+      return;
+    }
+    needs_confirm = false;
+    data_needs_confirm = false;
   }
 
   // Signed metadata clear signing (backwards compatible).
@@ -1134,10 +1217,10 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       }
     }
   }
-  // Drop metadata now UNLESS we relied on it to suppress the raw-data confirm
-  // (then it must survive to bind the signature). Prevents stale reuse when the
-  // contractHandled / ERC-20 paths bypass the metadata check above.
-  if (!signed_metadata_relied()) {
+  // Keep metadata only when its decoded screens were approved, so their
+  // attestation remains bound to the signature. Otherwise prevent stale reuse
+  // when contractHandled / ERC-20 paths bypassed metadata review.
+  if (!signed_metadata_ur_pending() && !signed_metadata_relied()) {
     signed_metadata_clear();
   }
 
@@ -1150,24 +1233,16 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   if (data_total == 68 && ethereum_isStandardERC20Approve(msg)) {
     token = tokenByChainAddress(chain_id, msg->to.bytes);
     is_approve = true;
-
-    /* An unlimited allowance transfers open-ended authority to the spender.
-     * This release line deliberately refuses it instead of presenting it as a
-     * bounded token withdrawal.  Zero and finite approvals remain supported. */
-    const uint8_t* allowance = msg->data_initial_chunk.bytes + 36;
-    bool unlimited = true;
-    for (size_t i = 0; i < 32; i++) unlimited &= allowance[i] == 0xff;
-    if (unlimited) {
-      fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                      _("Unlimited ERC20 approval is disabled"));
-      ethereum_signing_abort();
-      return;
-    }
   }
 
+  /* A certified contact labels only a plain recipient (a native send with no
+   * calldata, or a known-token transfer) and never sits beside a contract
+   * description: none may be loaded, signed metadata or ERC-7730. */
+  bool contact = !is_approve && !signed_metadata_available() &&
+                 erc7730_workflow_state()->phase == ERC7730_WORKFLOW_IDLE &&
+                 (token == NULL ? data_total == 0 : token != UnknownToken);
+  const uint8_t* recipient = NULL;
   if (needs_confirm) {
-    bool verified_contact = false;
-    const uint8_t* transfer_to = NULL;
     if (token == UnknownToken) {
       if (!ethereumFormatUnknownTokenReview(msg, confirm_body_message,
                                             sizeof(confirm_body_message))) {
@@ -1177,24 +1252,22 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
         return;
       }
     } else if (token != NULL) {
-      transfer_to = msg->data_initial_chunk.bytes + 16;
-      const uint32_t transfer_to_len = 20;
+      recipient = msg->data_initial_chunk.bytes + 16;
       if (!layoutEthereumConfirmTx(
-              transfer_to, transfer_to_len, msg->data_initial_chunk.bytes + 36,
-              32, token, confirm_body_message, sizeof(confirm_body_message),
-              /*approve=*/is_approve, &verified_contact)) {
+              recipient, 20, msg->data_initial_chunk.bytes + 36, 32, token,
+              confirm_body_message, sizeof(confirm_body_message),
+              /*approve=*/is_approve, &contact)) {
         fsm_sendFailure(FailureType_Failure_SyntaxError,
                         _("Ethereum amount too large"));
         ethereum_signing_abort();
         return;
       }
     } else {
-      transfer_to = msg->to.bytes;
-      const uint32_t transfer_to_len = msg->to.size;
-      if (!layoutEthereumConfirmTx(
-              transfer_to, transfer_to_len, msg->value.bytes, msg->value.size,
-              NULL, confirm_body_message, sizeof(confirm_body_message),
-              /*approve=*/false, &verified_contact)) {
+      recipient = msg->to.bytes;
+      if (!layoutEthereumConfirmTx(recipient, msg->to.size, msg->value.bytes,
+                                   msg->value.size, NULL, confirm_body_message,
+                                   sizeof(confirm_body_message),
+                                   /*approve=*/false, &contact)) {
         fsm_sendFailure(FailureType_Failure_SyntaxError,
                         _("Ethereum amount too large"));
         ethereum_signing_abort();
@@ -1221,20 +1294,21 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       ethereum_signing_abort();
       return;
     }
-    if (verified_contact) {
-      char raw_address[43] = "0x";
-      ethereum_address_checksum(transfer_to, raw_address + 2, false, chain_id);
+    /* The label replaced the address on the screen above: show it too. */
+    if (contact && recipient) {
+      char raw[43] = "0x";
+      ethereum_address_checksum(recipient, raw + 2, false, chain_id);
       if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                   "Contact Address", "%s", raw_address)) {
-        contact_book_clear();
+                   "Contact Address", "%s", raw)) {
         fsm_sendFailure(FailureType_Failure_ActionCancelled,
                         "Signing cancelled by user");
         ethereum_signing_abort();
         return;
       }
     }
-    contact_book_clear();
   }
+  /* A proof labels exactly one signing request. */
+  contact_book_clear();
 
   memset(confirm_body_message, 0, sizeof(confirm_body_message));
   // A contract that is not in the token table yields the UnknownToken
@@ -1285,7 +1359,9 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     ethereum_signing_abort();
     return;
   }
-  if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Transaction", "%s",
+  char transaction_title[24];
+  ethereum_transactionTitle(msg, transaction_title, sizeof(transaction_title));
+  if (!confirm(ButtonRequestType_ButtonRequest_SignTx, transaction_title, "%s",
                confirm_body_message)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     "Signing cancelled by user");
@@ -1450,6 +1526,23 @@ void ethereum_signing_txack(EthereumTxAck* tx) {
 
   data_left -= tx->data_chunk.size;
 
+  /* A certified Uniswap call held since init: decoded at its last byte and
+   * reviewed then. Refused, never downgraded (SRS R-1.4), as at init. */
+  if (signed_metadata_ur_pending()) {
+    if (!signed_metadata_ur_feed(tx->data_chunk.bytes, tx->data_chunk.size)) {
+      fsm_sendFailure(FailureType_Failure_Other,
+                      _("Certified description invalid or not for this tx"));
+      ethereum_signing_abort();
+      return;
+    }
+    if (data_left == 0 && !signed_metadata_confirm()) {
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      "Signing cancelled by user");
+      ethereum_signing_abort();
+      return;
+    }
+  }
+
   if (erc7730->phase == ERC7730_WORKFLOW_CALLDATA && data_left == 0 &&
       erc7730_workflow_calldata_finish(erc7730) != ERC7730_ABI_OK) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -1473,12 +1566,12 @@ void ethereum_signing_txack(EthereumTxAck* tx) {
 }
 
 void ethereum_signing_abort(void) {
-  contact_book_clear();
   if (ethereum_signing) {
     memzero(privkey, sizeof(privkey));
     signed_metadata_clear();
     data_hash_pending = false;
     memzero(&data_keccak_ctx, sizeof(data_keccak_ctx));
+    contact_book_clear();
     layoutHome();
     ethereum_signing = false;
   }

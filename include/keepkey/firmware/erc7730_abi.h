@@ -63,6 +63,10 @@ typedef enum {
 
 Erc7730AbiResult erc7730_abi_validate_program(const Erc7730AbiProgram* p);
 
+/* Whether the value at node `index` has a dynamic ABI encoding. */
+bool erc7730_abi_node_dynamic(const Erc7730AbiProgram* p, uint16_t index,
+                              uint8_t depth, bool* dynamic);
+
 /* Validate a complete ABI argument block (calldata excluding its selector).
  * Success proves that exactly data_len bytes are represented by the root. */
 Erc7730AbiResult erc7730_abi_validate(const Erc7730AbiProgram* program,

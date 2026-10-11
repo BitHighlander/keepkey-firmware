@@ -154,10 +154,10 @@ TEST(Solana, FormatTokenAmountNeverShowsZeroForNonzero) {
 }
 
 TEST(Solana, OversizedAccountCountsFailClosedBeforeAccountArrayAccess) {
-  /* These messages end immediately after the count. A parser that correctly
-   * checks the count before reading accounts returns MALFORMED; the vulnerable
-   * OPAQUE path either stored 33 into an 8-bit loop bound (OOB past
-   * accounts[31]) or wrapped 256 to zero and skipped signer verification. */
+  /* These messages end immediately after the count. More accounts than the
+   * parser holds is opaque (blind sign behind AdvancedMode), and the count is
+   * never recorded: a parser that stored it either put 33 into an 8-bit loop
+   * bound (OOB past accounts[31]) or wrapped 256 to zero. */
   const uint8_t legacy_33[] = {1, 0, 0, 33};
   const uint8_t legacy_256[] = {1, 0, 0, 0x80, 0x02};
   const uint8_t versioned_33[] = {0x80, 1, 0, 0, 33};
@@ -174,7 +174,7 @@ TEST(Solana, OversizedAccountCountsFailClosedBeforeAccountArrayAccess) {
   for (const auto& test_case : cases) {
     SolanaParsedTx tx;
     memset(&tx, 0xa5, sizeof(tx));
-    EXPECT_EQ(SOL_TX_REVIEW_MALFORMED,
+    EXPECT_EQ(SOL_TX_REVIEW_OPAQUE,
               solana_inspectTx(test_case.raw, test_case.len, &tx));
     EXPECT_EQ(0, tx.num_accounts);
   }
@@ -565,6 +565,43 @@ TEST(Solana, PriorityFeeOverflowSafe) {
   EXPECT_FALSE(solana_priority_fee_lamports(UINT64_MAX, UINT64_MAX, &fee));
 }
 
+TEST(Solana, PriorityFeeCalculationIsRoundedAndOverflowSafe) {
+  uint64_t fee = 0;
+  ASSERT_TRUE(solana_priority_fee_lamports(50000000, 1400000, &fee));
+  EXPECT_EQ(fee, 70000000ULL);
+
+  /* Solana caps even an explicit request above 1.4M CU; the raw UINT32_MAX
+   * request must not be multiplied by the price. */
+  ASSERT_TRUE(solana_priority_fee_lamports(2000000, UINT32_MAX, &fee));
+  EXPECT_EQ(fee, 2800000ULL);
+  ASSERT_TRUE(solana_priority_fee_lamports(1, UINT64_MAX, &fee));
+  EXPECT_EQ(fee, 2ULL); /* ceil(1.4) */
+}
+
+// Without SetComputeUnitLimit the fee is charged on the runtime's default
+// request, not the 1.4M cap: [SetComputeUnitPrice, Transfer] is 203,000 CUs.
+TEST(Solana, PriorityFeeWithoutExplicitLimitUsesDerivedDefault) {
+  SolanaParsedTx tx = {};
+  tx.num_instructions = 2;
+  tx.instructions[0].type = SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE;
+  tx.instructions[1].type = SOL_INSTR_SYSTEM_TRANSFER;
+  EXPECT_EQ(203000u, solana_defaultComputeUnitLimit(&tx));
+  uint64_t fee = 0;
+  ASSERT_TRUE(solana_priority_fee_lamports(
+      1000000, solana_defaultComputeUnitLimit(&tx), &fee));
+  EXPECT_EQ(203000u, fee);
+
+  // Many instructions still stop at the per-transaction cap.
+  tx.num_instructions = SOL_MAX_INSTRUCTIONS;
+  for (uint8_t i = 1; i < tx.num_instructions; i++) {
+    tx.instructions[i].type = SOL_INSTR_SYSTEM_TRANSFER;
+  }
+  ASSERT_GT(solana_defaultComputeUnitLimit(&tx), SOL_MAX_COMPUTE_UNITS);
+  ASSERT_TRUE(solana_priority_fee_lamports(
+      1000000, solana_defaultComputeUnitLimit(&tx), &fee));
+  EXPECT_EQ(1400000u, fee);
+}
+
 TEST(Solana, ParseAssociatedTokenAccountCreate) {
   uint8_t raw[512];
   size_t pos = 0;
@@ -686,6 +723,12 @@ TEST(Solana, UnknownProgram) {
   EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
 }
 
+TEST(Solana, NullTransactionIsMalformed) {
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(nullptr, 64, &tx), SOL_TX_REVIEW_MALFORMED);
+  EXPECT_FALSE(solana_parseTx(nullptr, 64, &tx));
+}
+
 TEST(Solana, ParseTxTooShort) {
   uint8_t raw[2] = {0, 0};
   SolanaParsedTx tx;
@@ -701,7 +744,7 @@ TEST(Solana, ParseTxTooShort) {
  * past accounts[31] as a uint16_t loop bound) or a value that silently wraps
  * to a small/zero uint8_t (256, 512, ...), which would have reintroduced the
  * original signer-check bypass this fix closed. */
-TEST(Solana, RejectsThirtyThreeAccounts) {
+TEST(Solana, ThirtyThreeAccountsAreOpaqueAndRecordNoCount) {
   uint8_t raw[4];
   size_t pos = 0;
   raw[pos++] = 1;  /* num_required_sigs */
@@ -710,10 +753,13 @@ TEST(Solana, RejectsThirtyThreeAccounts) {
   raw[pos++] = 33; /* compact-u16 num_accounts: 33 > SOL_MAX_ACCOUNTS(32) */
 
   SolanaParsedTx tx;
-  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
+  // Blind sign behind AdvancedMode, by design. The count is never
+  // recorded, so the signer check cannot walk past accounts[31].
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.num_accounts, 0);
 }
 
-TEST(Solana, RejectsAccountCountWrapAt256) {
+TEST(Solana, AccountCountOf256IsOpaqueAndDoesNotWrap) {
   uint8_t raw[5];
   size_t pos = 0;
   raw[pos++] = 1;
@@ -724,10 +770,13 @@ TEST(Solana, RejectsAccountCountWrapAt256) {
   raw[pos++] = 0x02;
 
   SolanaParsedTx tx;
-  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
+  // Blind sign behind AdvancedMode, by design. The count is never
+  // recorded, so the signer check cannot walk past accounts[31].
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.num_accounts, 0);
 }
 
-TEST(Solana, RejectsAccountCountWrapAt512) {
+TEST(Solana, AccountCountOf512IsOpaqueAndDoesNotWrap) {
   uint8_t raw[5];
   size_t pos = 0;
   raw[pos++] = 1;
@@ -738,7 +787,10 @@ TEST(Solana, RejectsAccountCountWrapAt512) {
   raw[pos++] = 0x04;
 
   SolanaParsedTx tx;
-  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
+  // Blind sign behind AdvancedMode, by design. The count is never
+  // recorded, so the signer check cannot walk past accounts[31].
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.num_accounts, 0);
 }
 
 TEST(Solana, RejectsTrailingBytes) {
@@ -941,6 +993,88 @@ TEST(Solana, VersionedMessageNoLookupTablesIsVerified) {
   uint8_t expected_to[32];
   memset(expected_to, 0x22, 32);
   EXPECT_EQ(memcmp(tx.instructions[0].to, expected_to, 32), 0);
+}
+
+// A zero-LUT v0 message can verify, so its header must pass Solana's own
+// sanitize rules first: a writable fee payer, and signer plus read-only
+// unsigned ranges inside the three static keys.
+TEST(Solana, VersionedMessageWithInvalidHeaderIsMalformed) {
+  struct Header {
+    uint8_t sigs, ro_signed, ro_unsigned;
+    SolanaTxReview review;
+  };
+  const Header headers[] = {
+      {1, 0, 1, SOL_TX_REVIEW_VERIFIED},  /* control */
+      {1, 0, 2, SOL_TX_REVIEW_VERIFIED},  /* 1 + 2 == 3 static keys */
+      {0, 0, 1, SOL_TX_REVIEW_MALFORMED}, /* no signer */
+      {1, 1, 1, SOL_TX_REVIEW_MALFORMED}, /* no writable signer */
+      {4, 0, 0, SOL_TX_REVIEW_MALFORMED}, /* more signers than keys */
+      {1, 0, 3, SOL_TX_REVIEW_MALFORMED}, /* ranges overlap */
+  };
+  for (const Header& h : headers) {
+    SCOPED_TRACE(testing::Message() << int(h.sigs) << "," << int(h.ro_signed)
+                                    << "," << int(h.ro_unsigned));
+    uint8_t raw[256];
+    size_t pos = 0;
+    raw[pos++] = 0x80; /* v0 prefix */
+    raw[pos++] = h.sigs;
+    raw[pos++] = h.ro_signed;
+    raw[pos++] = h.ro_unsigned;
+    raw[pos++] = 3; /* static accounts */
+    memset(raw + pos, 0x11, 32);
+    pos += 32;
+    memset(raw + pos, 0x22, 32);
+    pos += 32;
+    memset(raw + pos, 0x00, 32); /* system program */
+    pos += 32;
+    memset(raw + pos, 0xBB, 32); /* blockhash */
+    pos += 32;
+    raw[pos++] = 1; /* instructions */
+    raw[pos++] = 2; /* program = system */
+    raw[pos++] = 2;
+    raw[pos++] = 0;
+    raw[pos++] = 1;
+    raw[pos++] = 12;
+    const uint8_t transfer[12] = {2, 0, 0, 0, 0x00, 0xCA, 0x9A, 0x3B};
+    memcpy(raw + pos, transfer, sizeof(transfer));
+    pos += sizeof(transfer);
+    raw[pos++] = 0; /* zero lookup tables */
+    SolanaParsedTx tx;
+    EXPECT_EQ(solana_inspectTx(raw, pos, &tx), h.review);
+  }
+}
+
+// Legacy messages get the same header sanitize rules as v0, before any
+// review classification, including the opaque path for too many accounts.
+TEST(Solana, LegacyMessageWithInvalidHeaderIsMalformed) {
+  struct Header {
+    uint8_t sigs, ro_signed, ro_unsigned, accounts;
+    SolanaTxReview review;
+  };
+  const Header headers[] = {
+      {1, 0, 1, 3, SOL_TX_REVIEW_VERIFIED},  /* control */
+      {1, 0, 2, 3, SOL_TX_REVIEW_VERIFIED},  /* 1 + 2 == 3 static keys */
+      {0, 0, 1, 3, SOL_TX_REVIEW_MALFORMED}, /* no signer */
+      {1, 1, 1, 3, SOL_TX_REVIEW_MALFORMED}, /* no writable signer */
+      {4, 0, 0, 3, SOL_TX_REVIEW_MALFORMED}, /* more signers than keys */
+      {1, 0, 3, 3, SOL_TX_REVIEW_MALFORMED}, /* ranges overlap */
+      {1, 0, 1, SOL_MAX_ACCOUNTS + 1, SOL_TX_REVIEW_OPAQUE}, /* control */
+      {1, 1, 1, SOL_MAX_ACCOUNTS + 1, SOL_TX_REVIEW_MALFORMED},
+  };
+  for (const Header& h : headers) {
+    SCOPED_TRACE(testing::Message()
+                 << int(h.sigs) << "," << int(h.ro_signed) << ","
+                 << int(h.ro_unsigned) << "," << int(h.accounts));
+    std::vector<uint8_t> raw = {h.sigs, h.ro_signed, h.ro_unsigned, h.accounts};
+    raw.insert(raw.end(), 32, 0x11);
+    raw.insert(raw.end(), 32, 0x22);
+    for (uint8_t i = 2; i < h.accounts; i++) raw.insert(raw.end(), 32, 0x00);
+    raw.insert(raw.end(), 32, 0xBB); /* blockhash */
+    raw.insert(raw.end(), {1, 2, 2, 0, 1, 12, 2, 0, 0, 0});
+    raw.insert(raw.end(), {0x00, 0xCA, 0x9A, 0x3B, 0, 0, 0, 0});
+    SolanaParsedTx tx;
+    EXPECT_EQ(h.review, solana_inspectTx(raw.data(), raw.size(), &tx));
+  }
 }
 
 TEST(Solana, X402ZeroLookupV0UsdcPaymentIsVerified) {
@@ -1159,6 +1293,138 @@ TEST(Solana, VersionedInstructionUsingLookupAccountIsOpaque) {
   memset(surplus, 0x45, sizeof(surplus));
   EXPECT_EQ(solana_inspectTxWithTrustedLut(raw, pos, surplus, 2, &tx),
             SOL_TX_REVIEW_MALFORMED);
+}
+
+// Three static keys (payer, recipient, system program) and one SystemTransfer
+// whose program and recipient indices the caller chooses. `instructions`
+// repeats it, so a count past SOL_MAX_INSTRUCTIONS walks the unretained path.
+// `loaded` is the number of accounts one lookup table loads (-1: no table).
+static std::vector<uint8_t> v0_transfer(uint8_t program, uint8_t to, int loaded,
+                                        uint8_t instructions = 1) {
+  std::vector<uint8_t> raw = {0x80, 1, 0, 1, 3};
+  for (uint8_t fill : {0x11, 0x22, 0x00, 0xBB}) raw.insert(raw.end(), 32, fill);
+  raw.push_back(instructions);
+  for (uint8_t i = 0; i < instructions; i++) {
+    raw.insert(raw.end(), {program, 2, 0, to, 12, 2, 0, 0, 0});
+    raw.insert(raw.end(), {0x00, 0xCA, 0x9A, 0x3B, 0, 0, 0, 0});
+  }
+  if (loaded < 0) {
+    raw.push_back(0);
+  } else {
+    raw.push_back(1);
+    raw.insert(raw.end(), 32, 0x55);
+    raw.push_back((uint8_t)loaded);
+    for (int i = 0; i < loaded; i++) raw.push_back((uint8_t)i);
+    raw.push_back(0);
+  }
+  return raw;
+}
+
+// An operand may name a lookup-table account, but only one that a table
+// actually loads; past static + loaded keys the account does not exist.
+TEST(Solana, VersionedOperandPastLoadedAccountsIsMalformed) {
+  struct Case {
+    uint8_t to;
+    int loaded;
+    uint8_t instructions;
+    SolanaTxReview review;
+  };
+  const Case cases[] = {
+      {1, -1, 1, SOL_TX_REVIEW_VERIFIED}, /* control: static recipient */
+      {3, 1, 1, SOL_TX_REVIEW_OPAQUE},    /* control: first loaded account */
+      {4, 2, 1, SOL_TX_REVIEW_OPAQUE},    /* control: last loaded account */
+      {3, -1, 1, SOL_TX_REVIEW_MALFORMED},
+      {3, 0, 1, SOL_TX_REVIEW_MALFORMED},
+      {4, 1, 1, SOL_TX_REVIEW_MALFORMED},
+      {255, 2, 1, SOL_TX_REVIEW_MALFORMED},
+      /* Also checked for instructions too many to retain. */
+      {3, -1, SOL_MAX_INSTRUCTIONS + 1, SOL_TX_REVIEW_MALFORMED},
+  };
+  for (const Case& c : cases) {
+    SCOPED_TRACE(testing::Message()
+                 << int(c.to) << "," << c.loaded << "," << int(c.instructions));
+    const auto raw = v0_transfer(2, c.to, c.loaded, c.instructions);
+    SolanaParsedTx tx;
+    EXPECT_EQ(c.review, solana_inspectTx(raw.data(), raw.size(), &tx));
+  }
+}
+
+// A program id must be a static key; lookup tables supply operands only.
+TEST(Solana, VersionedProgramIndexMustBeStatic) {
+  SolanaParsedTx tx;
+  auto raw = v0_transfer(2, 1, 1); /* control: static system program */
+  EXPECT_EQ(SOL_TX_REVIEW_OPAQUE,
+            solana_inspectTx(raw.data(), raw.size(), &tx));
+  raw = v0_transfer(3, 1, 1); /* program = the loaded account */
+  EXPECT_EQ(SOL_TX_REVIEW_MALFORMED,
+            solana_inspectTx(raw.data(), raw.size(), &tx));
+  raw = v0_transfer(3, 1, 1, SOL_MAX_INSTRUCTIONS + 1);
+  EXPECT_EQ(SOL_TX_REVIEW_MALFORMED,
+            solana_inspectTx(raw.data(), raw.size(), &tx));
+}
+
+// The KKSOLSW1 annotation is offered only when the message's lookup tables
+// load accounts, so the parser reports how many they load.
+TEST(Solana, ParserCountsLookupLoadedAccounts) {
+  uint8_t raw[256];
+  size_t pos = 0;
+  raw[pos++] = 0x80; /* v0 prefix */
+  raw[pos++] = 1;
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  raw[pos++] = 2; /* static accounts */
+  memset(raw + pos, 0x11, 32);
+  pos += 32;
+  memset(raw + pos, 0x00, 32); /* system program */
+  pos += 32;
+  memset(raw + pos, 0xBB, 32); /* blockhash */
+  pos += 32;
+  raw[pos++] = 1; /* instructions */
+  raw[pos++] = 1; /* program = system */
+  raw[pos++] = 2;
+  raw[pos++] = 0;
+  const size_t recipient_at = pos;
+  raw[pos++] = 2; /* first loaded address */
+  raw[pos++] = 12;
+  const uint8_t transfer[12] = {2, 0, 0, 0, 0x00, 0xCA, 0x9A, 0x3B};
+  memcpy(raw + pos, transfer, sizeof(transfer));
+  pos += sizeof(transfer);
+  const size_t lut_count_at = pos;
+  raw[pos++] = 1; /* one table: two writable, one readonly */
+  memset(raw + pos, 0x55, 32);
+  pos += 32;
+  raw[pos++] = 2;
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  raw[pos++] = 1;
+  raw[pos++] = 2;
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(3u, tx.num_loaded_accounts);
+
+  /* The same transfer to a static account, with no lookup table, is a valid
+   * v0 message that loads nothing. */
+  raw[recipient_at] = 1;
+  raw[lut_count_at] = 0;
+  ASSERT_EQ(solana_inspectTx(raw, lut_count_at + 1, &tx),
+            SOL_TX_REVIEW_VERIFIED);
+  EXPECT_EQ(0u, tx.num_loaded_accounts);
+}
+
+// A lookup-account attestation is shown only when it attests as many accounts
+// as the message loads: a partial or padded list would mislead. Only the count
+// is checked here; the account keys are bound by the attestation signature
+// check, solana_lut_accounts_trusted().
+TEST(Solana, LookupAttestationMustCoverEveryLoadedAccount) {
+  SolanaParsedTx tx;
+  memset(&tx, 0, sizeof(tx));
+  tx.num_loaded_accounts = 3;
+  EXPECT_TRUE(solana_lut_attestation_complete(&tx, 3));
+  EXPECT_FALSE(solana_lut_attestation_complete(&tx, 1));
+  EXPECT_FALSE(solana_lut_attestation_complete(&tx, 4));
+  EXPECT_FALSE(solana_lut_attestation_complete(&tx, 0));
+  tx.num_loaded_accounts = 0;
+  EXPECT_FALSE(solana_lut_attestation_complete(&tx, 0));
 }
 
 TEST(Solana, MemoBodyCaptured) {
@@ -1383,7 +1649,11 @@ TEST(Solana, SplAffectedIdentitiesAreCanonicalReviewMaterial) {
      * instruction whose confirmation would display a zero-filled key. */
     const size_t short_len = build_single_instr_tx(
         raw, SOL_TOKEN_PROGRAM, test_case.account_count - 1, data, data_len);
-    EXPECT_EQ(SOL_TX_REVIEW_OPAQUE, solana_inspectTx(raw, short_len, &tx));
+    /* With no account left the program would be the fee payer: the header
+     * itself is invalid, which is refused outright. */
+    EXPECT_EQ(test_case.account_count == 1 ? SOL_TX_REVIEW_MALFORMED
+                                           : SOL_TX_REVIEW_OPAQUE,
+              solana_inspectTx(raw, short_len, &tx));
   }
 }
 
@@ -1521,7 +1791,11 @@ TEST(Solana, SystemReviewRequiresAndPreservesAffectedAccounts) {
     len = build_single_instr_tx(raw, SOL_SYSTEM_PROGRAM,
                                 test_case.account_count - 1, data,
                                 test_case.data_len);
-    EXPECT_EQ(SOL_TX_REVIEW_OPAQUE, solana_inspectTx(raw, len, &tx));
+    /* With no account left the program would be the fee payer: the header
+     * itself is invalid, which is refused outright. */
+    EXPECT_EQ(test_case.account_count == 1 ? SOL_TX_REVIEW_MALFORMED
+                                           : SOL_TX_REVIEW_OPAQUE,
+              solana_inspectTx(raw, len, &tx));
   }
 }
 
@@ -2146,7 +2420,7 @@ TEST(Solana, RealRelayV0NoLookupFixtureAcceptsCompleteSchema) {
   EXPECT_EQ(memcmp(tx.accounts[instr->acct_indices[3]], tx.accounts[1], 32), 0);
 }
 
-TEST(Solana, SchemaAppliesToCertifiedLookupResolvedProgramAndAccount) {
+TEST(Solana, SchemaAppliesToCertifiedLookupResolvedAccount) {
   uint8_t program[32];
   memset(program, 0x42, sizeof(program));
   uint8_t data[48];
@@ -2157,16 +2431,19 @@ TEST(Solana, SchemaAppliesToCertifiedLookupResolvedProgramAndAccount) {
   raw[pos++] = 0x80; /* v0 */
   raw[pos++] = 1;    /* required signatures */
   raw[pos++] = 0;
-  raw[pos++] = 0;
-  raw[pos++] = 1; /* one static account: signer */
+  raw[pos++] = 1; /* the program is readonly */
+  raw[pos++] = 2; /* two static accounts: signer, program */
   memset(raw + pos, 0x11, 32);
+  pos += 32;
+  memcpy(raw + pos, program, 32);
   pos += 32;
   memset(raw + pos, 0xBB, 32); /* blockhash */
   pos += 32;
   raw[pos++] = 1; /* one instruction */
-  raw[pos++] = 1; /* program is resolved account 0 */
+  const size_t program_index_at = pos;
+  raw[pos++] = 1; /* program is static account 1 */
   raw[pos++] = 1; /* one instruction account */
-  raw[pos++] = 2; /* resolved account 1 */
+  raw[pos++] = 3; /* resolved account 1 */
   raw[pos++] = sizeof(data);
   memcpy(raw + pos, data, sizeof(data));
   pos += sizeof(data);
@@ -2204,6 +2481,12 @@ TEST(Solana, SchemaAppliesToCertifiedLookupResolvedProgramAndAccount) {
   EXPECT_EQ(
       memcmp(tx.accounts[tx.instructions[ix].acct_indices[0]], resolved[1], 32),
       0);
+
+  /* A program id is never taken from a lookup table, certified or not. */
+  raw[program_index_at] = 2; /* resolved account 0 */
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
+  EXPECT_EQ(solana_inspectTxWithTrustedLut(raw, pos, resolved, 2, &tx),
+            SOL_TX_REVIEW_MALFORMED);
 }
 
 TEST(Solana, SchemaNeverOverridesNativeDecoder) {
@@ -2288,6 +2571,42 @@ TEST(Solana, SchemaRejectsOutOfRangeAccount) {
   s.accounts[0].index = 9; /* beyond this instruction's account list */
   uint8_t idx = 0xFF;
   EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx));
+}
+
+/* A v0 message with an address-table section never takes the schema path,
+ * even when no instruction names a loaded account. */
+TEST(Solana, SchemaRejectsAnyLookupTable) {
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  uint8_t d[48];
+  build_relay_data(d, 1ULL);
+  uint8_t blob[256];
+  size_t len = build_relay_schema(blob, program, 2);
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob, len, &s));
+
+  for (bool table : {false, true}) {
+    SCOPED_TRACE(table);
+    std::vector<uint8_t> raw = {0x80, 1, 0, 1, 3};
+    raw.insert(raw.end(), 32, 0x11);
+    raw.insert(raw.end(), 32, 0x22);
+    raw.insert(raw.end(), program, program + 32);
+    raw.insert(raw.end(), 32, 0xBB); /* recent blockhash */
+    raw.insert(raw.end(), {1, 2, 2, 0, 1, sizeof(d)});
+    raw.insert(raw.end(), d, d + sizeof(d));
+    if (table) {
+      raw.push_back(1);
+      raw.insert(raw.end(), 32, 0x55);
+      raw.insert(raw.end(), {1, 0, 0}); /* loads one account, unused */
+    } else {
+      raw.push_back(0);
+    }
+    SolanaParsedTx tx;
+    ASSERT_NE(SOL_TX_REVIEW_MALFORMED,
+              solana_inspectTx(raw.data(), raw.size(), &tx));
+    uint8_t idx = 0xFF;
+    EXPECT_EQ(!table, solana_schemaApplies(&s, &tx, &idx));
+  }
 }
 
 /* Cross-language parity: these exact bytes are emitted by the KeepKey SDK's

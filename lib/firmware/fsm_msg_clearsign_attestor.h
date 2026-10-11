@@ -38,7 +38,8 @@
  *
  * Also accepts bounded KKABREQ1 address-book batches. The device recomputes a
  * Merkle root, shows every label/network/destination tuple, and signs only the
- * fixed-size KKABRT01 root manifest returned implicitly to the host.
+ * fixed-size KKABRT01 root manifest returned implicitly to the host. EVM
+ * addresses only for now.
  *
  * ponytail: KKSOLSC1 and KKABREQ1 only. EVM v2 metadata blobs are attestable in
  * principle but sign a different range (payload minus the 65-byte signature
@@ -112,135 +113,17 @@ void fsm_msgClearsignAttestorGetPublicKey(
   layoutHome();
 }
 
-void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
+/* ECDSA over SHA256(bytes) with the attestor key, as
+ * signed_metadata_verify_attestation() and contact_book_process_proof()
+ * check it. Sends the reply or the failure. */
+static void attestor_signAndReply(const uint8_t* bytes, size_t len) {
   RESP_INIT(ClearsignAttestorSignature);
-
-  CHECK_INITIALIZED
-  CHECK_PIN
-
-  CHECK_PARAM(msg->has_payload && msg->payload.size > 0, "Missing payload");
-
-  /* Validate before attesting. The payload must be a descriptor this firmware
-   * can itself parse — the same code path fsm_msgSolanaSignTx runs — so a
-   * compromised host cannot use the attestor as a raw signing oracle. */
-  SolanaInstrSchema schema;
-  ContactBookManifest contact_manifest;
-  ContactBookEntry contact_entries[CONTACT_BOOK_MAX_ENTRIES];
-  uint8_t contact_signed[46];
-  const uint8_t* bytes_to_sign = msg->payload.bytes;
-  size_t bytes_to_sign_len = msg->payload.size;
-  bool contact_request =
-      msg->payload.size >= 8 && memcmp(msg->payload.bytes, "KKABREQ1", 8) == 0;
-  CHECK_PARAM(contact_request || storage_isPolicyEnabled("AdvancedMode"),
-              _("AdvancedMode required for schema attestation"));
-  if (!contact_request && (msg->payload.size < 8 ||
-                           memcmp(msg->payload.bytes, "KKSOLSC1", 8) != 0)) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError, "Unsupported descriptor");
-    layoutHome();
-    return;
-  }
-  if (contact_request) {
-    if (!contact_book_parse_request(msg->payload.bytes, msg->payload.size,
-                                    &contact_manifest, contact_entries, NULL)) {
-      fsm_sendFailure(FailureType_Failure_SyntaxError, "Invalid address book");
-      layoutHome();
-      return;
-    }
-    bool confirmed = confirm(
-        ButtonRequestType_ButtonRequest_SignTx, "Address Book",
-        "Approve %u contacts?\nRevision %lu", (unsigned)contact_manifest.count,
-        (unsigned long)contact_manifest.revision);
-    for (uint8_t i = 0; confirmed && i < contact_manifest.count; i++) {
-      confirmed = confirm(ButtonRequestType_ButtonRequest_SignTx,
-                          "Certify Contact", "%s\n%s", contact_entries[i].label,
-                          contact_entries[i].network);
-      if (confirmed) {
-        confirmed = confirm_bytes(ButtonRequestType_ButtonRequest_SignTx,
-                                  "Destination", contact_entries[i].destination,
-                                  contact_entries[i].destination_len);
-      }
-    }
-    if (!confirmed) {
-      memzero(contact_entries, sizeof(contact_entries));
-      fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
-      layoutHome();
-      return;
-    }
-    contact_book_manifest_bytes(&contact_manifest, contact_signed);
-    bytes_to_sign = contact_signed;
-    bytes_to_sign_len = sizeof(contact_signed);
-  } else if (!solana_parseInstrSchema(msg->payload.bytes, msg->payload.size,
-                                      &schema)) {
-    memzero(&schema, sizeof(schema));
-    fsm_sendFailure(FailureType_Failure_SyntaxError, "Invalid schema");
-    layoutHome();
-    return;
-  }
-
-  char program_id[45] = {0};
-  char disc_hex[2 * SOL_SCHEMA_DISC_MAX + 1] = {0};
-  if (!contact_request) {
-    solana_pubkeyToStr(schema.program_id, program_id, sizeof(program_id));
-    for (uint8_t i = 0; i < schema.disc_len; i++) {
-      snprintf(disc_hex + 2 * i, sizeof(disc_hex) - 2 * i, "%02x",
-               schema.disc[i]);
-    }
-  }
-
-  /* Program IDs may consume two body rows, while an 8-byte discriminator plus
-   * its label consumes another two. They therefore get separate confirmations:
-   * combining them can silently clip the discriminator, which is precisely the
-   * field the operator must compare against the contract ABI. */
-  bool confirmed =
-      contact_request ||
-      (confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
-               "%s\n%s", schema.program_name, schema.instruction_name) &&
-       confirm(ButtonRequestType_ButtonRequest_SignTx, "Program ID", "%s",
-               program_id) &&
-       confirm(ButtonRequestType_ButtonRequest_SignTx, "Discriminator", "%s",
-               disc_hex));
-
-  /* One label per screen. A structurally valid schema can still lie by
-   * labelling the wrong offset ("Amount" over the order id), so the operator
-   * has to read every label — and confirm()'s body is three rendered rows with
-   * no pagination, so a batched list of max-length labels scrolls off. A label
-   * nobody saw is a label nobody checked. */
-  for (uint8_t i = 0; !contact_request && confirmed && i < schema.num_args;
-       i++) {
-    confirmed = confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
-                        "Arg %u: %s\n%s", (unsigned)(i + 1),
-                        attestor_schemaArgTypeName(schema.args[i].type),
-                        schema.args[i].label);
-    /* The mint account decides which token definition may name and scale the
-     * amount, so it is attested as deliberately as the label. */
-    if (confirmed && schema.args[i].type == SOL_SCHEMA_ARG_TOKEN_AMOUNT) {
-      confirmed =
-          confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
-                  "Arg %u token mint is\naccount #%u", (unsigned)(i + 1),
-                  (unsigned)schema.args[i].mint_account);
-    }
-  }
-  for (uint8_t i = 0; !contact_request && confirmed && i < schema.num_accounts;
-       i++) {
-    confirmed =
-        confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
-                "Account #%u shows\n%s", (unsigned)schema.accounts[i].index,
-                schema.accounts[i].label);
-  }
-  memzero(&schema, sizeof(schema));
-  if (!confirmed) {
-    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
-    layoutHome();
-    return;
-  }
 
   HDNode* node = attestor_getNode();
   if (!node) return;
 
-  /* Plain ECDSA over SHA256(payload): exactly what
-   * signed_metadata_verify_attestation() checks on the verifying device. */
   uint8_t digest[32];
-  sha256_Raw(bytes_to_sign, bytes_to_sign_len, digest);
+  sha256_Raw(bytes, len, digest);
 
   uint8_t sig[64];
   int ret =
@@ -263,9 +146,147 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
 
   memzero(sig, sizeof(sig));
   memzero(node, sizeof(*node));
-  memzero(contact_entries, sizeof(contact_entries));
-  memzero(contact_signed, sizeof(contact_signed));
 
   msg_write(MessageType_MessageType_ClearsignAttestorSignature, resp);
   layoutHome();
+}
+
+/* Every entry is reviewed before the root is signed: a label nobody saw is a
+ * label nobody checked. */
+static void attestor_certifyContacts(const ClearsignAttestorSign* msg) {
+  ContactBookEntry entries[CONTACT_BOOK_MAX_ENTRIES];
+  ContactBookManifest manifest;
+  bool ok = contact_book_parse_request(msg->payload.bytes, msg->payload.size,
+                                       &manifest, entries, NULL);
+  for (uint8_t i = 0; ok && i < manifest.count; i++) {
+    ok = entries[i].destination_type == CONTACT_BOOK_DEST_EVM_ADDRESS &&
+         entries[i].destination_len == 20 &&
+         strncmp(entries[i].network, "eip155:", 7) == 0;
+  }
+  if (!ok) {
+    memzero(entries, sizeof(entries));
+    fsm_sendFailure(FailureType_Failure_SyntaxError, "Invalid address book");
+    layoutHome();
+    return;
+  }
+
+  bool confirmed =
+      confirm(ButtonRequestType_ButtonRequest_SignTx, "Address Book",
+              "Approve %u contacts?\nRevision %lu", (unsigned)manifest.count,
+              (unsigned long)manifest.revision);
+  for (uint8_t i = 0; confirmed && i < manifest.count; i++) {
+    char address[43] = "0x";
+    ethereum_address_checksum(entries[i].destination, address + 2, false, 0);
+    confirmed =
+        confirm(ButtonRequestType_ButtonRequest_SignTx, "Certify Contact",
+                "%s\n%s", entries[i].label, entries[i].network) &&
+        confirm(ButtonRequestType_ButtonRequest_SignTx, "Destination", "%s",
+                address);
+  }
+  memzero(entries, sizeof(entries));
+  if (!confirmed) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+    layoutHome();
+    return;
+  }
+
+  uint8_t signed_bytes[46];
+  contact_book_manifest_bytes(&manifest, signed_bytes);
+  attestor_signAndReply(signed_bytes, sizeof(signed_bytes));
+  memzero(signed_bytes, sizeof(signed_bytes));
+}
+
+void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
+  CHECK_INITIALIZED
+  CHECK_PIN
+
+  CHECK_PARAM(msg->has_payload && msg->payload.size > 0, "Missing payload");
+
+  if (msg->payload.size >= 8 &&
+      memcmp(msg->payload.bytes, "KKABREQ1", 8) == 0) {
+    attestor_certifyContacts(msg);
+    return;
+  }
+
+  /* Validate before attesting. The payload must be a descriptor this firmware
+   * can itself parse — the same code path fsm_msgSolanaSignTx runs — so a
+   * compromised host cannot use the attestor as a raw signing oracle. */
+  SolanaInstrSchema schema;
+  CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),
+              _("AdvancedMode required for schema attestation"));
+  if (msg->payload.size < 8 || memcmp(msg->payload.bytes, "KKSOLSC1", 8) != 0) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError, "Unsupported descriptor");
+    layoutHome();
+    return;
+  }
+  if (!solana_parseInstrSchema(msg->payload.bytes, msg->payload.size,
+                               &schema)) {
+    memzero(&schema, sizeof(schema));
+    fsm_sendFailure(FailureType_Failure_SyntaxError, "Invalid schema");
+    layoutHome();
+    return;
+  }
+  /* Roles and intent templates (v3) are not on these review screens, so the
+   * attestor never signs wording or limit semantics it did not show. */
+  if (schema.version >= 3) {
+    memzero(&schema, sizeof(schema));
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    "Attestor cannot review this schema version");
+    layoutHome();
+    return;
+  }
+
+  char program_id[45] = {0};
+  char disc_hex[2 * SOL_SCHEMA_DISC_MAX + 1] = {0};
+  solana_pubkeyToStr(schema.program_id, program_id, sizeof(program_id));
+  for (uint8_t i = 0; i < schema.disc_len; i++) {
+    snprintf(disc_hex + 2 * i, sizeof(disc_hex) - 2 * i, "%02x",
+             schema.disc[i]);
+  }
+
+  /* Program IDs may consume two body rows, while an 8-byte discriminator plus
+   * its label consumes another two. They therefore get separate confirmations:
+   * combining them can silently clip the discriminator, which is precisely the
+   * field the operator must compare against the contract ABI. */
+  bool confirmed =
+      (confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
+               "%s\n%s", schema.program_name, schema.instruction_name) &&
+       confirm(ButtonRequestType_ButtonRequest_SignTx, "Program ID", "%s",
+               program_id) &&
+       confirm(ButtonRequestType_ButtonRequest_SignTx, "Discriminator", "%s",
+               disc_hex));
+
+  /* One label per screen. A structurally valid schema can still lie by
+   * labelling the wrong offset ("Amount" over the order id), so the operator
+   * has to read every label — and confirm()'s body is three rendered rows with
+   * no pagination, so a batched list of max-length labels scrolls off. A label
+   * nobody saw is a label nobody checked. */
+  for (uint8_t i = 0; confirmed && i < schema.num_args; i++) {
+    confirmed = confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
+                        "Arg %u: %s\n%s", (unsigned)(i + 1),
+                        attestor_schemaArgTypeName(schema.args[i].type),
+                        schema.args[i].label);
+    /* The mint account decides which token definition may name and scale the
+     * amount, so it is attested as deliberately as the label. */
+    if (confirmed && schema.args[i].type == SOL_SCHEMA_ARG_TOKEN_AMOUNT) {
+      confirmed =
+          confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
+                  "Arg %u token mint is\naccount #%u", (unsigned)(i + 1),
+                  (unsigned)schema.args[i].mint_account);
+    }
+  }
+  for (uint8_t i = 0; confirmed && i < schema.num_accounts; i++) {
+    confirmed =
+        confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
+                "Account #%u shows\n%s", (unsigned)schema.accounts[i].index,
+                schema.accounts[i].label);
+  }
+  memzero(&schema, sizeof(schema));
+  if (!confirmed) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+    layoutHome();
+    return;
+  }
+
+  attestor_signAndReply(msg->payload.bytes, msg->payload.size);
 }

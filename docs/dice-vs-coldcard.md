@@ -19,7 +19,7 @@ which is comparable. It was the derivation.
 | Rolls required for a new seed | no, opt-in via `dice_entropy` | **yes, mandatory** since 5.6.1 / 1.5.1Q |
 | Roll count for 24 words | 99 | 99 |
 | Roll count for 12 words | 50 | 50 |
-| Bias rejection on rolls | rejects any face over 30% frequency | rejects any face over 30% frequency |
+| Bias rejection on rolls | rejects one face on 25/50, 32/75 or 39/99 rolls (fair-die false alarm ≤ 1e-6) | rejects any face over 30% frequency |
 | Digest shown | after entry, **full 32 bytes** | live, **full 32 bytes** |
 | Digest is `SHA256(rolls)` | yes | yes |
 | Host can contribute entropy | default (no-dice) mode only; **consumed and dropped** when dice are used | **no such command exists** |

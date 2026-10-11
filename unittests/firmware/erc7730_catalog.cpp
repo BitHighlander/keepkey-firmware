@@ -3,7 +3,11 @@ extern "C" {
 #include "keepkey/firmware/erc7730_capabilities.h"
 #include "keepkey/firmware/erc7730_catalog.h"
 #include "keepkey/firmware/erc7730_program.h"
+#include "keepkey/board/memory.h"
+#include "keepkey/firmware/erc7730_workflow.h"
+#include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/storage.h"
+#include "messages-ethereum.pb.h"
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha2.h"
@@ -626,9 +630,12 @@ TEST(Erc7730Catalog, RootCertifiedDefinitionVerifiesWithoutRuntimeSigner) {
   EXPECT_STREQ(identity.delegate_fingerprint, fingerprint);
   EXPECT_EQ(feedAll(e, 1), ERC7730_CATALOG_COMPLETE);
 
-  // Certification does not lift AdvancedMode.
+  // D-007: a certified definition verifies without AdvancedMode.
   ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
-  EXPECT_EQ(feedAll(e, 64), ERC7730_CATALOG_UNTRUSTED);
+  Erc7730CatalogIdentity off{};
+  ASSERT_EQ(feedIdentity(e, &off), ERC7730_CATALOG_COMPLETE);
+  EXPECT_EQ(off.tier, (uint8_t)METADATA_TIER_KEEPKEY);
+  EXPECT_STREQ(off.delegate_alias, "KeepKey Test");
 }
 
 TEST(Erc7730Catalog, RootCertificateDefectsAreRefused) {
@@ -663,9 +670,15 @@ TEST(Erc7730Catalog, RootCertificateDefectsAreRefused) {
           rootCert(fixture.root_key, delegate, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
                    1, KK_CLEARSIGN_MIN_EXPIRY + 1, "KeepKey\nTest")),
   };
-  // With no runtime signer loaded there is nothing to fall back to.
-  for (size_t i = 0; i < refused.size(); i++)
-    EXPECT_EQ(feedAll(refused[i], 64), ERC7730_CATALOG_UNTRUSTED) << i;
+  // With no runtime signer loaded there is nothing to fall back to, with
+  // AdvancedMode on or off.
+  for (bool advanced : {true, false}) {
+    ASSERT_TRUE(storage_setPolicy("AdvancedMode", advanced));
+    for (size_t i = 0; i < refused.size(); i++)
+      EXPECT_EQ(feedAll(refused[i], 64), ERC7730_CATALOG_UNTRUSTED)
+          << i << " advanced=" << advanced;
+  }
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
 
   // The same defect with the delegate loaded as a runtime signer falls back
   // to the runtime tier, under the alias the user approved.
@@ -675,8 +688,10 @@ TEST(Erc7730Catalog, RootCertificateDefectsAreRefused) {
   ASSERT_EQ(feedIdentity(refused[0], &identity), ERC7730_CATALOG_COMPLETE);
   EXPECT_EQ(identity.tier, (uint8_t)METADATA_TIER_RUNTIME);
   EXPECT_STREQ(identity.delegate_alias, "Approved signer");
-  signed_metadata_clear_signers();
+  // The runtime fallback is never reached without AdvancedMode.
   ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+  EXPECT_EQ(feedAll(refused[0], 64), ERC7730_CATALOG_UNTRUSTED);
+  signed_metadata_clear_signers();
 }
 
 TEST(Erc7730Catalog, ChainIdAboveUint32IsRefusedNotTruncated) {
@@ -753,15 +768,22 @@ TEST(Erc7730Catalog, RejectsOutOfOrderAndDuplicateChunks) {
             ERC7730_CATALOG_BAD_SEQUENCE);
 }
 
+// The declared id must be the envelope's own hash. The envelope here is
+// validly signed, so the id comparison is the only thing that can refuse it.
 TEST(Erc7730Catalog, RejectsDefinitionIdMismatch) {
-  auto e = envelope(minimalProgram());
-  auto id = digest(e);
-  id[0] ^= 1;
-  Erc7730CatalogVerifier verifier;
-  Erc7730CatalogIdentity identity = {};
-  erc7730_catalog_begin(&verifier, id.data(), (uint32_t)e.size());
-  EXPECT_EQ(erc7730_catalog_feed(&verifier, 0, e.data(), e.size(), &identity),
-            ERC7730_CATALOG_UNTRUSTED);
+  SignedFixture fixture;
+  loadRuntimeSigner(&fixture, "Approved signer");
+  const auto e = signedEnvelope(fixture, minimalProgram());
+  for (bool wrong : {false, true}) {
+    auto id = digest(e);
+    if (wrong) id[0] ^= 1;
+    Erc7730CatalogVerifier verifier;
+    Erc7730CatalogIdentity identity = {};
+    erc7730_catalog_begin(&verifier, id.data(), (uint32_t)e.size());
+    EXPECT_EQ(erc7730_catalog_feed(&verifier, 0, e.data(), e.size(), &identity),
+              wrong ? ERC7730_CATALOG_UNTRUSTED : ERC7730_CATALOG_COMPLETE);
+    erc7730_catalog_abort(&verifier);
+  }
 }
 
 TEST(Erc7730Catalog, RejectsNonCanonicalProgramHeaderAndSections) {
@@ -787,16 +809,44 @@ TEST(Erc7730Catalog, RejectsMalformedOrAliasedAbiGraphsWhileStreaming) {
   p[kFirstNode + 4] = 2;  // tuple child begins beyond the two-node table
   EXPECT_EQ(feedAll(envelope(p), 19), ERC7730_CATALOG_BAD_PROGRAM);
 
-  p = minimalProgram();
-  p[kSecondNode] = 8;      // tuple
-  p[kSecondNode + 4] = 1;  // backwards/self edge
-  p[kSecondNode + 6] = 1;
+  // root -> tuple -> uint256, each child after its parent: accepted.
+  p = withAbi(minimalProgram(),
+              {8, 0, 0, 0, 1, 0, 1, 0, 0,   // root -> node 1
+               8, 0, 0, 0, 2, 0, 1, 0, 0,   // tuple -> node 2
+               1, 1, 0, 0, 0, 0, 0, 0, 0},  // uint256
+              3);
+  EXPECT_EQ(feedAll(envelope(p), 43), ERC7730_CATALOG_UNTRUSTED);
+
+  // The same tree with the child before its parent. Every node still has
+  // exactly one parent, so only the forward-edge rule refuses it.
+  p = withAbi(minimalProgram(),
+              {8, 0, 0, 0, 2, 0, 1, 0, 0,   // root -> node 2
+               1, 1, 0, 0, 0, 0, 0, 0, 0,   // uint256
+               8, 0, 0, 0, 1, 0, 1, 0, 0},  // tuple -> node 1: backwards
+              3);
+  EXPECT_EQ(feedAll(envelope(p), 43), ERC7730_CATALOG_BAD_PROGRAM);
+
+  // A tuple that is its own only parent.
+  p = withAbi(minimalProgram(),
+              {8, 0, 0, 0, 1, 0, 1, 0, 0,   // root -> node 1
+               1, 1, 0, 0, 0, 0, 0, 0, 0,   // uint256
+               8, 0, 0, 0, 2, 0, 1, 0, 0},  // tuple -> itself
+              2);
+  EXPECT_EQ(feedAll(envelope(p), 43), ERC7730_CATALOG_BAD_PROGRAM);
+
+  // Two parents share a child: the edges all point forward, so only the
+  // one-parent rule refuses it.
+  p = withAbi(minimalProgram(),
+              {8, 0, 0, 0, 1, 0, 2, 0, 0,   // root -> nodes 1 and 2
+               8, 0, 0, 0, 2, 0, 1, 0, 0,   // tuple -> node 2 again
+               1, 1, 0, 0, 0, 0, 0, 0, 0},  // uint256
+              3);
   EXPECT_EQ(feedAll(envelope(p), 43), ERC7730_CATALOG_BAD_PROGRAM);
 }
 
 TEST(Erc7730Catalog, RecomputesSignedResourceDeclaration) {
   auto p = minimalProgram();
-  p[p.size() - 22] = 1;  // claims 256 strings instead of zero
+  p[p.size() - 22] = 1;  // claims 257 strings instead of one
   EXPECT_EQ(feedAll(envelope(p), 29), ERC7730_CATALOG_BAD_PROGRAM);
 
   p = minimalProgram();
@@ -834,8 +884,6 @@ TEST(Erc7730Catalog, ValidatesTypedPathsSlicesAndFullArraySteps) {
   auto p = programWithPaths({1, 1, 0xff, 0xff, 1, 0, 0, 0, 0}, 1);
   EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_UNTRUSTED);
 
-  // Slices, whole-array steps, container and literal sources are not in the
-  // capability table: the runtime cannot capture them, so preload refuses.
   // @.from, @.to, @.value and a literal are executable value sources.
   for (const auto& entries : std::vector<std::vector<uint8_t>>{
            {2, 0, 0, 1}, {2, 0, 0, 2}, {2, 0, 0, 3}, {3, 0, 0, 0}}) {
@@ -843,8 +891,8 @@ TEST(Erc7730Catalog, ValidatesTypedPathsSlicesAndFullArraySteps) {
     EXPECT_EQ(feedAll(envelope(p), 23), ERC7730_CATALOG_UNTRUSTED);
   }
 
-  // Slices, whole-array steps, the other containers and out-of-table literal
-  // indices are not executed, so preload refuses them.
+  // Slices, a whole-array step on the root tuple, the other containers, a
+  // container with a step and an out-of-range literal index are refused.
   const std::vector<std::vector<uint8_t>> refused = {
       {1, 2, 0xff, 0xff, 1, 0, 0, 0, 0, 3, 1, 0xff, 0xff, 0xff, 0xec},
       {1, 1, 0xff, 0xff, 2},
@@ -860,12 +908,14 @@ TEST(Erc7730Catalog, ValidatesTypedPathsSlicesAndFullArraySteps) {
   }
 }
 
-// Calldata and typed-data captures refuse ERC7730_ABI_MAX_DEPTH or more path
-// steps, so the preload verifier must too: a longer signed path would pass
-// preload and then fail after the user had approved earlier screens.
-TEST(Erc7730Catalog, PathStepLimitMatchesExecutionCaptures) {
+// The verifier's path step limit does not cut into the paths an ABI admits:
+// the deepest one, ERC7730_ABI_MAX_DEPTH - 1 steps, passes preload. One step
+// more is refused, but that does not show the limit itself: ABI depth is
+// capped at ERC7730_ABI_MAX_DEPTH and each step descends one level, so the
+// walk has no node left for that step and refuses the path on its own.
+TEST(Erc7730Catalog, PathStepLimitAdmitsTheDeepestAbiPath) {
   // Seven nested tuples above a uint256: depth eight, the ABI maximum, and a
-  // seven-step path to the leaf, the capture maximum.
+  // seven-step path to the leaf.
   std::vector<uint8_t> nodes;
   for (uint8_t i = 0; i < ERC7730_ABI_MAX_DEPTH - 1u; i++)
     nodes.insert(nodes.end(), {8, 0, 0, 0, (uint8_t)(i + 1), 0, 1, 0, 0});
@@ -931,6 +981,14 @@ TEST(Erc7730Catalog, ValidatesFormatterOperandsAndDisplayProgram) {
   auto bad_formatter = formatter;
   bad_formatter[4] = 3;
   bad_formatter[6] = 1;  // value operand claims a missing string index
+  p = programWithPaths(path, 1);
+  p = replaceTable(p, 6, bad_formatter, 1);
+  EXPECT_EQ(feedAll(envelope(p), 31), ERC7730_CATALOG_BAD_PROGRAM);
+
+  // The same operand with its source left a path: index 1 of one path. Only
+  // the index bound can refuse this one.
+  bad_formatter = formatter;
+  bad_formatter[6] = 1;
   p = programWithPaths(path, 1);
   p = replaceTable(p, 6, bad_formatter, 1);
   EXPECT_EQ(feedAll(envelope(p), 31), ERC7730_CATALOG_BAD_PROGRAM);
@@ -1320,7 +1378,7 @@ TEST(Erc7730Catalog, VerifierRejectsDuplicateDomainFieldLikeLoader) {
 // Phase 0 of the ERC-7730 formatter plan: the preload verifier and the
 // runtime consult one capability table, so every shape the runtime cannot
 // execute is refused before the first screen. Each refusal below is paired
-// with the runtime predicate that would have refused it mid-review.
+// with the runtime check that would have refused it mid-review.
 TEST(Erc7730Catalog, PreloadRefusesDisplayInstructionsTheRuntimeCannotRun) {
   const std::vector<uint8_t> path = {1, 1, 0xff, 0xff, 1, 0, 0, 0, 0};
   EXPECT_EQ(feedAll(envelope(rawFieldProgram(path)), 7),
@@ -1352,20 +1410,29 @@ TEST(Erc7730Catalog, PreloadRefusesDisplayInstructionsTheRuntimeCannotRun) {
       feedAll(envelope(replaceTable(rawFieldProgram(path), 7, interpolated, 5)),
               7),
       ERC7730_CATALOG_UNTRUSTED);
+  // An intent part after a field. The capability predicate sees one
+  // instruction at a time and accepts it; the runtime refuses it because its
+  // index lies beyond the intent run the replay reader counted.
+  for (uint8_t opcode : {2, 3}) {
+    const std::vector<uint8_t> late = {
+        1,      0, 0,    0,    0xff, 0xff, 0xff, 0xff,  // intent
+        4,      0, 0,    0,    0,    0,    0xff, 0xff,  // field
+        opcode, 0, 0,    0,    0xff, 0xff, 0xff, 0xff,  // part
+        10,     0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+    const auto p = replaceTable(rawFieldProgram(path), 7, late, 4);
+    EXPECT_EQ(feedAll(envelope(p), 7), ERC7730_CATALOG_BAD_PROGRAM)
+        << (int)opcode;
+    const Erc7730DisplayInstruction part = {opcode, 0, 0, UINT16_MAX,
+                                            UINT16_MAX};
+    EXPECT_TRUE(erc7730_cap_display(&part, 2)) << (int)opcode;
+    Erc7730ProgramDisplay reader{};
+    const size_t payload = 2u + late.size();
+    erc7730_program_display_begin(&reader, payload, 2);
+    ASSERT_TRUE(erc7730_program_display_feed(
+        &reader, 0, p.data() + sectionOffset(p, 7) + 5, payload));
+    EXPECT_LT(reader.intent_parts, 2) << (int)opcode;
+  }
   const Case cases[] = {
-      // an intent part after a field
-      {{1,    0,    0,  0,    0xff, 0xff, 0xff, 0xff, 4,    0,    0,
-        0,    0,    0,  0xff, 0xff, 2,    0,    0,    0,    0xff, 0xff,
-        0xff, 0xff, 10, 0,    0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
-       4,
-       {2, 0, 0, UINT16_MAX, 0},
-       2},
-      {{1,    0,    0,  0,    0xff, 0xff, 0xff, 0xff, 4,    0,    0,
-        0,    0,    0,  0xff, 0xff, 3,    0,    0,    0,    0xff, 0xff,
-        0xff, 0xff, 10, 0,    0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
-       4,
-       {3, 0, 0, 0, UINT16_MAX},
-       2},
       // a group end that names no group
       {{1,    0,    0,    0,    0xff, 0xff, 0xff, 0xff, 6,    0,    0xff, 0xff,
         0xff, 0xff, 0xff, 0xff, 10,   0,    0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
@@ -1402,6 +1469,25 @@ TEST(Erc7730Catalog, PreloadRefusesDisplayInstructionsTheRuntimeCannotRun) {
         << (int)c.refused.opcode << "@" << c.pc;
     EXPECT_FALSE(erc7730_cap_display(&c.refused, c.pc))
         << (int)c.refused.opcode << "@" << c.pc;
+  }
+  // A table that does not end in an end instruction. The runtime leaves the
+  // review only at an end, so it would step past the last instruction, where
+  // the replay reader has nothing to select.
+  const std::vector<std::vector<uint8_t>> unterminated = {
+      {1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff},  // intent
+      {1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff,   // intent
+       4, 0, 0, 0, 0,    0,    0xff, 0xff},  // field
+  };
+  for (const auto& display : unterminated) {
+    const uint16_t count = (uint16_t)(display.size() / 8u);
+    const auto p = replaceTable(rawFieldProgram(path), 7, display, count);
+    EXPECT_EQ(feedAll(envelope(p), 7), ERC7730_CATALOG_BAD_PROGRAM) << count;
+    Erc7730ProgramDisplay reader{};
+    const size_t payload = 2u + display.size();
+    erc7730_program_display_begin(&reader, payload, count);
+    EXPECT_FALSE(erc7730_program_display_feed(
+        &reader, 0, p.data() + sectionOffset(p, 7) + 5, payload))
+        << count;
   }
   // A field may carry an "optional" condition, which only ever shows it.
   const Erc7730DisplayInstruction conditional = {4, 0, 0, 0, 0};
@@ -1505,7 +1591,10 @@ TEST(Erc7730Catalog, RuntimePathPredicateMatchesTheTable) {
   EXPECT_TRUE(erc7730_cap_path(&path));
   path.steps[0].opcode = 3;
   EXPECT_FALSE(erc7730_cap_path(&path));
-  path.steps[0].opcode = 1;
+  // Every step is an index, so only the step count tells these two apart.
+  for (uint8_t i = 0; i < ERC7730_ABI_MAX_DEPTH; i++) path.steps[i].opcode = 1;
+  path.step_count = ERC7730_ABI_MAX_DEPTH - 1u;
+  EXPECT_TRUE(erc7730_cap_path(&path));
   path.step_count = ERC7730_ABI_MAX_DEPTH;
   EXPECT_FALSE(erc7730_cap_path(&path));
   path.step_count = 0;
@@ -1540,7 +1629,8 @@ std::vector<uint8_t> tokenProgram(const std::vector<uint8_t>& formatter,
 
 }  // namespace
 
-// Phase A: tokenAmount, addressName, container and literal values. Every
+// Phase A: arguments of tokenAmount and addressName, from container and
+// literal values. Every
 // argument is type-checked at preload against the class the runtime needs, so
 // a mistyped program is refused before the first screen. Each refusal below
 // has an accepted neighbour differing only in the offending byte.
@@ -1893,9 +1983,11 @@ TEST(Erc7730Catalog, OnlyARawFieldShowsASignerConstant) {
 }
 
 TEST(Erc7730Catalog, AnEnumMapsADecodedValueNeverAConstant) {
-  // literal 0 = 1 (the constant, also the map's key); literal 1 = a
-  // one-entry map. Path 2 is literal 0, path 1 the uint256 argument.
-  const std::vector<uint8_t> literals = {1, 0, 1, 1,  //
+  // literal 0 = 256 (the constant, also the map's key); literal 1 = a
+  // one-entry map. Path 2 is literal 0, path 1 the uint256 argument. Two
+  // bytes give the constant the class of a decoded uint256, so only the
+  // signer-constant rule tells the two programs apart.
+  const std::vector<uint8_t> literals = {1, 0, 2, 1, 0,  //
                                          8, 0, 6, 0, 1, 0, 0, 0, 0};
   EXPECT_EQ(feedAll(envelope(tokenProgram({8, 0, 2, 1, 1, 0, 1, 10, 2, 0, 1},
                                           literals, 2)),
@@ -2103,4 +2195,283 @@ TEST(Erc7730Catalog, ValidatesNestedGroupControlFlowAndRejectsBadReturns) {
   p = replaceTable(minimalProgram(), 7, malformed, 6);
   p[sectionOffset(p, 9) + 5 + 18] = 2;
   EXPECT_EQ(feedAll(envelope(p), 17), ERC7730_CATALOG_BAD_PROGRAM);
+}
+
+// D-007 through the FSM: what a host sees for a definition on each tier, with
+// AdvancedMode on and off. The device signs only after every screen is
+// accepted; the run reads the signature frame the host would receive.
+bool kkconfirm_preload(int nYes, int nNo);
+int kkconfirm_drain(void);
+void kkconfirm_capture_start(void);
+std::vector<std::string> kkconfirm_capture_finish(void);
+bool kkconfirm_readResponse(uint16_t expected, const pb_field_t* fields,
+                            void* result);
+
+namespace {
+
+constexpr int kScreenBudget = 12;
+
+struct ScopedWallet {
+  std::vector<uint8_t> bytes = std::vector<uint8_t>(FLASH_TOTAL_SIZE, 0xff);
+  uint8_t* previous = emulator_flash_base;
+  ScopedWallet() {
+    emulator_flash_base = bytes.data();
+    storage_init();
+    storage_setMnemonic("all all all all all all all all all all all all");
+  }
+  ~ScopedWallet() {
+    fsm_abort_workflows();
+    erc7730_catalog_clear_preload();
+    signed_metadata_clear_signers();
+    storage_reset();
+    emulator_flash_base = previous;
+  }
+};
+
+struct SignRun {
+  FailureType code = (FailureType)0;
+  std::string message;
+  int screens = 0;
+  bool signature = false;
+  std::vector<std::string> bodies;
+};
+
+std::vector<uint8_t> word(uint8_t low) {
+  std::vector<uint8_t> w(32, 0);
+  w[31] = low;
+  return w;
+}
+
+// Preloads `e`, then signs a call of minimalProgram()'s selector with
+// `args` on `chain`. `tamper_signing_pass` changes one byte the host sends on
+// the final, signing pass.
+SignRun signWithDefinition(const std::vector<uint8_t>& e,
+                           const std::vector<uint8_t>& args, uint64_t chain = 1,
+                           bool tamper_signing_pass = false) {
+  SignRun run;
+  fsm_test_clearLastFailure();
+  EXPECT_TRUE(kkconfirm_preload(kScreenBudget, 0));
+  kkconfirm_capture_start();
+  const auto id = digest(e);
+
+  for (size_t offset = 0; offset < e.size();) {
+    EthereumClearSignDefinition chunk{};
+    chunk.definition_id.size = 32;
+    memcpy(chunk.definition_id.bytes, id.data(), 32);
+    chunk.offset = (uint32_t)offset;
+    chunk.total_length = (uint32_t)e.size();
+    chunk.data.size = (pb_size_t)std::min<size_t>(ERC7730_TRANSPORT_CHUNK_MAX,
+                                                  e.size() - offset);
+    memcpy(chunk.data.bytes, e.data() + offset, chunk.data.size);
+    fsm_msgEthereumClearSignDefinition(&chunk);
+    if (fsm_test_lastFailureCode() != 0) break;
+    offset += chunk.data.size;
+  }
+
+  if (fsm_test_lastFailureCode() == 0) {
+    EthereumSignTx tx{};
+    const uint32_t path[5] = {0x8000002c, 0x8000003c, 0x80000000, 0, 0};
+    memcpy(tx.address_n, path, sizeof(path));
+    tx.address_n_count = 5;
+    tx.has_chain_id = true;
+    tx.chain_id = chain;
+    tx.has_nonce = tx.has_gas_price = tx.has_gas_limit = true;
+    tx.nonce.size = tx.gas_price.size = tx.gas_limit.size = 1;
+    tx.nonce.bytes[0] = 0;
+    tx.gas_price.bytes[0] = 1;
+    tx.gas_limit.bytes[0] = 0x80;
+    tx.has_to = true;
+    tx.to.size = 20;
+    tx.to.bytes[0] = 0x11;
+    tx.has_data_length = tx.has_data_initial_chunk = true;
+    tx.data_length = 4 + (uint32_t)args.size();
+    tx.data_initial_chunk.size = 4;
+    memcpy(tx.data_initial_chunk.bytes, "\xaa\xbb\xcc\xdd", 4);
+    fsm_msgEthereumSignTx(&tx);
+  }
+
+  Erc7730Workflow* workflow = erc7730_workflow_state();
+  for (int guard = 0; guard < 256 && fsm_test_lastFailureCode() == 0; guard++) {
+    uint8_t id_wanted[32];
+    uint32_t offset = 0, total = 0;
+    size_t remaining = 0;
+    if (erc7730_workflow_waiting(workflow, id_wanted, &offset, &total)) {
+      EthereumClearSignDefinitionChunk chunk{};
+      chunk.definition_id.size = 32;
+      memcpy(chunk.definition_id.bytes, id_wanted, 32);
+      chunk.offset = offset;
+      chunk.total_length = total;
+      chunk.data.size = (pb_size_t)std::min<size_t>(ERC7730_TRANSPORT_CHUNK_MAX,
+                                                    total - offset);
+      memcpy(chunk.data.bytes, e.data() + offset, chunk.data.size);
+      fsm_msgEthereumClearSignDefinitionChunk(&chunk);
+    } else if (erc7730_workflow_calldata_waiting(workflow, &remaining)) {
+      const size_t at = workflow->outer_received;
+      EthereumTxAck ack{};
+      ack.has_data_chunk = true;
+      ack.data_chunk.size = (pb_size_t)std::min<size_t>(remaining, 1024);
+      memcpy(ack.data_chunk.bytes, args.data() + at, ack.data_chunk.size);
+      if (tamper_signing_pass && workflow->signing_pass)
+        ack.data_chunk.bytes[ack.data_chunk.size - 1] ^= 1;
+      fsm_msgEthereumTxAck(&ack);
+    } else {
+      break;
+    }
+  }
+
+  run.code = fsm_test_lastFailureCode();
+  run.message = fsm_test_lastFailureMessage();
+  run.bodies = kkconfirm_capture_finish();
+  run.screens = kScreenBudget - kkconfirm_drain() / 2;
+  if (run.code == 0) {
+    for (int i = 0; i < 64 && !run.signature; i++) {
+      EthereumTxRequest response{};
+      if (!kkconfirm_readResponse(MessageType_MessageType_EthereumTxRequest,
+                                  EthereumTxRequest_fields, &response))
+        break;
+      run.signature = response.has_signature_r && response.has_signature_s;
+    }
+  }
+  fsm_abort_workflows();
+  erc7730_catalog_clear_preload();
+  return run;
+}
+
+bool shows(const SignRun& run, const char* text) {
+  for (const auto& body : run.bodies)
+    if (body.find(text) != std::string::npos) return true;
+  return false;
+}
+
+}  // namespace
+
+TEST(Erc7730Certified, SignsWithoutAdvancedModeAndShowsItsScreens) {
+  CertifiedFixture fixture;
+  makeCertifiedFixture(&fixture);
+  TestRoot root(fixture.root_pubkey);
+  ScopedWallet wallet;
+  auto e =
+      certifiedEnvelope(fixture, minimalProgram(),
+                        rootCert(fixture.root_key, fixture.delegate.pubkey));
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+  const SignRun run = signWithDefinition(e, word(42));
+  EXPECT_EQ(run.code, (FailureType)0) << run.message;
+  EXPECT_TRUE(run.signature);
+  // Provenance, the program's intent, then the device's own amount and fee
+  // screens. No raw-data review.
+  EXPECT_TRUE(shows(run, "KeepKey Test (")) << run.screens;
+  EXPECT_TRUE(shows(run, "describes this transaction."));
+  EXPECT_TRUE(shows(run, "Test"));
+  EXPECT_FALSE(shows(run, "NOT verified by KeepKey"));
+  EXPECT_TRUE(shows(run, "Send message to 0x1100"));
+  EXPECT_EQ(run.screens, 4);
+  EXPECT_EQ(run.bodies.size(), 4u);
+
+  // AdvancedMode on changes nothing for a certified definition.
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+  const SignRun advanced = signWithDefinition(e, word(42));
+  EXPECT_EQ(advanced.code, (FailureType)0) << advanced.message;
+  EXPECT_TRUE(advanced.signature);
+  EXPECT_EQ(advanced.bodies, run.bodies);
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+}
+
+TEST(Erc7730Certified, RuntimeSignerStaysOnTheAdvancedModePath) {
+  CertifiedFixture fixture;
+  makeCertifiedFixture(&fixture);
+  ScopedWallet wallet;
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+  ASSERT_TRUE(signed_metadata_store_signer(
+      3, fixture.delegate.pubkey, "Approved signer", nullptr, 0, 0, 0, false));
+  auto e = signedEnvelope(fixture.delegate, minimalProgram());
+
+  // AdvancedMode on: the 7.15 review, raw-data review included.
+  const SignRun on = signWithDefinition(e, word(42));
+  EXPECT_EQ(on.code, (FailureType)0) << on.message;
+  EXPECT_TRUE(on.signature);
+  EXPECT_TRUE(shows(on, "NOT verified by KeepKey"));
+  // Signer, warning, intent, amount, fee and the calldata's Keccak-256.
+  EXPECT_EQ(on.screens, 6);
+  ASSERT_EQ(on.bodies.size(), 6u);
+  EXPECT_EQ(on.bodies.back().size(), 64u);
+
+  // AdvancedMode off: refused, naming AdvancedMode, before any screen.
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+  const SignRun off = signWithDefinition(e, word(42));
+  EXPECT_EQ(off.code, FailureType_Failure_Other);
+  EXPECT_EQ(off.message, "AdvancedMode required for ERC-7730");
+  EXPECT_EQ(off.screens, 0);
+  EXPECT_FALSE(off.signature);
+}
+
+TEST(Erc7730Certified, UnverifiedCertificatesStayOnTheAdvancedModePath) {
+  CertifiedFixture fixture;
+  makeCertifiedFixture(&fixture);
+  TestRoot root(fixture.root_pubkey);
+  ScopedWallet wallet;
+  const uint8_t* delegate = fixture.delegate.pubkey;
+  auto program = minimalProgram();
+  const std::vector<std::vector<uint8_t>> refused = {
+      // Not signed by the root.
+      certifiedEnvelope(fixture, program,
+                        rootCert(fixture.delegate.key, delegate)),
+      // Expired.
+      certifiedEnvelope(
+          fixture, program,
+          rootCert(fixture.root_key, delegate, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+                   1, KK_CLEARSIGN_MIN_EXPIRY)),
+      // Scoped to another chain.
+      certifiedEnvelope(fixture, program,
+                        rootCert(fixture.root_key, delegate,
+                                 CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, 2)),
+      // No MAY_SUPPRESS_RAW.
+      certifiedEnvelope(fixture, program,
+                        rootCert(fixture.root_key, delegate, 0)),
+  };
+  for (size_t i = 0; i < refused.size(); i++) {
+    // Without AdvancedMode: the 7.15 refusal, which names AdvancedMode.
+    ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+    const SignRun off = signWithDefinition(refused[i], word(42));
+    EXPECT_EQ(off.code, FailureType_Failure_Other) << i;
+    EXPECT_EQ(off.message, "AdvancedMode required for ERC-7730") << i;
+    EXPECT_EQ(off.screens, 0) << i;
+    EXPECT_FALSE(off.signature) << i;
+    // With AdvancedMode: the definition is refused as before.
+    ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+    const SignRun on = signWithDefinition(refused[i], word(42));
+    EXPECT_EQ(on.message, "Invalid certified ERC-7730 definition") << i;
+    EXPECT_FALSE(on.signature) << i;
+  }
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+}
+
+TEST(Erc7730Certified, CertifiedDefinitionStillBindsChainAndCalldata) {
+  CertifiedFixture fixture;
+  makeCertifiedFixture(&fixture);
+  TestRoot root(fixture.root_pubkey);
+  ScopedWallet wallet;
+  auto e =
+      certifiedEnvelope(fixture, minimalProgram(),
+                        rootCert(fixture.root_key, fixture.delegate.pubkey));
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+
+  // Another chain than the definition's.
+  const SignRun chain = signWithDefinition(e, word(42), 2);
+  EXPECT_EQ(chain.message, "ERC-7730 definition does not match transaction");
+  EXPECT_EQ(chain.screens, 0);
+  EXPECT_FALSE(chain.signature);
+
+  // Calldata the program's ABI does not describe (a trailing word).
+  auto extra = word(42);
+  const auto more = word(7);
+  extra.insert(extra.end(), more.begin(), more.end());
+  const SignRun calldata = signWithDefinition(e, extra);
+  EXPECT_EQ(calldata.message, "ERC-7730 calldata does not match definition");
+  EXPECT_EQ(calldata.screens, 0);
+  EXPECT_FALSE(calldata.signature);
+
+  // Bytes changed on the signing pass after the review.
+  const SignRun swapped = signWithDefinition(e, word(42), 1, true);
+  EXPECT_EQ(swapped.message, "ERC-7730 calldata does not match definition");
+  EXPECT_FALSE(swapped.signature);
 }

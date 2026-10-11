@@ -1,9 +1,15 @@
 #include "keepkey/board/keepkey_display.h"
 
 #if DEBUG_LINK
+/* Own storage, not msg_resp: this handler also runs nested inside the PIN,
+ * passphrase and confirm waits, while the suspended outer handler may already
+ * hold its pending response in msg_resp. */
+static DebugLinkState debug_link_state;
+
 void fsm_msgDebugLinkGetState(DebugLinkGetState* msg) {
   (void)msg;
-  RESP_INIT(DebugLinkState);
+  DebugLinkState* resp = &debug_link_state;
+  memset(resp, 0, sizeof(*resp));
 
   /* The canvas can encode dice entropy or a BIP-85 child mnemonic. Return an
    * empty state throughout either private ceremony so no alternate field or
@@ -101,14 +107,27 @@ void fsm_msgDebugLinkGetState(DebugLinkGetState* msg) {
   }
 
   msg_debug_write(MessageType_MessageType_DebugLinkState, resp);
+  memzero(resp, sizeof(*resp));
 }
 
 void fsm_msgDebugLinkStop(DebugLinkStop* msg) { (void)msg; }
 
+/* FlashDump arrives on the debug endpoint, so its refusal is answered there:
+ * a normal-channel Failure would leave the debug caller waiting. The debug map
+ * carries no Failure, so the answer is a response holding no memory. The
+ * reason is still recorded for the native tests. */
+static void fsm_refuseFlashDump(FailureType code, const char* text) {
+  DebugLinkFlashDumpResponse empty;
+  memset(&empty, 0, sizeof(empty));
+  fsm_test_failure_code = code;
+  strlcpy(fsm_test_failure_message, text, sizeof(fsm_test_failure_message));
+  msg_debug_write(MessageType_MessageType_DebugLinkFlashDumpResponse, &empty);
+}
+
 void fsm_msgDebugLinkFlashDump(DebugLinkFlashDump* msg) {
   if (reset_debug_is_private() || bip85_debug_is_private()) {
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
-                    "Memory reads disabled during private seed display");
+    fsm_refuseFlashDump(FailureType_Failure_UnexpectedMessage,
+                        "Memory reads disabled during private seed display");
     return;
   }
 #ifndef EMULATOR

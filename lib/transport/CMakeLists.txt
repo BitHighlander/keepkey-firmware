@@ -98,9 +98,11 @@ set(protoc_pb_sources_moved
     ${CMAKE_BINARY_DIR}/lib/transport/messages-hive.proto
     ${CMAKE_BINARY_DIR}/lib/transport/messages.proto)
 
-set(PROTOC_GEN_NANOPB_EXECUTABLE
-    "${NANOPB_DIR}/generator/protoc-gen-nanopb"
-    CACHE FILEPATH "nanopb protoc plugin executable")
+# The plugin next to the configured nanopb, else the one on PATH: some builds
+# pass a placeholder NANOPB_DIR and put the generator on PATH.
+find_program(PROTOC_GEN_NANOPB_EXECUTABLE protoc-gen-nanopb
+    HINTS "${NANOPB_DIR}/generator"
+    DOC "nanopb protoc plugin executable")
 
 add_custom_command(
   OUTPUT

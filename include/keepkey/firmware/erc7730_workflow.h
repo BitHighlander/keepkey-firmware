@@ -77,6 +77,8 @@ typedef struct {
   uint8_t inner_selector[4];
   uint8_t inner_selector_length;
   uint8_t spender[20];
+  uint8_t approve_spender[20]; /* of an inner approve(spender, 2^256-1) */
+  bool unlimited_approve;
   bool has_inner;
   bool has_spender;
   uint8_t list_count;
@@ -148,6 +150,7 @@ typedef struct {
   uint8_t depth;
   uint8_t fetch_depth; /* 1 fetching the inner definition, 0 the outer */
   uint8_t outer_tier;  /* the outer definition's tier while depth is 1 */
+  uint8_t review_tier; /* the lowest tier of every definition loaded */
   bool outer_identity_confirmed;
   bool outer_intent_confirmed;
   bool resuming; /* the outer program restarts after its inner call */
@@ -217,10 +220,14 @@ bool erc7730_workflow_restore_and_start_length(Erc7730Workflow* workflow,
                                                const Erc7730Path* path);
 bool erc7730_workflow_start_eip712_capture(Erc7730Workflow* workflow,
                                            const Erc7730Path* path);
+/* One typed-data value ack. A value too long for one ack arrives in chunks
+ * under the same member path: whole_len is the whole value's length, and
+ * continuation marks every ack after the first. */
 bool erc7730_workflow_eip712_observe(Erc7730Workflow* workflow,
                                      const uint32_t* member_path,
                                      size_t member_path_count,
-                                     const uint8_t* value, size_t value_len);
+                                     const uint8_t* value, size_t value_len,
+                                     size_t whole_len, bool continuation);
 bool erc7730_workflow_eip712_finish(Erc7730Workflow* workflow);
 bool erc7730_workflow_eip712_commit(Erc7730Workflow* workflow,
                                     const uint8_t domain[32],
@@ -242,6 +249,8 @@ const Erc7730CatalogIdentity* erc7730_workflow_identity(
 /* The tier the provenance screen shows. An inner definition is never shown
  * as more trusted than the outer definition that led to it. */
 uint8_t erc7730_workflow_tier(const Erc7730Workflow* workflow);
+/* Every definition this review loaded is KeepKey-certified (D-007). */
+bool erc7730_workflow_certified(const Erc7730Workflow* workflow);
 bool erc7730_workflow_preserve_selected_string(Erc7730Workflow* workflow,
                                                bool intent);
 bool erc7730_workflow_format_captured_raw(const Erc7730Workflow* workflow,

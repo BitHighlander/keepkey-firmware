@@ -218,7 +218,9 @@ bool erc7730_format_unit(const uint8_t value[32], uint8_t decimals,
   memcpy(capture.data, value, 32);
   capture.length = 32;
   capture.node = 0;
-  char scaled[344], raw[80]; /* <= 78 digits, '.', 77 zeros, ' ', base */
+  /* scaled: up to 78 digits, '.', and up to 254 leading zeros (any uint8
+   * decimals); erc7730_format_amount() also bounds the " base" it appends. */
+  char scaled[344], raw[80];
   bool ok = erc7730_format_amount(&program, &capture, decimals, base, scaled,
                                   sizeof(scaled)) &&
             format_integer(value, raw, sizeof(raw));

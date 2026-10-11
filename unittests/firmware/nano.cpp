@@ -1,8 +1,6 @@
 extern "C" {
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/nano.h"
-#include "keepkey/firmware/storage.h"
-#include "keepkey/emulator/setup.h"
 }
 
 #include "gtest/gtest.h"
@@ -11,8 +9,7 @@ extern "C" {
 bool kkconfirm_preload(int nYes, int nNo);
 
 TEST(Nano, UnrenderableAmountCannotBeSigned) {
-  setup();
-  storage_init();
+  // kkconfirm_preload() performs the guarded board/FSM bootstrap.
   // With approval queued, the old sentinel path would proceed to signing.
   ASSERT_TRUE(kkconfirm_preload(1, 0));
   static CoinType coin = *coinByName("Nano");

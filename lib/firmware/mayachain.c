@@ -591,8 +591,8 @@ MayachainMemoResult mayachain_parseConfirmMemo(const char* swapStr,
     if (nfields < 3 || fields[2][0] == '\0') {
       return MAYACHAIN_MEMO_UNPARSED;  // malformed memo
     }
-    /* WD:POOL:BPS[:ASSET] — refuse only genuinely-unknown structure (>4
-     * fields), mirroring thorchain.c. */
+    /* WD:POOL:BPS[:ASSET] — more than four fields is not this grammar, so it
+     * goes to raw review. thorchain.c pages the extra fields instead. */
     if (nfields > 4) {
       return MAYACHAIN_MEMO_UNPARSED;
     }

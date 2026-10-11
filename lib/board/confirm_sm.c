@@ -61,6 +61,11 @@ static char debug_confirm_body[BODY_CHAR_MAX];
 
 const char* confirm_debug_title(void) { return debug_confirm_title; }
 const char* confirm_debug_body(void) { return debug_confirm_body; }
+
+void confirm_debug_clear(void) {
+  memzero(debug_confirm_title, sizeof(debug_confirm_title));
+  memzero(debug_confirm_body, sizeof(debug_confirm_body));
+}
 #endif
 
 /* vsnprintf() returns the length it WOULD have written. Treat anything that
@@ -189,12 +194,23 @@ static void swap_layout(ActiveLayout active_layout, volatile StateInfo* si,
 /// \param requesta_body  The body of the confirmation message.
 /// \param layout_notification_func  layout callback for displaying confirm
 /// message. \returns true iff the device confirmed.
+#ifdef EMULATOR
+__attribute__((weak)) void emulator_confirm_screen(const char* title,
+                                                   const char* body) {
+  (void)title;
+  (void)body;
+}
+#endif
+
 static bool confirm_screen(const char* request_title_param,
                            const char* request_body,
                            layout_notification_t layout_notification_func,
                            bool constant_power, IconType iconNum,
                            bool immediate) {
   bool ret_stat = false;
+#ifdef EMULATOR
+  emulator_confirm_screen(request_title_param, request_body);
+#endif
 #if DEBUG_LINK
   last_exit_was_debug_decision = false;
 #endif
@@ -457,8 +473,8 @@ static bool page_body_confirm(const char* request_title, const char* body,
    * unread left `pages` at 100 while the body ran on, and the render loop then
    * treats page 100 as the last one -- so the hold that means "I approve this"
    * lands on a prefix, with the tail neither shown nor accounted for. A body of
-   * 351 newlines reaches that: confirm_body_fits() accepts two newlines and
-   * rejects three, so page_take() returns 2 and the body needs 176 pages.
+   * 351 newlines reaches that: confirm_body_fits() accepts three newlines and
+   * rejects four, so page_take() returns 3 and the body needs 117 pages.
    *
    * Returning false instead is not a lost capability. BODY_CHAR_MAX is 352, and
    * a body needing more than 99 pages is one averaging under four characters a

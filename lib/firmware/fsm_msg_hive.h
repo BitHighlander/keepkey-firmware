@@ -68,18 +68,13 @@ void fsm_msgHiveGetPublicKey(const HiveGetPublicKey* msg) {
           break;
       }
     }
-    // NOT confirm_ethereum_address(): that layout draws its body at y = 27
-    // with a 14-pixel line height and a 140-pixel wrap, so only the rows at
-    // y = 27 and y = 41 land inside the 64-pixel canvas — draw_string() drops
-    // the first glyph that would start at y = 55 and every character after it,
-    // silently. An STM key is "STM" + base58check(37) = 53-54 characters,
-    // ~321 pixels of body-font glyphs against the 280 those two rows hold, so
-    // the tail the user is meant to be checking is the part that never gets
-    // drawn. confirm() measures the body and pages it, and unlike a receive
-    // address there is nothing lost by dropping the QR: an STM public key is
-    // read back into a host wallet, never scanned to be paid.
-    if (!confirm(ButtonRequestType_ButtonRequest_Address, role_label, "%s",
-                 resp->public_key)) {
+    /* An STM key outgrows the address layout's text area, which truncates
+     * silently; confirm_bytes() pages it so every character is shown, and the
+     * QR follows on its own screen. */
+    if (!confirm_bytes(ButtonRequestType_ButtonRequest_Address, role_label,
+                       (const uint8_t*)resp->public_key,
+                       strlen(resp->public_key)) ||
+        !confirm_qr(role_label, resp->public_key)) {
       memzero(node, sizeof(*node));
       fsm_sendFailure(FailureType_Failure_ActionCancelled, _("Cancelled"));
       layoutHome();
@@ -103,6 +98,13 @@ void fsm_msgHiveGetPublicKeys(const HiveGetPublicKeys* msg) {
   CHECK_PIN
 
   uint32_t account_index = msg->has_account_index ? msg->account_index : 0;
+  // Bit 31 is the hardening flag; accepting it would alias a lower account.
+  if (account_index > 0x7FFFFFFFu) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("Invalid Hive account index"));
+    layoutHome();
+    return;
+  }
 
   HDNode* root = fsm_getDerivedNode(SECP256K1_NAME, NULL, 0, NULL);
   if (!root) return;

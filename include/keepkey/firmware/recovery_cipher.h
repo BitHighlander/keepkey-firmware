@@ -22,6 +22,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 #define MNEMONIC_BUF 24 * 12
 #define CURRENT_WORD_BUF 32
@@ -58,6 +59,10 @@ const char* recovery_get_auto_completed_word(void);
 const char* recovery_get_decoded_mnemonic(void);
 void recovery_debugLinkStart(uint32_t _word_count);
 #endif
+
+/// Format the previous-word indicator shown above the cipher prompt.
+void recovery_cipher_prev_word_info(char* buf, size_t len, uint32_t word_pos,
+                                    const char* word);
 
 /// Determine if two strings are exact matches for length passed
 /// (does not stop at null termination)

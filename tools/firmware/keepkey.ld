@@ -4,8 +4,11 @@
 
 MEMORY
 {
-    /* Firmware ROM */
-    rom (rx)   : ORIGIN = 0x08060000, LENGTH = 0x00100000 - 0x00060000
+    /* Firmware ROM. The bootloader refuses an upload whose FirmwareUpload
+     * frame (38-byte protobuf prefix + image) is >= the 0xA0000 region
+     * (usb_flash.c raw_handler_upload), so the largest image that installs
+     * is 0xA0000 - 38 - 1 bytes. Link against that, not the whole region. */
+    rom (rx)   : ORIGIN = 0x08060000, LENGTH = 0x00100000 - 0x00060000 - 39
 
     /* ram shared by bootloader and firmware, contains psp */
     ram (rwx) : ORIGIN = 0x20000000, LENGTH = 0x1F800
@@ -72,12 +75,9 @@ _data_size = SIZEOF(.data);
 
 _codelen = SIZEOF(.text) + SIZEOF(.data) + SIZEOF(.ARM.exidx) + SIZEOF(.version);
 
-/* Runtime SRAM gate: everything between the end of static allocation (.bss)
- * and the top-of-RAM stack is the ONLY memory the running firmware has for
- * call frames. RC7's privacy-enabled build shipped with an 11.2 KB gap while
- * msg_write() put a 12.4 KB frame on the stack — a guaranteed boot-path
- * overwrite of static memory. Never again: require a 16 KiB reserve at link
- * time, for every variant. (Initial limit — replace with measured worst-case
- * high-water + margin once the -fstack-usage CI reporting has data.) */
+/* Runtime SRAM gate: the space between the end of .bss and the top-of-RAM
+ * stack is all the running firmware has for call frames. Require a 16 KiB
+ * reserve at link time for every variant, so a large frame cannot overwrite
+ * static memory. */
 ASSERT((_stack - _ebss) >= 0x4000,
        "Insufficient runtime SRAM: require 16 KiB stack/heap reserve between _ebss and _stack");

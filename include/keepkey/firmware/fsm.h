@@ -31,6 +31,8 @@ bool fsm_test_derivedNodeIsZero(void);
 void fsm_test_clearLastFailure(void);
 FailureType fsm_test_lastFailureCode(void);
 const char* fsm_test_lastFailureMessage(void);
+/* The shared response arena that RESP_INIT() hands to handlers. */
+uint8_t* fsm_test_responseArena(size_t* size);
 /* Wipes routed through FSM_SCRUB() since the last clear, by buffer size, so a
  * test can tell that a function-local secret buffer was wiped. */
 void fsm_test_recordScrub(size_t size);
@@ -72,6 +74,8 @@ void fsm_init(void);
  * state. Call before any operation that clears or revokes a session. */
 void fsm_abort_workflows(void);
 void fsm_abort_signing_workflows(void);
+/* True while a setup ceremony is armed or any signer waits for the host. */
+bool fsm_workflowInProgress(void);
 
 void fsm_sendSuccess(const char* text);
 

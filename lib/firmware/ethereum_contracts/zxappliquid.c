@@ -104,24 +104,13 @@ static bool approve_shape_is_clear_signable(const EthereumSignTx* msg,
    * size 0. Accepting any all-zero value of length <= 32 instead let a host
    * pad `value` with 32 zero bytes and send a byte-identical transaction (RLP
    * strips leading zeros) that this path claimed while
-   * ethereum_isStandardERC20Approve() -- which requires size 0 -- did not, so
-   * the unlimited-approval refusal there never ran. The two shape checks must
-   * agree on what an ERC-20 approve looks like. */
+   * ethereum_isStandardERC20Approve() -- which requires size 0 -- did not. The
+   * two shape checks must agree on what an ERC-20 approve looks like. */
   if (!msg->has_chain_id || msg->chain_id != 1 || !msg->has_to ||
       msg->to.size != 20 || !msg->has_data_initial_chunk ||
       msg->data_initial_chunk.size != UNISWAP_APPROVE_CALL_SIZE ||
       memcmp(msg->data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4) != 0 ||
       msg->value.size != 0 || !spender_word_is_router(msg))
-    return false;
-
-  /* An unlimited (2^256-1) allowance is refused for every ERC-20 approve by
-   * ethereum_signing_init(), AFTER ethereum_contractConfirmed() has already
-   * taken both holds here. Refusing it before this path claims the tx keeps
-   * the policy in one place: the user is never asked to consent to an approval
-   * the firmware was always going to reject, and the LP screens never render
-   * an infinite allowance as "full LP balance". */
-  if (memcmp(msg->data_initial_chunk.bytes + 4 + 32,
-             (const uint8_t*)MAX_ALLOWANCE, 32) == 0)
     return false;
 
   const TokenType* token = pool_underlying_token(msg);
@@ -137,8 +126,6 @@ bool zx_confirmApproveLiquidity(uint32_t data_total,
       !approve_shape_is_clear_signable(msg, &token))
     return false;
 
-  /* MAX_ALLOWANCE was excluded by approve_shape_is_clear_signable() above, so
-   * every allowance reaching here is a finite amount with a real figure. */
   const uint8_t* allowance = msg->data_initial_chunk.bytes + 4 + 32;
   char amount_text[UNISWAP_AMOUNT_TEXT_SIZE];
   bignum256 amount;
@@ -147,9 +134,12 @@ bool zx_confirmApproveLiquidity(uint32_t data_total,
    * every body through confirm_body_fits()/page_body_confirm(), so an
    * over-long amount is paginated behind its own hold rather than silently
    * clipped. See the comment at lib/board/confirm_sm.c:313. */
-  if (bn_format(&amount, NULL, " LP", 18, 0, false, amount_text,
-                sizeof(amount_text)) == 0)
+  if (memcmp(allowance, MAX_ALLOWANCE, 32) == 0) {
+    strlcpy(amount_text, "UNLIMITED LP", sizeof(amount_text));
+  } else if (bn_format(&amount, NULL, " LP", 18, 0, false, amount_text,
+                       sizeof(amount_text)) == 0) {
     return false;
+  }
 
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                "Uniswap LP Approval", "%s", amount_text))

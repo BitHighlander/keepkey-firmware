@@ -1,9 +1,14 @@
 extern "C" {
+#include "keepkey/firmware/pin_sm.h"
 #include "keepkey/rand/rng.h"
 #include "keepkey/rand/rng_health.h"
 #include "trezor/crypto/rand.h"
 }
 
+#include "kkconfirm_driver.h"
+bool kkconfirm_sendCancel(void);
+bool kkconfirm_readResponse(uint16_t expected, const pb_field_t* fields,
+                            void* result);
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -38,9 +43,8 @@ std::vector<uint8_t> pseudo(size_t len, uint32_t seed = 1) {
 //
 // A test-only reset restores the initial verdict regardless of test order.
 //
-// WHAT IT DOES NOT PIN: the `!rng_source_live() -> RNG_FAILED` arm, and the
-// size of the sample drawn. Both need an emulator seam in lib/rand/rng_health.c
-// that can make the source report dead or stuck, which does not exist yet.
+// The RngBootGate fixture below checks draw size and mid-sample faults. The
+// initial `!rng_source_live() -> RNG_FAILED` arm still needs a dead-source seam.
 TEST(RngHealth, BootGateRunsOnAFreshVerdict) {
   rng_health_reset_for_test();
   EXPECT_TRUE(rng_health_check())
@@ -270,12 +274,8 @@ TEST(RngHealth, PersistentHardwareFaultLatchesBeforeReset) {
   rng_health_force_verdict(true);
 }
 
-// THE CONTINUOUS TEST, ON THE DEFAULT PATH. The boot gate only says the source
-// was healthy once; the RCT and APT exist to notice one that goes degenerate
-// afterwards. An earlier revision folded bytes into the continuous state only
-// inside random_buffer_checked(), so the ordinary path -- which is the one
-// RedPallas, ECDSA blinding and SecAESSTM32 take -- enforced the boot verdict
-// and nothing else.
+// After the boot gate passes, a degenerate run seen by rng_health_observe()
+// (called from random_buffer_checked()) must latch the verdict to failed.
 TEST(RngHealth, DegenerateOutputAfterTheGateLatchesFailure) {
   rng_health_force_verdict(true);
   ASSERT_TRUE(rng_health_check());
@@ -289,8 +289,8 @@ TEST(RngHealth, DegenerateOutputAfterTheGateLatchesFailure) {
   rng_health_force_verdict(true);
 }
 
-// And the same at the unit level: the call that trips reports the failure,
-// which is what random32() branches on.
+// The observing call that trips the test must itself return false, so
+// random_buffer_checked() can refuse those bytes.
 TEST(RngHealth, ObserveReportsTheTrippingCall) {
   rng_health_force_verdict(true);
   const uint8_t fine[4] = {0x01, 0x02, 0x03, 0x04};
@@ -306,25 +306,29 @@ TEST(RngHealth, ObserveReportsTheTrippingCall) {
 
 // The triggering draw must not be returned. random_buffer_checked() observes
 // the bytes it just produced, and if THOSE bytes tripped the test they are
-// wiped rather than handed over -- the triggering draw is part of the
-// degenerate run, so returning it and failing on the next call would deliver
-// exactly the output the test rejected.
+// wiped rather than handed over. The draw is real, so the run is brought to
+// one short of the cutoff and single bytes are drawn until one completes it.
 TEST(RngHealth, TrippingBytesAreWipedNotReturned) {
-  rng_health_force_verdict(true);
-  const uint8_t fine[4] = {0x01, 0x02, 0x03, 0x04};
-  EXPECT_TRUE(rng_health_observe(fine, sizeof(fine)));
-
-  uint8_t stuck[RNG_HEALTH_RCT_CUTOFF];
-  memset(stuck, 0x7E, sizeof(stuck));
-  EXPECT_FALSE(rng_health_observe(stuck, sizeof(stuck)))
-      << "the observing call that tripped the test reported success";
-
-  // With the verdict latched, the next checked draw refuses and wipes.
-  uint8_t buf[64];
-  memset(buf, 0xAB, sizeof(buf));
-  EXPECT_FALSE(random_buffer_checked(buf, sizeof(buf)));
-  const uint8_t zeros[64] = {0};
-  EXPECT_EQ(0, memcmp(buf, zeros, sizeof(buf)));
+  uint8_t run[RNG_HEALTH_RCT_CUTOFF - 1];
+  memset(run, 0x7E, sizeof(run));
+  bool tripped = false;
+  // One draw in 256 completes the run; 100000 tries cannot all miss.
+  for (int i = 0; i < 100000 && !tripped; i++) {
+    rng_health_force_verdict(true);
+    ASSERT_TRUE(rng_health_observe(run, sizeof(run)));
+    uint8_t byte = 0xAB;
+    if (random_buffer_checked(&byte, 1)) {
+      ASSERT_NE(0x7E, byte) << "the byte that completed the run was returned";
+      continue;
+    }
+    tripped = true;
+    EXPECT_EQ(0, byte) << "the tripping byte was not wiped";
+    uint8_t next = 0xAB;
+    EXPECT_FALSE(random_buffer_checked(&next, 1))
+        << "the verdict did not latch";
+    EXPECT_EQ(0, next);
+  }
+  EXPECT_TRUE(tripped);
 
   rng_health_force_verdict(true);
 }
@@ -333,9 +337,13 @@ TEST(RngHealth, TrippingBytesAreWipedNotReturned) {
 
 static size_t observed_draw_bytes;
 static bool fault_on_draw;
+// Nonzero: fault the draw that brings observed_draw_bytes to this total.
+static size_t fault_at_draw_bytes;
 extern "C" void rng_health_test_draw_completed(size_t len) {
   observed_draw_bytes += len;
-  if (fault_on_draw) rng_test_observe_transient_error();
+  if (fault_on_draw ||
+      (fault_at_draw_bytes != 0 && observed_draw_bytes >= fault_at_draw_bytes))
+    rng_test_observe_transient_error();
 }
 
 class RngBootGate : public ::testing::Test {
@@ -345,9 +353,11 @@ class RngBootGate : public ::testing::Test {
     rng_health_reset_for_test();
     observed_draw_bytes = 0;
     fault_on_draw = false;
+    fault_at_draw_bytes = 0;
   }
   void TearDown() override {
     fault_on_draw = false;
+    fault_at_draw_bytes = 0;
     rng_test_power_on_reset();
     rng_health_force_verdict(true);
   }
@@ -366,4 +376,59 @@ TEST_F(RngBootGate, MidSampleHardwareFaultFailsClosed) {
   EXPECT_EQ(32u, observed_draw_bytes);
   EXPECT_FALSE(rng_health_check());
   EXPECT_EQ(32u, observed_draw_bytes);
+}
+
+TEST_F(RngBootGate, FaultDuringCheckedDrawWipesOutput) {
+  rng_health_force_verdict(true);
+  fault_on_draw = true;
+  uint8_t buf[64];
+  memset(buf, 0xab, sizeof(buf));
+  EXPECT_FALSE(random_buffer_checked(buf, sizeof(buf)));
+  const uint8_t zeros[64] = {};
+  EXPECT_EQ(0, memcmp(buf, zeros, sizeof(buf)));
+  EXPECT_EQ(sizeof(buf), observed_draw_bytes);
+}
+
+// A permutation that faults partway through: the first checked draw succeeds
+// and its swap lands, the second draw faults. The already-shuffled buffer
+// must be wiped whole, not left as a partial secret mapping.
+TEST_F(RngBootGate, FaultMidPermutationWipesPartialShuffle) {
+  rng_health_force_verdict(true);
+  fault_at_draw_bytes = 2 * sizeof(uint32_t);
+  char value[] = "123456789";
+  EXPECT_FALSE(random_permute_char_checked(value, sizeof(value) - 1));
+  EXPECT_EQ(fault_at_draw_bytes, observed_draw_bytes)
+      << "the fault did not land after a completed swap";
+  const char zeros[sizeof(value) - 1] = {0};
+  EXPECT_EQ(0, memcmp(value, zeros, sizeof(zeros)));
+}
+
+// The PIN matrix call site, not just the helper: a failed verdict must halt
+// before the matrix is shown or any PinMatrixRequest reaches the host, rather
+// than return a false that callers would report as a second Failure.
+// The death-test child shares the emulator's sockets, so the parent reads
+// whatever it wrote to the host after it has exited.
+TEST(RngHealth, PinMatrixHaltsOnFailedVerdict) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));  // board bootstrap for the warning
+  (void)kkconfirm_drain();
+  PinMatrixRequest request = {};
+
+  // Control: with a sound verdict the same flow does reach the host.
+  ASSERT_TRUE(kkconfirm_sendCancel());
+  EXPECT_EXIT(
+      {
+        change_pin();
+        exit(0);
+      },
+      ::testing::ExitedWithCode(0), "");
+  EXPECT_TRUE(kkconfirm_readResponse(MessageType_MessageType_PinMatrixRequest,
+                                     PinMatrixRequest_fields, &request));
+
+  ASSERT_TRUE(kkconfirm_preload(0, 0));  // also discards earlier host output
+  (void)kkconfirm_drain();
+  rng_health_force_verdict(false);
+  EXPECT_EXIT(change_pin(), ::testing::ExitedWithCode(1), "");
+  rng_health_force_verdict(true);
+  EXPECT_FALSE(kkconfirm_readResponse(MessageType_MessageType_PinMatrixRequest,
+                                      PinMatrixRequest_fields, &request));
 }

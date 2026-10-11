@@ -11,12 +11,16 @@ extern "C" {
 #include "gtest/gtest.h"
 #include <cstring>
 #include <string>
+#include <vector>
 
 // confirm() auto-accept driver, defined in thorchain.cpp (same binary).
 // kkconfirm_preload(nYes, nNo) queues nYes accepted confirm screens then
 // nNo rejected ones; kkconfirm_drain() == 0 proves the exact screen count.
 bool kkconfirm_preload(int nYes, int nNo);
 int kkconfirm_drain(void);
+void kkconfirm_capture_start(void);
+std::vector<std::string> kkconfirm_captured_titles(void);
+std::vector<std::string> kkconfirm_capture_finish(void);
 
 /* Every MAYAChain screen scales by the denom's own exponent, and they all ask
  * the same function: the send screen renders the amount without a suffix (the
@@ -84,14 +88,25 @@ TEST(Mayachain, RejectingAssetScreenAbortsSendHandler) {
   std::memset(ack.send.denom, 'a', 68);
   ack.send.denom[68] = '\0';
 
-  // The amount/recipient screen is accepted; the independent Asset screen is
-  // refused. The handler must abort before serializing this send.
-  ASSERT_TRUE(kkconfirm_preload(1, 1));
+  // A denom this long pages the amount/recipient review in two. Both pages
+  // are accepted; the independent Asset screen is refused. The handler must
+  // abort before serializing this send.
+  ASSERT_TRUE(kkconfirm_preload(2, 1));
   fsm_test_clearLastFailure();
+  kkconfirm_capture_start();
   fsm_msgMayachainMsgAck(&ack);
+  const auto titles = kkconfirm_captured_titles();
+  const auto screens = kkconfirm_capture_finish();
   EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
   EXPECT_FALSE(mayachain_signingIsInited());
   EXPECT_EQ(0, kkconfirm_drain());
+  // The refused screen is the last one drawn: it must be the Asset screen,
+  // carrying the whole denom, after the amount and then the recipient.
+  ASSERT_EQ(3u, screens.size());
+  EXPECT_EQ(0u, screens[0].rfind("Send 1 a", 0)) << screens[0];
+  EXPECT_EQ(ack.send.to_address, screens[1]);
+  EXPECT_EQ("Asset", titles[2]);
+  EXPECT_EQ(ack.send.denom, screens[2]);
 }
 
 TEST(Mayachain, MemoWithMisdeclaredLengthIsRefused) {

@@ -1,14 +1,29 @@
 extern "C" {
+#include "keepkey/board/keepkey_display.h"
+#include "keepkey/board/layout.h"
+#include "keepkey/board/memory.h"
+#include "keepkey/firmware/app_confirm.h"
+#include "keepkey/firmware/app_layout.h"
+#include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/hive.h"
+#include "keepkey/firmware/storage.h"
+#include "qrenc/qrcodegen.h"
 #include "trezor/crypto/curves.h"
 #include "trezor/crypto/ecdsa.h"
+#include "trezor/crypto/memzero.h"
 #include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha2.h"
 }
 
 #include "gtest/gtest.h"
 #include <cstring>
+#include <string>
 #include <vector>
+
+bool kkconfirm_preload(int, int);
+int kkconfirm_drain(void);
+void kkconfirm_capture_start(void);
+std::vector<std::string> kkconfirm_capture_finish(void);
 
 static HiveSignTx transfer_request() {
   HiveSignTx msg = {};
@@ -176,6 +191,34 @@ TEST(Hive, AllSigningOperationsRejectMalformedExplicitChainIds) {
         hive_signAccountUpdate(&node, &msg, node.public_key, node.public_key,
                                node.public_key, node.public_key, &response);
       });
+}
+
+// TaPoS takes a 16-bit block number; a wider value is refused, not masked.
+TEST(Hive, AllSigningOperationsRefuseAnOutOfRangeRefBlockNum) {
+  HiveSignTx transfer = transfer_request();
+  HiveSignAccountCreate create = {};
+  create.has_creator = create.has_new_account_name = true;
+  strcpy(create.creator, "alice");
+  strcpy(create.new_account_name, "bob");
+  create.has_ref_block_num = create.has_ref_block_prefix =
+      create.has_expiration = true;
+  create.ref_block_prefix = 2;
+  create.expiration = 3;
+  HiveSignAccountUpdate update = {};
+  update.has_account = true;
+  strcpy(update.account, "alice");
+  update.has_ref_block_num = update.has_ref_block_prefix =
+      update.has_expiration = true;
+  update.ref_block_prefix = 2;
+  update.expiration = 3;
+  for (uint32_t ref : {0u, 0xFFFFu, 0x10000u, 0x10001u, 0xFFFFFFFFu}) {
+    SCOPED_TRACE(ref);
+    const bool in_range = ref <= 0xFFFF;
+    transfer.ref_block_num = create.ref_block_num = update.ref_block_num = ref;
+    EXPECT_EQ(in_range, hive_validateTransfer(&transfer));
+    EXPECT_EQ(in_range, hive_validateAccountCreate(&create));
+    EXPECT_EQ(in_range, hive_validateAccountUpdate(&update));
+  }
 }
 
 TEST(Hive, TransferRejectsInvalidAmountAndAccountLabels) {
@@ -364,4 +407,199 @@ TEST(Hive, AccountUpdateBytesMatchIndependentGrapheneLayout) {
     expect_signed_over(node, expected, response.serialized_tx.bytes,
                        response.serialized_tx.size, response.signature.bytes);
   }
+}
+
+TEST(Hive, PublicKeysRejectAccountIndexWithHardeningBit) {
+  HDNode root = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_EQ(1, hdnode_from_seed(seed, sizeof(seed), SECP256K1_NAME, &root));
+  char keys[4][64];
+  EXPECT_TRUE(hive_getPublicKeys(&root, 0x7FFFFFFFu, keys[0], 64, keys[1], 64,
+                                 keys[2], 64, keys[3], 64));
+  EXPECT_FALSE(hive_getPublicKeys(&root, 0x80000000u, keys[0], 64, keys[1], 64,
+                                  keys[2], 64, keys[3], 64));
+}
+
+// The native binary has no mapped flash unless a test supplies one. Cleanup
+// runs on every exit, including a failed ASSERT, so later tests never see a
+// dangling emulator_flash_base.
+struct HiveScopedFlash {
+  std::vector<uint8_t> bytes = std::vector<uint8_t>(FLASH_TOTAL_SIZE, 0xff);
+  uint8_t* previous = emulator_flash_base;
+  HiveScopedFlash() {
+    emulator_flash_base = bytes.data();
+    storage_init();
+  }
+  ~HiveScopedFlash() {
+    storage_wipe();
+    storage_reset();
+    emulator_flash_base = previous;
+  }
+};
+
+TEST(Hive, PublicKeyHandlersRejectNonHivePathsAndAliasedAccounts) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  HiveScopedFlash flash;
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  // Nothing below may show a screen: only the sentinel is queued.
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+
+  HiveGetPublicKey key = {};
+  const uint32_t hive_path[5] = {HIVE_SLIP48_PURPOSE, HIVE_SLIP48_NETWORK,
+                                 HIVE_ROLE_OWNER, 0x80000000u, 0x80000000u};
+  key.address_n_count = 5;
+  memcpy(key.address_n, hive_path, sizeof(hive_path));
+  fsm_test_clearLastFailure();
+  fsm_msgHiveGetPublicKey(&key);
+  EXPECT_EQ(0, fsm_test_lastFailureCode());  // control: real Hive path
+  // Every component outside the SLIP-0048 Hive shape is refused before
+  // derivation, including the role slot the display label is taken from.
+  for (int i = 0; i < 5; ++i) {
+    SCOPED_TRACE(i);
+    memcpy(key.address_n, hive_path, sizeof(hive_path));
+    key.address_n[i] = i == 2   ? 0x80000002u
+                       : i == 3 ? 0u
+                                : key.address_n[i] ^ 1u;
+    fsm_test_clearLastFailure();
+    fsm_msgHiveGetPublicKey(&key);
+    EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+  }
+  key.address_n_count = 4;
+  memcpy(key.address_n, hive_path, sizeof(hive_path));
+  fsm_test_clearLastFailure();
+  fsm_msgHiveGetPublicKey(&key);
+  EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+
+  HiveGetPublicKeys keys = {};
+  keys.has_account_index = true;
+  keys.account_index = 0x7FFFFFFFu;
+  fsm_test_clearLastFailure();
+  fsm_msgHiveGetPublicKeys(&keys);
+  EXPECT_EQ(0, fsm_test_lastFailureCode());
+  keys.account_index = 0x80000001u;
+  fsm_test_clearLastFailure();
+  fsm_msgHiveGetPublicKeys(&keys);
+  EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
+namespace {
+std::vector<std::vector<uint8_t>> frames;
+void record_frame(const uint8_t* buffer) {
+  const Canvas* canvas = layout_get_canvas();
+  frames.emplace_back(buffer, buffer + canvas->width * canvas->height);
+}
+std::vector<uint8_t> standard_screen(const char* title, const char* body) {
+  layout_standard_notification(title, body, NOTIFICATION_REQUEST);
+  const Canvas* canvas = layout_get_canvas();
+  return std::vector<uint8_t>(canvas->buffer,
+                              canvas->buffer + canvas->width * canvas->height);
+}
+}  // namespace
+
+// A 53-character STM key overflows the address layout's text area, which
+// clips it. Every page must instead be the standard body screen, which the
+// pager has measured, and the pages together must be the whole key. A QR of
+// the same key follows on its own screen.
+TEST(Hive, ShowDisplayRendersTheCompleteKey) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  HiveScopedFlash flash;
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+
+  HDNode root = {};
+  ASSERT_TRUE(storage_getRootNode(SECP256K1_NAME, true, &root));
+  char expected[4][64];
+  ASSERT_TRUE(hive_getPublicKeys(&root, 0, expected[0], 64, expected[1], 64,
+                                 expected[2], 64, expected[3], 64));
+  memzero(&root, sizeof(root));
+  const std::string key = expected[0];
+  ASSERT_EQ(53u, key.size());
+
+  std::vector<std::string> pages;
+  for (size_t offset = 0; offset < key.size();) {
+    char page[BODY_CHAR_MAX];
+    const size_t take =
+        confirm_bytes_format_page((const uint8_t*)key.data() + offset,
+                                  key.size() - offset, page, sizeof(page));
+    ASSERT_GT(take, 0u);
+    pages.emplace_back(page);
+    offset += take;
+  }
+
+  HiveGetPublicKey msg = {};
+  const uint32_t path[5] = {HIVE_SLIP48_PURPOSE, HIVE_SLIP48_NETWORK,
+                            HIVE_ROLE_OWNER, 0x80000000u, 0x80000000u};
+  msg.address_n_count = 5;
+  memcpy(msg.address_n, path, sizeof(path));
+  msg.has_show_display = msg.show_display = true;
+
+  ASSERT_TRUE(kkconfirm_preload((int)pages.size() + 1, 0));
+  frames.clear();
+  display_set_dump_callback(record_frame);
+  kkconfirm_capture_start();
+  fsm_test_clearLastFailure();
+  fsm_msgHiveGetPublicKey(&msg);
+  const auto screens = kkconfirm_capture_finish();
+  display_set_dump_callback(nullptr);
+  EXPECT_EQ(0, fsm_test_lastFailureCode());
+  EXPECT_EQ(0, kkconfirm_drain());
+  std::vector<std::string> expected_screens = pages;
+  expected_screens.push_back(key);
+  ASSERT_EQ(expected_screens, screens);
+
+  for (size_t i = 0; i < pages.size(); i++) {
+    SCOPED_TRACE(i);
+    std::string title = "Hive Owner Key";
+    if (pages.size() > 1)
+      title += " " + std::to_string(i + 1) + "/" + std::to_string(pages.size());
+    const auto reference = standard_screen(title.c_str(), pages[i].c_str());
+    bool shown = false;
+    for (const auto& frame : frames) shown = shown || frame == reference;
+    EXPECT_TRUE(shown) << "page not drawn by the measured body renderer";
+  }
+
+  // Independent QR of the key (layout_address()'s large-code parameters):
+  // some frame must carry exactly these modules where the QR is drawn.
+  uint8_t code[qrcodegen_BUFFER_LEN_MAX], temp[qrcodegen_BUFFER_LEN_MAX];
+  ASSERT_TRUE(qrcodegen_encodeText(key.c_str(), temp, code, qrcodegen_Ecc_LOW,
+                                   8, 9, qrcodegen_Mask_AUTO, true));
+  const int side = qrcodegen_getSize(code);
+  const int width = layout_get_canvas()->width;
+  bool qr_shown = false;
+  for (const auto& frame : frames) {
+    bool match = true;
+    for (int i = 0; match && i < side; i++) {
+      for (int j = 0; match && j < side; j++) {
+        const int x = QR_DISPLAY_SCALE + (i + QR_DISPLAY_X) * QR_DISPLAY_SCALE;
+        const int y =
+            QR_DISPLAY_SCALE + (j + QR_DISPLAY_Y - 4) * QR_DISPLAY_SCALE;
+        match = frame[y * width + x] ==
+                (qrcodegen_getModule(code, i, j) ? 0x00 : 0xFF);
+      }
+    }
+    qr_shown = qr_shown || match;
+  }
+  EXPECT_TRUE(qr_shown) << "no screen shows a QR of the key";
+}
+
+// hive_deriveRawKey derives only a SLIP-0048 Hive role key: an unknown role or
+// an unhardened account index is refused, never derived.
+TEST(Hive, DeriveRawKeyRefusesNonHivePaths) {
+  HDNode root = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_EQ(1, hdnode_from_seed(seed, sizeof(seed), SECP256K1_NAME, &root));
+  uint8_t key[33] = {};
+  EXPECT_TRUE(hive_deriveRawKey(&root, HIVE_ROLE_ACTIVE, 0x80000000u, key));
+  for (uint32_t role : {0x80000002u, 0x80000005u, 1u}) {
+    EXPECT_FALSE(hive_deriveRawKey(&root, role, 0x80000000u, key)) << role;
+  }
+  EXPECT_FALSE(hive_deriveRawKey(&root, HIVE_ROLE_OWNER, 0u, key));
 }
