@@ -56,6 +56,11 @@ if(${KK_ZCASH_PRIVACY})
       gtest_main
       trezorcrypto
       kkrand)
+  # As lib/firmware does for zcash.c: ecrypt-config.h picks an alignment type
+  # from SSE/MMX headers the emulator image's clang lacks, and the ChaCha
+  # context layout must match the portable one deps/crypto is built with.
+  target_compile_options(zcash-crypto-unit PRIVATE -U__SSE__ -U__MMX__)
+  target_compile_definitions(zcash-crypto-unit PRIVATE ZCASH_CRYPTO_STANDALONE)
   if(WIN32)
     target_link_libraries(zcash-crypto-unit bcrypt)
   endif()

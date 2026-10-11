@@ -2591,10 +2591,15 @@ TEST(Zcash, EmptyBundleDigests_MatchZip244AndZip229) {
     uint8_t out[32];
     ASSERT_EQ(blake2b_Final(&ctx, out, 32), 0) << c.personal;
 
+#ifndef ZCASH_CRYPTO_STANDALONE
+    // The handler's own digests live in the firmware library, which the
+    // crypto-only binary does not link.
     uint8_t device[32];
-    zcash_test_emptyDigest(component++, device);
+    zcash_test_emptyDigest(component, device);
     EXPECT_EQ(0, memcmp(device, out, 32))
         << "the device's empty digest for " << c.personal;
+#endif
+    component++;
 
     char hex[65];
     for (int i = 0; i < 32; i++) {
