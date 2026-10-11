@@ -1181,16 +1181,85 @@ jobs:
           mkdir -p test-reports/emulator
           build-emu/bin/emulator-unit --gtest_output=xml:test-reports/emulator/lifecycle.xml
 
-      - name: Upload libkkemu.dylib
-        # Always upload, even on later test failure — the binary is
+      # ── Windows emulator DLL (cross-compiled from this macOS runner) ──
+      # Uses cmake/toolchains/mingw-w64-x86_64.cmake, so no Windows runner
+      # is needed. BLOCKING on purpose: the DLL and the dylib are the same
+      # deliverable on two platforms, and this job is the only place either
+      # is built. When the cross-build was non-blocking, a regression here
+      # produced a macOS-only set and stayed green.
+      - name: Install MinGW-w64
+        run: brew install mingw-w64
+
+      - name: Cross-build Windows emulator DLL
+        run: |
+          # Same nanopb PATH handling as the macOS configure step above; the
+          # toolchain file cannot see the pyenv wrappers on its own.
+          NANOPB_DIR="$(python -c 'import os, nanopb; print(os.path.dirname(nanopb.__file__))')"
+          export PATH="$PATH:$NANOPB_DIR/generator"
+          CPU_COUNT="$(sysctl -n hw.ncpu)"
+          NANOPB_PLUGIN="$(command -v protoc-gen-nanopb)"
+          cmake \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/mingw-w64-x86_64.cmake \
+            -DKK_EMULATOR=1 \
+            -DKK_BUILD_DYLIB=1 \
+            -DKK_DEBUG_LINK=ON \
+            -DNANOPB_DIR="$NANOPB_DIR" \
+            -DPROTOC_GEN_NANOPB_EXECUTABLE="$NANOPB_PLUGIN" \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -B build-emu-win .
+          cmake --build build-emu-win --target kkemulator_dylib -j"$CPU_COUNT"
+          DLL="$(find build-emu-win -name 'libkkemu.dll' -print -quit)"
+          test -f "$DLL" || (echo "::error::libkkemu.dll not produced by cross-build" && exit 1)
+          file "$DLL"
+          echo "WIN_DLL_PATH=$(pwd)/$DLL" >> "$GITHUB_ENV"
+
+      - name: Stage emulator libraries
+        # One directory, published names applied here, so every consumer
+        # (this artifact, the rolling prerelease, a tagged firmware
+        # release) ships the identical pair of files.
+        if: always() && env.DYLIB_PATH != '' && env.WIN_DLL_PATH != ''
+        run: |
+          mkdir -p emulator-libs
+          cp "$DYLIB_PATH" emulator-libs/libkkemu-macos-arm64.dylib
+          cp "$WIN_DLL_PATH" emulator-libs/libkkemu-win-x64.dll
+          ls -lh emulator-libs/
+
+      - name: Assert ClearSign root in emulator libraries
+        id: root_assert
+        # Every 7.16 build embeds the alpha ClearSign root. These libs are
+        # what Vault installs, and Vault turns certified ClearSign on from the
+        # firmware version alone, so a lib without the root refuses every
+        # certificate -- and this job's dylib tests never send one.
+        # publish-emulator-libs checks the same bytes again; release.yml
+        # refuses them, because the alpha root never ships in a release.
+        run: |
+          python3 - <<'EOF'
+          import sys
+          ALPHA_ROOT = bytes.fromhex(
+              "02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7")
+          for name in ("libkkemu-macos-arm64.dylib", "libkkemu-win-x64.dll"):
+              if ALPHA_ROOT not in open("emulator-libs/" + name, "rb").read():
+                  sys.exit("::error::%s does not contain the alpha ClearSign root" % name)
+              print("Alpha ClearSign root present: %s" % name)
+          EOF
+
+      - name: Upload emulator libraries
+        # Always upload, even on later test failure — the binaries are
         # what vault and external auditors actually consume from this
         # PR. Tagged with the short commit SHA so multiple PR pushes
         # don't overwrite each other when a reviewer downloads them.
-        if: always() && env.DYLIB_PATH != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        #
+        # Gated on BOTH paths: a partial artifact carrying only the dylib
+        # is exactly the silent drop this coupling exists to prevent, and
+        # release.yml treats this artifact as the source of truth for a
+        # tagged release's emulator assets. Also gated on the root assert
+        # above: a lib without the root is not uploaded as this commit's
+        # artifact.
+        if: always() && steps.root_assert.outcome == 'success' && env.DYLIB_PATH != '' && env.WIN_DLL_PATH != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: libkkemu-${{ github.event.pull_request.head.sha || github.sha }}
-          path: ${{ env.DYLIB_PATH }}
+          path: emulator-libs/
           retention-days: 30
           if-no-files-found: error
 
