@@ -700,7 +700,7 @@ jobs:
     name: unit-tests${{ matrix.label }}
     needs: build-emulator
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20  # alpha's suite takes about 9 minutes here
     strategy:
       fail-fast: false
       matrix:
