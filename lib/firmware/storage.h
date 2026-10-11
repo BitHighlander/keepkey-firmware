@@ -75,7 +75,7 @@ typedef struct _Storage {
     bool authdata_encrypted;
     uint8_t random_salt[32];
     uint8_t authdata_fingerprint[32];
-    /* V20 CTAP2 state stored in the V17 reserved plaintext area. */
+    /* V20 CTAP2 state, stored in the V17 reserved plaintext area. */
     PasskeyStorage passkeys;
   } pub;
 

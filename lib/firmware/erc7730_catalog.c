@@ -1229,8 +1229,7 @@ static Erc7730CatalogResult finish(Erc7730CatalogVerifier* v,
                                    Erc7730CatalogIdentity* identity) {
   uint8_t actual_id[32];
   sha256_Final(&v->envelope_hash, actual_id);
-  /* validate_header() refused a chain id above UINT32_MAX, so the scope cast
-   * below cannot truncate on either tier. */
+  /* validate_header() bounds the chain id to 32 bits: no truncation. */
   const uint32_t scope = (uint32_t)read_be64(v->header + 10);
   uint8_t tier = METADATA_TIER_NONE;
   if (memcmp(actual_id, v->expected_id, sizeof(actual_id)) == 0 &&

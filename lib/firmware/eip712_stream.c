@@ -38,6 +38,7 @@
 #include "keepkey/board/confirm_sm.h"
 #include "keepkey/board/layout.h"
 #include "keepkey/board/util.h"
+#include "keepkey/firmware/erc7730_field.h"
 #include "keepkey/firmware/erc7730_format.h"
 #include "keepkey/firmware/ethereum.h"
 #include "keepkey/firmware/ethereum_tokens.h"
@@ -50,7 +51,7 @@
 
 /* Uniswap Permit2: one immutable deployment, the same address on every EVM
  * chain that uses the canonical CREATE2 factory. */
-const uint8_t EIP712_PERMIT2_ADDRESS[20] = {
+static const uint8_t EIP712_PERMIT2_ADDRESS[20] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x22, 0xd4, 0x73, 0x03, 0x0f,
     0x11, 0x6d, 0xde, 0xe9, 0xf6, 0xb4, 0x3a, 0xc7, 0x8b, 0xa3};
 
@@ -896,6 +897,26 @@ bool eip712_render_integer(const Eip712FieldType* field, const uint8_t* value,
   return written > 0;
 }
 
+/* The one-line text of a bool, address or integer leaf. */
+static bool leaf_text(const Eip712FieldType* field, const uint8_t* value,
+                      uint16_t len, char* text, size_t size) {
+  switch (field->data_type) {
+    case EthereumTypedDataStructAck_EthereumDataType_BOOL:
+      strlcpy(text, value[0] ? "true" : "false", size);
+      return true;
+    case EthereumTypedDataStructAck_EthereumDataType_ADDRESS:
+      text[0] = '0';
+      text[1] = 'x';
+      ethereum_address_checksum(value, text + 2, false, 0);
+      return true;
+    case EthereumTypedDataStructAck_EthereumDataType_UINT:
+    case EthereumTypedDataStructAck_EthereumDataType_INT:
+      return eip712_render_integer(field, value, len, text, size);
+    default:
+      return false;
+  }
+}
+
 bool eip712_amount_unlimited(const uint8_t* value, uint16_t len) {
   if (len == 32) return (value[0] & 0x80) != 0;
   for (uint16_t i = 0; i < len; i++)
@@ -1312,19 +1333,6 @@ static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
     case EthereumTypedDataStructAck_EthereumDataType_STRING:
       return confirm_parts(title, path, type_name, EIP712_RENDER_ESCAPED, value,
                            len);
-    case EthereumTypedDataStructAck_EthereumDataType_BOOL:
-      strlcpy(text, value[0] ? "true" : "false", sizeof(text));
-      break;
-    case EthereumTypedDataStructAck_EthereumDataType_ADDRESS:
-      text[0] = '0';
-      text[1] = 'x';
-      ethereum_address_checksum(value, text + 2, false, 0);
-      break;
-    case EthereumTypedDataStructAck_EthereumDataType_UINT:
-    case EthereumTypedDataStructAck_EthereumDataType_INT:
-      if (!eip712_render_integer(field, value, len, text, sizeof(text)))
-        return EIP712_LEAF_INVALID;
-      break;
     case EthereumTypedDataStructAck_EthereumDataType_BYTES:
       if (embedded_approve(field, value, len)) {
         const Eip712LeafResult warned = confirm_embedded_unlimited(value);
@@ -1333,10 +1341,11 @@ static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
       return confirm_parts(title, path, type_name, EIP712_RENDER_HEX, value,
                            len);
     default:
-      return EIP712_LEAF_INVALID;
+      if (!leaf_text(field, value, len, text, sizeof(text)))
+        return EIP712_LEAF_INVALID;
+      return confirm_parts(title, path, type_name, EIP712_RENDER_TEXT,
+                           (const uint8_t*)text, strlen(text));
   }
-  return confirm_parts(title, path, type_name, EIP712_RENDER_TEXT,
-                       (const uint8_t*)text, strlen(text));
 }
 
 /* An empty array has no element screen, so it would otherwise sign unseen.
@@ -1467,26 +1476,10 @@ static bool permit2_queue_leaf(const Eip712FieldType* field,
       !eip712_type_name(field, type_name, sizeof(type_name)) ||
       !leaf_path(path, sizeof(path)))
     return false;
-  switch (field->data_type) {
-    case EthereumTypedDataStructAck_EthereumDataType_STRING:
-      if (!erc7730_format_text(value, len, text, sizeof(text))) return false;
-      break;
-    case EthereumTypedDataStructAck_EthereumDataType_BOOL:
-      strlcpy(text, value[0] ? "true" : "false", sizeof(text));
-      break;
-    case EthereumTypedDataStructAck_EthereumDataType_ADDRESS:
-      text[0] = '0';
-      text[1] = 'x';
-      ethereum_address_checksum(value, text + 2, false, 0);
-      break;
-    case EthereumTypedDataStructAck_EthereumDataType_UINT:
-    case EthereumTypedDataStructAck_EthereumDataType_INT:
-      if (!eip712_render_integer(field, value, len, text, sizeof(text)))
-        return false;
-      break;
-    default:
-      return false;
-  }
+  if (field->data_type == EthereumTypedDataStructAck_EthereumDataType_STRING
+          ? !erc7730_format_text(value, len, text, sizeof(text))
+          : !leaf_text(field, value, len, text, sizeof(text)))
+    return false;
   const int n = snprintf(e712.queue[e712.queued], EIP712_QUEUE_BODY,
                          "%s\n%s: %s", path, type_name, text);
   if (n < 0 || n >= EIP712_QUEUE_BODY) return false;
@@ -1546,37 +1539,16 @@ static void permit2_capture(const uint8_t* v, uint16_t len) {
   }
 }
 
-static void u64_decimal(uint64_t v, char* out, size_t len) {
-  char tmp[21];
-  size_t i = sizeof(tmp) - 1;
-  tmp[i] = '\0';
-  do {
-    tmp[--i] = (char)('0' + v % 10);
-    v /= 10;
-  } while (v && i);
-  strlcpy(out, tmp + i, len);
-}
-
 void eip712_format_utc(uint64_t t, char* out, size_t len) {
   if (t > 253402300799ULL) { /* past 9999-12-31 */
-    char n[21];
-    u64_decimal(t, n, sizeof(n));
-    snprintf(out, len, "Unix time %s", n);
+    snprintf(out, len, "Unix time %llu", (unsigned long long)t);
     return;
   }
-  /* Civil date from days since 1970-01-01 (proleptic Gregorian). */
-  const uint64_t z = t / 86400 + 719468;
+  unsigned y, m, d;
+  erc7730_civil_from_days(t / 86400, &y, &m, &d);
   const uint32_t rem = (uint32_t)(t % 86400);
-  const uint64_t era = z / 146097;
-  const uint32_t doe = (uint32_t)(z - era * 146097);
-  const uint32_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-  const uint32_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-  const uint32_t mp = (5 * doy + 2) / 153;
-  const uint32_t d = doy - (153 * mp + 2) / 5 + 1;
-  const uint32_t m = mp < 10 ? mp + 3 : mp - 9;
-  const uint32_t y = (uint32_t)(yoe + era * 400) + (m <= 2 ? 1 : 0);
-  snprintf(out, len, "%04u-%02u-%02u %02u:%02u UTC", (unsigned)y, (unsigned)m,
-           (unsigned)d, (unsigned)(rem / 3600), (unsigned)(rem % 3600 / 60));
+  snprintf(out, len, "%04u-%02u-%02u %02u:%02u UTC", y, m, d,
+           (unsigned)(rem / 3600), (unsigned)(rem % 3600 / 60));
 }
 
 typedef struct {
@@ -1584,10 +1556,6 @@ typedef struct {
   uint8_t decimals;
   bool certified; /* from the host's KeepKey-certified token identity */
 } PermitToken;
-
-static const char* ticker_of(const TokenType* t) {
-  return t->ticker[0] == ' ' ? t->ticker + 1 : t->ticker;
-}
 
 /* The firmware table first, else the KeepKey-certified identity sent for
  * this request (the caller bound it to this chain), only if it names this
@@ -1597,7 +1565,7 @@ static bool permit_token(uint64_t chain_id, const uint8_t token[20],
   if (chain_id <= UINT32_MAX) {
     const TokenType* t = tokenByChainAddress((uint32_t)chain_id, token);
     if (t != UnknownToken) {
-      out->symbol = ticker_of(t);
+      out->symbol = t->ticker + 1;
       out->decimals = t->decimals;
       out->certified = false;
       return true;
@@ -1631,11 +1599,10 @@ static bool permit2_amount(const Eip712Permit2* p, const PermitToken* t,
   return n > 0;
 }
 
-static void address_text(const uint8_t a[20], uint64_t chain_id, bool shorten,
-                         char* out, size_t len) {
+static void address_text(const uint8_t a[20], bool shorten, char* out,
+                         size_t len) {
   char full[43] = "0x";
   ethereum_address_checksum(a, full + 2, false, 0);
-  (void)chain_id;
   if (shorten) {
     snprintf(out, len, "%.6s...%s", full, full + 38);
   } else {
@@ -1666,7 +1633,7 @@ static bool deadline_text(const uint8_t v[32], char* out, size_t len) {
 bool eip712_permit2_review(const Eip712Permit2* p,
                            const MetadataToken* identity,
                            const char* spender_name, const char* alias,
-                           const char* fp, Eip712ReviewEmit emit, void* ctx) {
+                           const char* fp, ReviewEmit emit, void* ctx) {
   if (!p || !p->valid || !emit) return false;
   char amount[100], expires[32], deadline[96], spender[44], body[BODY_CHAR_MAX];
   PermitToken tok;
@@ -1678,35 +1645,34 @@ bool eip712_permit2_review(const Eip712Permit2* p,
   if (spender_name) {
     strlcpy(spender, spender_name, sizeof(spender));
   } else {
-    address_text(p->spender, p->chain_id, true, spender, sizeof(spender));
+    address_text(p->spender, true, spender, sizeof(spender));
   }
   /* Summary: who may take what, until when. */
   snprintf(body, sizeof(body), "Allow %s to spend %s from this wallet until %s",
            spender, amount, expires);
-  if (!emit(ctx, "Permit2", body)) return false;
+  if (!emit(ctx, "Permit2", body, NULL, 0)) return false;
   /* Limits: firmware wording, exact values. */
   snprintf(body, sizeof(body), "Spender may take\n%s", amount);
-  if (!emit(ctx, "Limits", body)) return false;
+  if (!emit(ctx, "Limits", body, NULL, 0)) return false;
   snprintf(body, sizeof(body), "Allowance expires\n%s", expires);
-  if (!emit(ctx, "Limits", body)) return false;
+  if (!emit(ctx, "Limits", body, NULL, 0)) return false;
   snprintf(body, sizeof(body), "Signature valid until\n%s", deadline);
-  if (!emit(ctx, "Limits", body)) return false;
+  if (!emit(ctx, "Limits", body, NULL, 0)) return false;
   /* Details: every value, every address in full. */
-  char full[44], n[21];
-  address_text(p->token, p->chain_id, false, full, sizeof(full));
+  char full[44];
+  address_text(p->token, false, full, sizeof(full));
   snprintf(body, sizeof(body), "%s%s%s", t ? t->symbol : "Unknown token", "\n",
            full);
-  if (!emit(ctx, "Token", body)) return false;
-  address_text(p->spender, p->chain_id, false, full, sizeof(full));
+  if (!emit(ctx, "Token", body, NULL, 0)) return false;
+  address_text(p->spender, false, full, sizeof(full));
   snprintf(body, sizeof(body), "%s\n%s",
            spender_name ? spender_name : "Not identified", full);
-  if (!emit(ctx, "Spender", body)) return false;
-  u64_decimal(p->nonce, n, sizeof(n));
-  snprintf(body, sizeof(body), "Nonce %s", n);
-  if (!emit(ctx, "Details", body)) return false;
-  u64_decimal(p->chain_id, n, sizeof(n));
-  snprintf(body, sizeof(body), "Permit2 contract on chain %s", n);
-  if (!emit(ctx, "Details", body)) return false;
+  if (!emit(ctx, "Spender", body, NULL, 0)) return false;
+  snprintf(body, sizeof(body), "Nonce %llu", (unsigned long long)p->nonce);
+  if (!emit(ctx, "Details", body, NULL, 0)) return false;
+  snprintf(body, sizeof(body), "Permit2 contract on chain %llu",
+           (unsigned long long)p->chain_id);
+  if (!emit(ctx, "Details", body, NULL, 0)) return false;
   const bool token_vouched = t && t->certified;
   if (spender_name || token_vouched) {
     snprintf(body, sizeof(body), "%s named by %s %s\ncertified by KeepKey",
@@ -1714,7 +1680,7 @@ bool eip712_permit2_review(const Eip712Permit2* p,
              : spender_name ? "Spender and token"
                             : "Token",
              alias ? alias : "", fp ? fp : "");
-    if (!emit(ctx, "KeepKey ClearSign", body)) return false;
+    if (!emit(ctx, "KeepKey ClearSign", body, NULL, 0)) return false;
   }
   return true;
 }
@@ -1724,14 +1690,14 @@ bool eip712_permit2_review(const Eip712Permit2* p,
  * only bounds when the signature can be used (DAI: expiry 0 = never). */
 static bool erc20_permit_warning(void) {
   char spender[44], token[44], deadline[96], body[BODY_CHAR_MAX];
-  const uint64_t chain_id = e712.domain_facts.chain_id;
   PermitToken tok;
   const PermitToken* t =
-      permit_token(chain_id, e712.domain_facts.verifying_contract, NULL, &tok)
+      permit_token(e712.domain_facts.chain_id,
+                   e712.domain_facts.verifying_contract, NULL, &tok)
           ? &tok
           : NULL;
-  address_text(e712.erc20_spender, chain_id, false, spender, sizeof(spender));
-  address_text(e712.domain_facts.verifying_contract, chain_id, false, token,
+  address_text(e712.erc20_spender, false, spender, sizeof(spender));
+  address_text(e712.domain_facts.verifying_contract, false, token,
                sizeof(token));
   bool zero = true;
   for (int i = 0; i < 32; i++)

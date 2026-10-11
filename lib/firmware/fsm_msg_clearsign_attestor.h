@@ -17,40 +17,21 @@
  * along with this library.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "keepkey/firmware/contact_book.h"
-
-/* Clearsign attestor: let a KeepKey issue clear-sign schema attestations from
- * its seed. Generic schema attestation is gated by AdvancedMode. Address-book
- * certification is a dedicated, fully parsed, user-confirmed operation and is
- * available by default.
+/* Clearsign attestor: seed-derived schema attestations, AdvancedMode-gated.
+ * Runtime tier (SRS R-1.3): annotates, never suppresses the raw review.
+ * NEVER signs arbitrary bytes: only payloads the verifier's own parser accepts
+ * and the user confirmed, so a compromised host gets no signing oracle. Do not
+ * add a "raw" mode. ponytail: KKSOLSC1 only; EVM v2 needs its own branch.
  *
- * The attestor NEVER signs arbitrary bytes. It parses the submitted payload
- * with the same validator verifying devices run (solana_parseInstrSchema for
- * KKSOLSC1) and refuses anything malformed. A fully compromised host can
- * therefore only obtain attestations over well-formed, user-confirmed
- * descriptors — never a general secp256k1 signing oracle. That is the single
- * most important property of this design; do not add a "raw" mode.
- *
- * Key custody: the attestation key is derived from the device seed at
- * ATTESTOR_PATH (a dedicated hardened path outside every coin space), so PIN
- * unlock gates its availability, seed backup is key backup, and wipe destroys
- * it.
- *
- * Also accepts bounded KKABREQ1 address-book batches. The device recomputes a
- * Merkle root, shows every label/network/destination tuple, and signs only the
- * fixed-size KKABRT01 root manifest returned implicitly to the host. EVM
- * addresses only for now.
- *
- * ponytail: KKSOLSC1 and KKABREQ1 only. EVM v2 metadata blobs are attestable in
- * principle but sign a different range (payload minus the 65-byte signature
- * trailer, see signed_metadata_process) and their parser is static in
- * signed_metadata.c; add a second branch here plus an exported pure parser when
- * EVM schemas need device-issued signatures.
+ * Also certifies KKABREQ1 address books (no AdvancedMode: a fully parsed,
+ * user-reviewed list of the user's own contacts). The device recomputes the
+ * Merkle root, shows every label, network and address, and signs only the
+ * 46-byte KKABRT01 root manifest. EVM addresses only for now.
  */
 
-/* The attestation key path: purpose 0x4B4B ("KK"), then 0x4353 ("CS") for
- * clearsign, then account 0. All hardened, and far outside any SLIP-44 coin
- * range, so an attestation key can never collide with a funds key. */
+#include "keepkey/firmware/contact_book.h"
+
+/* m/'KK'/'CS'/0', all hardened and outside SLIP-44 space: never a funds key. */
 #define ATTESTOR_PATH_LEN 3
 static const uint32_t ATTESTOR_PATH[ATTESTOR_PATH_LEN] = {
     0x80000000 | 0x4B4B,
@@ -67,10 +48,8 @@ static HDNode* attestor_getNode(void) {
   return node;
 }
 
-/* Human-readable ABI type names for the attestation review. The type is part
- * of the security boundary, not decoration: U64+PUBKEY and OPAQUE32+U64 have
- * the same total width but assign labels to different byte offsets. Never ask
- * an operator to attest an argument label without also showing its type. */
+/* Types are security-relevant (equal total widths can shift label offsets):
+ * never attest a label without showing its type. */
 static const char* attestor_schemaArgTypeName(SolanaSchemaArgType type) {
   switch (type) {
     case SOL_SCHEMA_ARG_U64:
@@ -208,17 +187,10 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
     return;
   }
 
-  /* Validate before attesting. The payload must be a descriptor this firmware
-   * can itself parse — the same code path fsm_msgSolanaSignTx runs — so a
-   * compromised host cannot use the attestor as a raw signing oracle. */
+  /* Validate with the verifier's own parser: no raw signing oracle. */
   SolanaInstrSchema schema;
   CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),
               _("AdvancedMode required for schema attestation"));
-  if (msg->payload.size < 8 || memcmp(msg->payload.bytes, "KKSOLSC1", 8) != 0) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError, "Unsupported descriptor");
-    layoutHome();
-    return;
-  }
   if (!solana_parseInstrSchema(msg->payload.bytes, msg->payload.size,
                                &schema)) {
     memzero(&schema, sizeof(schema));
@@ -244,10 +216,7 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
              schema.disc[i]);
   }
 
-  /* Program IDs may consume two body rows, while an 8-byte discriminator plus
-   * its label consumes another two. They therefore get separate confirmations:
-   * combining them can silently clip the discriminator, which is precisely the
-   * field the operator must compare against the contract ABI. */
+  /* Separate screens: combined, the discriminator could be clipped. */
   bool confirmed =
       (confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
                "%s\n%s", schema.program_name, schema.instruction_name) &&
@@ -256,18 +225,14 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
        confirm(ButtonRequestType_ButtonRequest_SignTx, "Discriminator", "%s",
                disc_hex));
 
-  /* One label per screen. A structurally valid schema can still lie by
-   * labelling the wrong offset ("Amount" over the order id), so the operator
-   * has to read every label — and confirm()'s body is three rendered rows with
-   * no pagination, so a batched list of max-length labels scrolls off. A label
-   * nobody saw is a label nobody checked. */
+  /* One label per screen (confirm() does not paginate): a valid schema can
+   * still mislabel an offset, so every label must be seen. */
   for (uint8_t i = 0; confirmed && i < schema.num_args; i++) {
     confirmed = confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
                         "Arg %u: %s\n%s", (unsigned)(i + 1),
                         attestor_schemaArgTypeName(schema.args[i].type),
                         schema.args[i].label);
-    /* The mint account decides which token definition may name and scale the
-     * amount, so it is attested as deliberately as the label. */
+    /* The mint account decides which token definition scales the amount. */
     if (confirmed && schema.args[i].type == SOL_SCHEMA_ARG_TOKEN_AMOUNT) {
       confirmed =
           confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",

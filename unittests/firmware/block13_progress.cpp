@@ -437,13 +437,13 @@ TEST_P(Block13CoinProgress, DeclinedContinuationCannotRenewAndFreshRetryWorks) {
 
 INSTANTIATE_TEST_CASE_P(
     Chains, Block13CoinProgress,
-    ::testing::Values(ProgressChain::Cosmos,
-                      ProgressChain::Osmosis, ProgressChain::Thorchain,
+    ::testing::Values(ProgressChain::Cosmos, ProgressChain::Osmosis,
+                      ProgressChain::Thorchain,
                       ProgressChain::Mayachain,
                       ProgressChain::TendermintDirectHandler),
     [](const ::testing::TestParamInfo<ProgressChain>& p) {
-      const char* names[] = {"Cosmos", "Osmosis", "Thorchain",
-                             "Mayachain", "TendermintDirectHandler"};
+      const char* names[] = {"Cosmos", "Osmosis", "Thorchain", "Mayachain",
+                             "TendermintDirectHandler"};
       return names[static_cast<int>(p.param)];
     });
 

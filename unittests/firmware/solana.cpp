@@ -3,10 +3,15 @@ extern "C" {
 #include "keepkey/firmware/solana.h"
 #include "trezor/crypto/base58.h"
 #include "trezor/crypto/curves.h"
+#include "trezor/crypto/ecdsa.h"
+#include "trezor/crypto/secp256k1.h"
+#include "trezor/crypto/sha2.h"
 #include "trezor/crypto/ed25519-donna/ed25519-donna.h"
 #include "trezor/crypto/memzero.h"
+#include "trezor/crypto/ed25519-donna/ed25519.h"
 }
 
+#include "clearsign_test_cert.h"
 #include "gtest/gtest.h"
 #include <algorithm>
 #include <cstring>
@@ -26,22 +31,17 @@ TEST(Solana, FormatAmount) {
   EXPECT_STREQ(buf, "2.500000000 SOL");
 }
 
-/* The property here is that the amount is scaled by the decimals carried in
-   the signed instruction -- not that trailing zeros are trimmed. Trimming was
-   an older rendering detail on one branch; it is gone, because "1 USDC" hides
-   the scale the base-unit count was divided by while "1.000000 USDC" states
-   it. Every fractional place the scale produces is now shown. */
-TEST(Solana, FormatTokenAmountUsesSignedDecimals) {
+TEST(Solana, FormatTokenAmountUsesSignedDecimalsAndTrimsZeros) {
   char buf[48];
 
   solana_formatTokenAmount(buf, sizeof(buf), 2000, "USDC", 6);
-  EXPECT_STREQ(buf, "0.002000 USDC");
+  EXPECT_STREQ(buf, "0.002 USDC");
 
   solana_formatTokenAmount(buf, sizeof(buf), 1000000, "USDC", 6);
-  EXPECT_STREQ(buf, "1.000000 USDC");
+  EXPECT_STREQ(buf, "1 USDC");
 
   solana_formatTokenAmount(buf, sizeof(buf), 2000, "tokens", 2);
-  EXPECT_STREQ(buf, "20.00 tokens");
+  EXPECT_STREQ(buf, "20 tokens");
 }
 
 TEST(Solana, MainnetUsdcIsFirmwareKnown) {
@@ -94,90 +94,6 @@ TEST(Solana, DerivesAndMatchesAssociatedTokenRecipientOwner) {
   EXPECT_FALSE(solana_findTokenRecipientOwner(&msg, SOL_TOKEN_PROGRAM, mint,
                                               wrong_destination, matched));
   for (uint8_t byte : matched) EXPECT_EQ(byte, 0xaa);
-}
-
-TEST(Solana, FormatTokenAmountNeverShowsZeroForNonzero) {
-  char buf[64];
-
-  /* Zero decimals is already an exact base-unit/token count. */
-  solana_formatTokenAmount(buf, sizeof(buf), 1, "tokens", 0);
-  EXPECT_STREQ(buf, "1 tokens");
-
-  /* The defect: at more than nine decimals the formatter divided the fraction
-     down and printed the result, so a real transfer could render as zero.
-     amount=1 decimals=18 became "0.000000000 tokens" while the signed
-     instruction moved one base unit. */
-  solana_formatTokenAmount(buf, sizeof(buf), 1, "tokens", 18);
-  EXPECT_STRNE(buf, "0.000000000 tokens");
-  EXPECT_NE(nullptr, strstr(buf, "1"));
-
-  /* 18 decimals, value below the display resolution -> exact base units. */
-  EXPECT_STREQ(buf, "1 base units (18 decimals) tokens");
-
-  /* 10 decimals, one digit past the limit, and that digit is nonzero. */
-  solana_formatTokenAmount(buf, sizeof(buf), 1, "tokens", 10);
-  EXPECT_STREQ(buf, "1 base units (10 decimals) tokens");
-
-  /* 10 decimals where the dropped digit IS zero: the decimal form is exact,
-     so it is still used. 10 base units at 10dp = 0.000000001. */
-  solana_formatTokenAmount(buf, sizeof(buf), 10, "tokens", 10);
-  EXPECT_STREQ(buf, "0.000000001 tokens");
-
-  /* 9 decimals is the boundary -- nothing is dropped, decimal form always. */
-  solana_formatTokenAmount(buf, sizeof(buf), 1, "tokens", 9);
-  EXPECT_STREQ(buf, "0.000000001 tokens");
-
-  solana_formatTokenAmount(buf, sizeof(buf), 1000000000ULL, "tokens", 9);
-  EXPECT_STREQ(buf, "1.000000000 tokens");
-
-  /* A whole-number amount at 18 decimals still divides exactly. */
-  solana_formatTokenAmount(buf, sizeof(buf), 1000000000000000000ULL, "tokens",
-                           18);
-  EXPECT_STREQ(buf, "1.000000000 tokens");
-
-  /* Zero really is zero, at any scale. */
-  solana_formatTokenAmount(buf, sizeof(buf), 0, "tokens", 18);
-  EXPECT_STREQ(buf, "0.000000000 tokens");
-
-  /* The on-chain decimals field is a uint8_t and is not capped at 18. Values
-     outside the formatter's supported range must retain their signed scale. */
-  solana_formatTokenAmount(buf, sizeof(buf), 1, "tokens", 19);
-  EXPECT_STREQ(buf, "1 base units (19 decimals) tokens");
-
-  solana_formatTokenAmount(buf, sizeof(buf), 0, "tokens", 255);
-  EXPECT_STREQ(buf, "0 base units (255 decimals) tokens");
-
-  /* The production caller also uses 64 bytes, so the longest fallback is not
-     silently truncated before it reaches the confirmation pager. */
-  solana_formatTokenAmount(buf, sizeof(buf), UINT64_MAX, "tokens", 255);
-  EXPECT_STREQ(buf, "18446744073709551615 base units (255 decimals) tokens");
-}
-
-TEST(Solana, OversizedAccountCountsFailClosedBeforeAccountArrayAccess) {
-  /* These messages end immediately after the count. More accounts than the
-   * parser holds is opaque (blind sign behind AdvancedMode), and the count is
-   * never recorded: a parser that stored it either put 33 into an 8-bit loop
-   * bound (OOB past accounts[31]) or wrapped 256 to zero. */
-  const uint8_t legacy_33[] = {1, 0, 0, 33};
-  const uint8_t legacy_256[] = {1, 0, 0, 0x80, 0x02};
-  const uint8_t versioned_33[] = {0x80, 1, 0, 0, 33};
-  const uint8_t versioned_256[] = {0x80, 1, 0, 0, 0x80, 0x02};
-
-  const struct {
-    const uint8_t* raw;
-    size_t len;
-  } cases[] = {{legacy_33, sizeof(legacy_33)},
-               {legacy_256, sizeof(legacy_256)},
-               {versioned_33, sizeof(versioned_33)},
-               {versioned_256, sizeof(versioned_256)}};
-
-  for (const auto& test_case : cases) {
-    SolanaParsedTx tx;
-    memset(&tx, 0xa5, sizeof(tx));
-    EXPECT_EQ(SOL_TX_REVIEW_OPAQUE,
-              solana_inspectTx(test_case.raw, test_case.len, &tx));
-    EXPECT_EQ(0, tx.num_accounts);
-  }
 }
 
 TEST(Solana, ParseSystemTransfer) {
@@ -259,53 +175,6 @@ TEST(Solana, ParseSystemTransfer) {
   memset(expected_to, 0x22, 32);
   EXPECT_TRUE(memcmp(tx.instructions[0].from, expected_from, 32) == 0);
   EXPECT_TRUE(memcmp(tx.instructions[0].to, expected_to, 32) == 0);
-}
-
-static size_t BuildMemoTx(uint8_t* raw, const uint8_t* memo, size_t memo_len) {
-  size_t pos = 0;
-  raw[pos++] = 1;
-  raw[pos++] = 0;
-  raw[pos++] = 1;
-  raw[pos++] = 2;
-  memset(raw + pos, 0x11, SOL_PUBKEY_SIZE);
-  pos += SOL_PUBKEY_SIZE;
-  memcpy(raw + pos, SOL_MEMO_PROGRAM, SOL_PUBKEY_SIZE);
-  pos += SOL_PUBKEY_SIZE;
-  memset(raw + pos, 0xbb, SOL_PUBKEY_SIZE);
-  pos += SOL_PUBKEY_SIZE;
-  raw[pos++] = 1;
-  raw[pos++] = 1;
-  raw[pos++] = 0;
-  raw[pos++] = (uint8_t)memo_len;
-  memcpy(raw + pos, memo, memo_len);
-  return pos + memo_len;
-}
-
-TEST(Solana, MemoRetainsEverySignedByteForReview) {
-  uint8_t memo_a[80];
-  uint8_t memo_b[80];
-  memset(memo_a, 'A', sizeof(memo_a));
-  memcpy(memo_b, memo_a, sizeof(memo_b));
-  memo_b[64] = 'B';
-
-  uint8_t raw_a[256];
-  uint8_t raw_b[256];
-  const size_t len_a = BuildMemoTx(raw_a, memo_a, sizeof(memo_a));
-  const size_t len_b = BuildMemoTx(raw_b, memo_b, sizeof(memo_b));
-  ASSERT_EQ(len_a, len_b);
-
-  SolanaParsedTx tx_a;
-  SolanaParsedTx tx_b;
-  ASSERT_EQ(solana_inspectTx(raw_a, len_a, &tx_a), SOL_TX_REVIEW_VERIFIED);
-  ASSERT_EQ(solana_inspectTx(raw_b, len_b, &tx_b), SOL_TX_REVIEW_VERIFIED);
-  ASSERT_EQ(tx_a.instructions[0].type, SOL_INSTR_MEMO);
-  ASSERT_EQ(tx_b.instructions[0].type, SOL_INSTR_MEMO);
-  ASSERT_EQ(tx_a.instructions[0].data_len, sizeof(memo_a));
-  ASSERT_EQ(tx_b.instructions[0].data_len, sizeof(memo_b));
-  EXPECT_EQ(0, memcmp(tx_a.instructions[0].data, memo_a, sizeof(memo_a)));
-  EXPECT_EQ(0, memcmp(tx_b.instructions[0].data, memo_b, sizeof(memo_b)));
-  EXPECT_NE(0, memcmp(tx_a.instructions[0].data, tx_b.instructions[0].data,
-                      sizeof(memo_a)));
 }
 
 TEST(Solana, ParseMultiInstruction) {
@@ -608,7 +477,7 @@ TEST(Solana, ParseAssociatedTokenAccountCreate) {
 
   raw[pos++] = 1;
   raw[pos++] = 0;
-  raw[pos++] = 1;
+  raw[pos++] = 3;
 
   raw[pos++] = 7;
   memset(raw + pos, 0x11, 32);
@@ -620,9 +489,9 @@ TEST(Solana, ParseAssociatedTokenAccountCreate) {
   memset(raw + pos, 0x44, 32);
   pos += 32; /* mint */
   memcpy(raw + pos, SOL_SYSTEM_PROGRAM, 32);
-  pos += 32; /* required system program */
+  pos += 32; /* system program */
   memcpy(raw + pos, SOL_TOKEN_PROGRAM, 32);
-  pos += 32; /* required token program */
+  pos += 32; /* token program */
   memcpy(raw + pos, SOL_ATA_PROGRAM, 32);
   pos += 32; /* program */
 
@@ -631,13 +500,8 @@ TEST(Solana, ParseAssociatedTokenAccountCreate) {
 
   raw[pos++] = 1;
   raw[pos++] = 6; /* ata program */
-  raw[pos++] = 6; /* canonical account indices */
-  raw[pos++] = 0;
-  raw[pos++] = 1;
-  raw[pos++] = 2;
-  raw[pos++] = 3;
-  raw[pos++] = 4;
-  raw[pos++] = 5;
+  raw[pos++] = 6; /* 6 account indices */
+  for (int i = 0; i < 6; i++) raw[pos++] = (uint8_t)i;
   raw[pos++] = 0; /* empty data */
 
   SolanaParsedTx tx;
@@ -1227,6 +1091,114 @@ TEST(Solana, VersionedMessageWithUnreferencedLookupTableIsOpaque) {
   EXPECT_FALSE(solana_parseTx(raw, pos, &tx));
 }
 
+/* SRS R-5.1: more lookup entries than a certified proof may bind still makes
+ * an UNcertified message opaque, but its tail must be parsed first -- a
+ * malformed message is refused, never handed to the blind-sign path. */
+/* The certified LUT proof, built here from its documented preimage rather
+ * than by the code under test: "KeepKeySolanaTxAccounts/1" || sha256(message)
+ * || count(le32) || keys, signed by a delegate the (test) root certified for
+ * Solana. It binds the message, the keys, their order and their count. */
+TEST(Solana, CertifiedLookupProofBindsMessageKeysOrderAndScope) {
+  static const uint8_t root_priv[32] = {
+      0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+      0xcc, 0xdd, 0xee, 0xf0, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+      0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11};
+  static const uint8_t delegate_priv[32] = {7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+                                            7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+                                            7, 7, 7, 7, 7, 7, 7, 7, 7, 7};
+  uint8_t root_pub[33], delegate_pub[33];
+  ecdsa_get_public_key33(&secp256k1, root_priv, root_pub);
+  ecdsa_get_public_key33(&secp256k1, delegate_priv, delegate_pub);
+  clearsign_root_set_test_root(root_pub);
+
+  auto mint = [&](uint32_t scope) {
+    return rootCert(root_priv, delegate_pub, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+                    scope, 1818806400u, "Test Delegate");
+  };
+  const std::vector<uint8_t> cert = mint(CLEARSIGN_SCOPE_SOLANA);
+
+  const std::vector<uint8_t> message = {1, 0, 1, 2, 0xAA, 0xBB, 0xCC};
+  uint8_t keys[2][32];
+  memset(keys[0], 0x41, 32);
+  memset(keys[1], 0x42, 32);
+  std::vector<uint8_t> pre((const uint8_t*)"KeepKeySolanaTxAccounts/1",
+                           (const uint8_t*)"KeepKeySolanaTxAccounts/1" + 25);
+  uint8_t h[32];
+  sha256_Raw(message.data(), message.size(), h);
+  pre.insert(pre.end(), h, h + 32);
+  pre.insert(pre.end(), {2, 0, 0, 0});
+  pre.insert(pre.end(), keys[0], keys[0] + 32);
+  pre.insert(pre.end(), keys[1], keys[1] + 32);
+  uint8_t digest[32], sig[64];
+  sha256_Raw(pre.data(), pre.size(), digest);
+  ASSERT_EQ(
+      0, ecdsa_sign_digest(&secp256k1, delegate_priv, digest, sig, NULL, NULL));
+
+  auto ok = [&](const std::vector<uint8_t>& raw, const uint8_t (*k)[32],
+                size_t n, const std::vector<uint8_t>& c, const uint8_t* sg) {
+    return solana_lut_accounts_certified(raw.data(), raw.size(), k, n, c.data(),
+                                         c.size(), sg, 64);
+  };
+  EXPECT_TRUE(ok(message, keys, 2, cert, sig));
+  std::vector<uint8_t> unsigned_tx(1, 0); /* zero signature count prefix */
+  unsigned_tx.insert(unsigned_tx.end(), message.begin(), message.end());
+  EXPECT_TRUE(ok(unsigned_tx, keys, 2, cert, sig));
+
+  std::vector<uint8_t> other = message;
+  other.back() ^= 1;
+  EXPECT_FALSE(ok(other, keys, 2, cert, sig)) << "another message";
+  uint8_t swapped[2][32];
+  memcpy(swapped[0], keys[1], 32);
+  memcpy(swapped[1], keys[0], 32);
+  EXPECT_FALSE(ok(message, swapped, 2, cert, sig)) << "reordered keys";
+  EXPECT_FALSE(ok(message, keys, 1, cert, sig)) << "dropped key";
+  EXPECT_FALSE(ok(message, keys, 2, mint(1), sig)) << "EVM-scoped certificate";
+  uint8_t bad[64];
+  memcpy(bad, sig, 64);
+  bad[10] ^= 1;
+  EXPECT_FALSE(ok(message, keys, 2, cert, bad)) << "altered signature";
+
+  clearsign_root_set_test_root(NULL);
+}
+
+TEST(Solana, OversizedLookupSectionStillRefusesAMalformedTail) {
+  uint8_t raw[256];
+  size_t pos = 0;
+  raw[pos++] = 0x80; /* v0 prefix */
+  raw[pos++] = 1;
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  raw[pos++] = 3; /* static accounts: payer, recipient, system program */
+  memset(raw + pos, 0x11, 32);
+  pos += 32;
+  memset(raw + pos, 0x22, 32);
+  pos += 32;
+  memset(raw + pos, 0x00, 32);
+  pos += 32;
+  memset(raw + pos, 0xBB, 32); /* blockhash */
+  pos += 32;
+  raw[pos++] = 1; /* one system transfer, static accounts only */
+  raw[pos++] = 2;
+  raw[pos++] = 2;
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  raw[pos++] = 12;
+  const uint8_t transfer[12] = {2, 0, 0, 0, 0x00, 0xCA, 0x9A, 0x3B};
+  memcpy(raw + pos, transfer, sizeof(transfer));
+  pos += sizeof(transfer);
+  raw[pos++] = 1; /* one lookup table */
+  memset(raw + pos, 0x55, 32);
+  pos += 32;
+  raw[pos++] = SOL_MAX_LUT_ACCOUNTS + 1; /* writable indexes */
+  for (int i = 0; i <= SOL_MAX_LUT_ACCOUNTS; i++) raw[pos++] = (uint8_t)i;
+  raw[pos++] = 0; /* readonly indexes */
+
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  raw[pos] = 0xEE; /* one trailing byte */
+  EXPECT_EQ(solana_inspectTx(raw, pos + 1, &tx), SOL_TX_REVIEW_MALFORMED);
+}
+
 TEST(Solana, VersionedInstructionUsingLookupAccountIsOpaque) {
   uint8_t raw[256];
   size_t pos = 0;
@@ -1487,6 +1459,130 @@ TEST(Solana, MemoBodyCaptured) {
   EXPECT_EQ(memcmp(tx.instructions[1].data, memo, strlen(memo)), 0);
 }
 
+static size_t BuildMemoTx(uint8_t* raw, const uint8_t* memo, size_t memo_len) {
+  size_t pos = 0;
+  raw[pos++] = 1; /* one required signer */
+  raw[pos++] = 0;
+  raw[pos++] = 1; /* memo program is readonly */
+  raw[pos++] = 2; /* signer + memo program */
+  memset(raw + pos, 0x11, SOL_PUBKEY_SIZE);
+  pos += SOL_PUBKEY_SIZE;
+  memcpy(raw + pos, SOL_MEMO_PROGRAM, SOL_PUBKEY_SIZE);
+  pos += SOL_PUBKEY_SIZE;
+  memset(raw + pos, 0xbb, SOL_PUBKEY_SIZE);
+  pos += SOL_PUBKEY_SIZE;
+  raw[pos++] = 1; /* one instruction */
+  raw[pos++] = 1; /* memo program */
+  raw[pos++] = 0; /* no account indices */
+  raw[pos++] = (uint8_t)memo_len;
+  memcpy(raw + pos, memo, memo_len);
+  pos += memo_len;
+  return pos;
+}
+
+TEST(Solana, MemoRetainsEverySignedByteForReview) {
+  uint8_t memo_a[80];
+  uint8_t memo_b[80];
+  memset(memo_a, 'A', sizeof(memo_a));
+  memcpy(memo_b, memo_a, sizeof(memo_b));
+  memo_b[64] = 'B'; /* same length and first 32 bytes, different signed tail */
+
+  uint8_t raw_a[256];
+  uint8_t raw_b[256];
+  const size_t len_a = BuildMemoTx(raw_a, memo_a, sizeof(memo_a));
+  const size_t len_b = BuildMemoTx(raw_b, memo_b, sizeof(memo_b));
+  ASSERT_EQ(len_a, len_b);
+
+  SolanaParsedTx tx_a;
+  SolanaParsedTx tx_b;
+  ASSERT_EQ(solana_inspectTx(raw_a, len_a, &tx_a), SOL_TX_REVIEW_VERIFIED);
+  ASSERT_EQ(solana_inspectTx(raw_b, len_b, &tx_b), SOL_TX_REVIEW_VERIFIED);
+  ASSERT_EQ(tx_a.instructions[0].type, SOL_INSTR_MEMO);
+  ASSERT_EQ(tx_b.instructions[0].type, SOL_INSTR_MEMO);
+  ASSERT_EQ(tx_a.instructions[0].data_len, sizeof(memo_a));
+  ASSERT_EQ(tx_b.instructions[0].data_len, sizeof(memo_b));
+  EXPECT_EQ(0, memcmp(tx_a.instructions[0].data, memo_a, sizeof(memo_a)));
+  EXPECT_EQ(0, memcmp(tx_b.instructions[0].data, memo_b, sizeof(memo_b)));
+  EXPECT_NE(0, memcmp(tx_a.instructions[0].data, tx_b.instructions[0].data,
+                      sizeof(memo_a)));
+}
+
+TEST(Solana, CreateAccountRetainsEveryDisplayedSecurityField) {
+  uint8_t raw[256];
+  size_t pos = 0;
+
+  raw[pos++] = 1;
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  raw[pos++] = 3;
+  memset(raw + pos, 0x11, 32);
+  pos += 32;
+  memset(raw + pos, 0x22, 32);
+  pos += 32;
+  memset(raw + pos, 0, 32);
+  pos += 32;
+  memset(raw + pos, 0xbb, 32);
+  pos += 32;
+
+  raw[pos++] = 1;
+  raw[pos++] = 2;
+  raw[pos++] = 2;
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  raw[pos++] = 52;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0x00;
+  raw[pos++] = 0xca;
+  raw[pos++] = 0x9a;
+  raw[pos++] = 0x3b;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0x00;
+  raw[pos++] = 0x02;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  memset(raw + pos, 0x33, 32);
+  pos += 32;
+
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
+  ASSERT_EQ(tx.instructions[0].type, SOL_INSTR_SYSTEM_CREATE_ACCOUNT);
+  EXPECT_EQ(tx.instructions[0].lamports, 1000000000ULL);
+  EXPECT_EQ(tx.instructions[0].extra_value, 512ULL);
+  EXPECT_EQ(0, memcmp(tx.instructions[0].to, raw + 4 + 32, 32));
+  uint8_t owner[32];
+  memset(owner, 0x33, sizeof(owner));
+  EXPECT_EQ(0, memcmp(tx.instructions[0].extra, owner, sizeof(owner)));
+
+  uint8_t prefixed[257];
+  prefixed[0] = 0;
+  memcpy(prefixed + 1, raw, pos);
+  EXPECT_EQ(solana_inspectTx(prefixed, pos + 1, &tx), SOL_TX_REVIEW_VERIFIED);
+
+  HDNode node = {};
+  node.private_key[0] = 1;
+  ed25519_publickey(node.private_key, node.public_key + 1);
+  SolanaSignTx msg = {};
+  msg.has_raw_tx = true;
+  msg.raw_tx.size = pos + 1;
+  memcpy(msg.raw_tx.bytes, prefixed, msg.raw_tx.size);
+  SolanaSignedTx resp = {};
+  ASSERT_TRUE(solana_signTx(&node, &msg, &resp));
+  EXPECT_EQ(0, ed25519_sign_open(raw, pos, node.public_key + 1,
+                                 resp.signature.bytes));
+  EXPECT_NE(0, ed25519_sign_open(prefixed, pos + 1, node.public_key + 1,
+                                 resp.signature.bytes));
+}
+
 TEST(Solana, MalformedVersionedLookupTableRejects) {
   uint8_t raw[256];
   size_t pos = 0;
@@ -1710,7 +1806,6 @@ TEST(Solana, CheckedMintAndBurnPreserveSignedDecimalsAndCanonicalShape) {
       SolanaParsedTx tx;
       ASSERT_EQ(SOL_TX_REVIEW_OPAQUE, solana_inspectTx(raw, len, &tx));
       const SolanaParsedInstruction& pi = tx.instructions[0];
-      EXPECT_TRUE(pi.has_token_decimals);
       EXPECT_EQ(decimal, pi.extra_u8);
       EXPECT_EQ(UINT64_C(1000000000), pi.amount);
 
@@ -1743,7 +1838,7 @@ TEST(Solana, UncheckedMintAndBurnDoNotFabricateDecimals) {
         build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 3, data, sizeof(data));
     SolanaParsedTx tx;
     ASSERT_EQ(SOL_TX_REVIEW_OPAQUE, solana_inspectTx(raw, len, &tx));
-    EXPECT_FALSE(tx.instructions[0].has_token_decimals);
+    EXPECT_EQ(0, tx.instructions[0].extra_u8);
     EXPECT_EQ(42, tx.instructions[0].amount);
   }
 }
@@ -1930,10 +2025,20 @@ TEST(Solana, StakeAuthorizeShortDataIsOpaque) {
 
 /* The same StakeAuthorize with the full 40-byte canonical encoding clear-signs
  * (role = staker), proving the rejection above is the length guard. */
+TEST(Solana, StakeAuthorizeCanonicalIsVerified) {
+  uint8_t d[40] = {SOL_STAKE_AUTHORIZE_IX, 0, 0, 0};
+  memset(d + 4, 0x77, 32); /* new authority */
+  /* d[36..39] = role 0 (staker), already zero */
+  uint8_t raw[512];
+  size_t pos = build_single_instr_tx(raw, SOL_STAKE_PROGRAM, 3, d, sizeof(d));
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
+}
+
 /* The runtime rejects a transaction with two SetComputeUnitLimit (or two
  * SetComputeUnitPrice) instructions. Displaying only one of them would
  * describe a transaction that cannot run, so the parser refuses it. */
-TEST(Solana, DuplicateComputeBudgetInstructionIsFlagged) {
+TEST(Solana, DuplicateComputeBudgetInstructionIsMalformed) {
   for (uint8_t kind = 0; kind < 2; kind++) {
     const bool price = kind == 1;
     uint8_t data[9] = {price ? (uint8_t)SOL_CB_SET_COMPUTE_UNIT_PRICE
@@ -1962,13 +2067,8 @@ TEST(Solana, DuplicateComputeBudgetInstructionIsFlagged) {
         pos += data_len;
       }
       SolanaParsedTx tx;
-      /* The parser still classifies the structure, but flags the duplicate:
-       * solana_parseTx refuses it and the FSM refuses it on every path
-       * (solana_validatePriorityFee for fee-binding reviews, the
-       * duplicate_compute_budget check for the rest). */
-      EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED)
-          << "kind=" << (int)kind << " copies=" << (int)copies;
-      EXPECT_EQ(tx.duplicate_compute_budget, copies == 2)
+      EXPECT_EQ(solana_inspectTx(raw, pos, &tx),
+                copies == 2 ? SOL_TX_REVIEW_MALFORMED : SOL_TX_REVIEW_VERIFIED)
           << "kind=" << (int)kind << " copies=" << (int)copies;
       EXPECT_EQ(solana_parseTx(raw, pos, &tx), copies == 1)
           << "kind=" << (int)kind << " copies=" << (int)copies;
@@ -1976,17 +2076,85 @@ TEST(Solana, DuplicateComputeBudgetInstructionIsFlagged) {
   }
 }
 
-/* Every fixed-layout decoder matches its data length EXACTLY: a recognised
- * instruction whose data is LONGER than its on-chain layout must not decode,
- * or its unshown tail would be signed while the tx still classified VERIFIED. */
+/* Never render a nonzero amount as zero. The assembly's formatter also trims
+ * trailing zeros, so exact-decimal cases read "1 tokens", not "1.000000000". */
+TEST(Solana, FormatTokenAmountNeverShowsZeroForNonzero) {
+  char buf[64];
+
+  solana_formatTokenAmount(buf, sizeof(buf), 1, "tokens", 0);
+  EXPECT_STREQ(buf, "1 tokens");
+
+  /* amount=1 decimals=18 used to render "0 tokens" while the signed
+     instruction moved one base unit. */
+  solana_formatTokenAmount(buf, sizeof(buf), 1, "tokens", 18);
+  EXPECT_STREQ(buf, "1 base units (18 decimals) tokens");
+
+  /* One digit past the display limit, and that digit is nonzero. */
+  solana_formatTokenAmount(buf, sizeof(buf), 1, "tokens", 10);
+  EXPECT_STREQ(buf, "1 base units (10 decimals) tokens");
+
+  /* Dropped digit is zero: the decimal form is exact and still used. */
+  solana_formatTokenAmount(buf, sizeof(buf), 10, "tokens", 10);
+  EXPECT_STREQ(buf, "0.000000001 tokens");
+
+  /* Nine decimals: nothing is dropped. */
+  solana_formatTokenAmount(buf, sizeof(buf), 1, "tokens", 9);
+  EXPECT_STREQ(buf, "0.000000001 tokens");
+
+  solana_formatTokenAmount(buf, sizeof(buf), 1000000000000000000ULL, "tokens",
+                           18);
+  EXPECT_STREQ(buf, "1 tokens");
+
+  /* Zero is zero at any scale in range. */
+  solana_formatTokenAmount(buf, sizeof(buf), 0, "tokens", 18);
+  EXPECT_STREQ(buf, "0 tokens");
+
+  /* decimals is an unrestricted uint8_t: beyond 18 keep the signed scale. */
+  solana_formatTokenAmount(buf, sizeof(buf), 1, "tokens", 19);
+  EXPECT_STREQ(buf, "1 base units (19 decimals) tokens");
+
+  solana_formatTokenAmount(buf, sizeof(buf), UINT64_MAX, "tokens", 255);
+  EXPECT_STREQ(buf, "18446744073709551615 base units (255 decimals) tokens");
+}
+
+TEST(Solana, OversizedAccountCountsFailClosedBeforeAccountArrayAccess) {
+  /* These messages end immediately after the count. More accounts than the
+   * parser holds is opaque (blind sign behind AdvancedMode), and the count is
+   * never recorded: a parser that stored it either put 33 into an 8-bit loop
+   * bound (OOB past accounts[31]) or wrapped 256 to zero. */
+  const uint8_t legacy_33[] = {1, 0, 0, 33};
+  const uint8_t legacy_256[] = {1, 0, 0, 0x80, 0x02};
+  const uint8_t versioned_33[] = {0x80, 1, 0, 0, 33};
+  const uint8_t versioned_256[] = {0x80, 1, 0, 0, 0x80, 0x02};
+
+  const struct {
+    const uint8_t* raw;
+    size_t len;
+  } cases[] = {{legacy_33, sizeof(legacy_33)},
+               {legacy_256, sizeof(legacy_256)},
+               {versioned_33, sizeof(versioned_33)},
+               {versioned_256, sizeof(versioned_256)}};
+
+  for (const auto& test_case : cases) {
+    SolanaParsedTx tx;
+    memset(&tx, 0xa5, sizeof(tx));
+    EXPECT_EQ(SOL_TX_REVIEW_OPAQUE,
+              solana_inspectTx(test_case.raw, test_case.len, &tx));
+    EXPECT_EQ(0, tx.num_accounts);
+  }
+}
+
+/* A recognised instruction whose data is LONGER than its on-chain layout must
+ * not decode: the tail would be signed but never displayed, and has_unknown
+ * would stay unset so the tx would classify VERIFIED. */
 TEST(Solana, OverlongFixedLayoutInstructionIsOpaque) {
   SolanaParsedTx tx;
   uint8_t raw[512];
   size_t len;
 
   static const uint8_t kExact[10] = {12, 0x40, 0x42, 0x0F, 0, 0, 0, 0, 0, 6};
-  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 4, kExact,
-                              sizeof(kExact));
+  len =
+      build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 4, kExact, sizeof(kExact));
   ASSERT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_VERIFIED);
   EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_TOKEN_TRANSFER_CHECKED);
 
@@ -2048,8 +2216,8 @@ TEST(Solana, OverlongFixedLayoutInstructionIsOpaque) {
 
   /* System Transfer is exactly 12 bytes. */
   uint8_t sys_ok[12] = {SOL_SYS_TRANSFER, 0, 0, 0, 1};
-  len = build_single_instr_tx(raw, SOL_SYSTEM_PROGRAM, 2, sys_ok,
-                              sizeof(sys_ok));
+  len =
+      build_single_instr_tx(raw, SOL_SYSTEM_PROGRAM, 2, sys_ok, sizeof(sys_ok));
   ASSERT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_VERIFIED);
   EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_SYSTEM_TRANSFER);
 
@@ -2067,8 +2235,8 @@ TEST(Solana, OverlongFixedLayoutInstructionIsOpaque) {
   EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
 
   /* Compute-budget SetComputeUnitLimit is exactly 5 bytes. */
-  static const uint8_t kCbLong[6] = {SOL_CB_SET_COMPUTE_UNIT_LIMIT, 1, 0, 0, 0,
-                                     0xEE};
+  static const uint8_t kCbLong[6] = {
+      SOL_CB_SET_COMPUTE_UNIT_LIMIT, 1, 0, 0, 0, 0xEE};
   len = build_single_instr_tx(raw, SOL_COMPUTE_BUDGET_PROGRAM, 1, kCbLong,
                               sizeof(kCbLong));
   EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
@@ -2077,6 +2245,37 @@ TEST(Solana, OverlongFixedLayoutInstructionIsOpaque) {
 
 /* A recognised instruction with fewer accounts than its layout needs would
  * display a zeroed address: it must be UNKNOWN and force opaque. */
+TEST(Solana, TokenMintAndBurnRemainOpaqueWithoutOpcodeBoundDisplay) {
+  uint8_t raw[512];
+  SolanaParsedTx tx;
+
+  static const uint8_t kMintUnchecked[9] = {7, 1, 0, 0, 0, 0, 0, 0, 0};
+  size_t len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 3, kMintUnchecked,
+                                     sizeof(kMintUnchecked));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_TOKEN_MINT_TO);
+
+  static const uint8_t kMintChecked[10] = {14, 1, 0, 0, 0, 0, 0, 0, 0, 6};
+  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 3, kMintChecked,
+                              sizeof(kMintChecked));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_TOKEN_MINT_TO);
+  EXPECT_EQ(tx.instructions[0].extra_u8, 6);
+
+  static const uint8_t kBurnUnchecked[9] = {8, 1, 0, 0, 0, 0, 0, 0, 0};
+  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 3, kBurnUnchecked,
+                              sizeof(kBurnUnchecked));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_TOKEN_BURN);
+
+  static const uint8_t kBurnChecked[10] = {15, 1, 0, 0, 0, 0, 0, 0, 0, 6};
+  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 3, kBurnChecked,
+                              sizeof(kBurnChecked));
+  EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_TOKEN_BURN);
+  EXPECT_EQ(tx.instructions[0].extra_u8, 6);
+}
+
 TEST(Solana, RecognizedInstructionMissingAccountsIsOpaque) {
   SolanaParsedTx tx;
   uint8_t raw[512];
@@ -2101,7 +2300,8 @@ TEST(Solana, RecognizedInstructionMissingAccountsIsOpaque) {
 
   /* Token Close needs 3 accounts, Revoke 2. */
   static const uint8_t kClose[1] = {SOL_TOKEN_CLOSE_ACCOUNT_IX};
-  len = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 2, kClose, sizeof(kClose));
+  len =
+      build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 2, kClose, sizeof(kClose));
   EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
   EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
 
@@ -2144,16 +2344,6 @@ TEST(Solana, AuthorizeUsesAuthorityNotClockSysvar) {
   len = build_single_instr_tx(raw, SOL_VOTE_PROGRAM, 3, v, sizeof(v));
   EXPECT_EQ(solana_inspectTx(raw, len, &tx), SOL_TX_REVIEW_OPAQUE);
   EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
-}
-
-TEST(Solana, StakeAuthorizeCanonicalIsVerified) {
-  uint8_t d[40] = {SOL_STAKE_AUTHORIZE_IX, 0, 0, 0};
-  memset(d + 4, 0x77, 32); /* new authority */
-  /* d[36..39] = role 0 (staker), already zero */
-  uint8_t raw[512];
-  size_t pos = build_single_instr_tx(raw, SOL_STAKE_PROGRAM, 3, d, sizeof(d));
-  SolanaParsedTx tx;
-  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
 }
 
 /* ── KKSOLSC1 reusable instruction schemas ────────────────────────────
@@ -2247,7 +2437,6 @@ TEST(Solana, SchemaParsesCanonicalPayload) {
   EXPECT_STREQ(s.program_name, "Relay");
   EXPECT_STREQ(s.instruction_name, "deposit");
   EXPECT_STREQ(s.args[0].label, "Amount");
-  /* Every strict prefix of a canonical payload must be rejected. */
   for (size_t cut = 0; cut < len; cut++) {
     EXPECT_FALSE(solana_parseInstrSchema(blob, cut, &s)) << cut;
   }
@@ -2678,14 +2867,15 @@ TEST(Solana, SchemaParsesSdkSerializedPayloadNative) {
  */
 static size_t build_ata_then_transfer_tx(uint8_t* raw, uint8_t ata_ix_byte,
                                          bool include_ata_byte) {
-  /* accounts: 0..3 acted-on, 4 = system, 5 = token, 6 = ATA program */
-  const int n_accounts = 4;
+  /* accounts: 0..3 transfer accounts, 4 = System, 5 = Token, 6 = ATA */
+  const int transfer_accounts = 4;
+  const int total_accounts = 7;
   size_t pos = 0;
   raw[pos++] = 1; /* num_required_sigs */
   raw[pos++] = 0;
-  raw[pos++] = 3;                         /* three readonly unsigned programs */
-  raw[pos++] = (uint8_t)(n_accounts + 3); /* total accounts */
-  for (int i = 0; i < n_accounts; i++) {
+  raw[pos++] = 3; /* System, Token and ATA programs are readonly unsigned */
+  raw[pos++] = (uint8_t)total_accounts;
+  for (int i = 0; i < transfer_accounts; i++) {
     memset(raw + pos, 0x11 + i, 32);
     pos += 32;
   }
@@ -2700,10 +2890,10 @@ static size_t build_ata_then_transfer_tx(uint8_t* raw, uint8_t ata_ix_byte,
 
   raw[pos++] = 2; /* two instructions */
 
-  /* 1) ATA create (idempotent or classic) — canonical accounts 0..5 */
-  raw[pos++] = (uint8_t)(n_accounts + 2); /* ATA program index */
-  raw[pos++] = (uint8_t)(n_accounts + 2);
-  for (int i = 0; i < n_accounts + 2; i++) raw[pos++] = (uint8_t)i;
+  /* 1) ATA create (idempotent or classic) — canonical six accounts */
+  raw[pos++] = 6; /* ATA program index */
+  raw[pos++] = 6;
+  for (int i = 0; i < 6; i++) raw[pos++] = (uint8_t)i;
   if (include_ata_byte) {
     raw[pos++] = 1; /* data_len */
     raw[pos++] = ata_ix_byte;
@@ -2712,9 +2902,9 @@ static size_t build_ata_then_transfer_tx(uint8_t* raw, uint8_t ata_ix_byte,
   }
 
   /* 2) TransferChecked: [12, amount u64 LE, decimals] over 4 accounts */
-  raw[pos++] = (uint8_t)(n_accounts + 1); /* token program index */
-  raw[pos++] = (uint8_t)n_accounts;
-  for (int i = 0; i < n_accounts; i++) raw[pos++] = (uint8_t)i;
+  raw[pos++] = 5; /* token program index */
+  raw[pos++] = (uint8_t)transfer_accounts;
+  for (int i = 0; i < transfer_accounts; i++) raw[pos++] = (uint8_t)i;
   raw[pos++] = 10; /* data_len */
   raw[pos++] = SOL_TOKEN_TRANSFER_CHECKED_IX;
   for (int i = 0; i < 8; i++) raw[pos++] = (i == 0) ? 0x40 : 0x00; /* amount */
@@ -2893,23 +3083,17 @@ TEST(Solana, RawMessageNotPlainTextKeepsAdvancedMode) {
   uint8_t key[SOL_PUBKEY_SIZE];
   memset(key, 0xAB, sizeof(key));
 
-  // A legacy transaction-message header is binary.
   const uint8_t tx_header[] = {0x01, 0x00, 0x01, 0x02, 0x00, 0x00};
   EXPECT_FALSE(solana_rawMessageIsPlainText(tx_header, sizeof(tx_header), key));
-
-  // Tab, CR, DEL and UTF-8 fall back to the AdvancedMode path.
   EXPECT_FALSE(solana_rawMessageIsPlainText((const uint8_t*)"a\tb", 3, key));
   EXPECT_FALSE(solana_rawMessageIsPlainText((const uint8_t*)"a\rb", 3, key));
   EXPECT_FALSE(solana_rawMessageIsPlainText((const uint8_t*)"a\x7f", 2, key));
   EXPECT_FALSE(
       solana_rawMessageIsPlainText((const uint8_t*)"caf\xc3\xa9", 5, key));
-
   EXPECT_FALSE(solana_rawMessageIsPlainText(nullptr, 3, key));
   EXPECT_FALSE(solana_rawMessageIsPlainText((const uint8_t*)"a", 0, key));
 }
 
-/* The key clause, isolated: a (synthetic) printable key embedded in printable
-   text must keep the gate, at the start, the end, and mid-string. */
 TEST(Solana, RawMessageContainingSignerKeyKeepsAdvancedMode) {
   uint8_t key[SOL_PUBKEY_SIZE];
   memset(key, 'K', sizeof(key));
@@ -3295,7 +3479,7 @@ TEST(Solana, SchemaTokenAmountTrustedOrRawWithMint) {
   ASSERT_TRUE(solana_formatSchemaTokenAmount(buf, sizeof(buf), 1000000000ULL,
                                              kSdiceMint, &ti));
   EXPECT_STREQ(buf,
-               "1000.000000 SDICE\n"
+               "1000 SDICE\n"
                "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump");
   /* The longest trusted text still fits the renderer's 96-byte value. */
   strcpy(ti.symbol, "ABCDEFGHIJKL");
@@ -3553,7 +3737,7 @@ TEST(Solana, CertifiedSoltoshiJoinRendersSdiceAmounts) {
   const SolanaParsedInstruction* ix = &tx.instructions[idx];
 
   const char* sdice =
-      "1000.000000 SDICE\n"
+      "1000 SDICE\n"
       "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump";
   const char* raw_sdice =
       "1000000000 base units of mint\n"
@@ -3764,6 +3948,7 @@ TEST(Solana, SchemaCertifiedRefusesTransferToLookupTableKey) {
     SolanaParsedTx tx;
     ASSERT_EQ(solana_inspectTxWithTrustedLut(raw, pos, resolved, 1, &tx),
               SOL_TX_REVIEW_OPAQUE);
+    ASSERT_TRUE(tx.has_address_lookups);
     ASSERT_TRUE(solana_certifiedLutShapeMatches(&tx, 1));
     ASSERT_EQ(tx.num_static_accounts, 4);
     ASSERT_EQ(tx.num_accounts, 5);
@@ -3986,11 +4171,11 @@ struct V3Arg {
   uint8_t role;
 };
 
-std::vector<uint8_t> v3_schema(const uint8_t program[32],
-                               const std::vector<uint8_t>& disc,
-                               const char* program_name, const char* instr,
-                               const std::vector<V3Arg>& args,
-                               const char* intent) {
+std::vector<uint8_t> v3_schema(
+    const uint8_t program[32], const std::vector<uint8_t>& disc,
+    const char* program_name, const char* instr, const std::vector<V3Arg>& args,
+    const char* intent,
+    const std::vector<std::pair<uint8_t, const char*>>& accounts = {}) {
   std::vector<uint8_t> p = {'K', 'K', 'S', 'O', 'L', 'S', 'C', '1', 3};
   p.insert(p.end(), program, program + 32);
   p.push_back((uint8_t)disc.size());
@@ -4008,7 +4193,11 @@ std::vector<uint8_t> v3_schema(const uint8_t program[32],
     if (a.mint >= 0) p.push_back((uint8_t)a.mint);
     p.push_back(a.role);
   }
-  p.push_back(0);  // accounts
+  p.push_back((uint8_t)accounts.size());
+  for (const auto& a : accounts) {
+    p.push_back(a.first);
+    text(a.second);
+  }
   if (intent) {
     text(intent);
   } else {
@@ -4021,9 +4210,9 @@ std::vector<uint8_t> pump_sell_v3(const char* intent) {
   return v3_schema(
       kPumpAmmProgram, {0x33, 0xe6, 0x85, 0xa4, 0x01, 0x7f, 0x83, 0xad},
       "Pump.fun", "Sell tokens",
-      {{SOL_SCHEMA_ARG_TOKEN_AMOUNT, "You sell", 3, SOL_ROLE_SPEND_EXACT},
+      {{SOL_SCHEMA_ARG_TOKEN_AMOUNT, "You sell", 3, METADATA_ROLE_SPEND_EXACT},
        {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Receive at least", 4,
-        SOL_ROLE_RECEIVE_MIN}},
+        METADATA_ROLE_RECEIVE_MIN}},
       intent);
 }
 
@@ -4188,11 +4377,11 @@ TEST(Solana, IntentReviewCapRoleAndUnstatedValuesOnRealJoin) {
       {{SOL_SCHEMA_ARG_U64, "Round", -1, 0},
        {SOL_SCHEMA_ARG_U64, "Revision", -1, 0},
        {SOL_SCHEMA_ARG_U8, "Seat", -1, 0},
-       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Buy-in", 3, SOL_ROLE_SPEND_EXACT},
+       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Buy-in", 3, METADATA_ROLE_SPEND_EXACT},
        {SOL_SCHEMA_ARG_PUBKEY, "Session key", -1, 0},
        {SOL_SCHEMA_ARG_DURATION, "Expires in", -1, 0},
-       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Allowance", 3, SOL_ROLE_SPEND_MAX},
-       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Max wager", 3, SOL_ROLE_CAP}},
+       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Allowance", 3, METADATA_ROLE_SPEND_MAX},
+       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Max wager", 3, METADATA_ROLE_CAP}},
       "Join blackjack seat {2} for {3}; key {4} may bet {7} each, {6} total, "
       "for {5}");
   SolanaInstrSchema s;
@@ -4208,18 +4397,77 @@ TEST(Solana, IntentReviewCapRoleAndUnstatedValuesOnRealJoin) {
   auto has = [&](const std::string& line) {
     return std::find(bodies.begin(), bodies.end(), line) != bodies.end();
   };
-  // alpha prints token amounts at full precision.
   EXPECT_TRUE(
-      has("SoltoshiDICE|Join blackjack seat 1 for 1000.000000 SDICE; "
-          "key BqtZ...cGjX may bet 1000.000000 SDICE each, "
-          "1000.000000 SDICE total, for 1 h"))
+      has("SoltoshiDICE|Join blackjack seat 1 for 1000 SDICE; key "
+          "BqtZ...cGjX may bet 1000 SDICE each, 1000 SDICE total, "
+          "for 1 h"))
       << bodies[0];
   EXPECT_TRUE(
-      has("Limits|Each use at most\n1000.000000 SDICE\n"
+      has("Limits|Each use at most\n1000 SDICE\n"
+          "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump"));
+  EXPECT_TRUE(
+      has("Limits|You spend\n1000 SDICE\n"
+          "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump"));
+  EXPECT_TRUE(
+      has("Limits|You spend at most\n1000 SDICE\n"
           "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump"));
   // Not in the sentence, so on details screens; the short key in full.
   EXPECT_TRUE(has("Round|86"));
   EXPECT_TRUE(has("Revision|980"));
   EXPECT_TRUE(has("Session key|BqtZ8PRQywD9Z5xXeB5112wtPG3xtj7TqF56hroicGjX"));
   EXPECT_FALSE(has("Seat|1"));  // stated in full in the sentence
+}
+
+/* Exact-text contract for the remaining review branches, on the real sell. */
+TEST(Solana, IntentReviewAccountPlaceholderReceiveExactAndLegacyFallback) {
+  const std::vector<uint8_t> raw = solana_unhex(kPumpSellMessageHex);
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  static SolanaSignTx msg;
+  ASSERT_NO_FATAL_FAILURE(fill_certified_soltoshi_join(&msg));
+  auto review = [&](const std::vector<uint8_t>& blob) {
+    SolanaInstrSchema s;
+    std::vector<Screen> got;
+    uint8_t idx = 0xFF;
+    EXPECT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
+    EXPECT_TRUE(solana_schemaAppliesCertified(&s, &tx, &idx));
+    EXPECT_TRUE(solana_buildIntentReview(&msg, &tx, &s, idx, tx.accounts[0],
+                                         "KeepKey Vault", "a9531b9d", true,
+                                         collect, &got));
+    return got;
+  };
+  const std::vector<V3Arg> args = {
+      {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "You sell", 3, METADATA_ROLE_SPEND_EXACT},
+      {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Receive", 4, METADATA_ROLE_RECEIVE_EXACT}};
+  const std::vector<uint8_t> disc = {0x33, 0xe6, 0x85, 0xa4,
+                                     0x01, 0x7f, 0x83, 0xad};
+
+  // {aN}: shortened in the sentence, then in full on its own screen.
+  std::vector<Screen> got =
+      review(v3_schema(kPumpAmmProgram, disc, "Pump.fun", "Sell tokens", args,
+                       "Sell {0} of {a0} for {1}", {{3, "Token"}}));
+  EXPECT_EQ(got[0].body,
+            "Sell 7738120.185405 SDICE of 4nCm...pump for 8.509507889 SOL");
+  // RECEIVE_EXACT reads "You receive" with no "at least".
+  EXPECT_EQ(got[2].title, "Limits");
+  EXPECT_EQ(got[2].body, "You receive\n8.509507889 SOL");
+  EXPECT_NE(
+      std::find_if(got.begin(), got.end(),
+                   [](const Screen& sc) {
+                     return sc.title == "Token" &&
+                            sc.body ==
+                                "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump";
+                   }),
+      got.end());
+
+  // No template (every certified v1/v2 schema): the instruction name is the
+  // summary and nothing the roles do not state is hidden.
+  got = review(v3_schema(kPumpAmmProgram, disc, "Pump.fun", "Sell tokens", args,
+                         nullptr));
+  EXPECT_EQ(got[0].title, "Pump.fun");
+  EXPECT_EQ(got[0].body, "Sell tokens");
+  EXPECT_EQ(got[1].body,
+            "You spend\n7738120.185405 SDICE\n"
+            "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump");
 }

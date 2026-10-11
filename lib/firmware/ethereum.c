@@ -1153,12 +1153,9 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     data_needs_confirm = false;
   }
 
-  /* SRS R-1.4: a certified (v3) claim for calldata the device does not decode
-   * natively is honoured completely or refused -- never silently downgraded to
-   * the additive review. "Completely" means the proof verified, describes this
-   * exact transaction, and may replace the raw review on this chain. Checked
-   * before any screen, so a failed claim can never show "Verified by KeepKey".
-   * Natively decoded calls and plain transfers do not need the description. */
+  /* SRS R-1.4: a certified claim is honoured completely or refused, never
+   * downgraded. Checked before any screen, so a failed claim never shows
+   * "Verified by KeepKey". */
   if (data_needs_confirm && data_total > 0 &&
       signed_metadata_certified_claimed() &&
       !(signed_metadata_available() && signed_metadata_matches_tx(msg) &&
@@ -1181,31 +1178,13 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   if (data_needs_confirm && data_total > 0 && signed_metadata_available()) {
     if (signed_metadata_matches_tx(msg)) {
       if (signed_metadata_confirm()) {
-        /* Suppression is the POSITIVE arm, deliberately.
-         *
-         * This used to read "if runtime signer ... else suppress", and an
-         * else-arm answers "not a runtime signer" -- which quietly becomes
-         * true for any trust tier added later, including one nobody reviewed
-         * against this question. Asking may_suppress() instead means a new
-         * tier defaults to the additive path and has to be let in on purpose.
-         *
-         * The chain id is passed because a certificate is bound to ONE
-         * network: the same address means something entirely different
-         * elsewhere, so a mainnet delegate must not describe an L2
-         * transaction. */
+        /* Suppression is the POSITIVE arm. A v2 schema cannot bind
+         * msg->value, so payable calls still show amount/recipient. */
         if (signed_metadata_may_suppress(chain_id)) {
-          /* KeepKey vouched for this describer, so the raw-data screen may be
-           * replaced by the decoded one. Payable calls still show
-           * amount/recipient because a v2 schema describes calldata only and
-           * cannot bind msg->value. */
           needs_confirm = signed_metadata_schema_moves_value();
           data_needs_confirm = false;
         } else {
-          /* A runtime (self-service) signer is ANNOTATION ONLY: the decoded
-           * screens are followed by the same amount and raw-calldata review
-           * the transaction would have received without metadata, so a lying
-           * describer cannot conceal bytes. A certified claim never reaches
-           * here: the check above refuses one that cannot be honoured. */
+          /* Runtime signer: annotation only; the raw review stays. */
           needs_confirm = true;
           data_needs_confirm = true;
         }

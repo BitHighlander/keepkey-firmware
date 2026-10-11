@@ -26,11 +26,8 @@
 #include "keepkey/firmware/authenticator.h"
 #include "keepkey/firmware/passkey.h"
 
-/* 20, not 18. 18 was the clear-sign identity block and 19 the PIN-KDF
- * migration -- both ACTIVE in alpha builds before 6bebde7b2 reverted the format
- * to V17, so devices carrying blobs stamped with either exist. Reusing a number
- * would make this firmware PARSE one as passkey state instead of refusing it.
- * See lib/firmware/storage_versions.inc. */
+/* 20, not 18: alpha builds wrote 18 (clear-sign identity) and 19 (PIN-KDF),
+ * so those numbers stay burned and are refused, never parsed as passkeys. */
 #define STORAGE_VERSION \
   20 /* Must add case fallthrough in storage_fromFlash after increment*/
 
@@ -227,9 +224,6 @@ uint32_t storage_getAutoLockDelayMs(void);
 void storage_setAutoLockDelayMs(uint32_t auto_lock_delay_ms);
 
 bool storage_getAuthData(authType* returnData);
-void storage_setAuthData(const authType* setData);
-void storage_wipeAuthData(void);
-
 /// Read or atomically replace CTAP2 PIN and discoverable-credential metadata.
 void storage_getPasskeyData(PasskeyStorage* data);
 void storage_setPasskeyData(const PasskeyStorage* data);
@@ -244,6 +238,9 @@ bool storage_getPasskeyCredentialGeneration(
 /// Atomically clear CTAP state and rotate the stateless-credential generation.
 /// Returns false without changing storage if checked entropy is unavailable.
 bool storage_resetPasskeyData(void);
+
+void storage_setAuthData(const authType* setData);
+void storage_wipeAuthData(void);
 
 #ifdef DEBUG_LINK
 typedef struct _HDNodeType HDNodeType;

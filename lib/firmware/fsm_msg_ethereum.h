@@ -587,9 +587,7 @@ static void show_erc7730_value(Erc7730Workflow* workflow, const char* text) {
   memzero(formatted, sizeof(formatted));
 }
 
-/* What an ERC-7730 review cannot clear-sign is refused from 7.16; 7.15
- * showed it under a blind-sign warning. First, an embedded call without a
- * usable inner definition. */
+/* Refused: an embedded call without a usable inner definition. */
 static void show_erc7730_embedded(Erc7730Workflow* workflow) {
   workflow->inner_refused = false; /* consumed: the next call may fetch */
   fail_erc7730_field(workflow, FailureType_Failure_Other,
@@ -1817,19 +1815,15 @@ void fsm_msgEthereumClearSignDefinitionChunk(
 void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
   CHECK_INITIALIZED
 
-  /* A user-owned contact proof is verified against this seed's dedicated
-   * attestor key. It annotates an otherwise fully decoded transfer and never
-   * enables blind signing, so AdvancedMode is unnecessary at send time. */
+  /* An address-book proof (KKABPRF1) is signed by this wallet's own attestor
+   * key and only labels a plain recipient; it never enables blind signing, so
+   * it needs no AdvancedMode. */
   const bool contact_proof =
       msg->has_signed_payload && msg->signed_payload.size >= 8 &&
       memcmp(msg->signed_payload.bytes, "KKABPRF1", 8) == 0;
 
-  /* Runtime/self-service signers remain behind AdvancedMode. A production v3
-   * envelope is allowed through only when it uses the reserved delegate key
-   * id and has enough bytes to contain a certificate plus inner payload. This
-   * shape check grants no trust: signed_metadata_process() still verifies the
-   * compiled root, certificate, delegate signature, and device-owned decode
-   * before the metadata can affect signing or suppress raw review. */
+  /* Runtime signers need AdvancedMode. The v3 shape check grants no trust;
+   * signed_metadata_process() verifies and SignTx refuses a failed claim. */
   const bool certified =
       msg->has_signed_payload && msg->has_key_id &&
       signed_metadata_is_certified_envelope(
@@ -2299,13 +2293,6 @@ void fsm_msgEthereum712TypesValues(Ethereum712TypesValues* msg) {
  * to name a later one. */
 static MetadataNameRecord typed_data_name;
 
-static bool eip712_review_confirm(void* ctx, const char* title,
-                                  const char* body) {
-  (void)ctx;
-  return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title, "%s",
-                 body);
-}
-
 /* ── Structured EIP-712 ──────────────────────────────────────────────
  *
  * The walk in eip712_stream.c never writes a message. It describes what it
@@ -2403,7 +2390,7 @@ static void eip712_pump(void) {
             signed_metadata_record_token(
                 &typed_data_name, done.permit2.chain_id, done.permit2.token),
             named ? typed_data_name.name : NULL, typed_data_name.alias,
-            typed_data_name.fp8, eip712_review_confirm, NULL);
+            typed_data_name.fp8, signed_metadata_review_emit, NULL);
         memzero(&typed_data_name, sizeof(typed_data_name));
         if (!ok) {
           fsm_sendFailure(FailureType_Failure_ActionCancelled,
