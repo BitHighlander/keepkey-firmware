@@ -52,10 +52,13 @@ if(${KK_ZCASH_PRIVACY})
       ${CMAKE_SOURCE_DIR}/lib/firmware
       ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-firmware/crypto
       ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-firmware/crypto/ed25519-donna)
+  # kkrand and trezorcrypto reference each other; a single-pass linker needs
+  # trezorcrypto again after kkrand.
   target_link_libraries(zcash-crypto-unit
       gtest_main
       trezorcrypto
-      kkrand)
+      kkrand
+      trezorcrypto)
   # As lib/firmware does for zcash.c: ecrypt-config.h picks an alignment type
   # from SSE/MMX headers the emulator image's clang lacks, and the ChaCha
   # context layout must match the portable one deps/crypto is built with.
