@@ -832,11 +832,7 @@ bool signing_input_multisig_quorum_is_valid(const TxInputType* txinput) {
 
 void signing_checksum_script_type_bytes(InputScriptType script_type,
                                         uint8_t out[4]) {
-  const uint32_t value = (uint32_t)script_type;
-  out[0] = (uint8_t)value;
-  out[1] = (uint8_t)(value >> 8);
-  out[2] = (uint8_t)(value >> 16);
-  out[3] = (uint8_t)(value >> 24);
+  signing_encode_script_type(script_type, out);
 }
 
 static bool is_internal_input_script_type(const TxInputType* txinput) {

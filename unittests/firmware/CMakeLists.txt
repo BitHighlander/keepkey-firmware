@@ -48,7 +48,6 @@ if(NOT ${KK_BITCOIN_ONLY})
       ethereum.cpp
       hive_transfer.cpp
       eip712_stream.cpp
-      liquidity_key_probe.c
       review_integer.cpp
       mayachain.cpp
       nano.cpp

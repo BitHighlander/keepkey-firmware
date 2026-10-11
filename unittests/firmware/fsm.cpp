@@ -55,6 +55,11 @@ bool keepkey_before_message_dispatch(MessageType msg_id);
 #include <vector>
 #include <unistd.h>
 
+// After the C++ headers: confirm_sm.h defines an isprint() macro.
+extern "C" {
+#include "keepkey/board/confirm_sm.h"
+}
+
 // The shared bootstrap initializes the canvas and timer queues exactly once.
 // Calling timer_init() again relinks the static runnable nodes into a cycle.
 #include "test_board.h"
@@ -1058,6 +1063,21 @@ TEST_F(AutoLockProgress, ProtectedPingCannotSuspendAnOlderSigningSession) {
   EXPECT_FALSE(signing_is_active());
 }
 
+// 7.14.3 end-to-end form of the test above: a button-protected Ping that the
+// user cancels must still have ended the older signing stream first.
+TEST_F(AutoLockProgress, ButtonProtectedPingCancelEndsAnOlderSigningSession) {
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+  Ping ping = {};
+  ping.has_button_protection = true;
+  ping.button_protection = true;
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
 TEST_F(AutoLockProgress, TopLevelConfirmationEndsAnOlderSigningSession) {
   ASSERT_TRUE(kkconfirm_preload(0, 1));
   ChangePin request = {};
@@ -1084,6 +1104,27 @@ TEST_F(AutoLockProgress, TopLevelBoundaryEndsSigningButIsNotALock) {
   storage_reset();
 }
 
+// 7.14.3 end-to-end form of the test above: a real ChangePin and a
+// PIN-protected Ping through the decoder still leave AdvancedMode armed.
+TEST_F(AutoLockProgress, DecodedRequestsEndSigningButAreNotALock) {
+  ScopedFlash flash;
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+  ChangePin request = {};
+  receiveMessage(MessageType_MessageType_ChangePin, ChangePin_fields, &request);
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_EQ(0, kkconfirm_drain());
+
+  Ping ping = {};
+  ping.has_pin_protection = true;
+  ping.pin_protection = true;
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+
+  EXPECT_TRUE(storage_isPolicyEnabled("AdvancedMode"))
+      << "an ordinary request must not disarm AdvancedMode before signing";
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+}
+
 TEST_F(AutoLockProgress, NewSigningRequestCannotCoexistWithRecovery) {
   signing_abort();
   setup_abort();
@@ -1092,6 +1133,22 @@ TEST_F(AutoLockProgress, NewSigningRequestCannotCoexistWithRecovery) {
   ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
 
   EXPECT_TRUE(keepkey_before_message_dispatch(MessageType_MessageType_SignTx));
+
+  EXPECT_FALSE(setup_isArmed());
+  EXPECT_FALSE(signing_is_active());
+  layoutHomeForced();
+}
+
+// 7.14.3 end-to-end form of the test above, through the USB decoder.
+TEST_F(AutoLockProgress, DecodedSigningRequestEndsAnArmedRecovery) {
+  signing_abort();
+  setup_abort();
+  ASSERT_TRUE(setup_stage(false, "english", "recovery", 0, 0, false));
+  setup_arm(SETUP_RECOVERY);
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+
+  SignTx invalid = {};
+  receiveMessage(MessageType_MessageType_SignTx, SignTx_fields, &invalid);
 
   EXPECT_FALSE(setup_isArmed());
   EXPECT_FALSE(signing_is_active());
@@ -3766,6 +3823,50 @@ TEST(DiceCeremonyPrivacy, AbortClearsCanvasBeforeDiagnosticsResume) {
   setup_abort();
   EXPECT_FALSE(reset_debug_is_private());
   for (size_t i = 0; i < size; ++i) ASSERT_EQ(0, canvas->buffer[i]);
+}
+
+TEST(DiceCeremonyPrivacy, AbortClearsConfirmTextBeforeDiagnosticsResume) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  ResetProbeScope probe(0);
+  reset_init(128, false, false, "english", "text", false, 0, 0, true, false);
+  ASSERT_TRUE(reset_debug_is_private());
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  ASSERT_TRUE(confirm(ButtonRequestType_ButtonRequest_DiceRoll, "Dice Rolls",
+                      "%s", "private page"));
+  EXPECT_EQ(0, kkconfirm_drain());
+  ASSERT_STREQ("private page", confirm_debug_body());
+  setup_abort();
+  EXPECT_FALSE(reset_debug_is_private());
+  EXPECT_STREQ("", confirm_debug_title());
+  EXPECT_STREQ("", confirm_debug_body());
+}
+
+TEST(Fsm, Bip85CompletionAndCancelClearConfirmText) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  struct WipeOnExit {
+    ~WipeOnExit() { storage_wipe(); }
+  } cleanup;
+  LoadDevice load = allLoad();
+  storage_loadDevice(&load);
+  GetBip85Mnemonic request = {};
+  request.word_count = 12;
+  for (bool cancel : {false, true}) {
+    SCOPED_TRACE(cancel);
+    // Approve the derivation prompt, then every page or only the first.
+    ASSERT_TRUE(kkconfirm_preload(cancel ? 2 : 20, cancel ? 1 : 0));
+    fsm_test_clearLastFailure();
+    fsm_msgGetBip85Mnemonic(&request);
+    EXPECT_EQ(cancel ? FailureType_Failure_ActionCancelled : 0,
+              static_cast<int>(fsm_test_lastFailureCode()));
+    kkconfirm_drain();
+    EXPECT_FALSE(bip85_debug_is_private());
+    EXPECT_STREQ("", confirm_debug_title());
+    EXPECT_STREQ("", confirm_debug_body());
+  }
 }
 
 TEST(Fsm, LockedStorageRefusesResetAndSetupCommitWithoutChangingFlash) {

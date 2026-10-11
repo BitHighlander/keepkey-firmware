@@ -58,14 +58,17 @@ extern void fsm_init(void);
  */
 #ifdef _WIN32
 static CRITICAL_SECTION g_fw_lock;
+static int g_fw_lock_ready = 0; /* initialized once, never deleted */
 static HANDLE g_poll_thread = NULL;
 #define FW_LOCK() EnterCriticalSection(&g_fw_lock)
 #define FW_UNLOCK() LeaveCriticalSection(&g_fw_lock)
+#define FW_TRYLOCK() TryEnterCriticalSection(&g_fw_lock)
 #else
 static pthread_mutex_t g_fw_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t g_poll_thread;
 #define FW_LOCK() pthread_mutex_lock(&g_fw_lock)
 #define FW_UNLOCK() pthread_mutex_unlock(&g_fw_lock)
+#define FW_TRYLOCK() (pthread_mutex_trylock(&g_fw_lock) == 0)
 #endif
 
 /* Cross-thread poll-running flag. _Atomic (not volatile — volatile is not a
@@ -95,6 +98,11 @@ static int g_poll_wedged = 0;
  * thread normally leaves within one poll tick (KKEMU_POLL_INTERVAL_MS) of the
  * injected Cancel; anything past this is a wedge, not slowness. */
 #define KKEMU_STOP_JOIN_TIMEOUT_MS 2000
+
+/* This host thread owns g_fw_lock; unlock keys on this, not on
+ * g_poll_running. Per thread, so a thread that got the no-poll-thread success
+ * from kkemu_trylock() cannot release a lock another thread still holds. */
+static _Thread_local int g_host_holds_lock = 0;
 
 /* ── Ring buffers (replace UDP sockets) ─────────────────────────────── */
 
@@ -472,17 +480,14 @@ static void* kkemu_poll_thread_fn(void* arg) {
  * push can only fail if rb_main_in is full; the parked confirm drains one input
  * frame per spin, so a slot frees within ~a poll tick. Retry briefly, and shout
  * loudly if it somehow never takes rather than dropping it. */
-static void kkemu_inject_cancel(void) {
-  uint8_t frame[KKEMU_PACKET_SIZE];
-  memset(frame, 0, sizeof(frame));
-  frame[0] = 0x3F; /* '?' HID report marker */
-  frame[1] = 0x23; /* '#' */
-  frame[2] = 0x23; /* '#' */
-  frame[3] = 0x00; /* MessageType_Cancel high */
-  frame[4] = 0x14; /* MessageType_Cancel low (20) */
-  /* payload length 0 (bytes 5-8 already zero) */
+/* '?##', MessageType_Cancel (20), payload length 0. */
+static const uint8_t kkemu_cancel_frame[KKEMU_PACKET_SIZE] = {0x3F, 0x23, 0x23,
+                                                              0x00, 0x14};
+
+static int kkemu_inject_cancel(void) {
   for (int i = 0; i < 200; i++) {
-    if (ringbuf_push(&rb_main_in, frame, sizeof(frame))) return;
+    if (ringbuf_push(&rb_main_in, kkemu_cancel_frame, KKEMU_PACKET_SIZE))
+      return 1;
     kkemu_sleep_ms(1);
   }
   fprintf(
@@ -490,6 +495,30 @@ static void kkemu_inject_cancel(void) {
       "[libkkemu] FATAL: could not inject Cancel to wake a parked confirm "
       "before join — rb_main_in stayed full for ~200ms; the poll thread may "
       "not exit\n");
+  return 0;
+}
+
+/* After POLL_SET(0): 1 if the thread is between bodies and needs no Cancel
+ * (a stray Cancel would draw an unsolicited Failure). */
+static int kkemu_poll_body_quiesced(void) {
+  for (int i = 0; i < 2 * KKEMU_POLL_INTERVAL_MS; i++) {
+    if (FW_TRYLOCK()) {
+      FW_UNLOCK();
+      return 1;
+    }
+    kkemu_sleep_ms(1);
+  }
+  return 0;
+}
+
+/* Drop an unread wake Cancel (newest slot) so the next session does not
+ * answer it with an unsolicited Failure. */
+static void kkemu_discard_unread_cancel(void) {
+  uint32_t head = atomic_load_explicit(&rb_main_in.head, memory_order_relaxed);
+  uint32_t last = (head + RINGBUF_CAPACITY - 1) % RINGBUF_CAPACITY;
+  if (!ringbuf_empty(&rb_main_in) &&
+      memcmp(rb_main_in.data[last], kkemu_cancel_frame, KKEMU_PACKET_SIZE) == 0)
+    atomic_store_explicit(&rb_main_in.head, last, memory_order_release);
 }
 
 int kkemu_start(void) {
@@ -501,12 +530,14 @@ int kkemu_start(void) {
 
   atomic_store_explicit(&g_poll_exited, 0, memory_order_release);
 #ifdef _WIN32
-  InitializeCriticalSection(&g_fw_lock);
+  if (!g_fw_lock_ready) {
+    InitializeCriticalSection(&g_fw_lock);
+    g_fw_lock_ready = 1;
+  }
   POLL_SET(1);
   g_poll_thread = CreateThread(NULL, 0, kkemu_poll_thread_fn, NULL, 0, NULL);
   if (!g_poll_thread) {
     POLL_SET(0);
-    DeleteCriticalSection(&g_fw_lock);
     return -1;
   }
 #else
@@ -533,7 +564,7 @@ void kkemu_stop(void) {
 
   POLL_SET(0);
   /* Unblock any confirm_helper currently parked on the thread, then join. */
-  kkemu_inject_cancel();
+  int injected = !kkemu_poll_body_quiesced() && kkemu_inject_cancel();
 
   int wedged = 0;
 #ifdef _WIN32
@@ -544,9 +575,7 @@ void kkemu_stop(void) {
     CloseHandle(g_poll_thread);
     g_poll_thread = NULL;
   }
-  /* DeleteCriticalSection on a section a live thread still owns is undefined,
-   * so leak it when we abandoned that thread. */
-  if (!wedged) DeleteCriticalSection(&g_fw_lock);
+  /* Not deleted: the host may still hold it and must be able to release it. */
 #else
   /* No portable timed join (pthread_timedjoin_np is absent on macOS): wait on
    * the thread's own exit flag, then join — which returns immediately — or
@@ -570,13 +599,14 @@ void kkemu_stop(void) {
             "g_fw_lock. Abandoning it instead of joining forever; this "
             "emulator session is dead and the host must exit the process.\n",
             KKEMU_STOP_JOIN_TIMEOUT_MS);
+  } else if (injected) {
+    kkemu_discard_unread_cancel();
   }
 }
 
 /* Host-side guard for reading the shared flash buffer (saveFlash) without
  * tearing a concurrent storage_commit on the poll thread. No-op when the
- * thread isn't running (single-threaded test path needs no lock, and on
- * Windows the CRITICAL_SECTION only exists between start and stop).
+ * thread isn't running (single-threaded test path needs no lock).
  *
  * WARNING: kkemu_lock() BLOCKS, and the poll thread can hold g_fw_lock for the
  * whole duration of a pending confirm. The host must therefore NOT call
@@ -585,11 +615,15 @@ void kkemu_stop(void) {
  * yield there instead. kkemu_lock() is retained for paths with no pending
  * confirm. */
 void kkemu_lock(void) {
-  if (POLL_RUNNING()) FW_LOCK();
+  if (!POLL_RUNNING()) return;
+  FW_LOCK();
+  g_host_holds_lock = 1;
 }
 
 void kkemu_unlock(void) {
-  if (POLL_RUNNING()) FW_UNLOCK();
+  if (!g_host_holds_lock) return;
+  g_host_holds_lock = 0;
+  FW_UNLOCK();
 }
 
 /* Non-blocking acquire. Returns 1 if the firmware lock is now held by the
@@ -600,11 +634,9 @@ void kkemu_unlock(void) {
  */
 int kkemu_trylock(void) {
   if (!POLL_RUNNING()) return 1;
-#ifdef _WIN32
-  return TryEnterCriticalSection(&g_fw_lock) ? 1 : 0;
-#else
-  return pthread_mutex_trylock(&g_fw_lock) == 0 ? 1 : 0;
-#endif
+  if (!FW_TRYLOCK()) return 0;
+  g_host_holds_lock = 1;
+  return 1;
 }
 
 /*

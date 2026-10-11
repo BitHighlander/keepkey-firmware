@@ -1,8 +1,6 @@
 extern "C" {
 #include "keepkey/board/layout.h"
-#include "keepkey/emulator/setup.h"
 #include "keepkey/firmware/app_confirm.h"
-#include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/eip712.h"
 #include "keepkey/firmware/ethereum.h"
 #include "keepkey/firmware/ethereum_contracts/zxappliquid.h"
@@ -15,6 +13,8 @@ extern "C" {
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/tron.h"
 #include "trezor/crypto/address.h"
+#include "trezor/crypto/bip32.h"
+#include "trezor/crypto/curves.h"
 #include "messages-ethereum.pb.h"
 }
 
@@ -30,15 +30,6 @@ extern "C" {
 void kkconfirm_capture_start(void);
 std::vector<std::string> kkconfirm_capture_finish(void);
 std::vector<std::string> kkconfirm_captured_titles(void);
-
-static void ensure_liquidity_signing_seed(void) {
-  if (storage_getLocation() == FLASH_INVALID) {
-    setup();
-    storage_init();
-  }
-  session_clear(true);
-  storage_setMnemonic("all all all all all all all all all all all all");
-}
 
 static uint8_t bin_from_ascii(char c) {
   if ('a' <= c && c <= 'f') return c - 'a' + 0xa;
@@ -643,6 +634,32 @@ TEST(Ethereum, TransformErc20RequiresBothTokensResolvable) {
     EXPECT_FALSE(
         ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr))
         << "chain " << cid << " has no token entries; nothing is nameable";
+  }
+}
+
+TEST(Ethereum, MakerDaoSelectorsAreNotSpecializedForPointRelease) {
+  struct MakerCall {
+    const uint8_t selector[4];
+    size_t argument_count;
+  };
+  static const MakerCall kCalls[] = {
+      {{0xc7, 0x40, 0x73, 0xa1}, 1},  // open(address)
+      {{0x1b, 0x96, 0x81, 0x60}, 5},  // wipeAndFree(...,address)
+  };
+
+  for (const MakerCall& call : kCalls) {
+    EthereumSignTx msg = EthereumSignTx{};
+    msg.has_chain_id = true;
+    msg.chain_id = 1;
+    msg.has_to = true;
+    msg.to.size = 20;
+    msg.has_data_initial_chunk = true;
+    msg.data_initial_chunk.size = 4 + call.argument_count * 32;
+    std::memcpy(msg.data_initial_chunk.bytes, call.selector,
+                sizeof(call.selector));
+
+    EXPECT_FALSE(
+        ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr));
   }
 }
 
@@ -1253,13 +1270,45 @@ TEST(Ethereum, LiquiditySelectorChecksDeclaredCalldataLength) {
 TEST(Ethereum, LiquidityCancellationFailsClosed) {
   EthereumSignTx msg = liquidity_tx(true);
   ASSERT_TRUE(kkconfirm_preload(0, 1));
-  EXPECT_FALSE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
+  EXPECT_FALSE(
+      zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg, nullptr));
   EXPECT_EQ(0, kkconfirm_drain());
+}
+
+// The recipient screen labels the address against the signing node the caller
+// passes in, so a matching and a foreign recipient must render differently.
+TEST(Ethereum, LiquidityRecipientIsLabelledAgainstTheSigningNode) {
+  const uint8_t seed[32] = {1};
+  HDNode node;
+  ASSERT_EQ(1, hdnode_from_seed(seed, sizeof(seed), SECP256K1_NAME, &node));
+  uint8_t self[20];
+  ASSERT_TRUE(hdnode_get_ethereum_pubkeyhash(&node, self));
+
+  char self_hex[41];
+  for (int i = 0; i < 20; i++) snprintf(self_hex + 2 * i, 3, "%02x", self[i]);
+  const std::string mine = std::string("this wallet\n0x") + self_hex;
+  const std::string foreign = "NOT this wallet\n0x" + std::string(40, '1');
+
+  for (bool is_self : {true, false}) {
+    EthereumSignTx msg = liquidity_tx(true);
+    if (is_self)
+      memcpy(msg.data_initial_chunk.bytes + 4 + 5 * 32 - 20, self, 20);
+    // Accept token and token-min, then reject the recipient screen.
+    ASSERT_TRUE(kkconfirm_preload(2, 1));
+    kkconfirm_capture_start();
+    EXPECT_FALSE(
+        zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg, &node));
+    const auto screens = kkconfirm_capture_finish();
+    EXPECT_EQ(0, kkconfirm_drain());
+    ASSERT_EQ(3u, screens.size());
+    EXPECT_EQ(is_self ? mine : foreign, screens[2]);
+  }
 }
 
 TEST(Ethereum, LiquidityRejectsUnknownTokenBeforeConfirmation) {
   EthereumSignTx msg = liquidity_tx(false);
-  EXPECT_FALSE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
+  EXPECT_FALSE(
+      zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg, nullptr));
 }
 
 TEST(Ethereum, LiquidityClearSigningIsMainnetOnly) {
@@ -1277,7 +1326,8 @@ TEST(Ethereum, LiquidityRejectsTruncatedDeadlineAndNoncanonicalAddresses) {
   EthereumSignTx msg = liquidity_tx(true);
   msg.data_initial_chunk.bytes[4 + 5 * 32] = 1;
   EXPECT_FALSE(zx_isZxLiquidTx(&msg));
-  EXPECT_FALSE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
+  EXPECT_FALSE(
+      zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg, nullptr));
 
   msg = liquidity_tx(true);
   msg.data_initial_chunk.bytes[4] = 1;
@@ -1320,7 +1370,8 @@ TEST(Ethereum, LiquidityFormatsFullUint256WithoutBlankConfirmation) {
   EXPECT_GT(strlen(formatted), 32u);
 
   ASSERT_TRUE(kkconfirm_preload(0, 1));
-  EXPECT_FALSE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
+  EXPECT_FALSE(
+      zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg, nullptr));
   EXPECT_EQ(0, kkconfirm_drain());
 }
 
@@ -1353,29 +1404,25 @@ TEST(Ethereum, LpApprovalRefusesPaddedValue) {
 }
 
 TEST(Ethereum, AddLiquidityToThirdPartyCanCompleteAllConfirmations) {
-  ensure_liquidity_signing_seed();
+  const uint8_t seed[32] = {1};
+  HDNode node;
+  ASSERT_EQ(1, hdnode_from_seed(seed, sizeof(seed), SECP256K1_NAME, &node));
   EthereumSignTx msg = liquidity_tx(true, true);
 
   ASSERT_TRUE(kkconfirm_preload(6, 0));
-  EXPECT_TRUE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
+  EXPECT_TRUE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg, &node));
   EXPECT_EQ(0, kkconfirm_drain());
 }
 
 TEST(Ethereum, RemoveLiquidityToThirdPartyCanCompleteAllConfirmations) {
-  ensure_liquidity_signing_seed();
+  const uint8_t seed[32] = {1};
+  HDNode node;
+  ASSERT_EQ(1, hdnode_from_seed(seed, sizeof(seed), SECP256K1_NAME, &node));
   EthereumSignTx msg = liquidity_tx(true, false);
 
   ASSERT_TRUE(kkconfirm_preload(5, 0));
-  EXPECT_TRUE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
+  EXPECT_TRUE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg, &node));
   EXPECT_EQ(0, kkconfirm_drain());
-}
-
-extern "C" bool test_liquidity_failed_derivation_wipes(int stage);
-
-TEST(Ethereum, LiquidityDerivationWipesRootAndPartialKeysOnEveryFailure) {
-  EXPECT_TRUE(test_liquidity_failed_derivation_wipes(1));
-  EXPECT_TRUE(test_liquidity_failed_derivation_wipes(2));
-  EXPECT_TRUE(test_liquidity_failed_derivation_wipes(3));
 }
 
 TEST(Ethereum, ApproveLiquidityRouterRejectsUnreviewedTail) {
@@ -1661,7 +1708,8 @@ TEST(Ethereum, LiquidityFirstScreenNamesTheOperation) {
     // Decline the first screen, so it is the only one drawn.
     ASSERT_TRUE(kkconfirm_preload(0, 1));
     kkconfirm_capture_start();
-    EXPECT_FALSE(zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg));
+    EXPECT_FALSE(
+        zx_confirmZxLiquidTx(msg.data_initial_chunk.size, &msg, nullptr));
     kkconfirm_capture_finish();
     EXPECT_EQ(0, kkconfirm_drain());
     const std::vector<std::string> titles = kkconfirm_captured_titles();

@@ -1430,6 +1430,27 @@ TEST(Storage, ResetMintsFreshPinKdfSalt) {
                       second.storage.pub.random_salt, RANDOM_SALT_LEN));
 }
 
+// Regression: storage_reset_impl() left random_salt zero, so every record
+// created after the V1 migration stretched its PIN with no per-record salt.
+TEST(Storage, ResetDrawsAFreshPinKdfSalt) {
+  ConfigFlash first, second;
+  SessionState session;
+  const uint8_t zero_salt[RANDOM_SALT_LEN] = {0};
+
+  memset(&session, 0, sizeof(session));
+  memset(&first, 0, sizeof(first));
+  storage_reset_impl(&session, &first);
+  memset(&session, 0, sizeof(session));
+  memset(&second, 0, sizeof(second));
+  storage_reset_impl(&session, &second);
+
+  EXPECT_NE(
+      0, memcmp(first.storage.pub.random_salt, zero_salt, sizeof(zero_salt)));
+  EXPECT_NE(0, memcmp(first.storage.pub.random_salt,
+                      second.storage.pub.random_salt, RANDOM_SALT_LEN))
+      << "each wipe must mint a new salt";
+}
+
 TEST(Storage, Reset) {
   ConfigFlash config;
   SessionState session;

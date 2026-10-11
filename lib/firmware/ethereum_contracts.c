@@ -21,7 +21,6 @@
 #include "keepkey/firmware/ethereum_contracts.h"
 
 #include "keepkey/firmware/ethereum.h"
-#include "keepkey/firmware/ethereum_contracts/makerdao.h"
 #include "keepkey/firmware/ethereum_contracts/saproxy.h"
 #include "keepkey/firmware/ethereum_contracts/thortx.h"
 #include "keepkey/firmware/ethereum_contracts/zxappliquid.h"
@@ -57,19 +56,6 @@ bool zx_tokenLabelsThisChain(uint32_t chain_id, const TokenType* token) {
 bool ethereum_contractHandled(uint32_t data_total, const EthereumSignTx* msg,
                               const HDNode* node) {
   (void)node;
-
-  /* Only a CALL to a contract may be clear-signed, never a CREATE.
-   * ethereum_signing_check() deliberately permits to.size == 0 when there is
-   * calldata, and a true return here sets needs_confirm = false, which
-   * suppresses BOTH layoutEthereumConfirmTx's "new contract?" screen and the
-   * ETH value screen. Most decoders pin msg->to against a known address and so
-   * cannot match a CREATE, but makerdao_isMakerDAO never inspects msg->to at
-   * all -- attacker-chosen init code carrying the `open(address)` selector and
-   * the Tub constant would otherwise be narrated as "MakerDAO / Open CDP?"
-   * while a contract deployment and its attached value were signed unseen.
-   * Refuse before any decoder runs, so a deployment always falls through to
-   * the generic disclosure path. */
-  if (msg->to.size != 20) return false;
 
   /* Every handler parses and displays fixed offsets inside the initial chunk
    * only. If the calldata does not fit in that chunk, the remainder streams
@@ -108,15 +94,11 @@ bool ethereum_contractHandled(uint32_t data_total, const EthereumSignTx* msg,
   if (thor_isMayachainTx(msg)) return true;
   if (thor_isThorchainTx(msg)) return true;
 
-  if (makerdao_isMakerDAO(data_total, msg)) return true;
-
   return false;
 }
 
 bool ethereum_contractConfirmed(uint32_t data_total, const EthereumSignTx* msg,
                                 const HDNode* node) {
-  (void)node;
-
   /* Same selector bound as ethereum_contractHandled(). This function is only
    * ever reached after that one returned true, so this is belt and braces --
    * but the two dispatch on the same predicates and must not be able to
@@ -131,16 +113,13 @@ bool ethereum_contractConfirmed(uint32_t data_total, const EthereumSignTx* msg,
 
   if (zx_isZxSwap(msg)) return zx_confirmZxSwap(data_total, msg);
 
-  if (zx_isZxLiquidTx(msg)) return zx_confirmZxLiquidTx(data_total, msg);
+  if (zx_isZxLiquidTx(msg)) return zx_confirmZxLiquidTx(data_total, msg, node);
 
   if (zx_isZxApproveLiquid(msg))
     return zx_confirmApproveLiquidity(data_total, msg);
 
   if (thor_isMayachainTx(msg)) return thor_confirmMayaTx(data_total, msg);
   if (thor_isThorchainTx(msg)) return thor_confirmThorTx(data_total, msg);
-
-  if (makerdao_isMakerDAO(data_total, msg))
-    return makerdao_confirmMakerDAO(data_total, msg);
 
   return false;
 }
