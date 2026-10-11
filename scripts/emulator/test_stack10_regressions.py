@@ -41,7 +41,10 @@ class TestStack10Disclosure(Erc7730Harness, common.KeepKeyTest):
 
     def test_exact_raw_values_contract_and_counterparty(self):
         for approve in (False, True):
-            for amount in (0, 1, (1 << 256) - (2 if approve else 1)):
+            # An allowance of 2^255 or more reads UNLIMITED, so the largest
+            # exact approval is one below it.
+            for amount in (0, 1,
+                           (1 << 255) - 1 if approve else (1 << 256) - 1):
                 self._signed(self._tx(approve, amount))
                 title, body = self._first_pages()[0]
                 self.assertEqual(title, "Approve" if approve else "Send")
@@ -52,6 +55,11 @@ class TestStack10Disclosure(Erc7730Harness, common.KeepKeyTest):
                              "24" * 20 + "?")
                 self.assertEqual(body, expected)
                 self.assertTrue(any("data" in t.lower() for t, _ in self.screens))
+        self._signed(self._tx(True, 1 << 255))
+        self.assertEqual(
+            self._first_pages()[0][1],
+            "Unknown token contract 0x" + "42" * 20 + "\nAllow 0x" + "24" * 20 +
+            " to withdraw up to UNLIMITED?")
 
     def test_padded_zero_value_keeps_exact_token_review(self):
         for approve in (False, True):

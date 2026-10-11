@@ -15,10 +15,11 @@ set -e
 # then FAILS BY NAME and the suite continues. Measured on the known-deadlocking
 # THORChain file: "1 failed, 5 passed in 20.29s" instead of hanging forever.
 #
-# 60s is roughly 30x the slowest healthy file in this suite (multisig, ~2s).
+# 300s: the slowest healthy test (the 32-order Seaport bundle in the EIP-712
+# corpus) takes about 75s locally and longer on a hosted runner.
 # See #466. Applied to the broad suites; the dedicated contract suites below
 # keep the invocation the audit proved.
-PYTEST_TIMEOUT_ARGS="--timeout=60 --timeout-method=signal"
+PYTEST_TIMEOUT_ARGS="--timeout=300 --timeout-method=signal"
 
 # The product under test is declared by the workflow matrix, never inferred
 # from the device, so a regressed full build cannot select the smaller
