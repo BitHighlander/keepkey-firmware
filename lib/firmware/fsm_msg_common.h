@@ -49,6 +49,14 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
   resp->has_supports_dice_modes = true;
   resp->supports_dice_modes = true;
 
+#if !BITCOIN_ONLY
+  /* SolanaSignTx accepts transaction-bound lookup-table account proofs
+     (KKSOLSW1). Older firmware skips the lut_* fields, so a host must see
+     this bit before sending them. */
+  resp->has_supports_solana_lut_attestation = true;
+  resp->supports_solana_lut_attestation = true;
+#endif
+
   /* Variant Name */
   resp->has_firmware_variant = true;
 #if BITCOIN_ONLY
@@ -140,6 +148,43 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
   resp->has_auto_lock_delay_ms = auto_lock_delay ? true : false;
   resp->auto_lock_delay_ms = auto_lock_delay;
 
+  /* Behaviours this build implements (Features.capabilities). Each release
+     block appends what it adds, so a host or a test can tell apart builds
+     that report the same version. List only what this build really does. */
+  static const Features_Capability capabilities[] = {
+      Features_Capability_CAPABILITY_ENTROPY_AUDIT_BUDGET,
+      Features_Capability_CAPABILITY_PROMPT_WORKFLOW_UNWIND,
+      Features_Capability_CAPABILITY_PROTECTED_PING_PRESENCE,
+      Features_Capability_CAPABILITY_SAFE_RESET_CEREMONY,
+      Features_Capability_CAPABILITY_SESSION_TRUST_LIFETIME,
+#if !BITCOIN_ONLY
+      Features_Capability_CAPABILITY_LEGACY_EVM_ROUTER_SIGNING,
+      Features_Capability_CAPABILITY_THOR_DEPOSIT_REVIEW,
+      Features_Capability_CAPABILITY_EVM_MAX_AMOUNT_REVIEW,
+      Features_Capability_CAPABILITY_EVM_UNKNOWN_TOKEN_REVIEW,
+      Features_Capability_CAPABILITY_EVM_TX_METADATA,
+      Features_Capability_CAPABILITY_ERC20_UNLIMITED_APPROVE_REVIEW,
+      Features_Capability_CAPABILITY_ERC20_UNLIMITED_PERMIT_REVIEW,
+      Features_Capability_CAPABILITY_EIP712_CHUNKED_VALUES,
+      Features_Capability_CAPABILITY_ERC7730_RUNTIME_REVIEW,
+      Features_Capability_CAPABILITY_OSMOSIS_WIRE_GUARDS,
+      Features_Capability_CAPABILITY_RIPPLE_MEMO_POLICY,
+      Features_Capability_CAPABILITY_HIVE_RELEASE_REVIEW,
+      Features_Capability_CAPABILITY_SOLANA_RUNTIME_REVIEW,
+      Features_Capability_CAPABILITY_MAYA_SINGLE_MESSAGE,
+      Features_Capability_CAPABILITY_TENDERMINT_PROGRESS,
+      Features_Capability_CAPABILITY_TRON_TRC20_REVIEW,
+      Features_Capability_CAPABILITY_SOLANA_LUT_ATTESTATION,
+      Features_Capability_CAPABILITY_EVM_CERTIFIED_INTENT,
+      Features_Capability_CAPABILITY_PERMIT2_REVIEW,
+      Features_Capability_CAPABILITY_SOLANA_CERTIFIED_REVIEW,
+#endif
+  };
+  _Static_assert(sizeof(capabilities) <= sizeof(resp->capabilities),
+                 "raise Features.capabilities max_count in messages.options");
+  resp->capabilities_count = sizeof(capabilities) / sizeof(capabilities[0]);
+  memcpy(resp->capabilities, capabilities, sizeof(capabilities));
+
   msg_write(MessageType_MessageType_Features, resp);
 }
 
@@ -163,19 +208,23 @@ void fsm_msgGetCoinTable(GetCoinTable* msg) {
   const size_t coin_table_count = COINS_COUNT + TOKENS_COUNT;
 #endif
 
-  CHECK_PARAM(has_start == has_end, "Incorrect GetCoinTable parameters");
-
   const size_t chunk_size =
       sizeof(((CoinTable*)0)->table) / sizeof(((CoinTable*)0)->table[0]);
 
-  if (has_start) {
-    if (coin_table_count <= start || coin_table_count < end || end < start ||
-        chunk_size < end - start) {
-      fsm_sendFailure(FailureType_Failure_Other,
-                      "Incorrect GetCoinTable parameters");
+  if (has_start != has_end ||
+      (has_start && (coin_table_count <= start || coin_table_count < end ||
+                     end < start || chunk_size < end - start))) {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    "Incorrect GetCoinTable parameters");
+    /* The gate lets GetCoinTable through mid-workflow (CHECK_PARAM would go
+     * home), so a malformed one must not hide an armed recovery cipher, an
+     * armed reset or a signer's screen. Same rule as fsm_msgPing(). */
+    if (setup_isArmedAs(SETUP_RECOVERY)) {
+      recovery_cipher_redraw();
+    } else if (!fsm_workflowInProgress()) {
       layoutHome();
-      return;
     }
+    return;
   }
 
   CoinTable* resp = (CoinTable*)msg_decoded_request_response_scratch();
@@ -252,6 +301,7 @@ void fsm_msgPing(Ping* msg) {
       [UNKERR] = "Auth secret unknown error",
       [DUPLICATE] = "Authenticator account already exists",
       [AUTH_CANCELLED] = "Action cancelled",
+      [OTPTIMEOUT] = "OTP time slice timed out, regenerate OTP",
   };
 
   typedef enum _AUTH_MSG_TYPE {
@@ -284,14 +334,34 @@ void fsm_msgPing(Ping* msg) {
     }
   }
 
-  /* A protected Ping can wait inside confirmation or credential entry. End
-   * an older signing stream first, so cancelling the Ping cannot resume it.
-   * This leaves the session's PIN and passphrase policy intact. */
+  /* During a setup ceremony only a plain Ping is answered: a protected one
+   * would draw its prompt over the ceremony and go home on cancel, and an
+   * authenticator one would be served on a PIN cached for a dry run. */
+  if (setup_isArmed() &&
+      (authMsg < NUM_AUTHMESSAGES ||
+       (msg->has_button_protection && msg->button_protection) ||
+       (msg->has_pin_protection && msg->pin_protection) ||
+       (msg->has_passphrase_protection && msg->passphrase_protection))) {
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
+                    _("Device is in the middle of setup. Send "
+                      "Initialize or Cancel first."));
+    return;
+  }
+
+  /* A protected Ping can block inside its confirmation or PIN/passphrase
+   * prompt while the main-loop auto-lock check is suspended. End any older
+   * signing stream before it can wait, so a Cancel cannot resume it. This is
+   * not a lock: the PIN and passphrase stay with the session (hosts unlock
+   * via Ping(pin_protection) and then sign). */
   if (authMsg < NUM_AUTHMESSAGES ||
       (msg->has_button_protection && msg->button_protection) ||
       (msg->has_pin_protection && msg->pin_protection) ||
       (msg->has_passphrase_protection && msg->passphrase_protection)) {
     fsm_abort_signing_workflows();
+    /* The gate passed Ping without ending the stream, so the deadline it
+     * deferred was not checked. Lock now if it has passed, before CHECK_PIN
+     * could serve this request from the cached PIN. */
+    auto_lock_if_due();
   }
 
   if (authMsg < NUM_AUTHMESSAGES) {
@@ -388,7 +458,13 @@ void fsm_msgPing(Ping* msg) {
   }
 
   msg_write(MessageType_MessageType_Success, resp);
-  layoutHome();
+  /* Ping may arrive mid-workflow; going home would hide an armed recovery
+   * cipher or a signer's screen while the workflow stays live. */
+  if (setup_isArmedAs(SETUP_RECOVERY)) {
+    recovery_cipher_redraw();
+  } else if (!fsm_workflowInProgress()) {
+    layoutHome();
+  }
 }
 
 // cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable

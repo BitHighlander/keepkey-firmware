@@ -34,7 +34,8 @@ static const MessagesMap_t* MessagesMap = NULL;
 static size_t map_size = 0;
 static msg_failure_t msg_failure;
 /* A tiny receive failure has already answered the suspended handler. Keep
- * its unwind from producing another reply or waiting for another prompt. */
+ * its unwind from producing another reply or waiting for another prompt.
+ * Cleared at the start of each tiny poll and around each normal frame. */
 static bool tiny_handler_rejected;
 static uint8_t decode_buffer[MAX_DECODE_SIZE] __attribute__((aligned(8)));
 
@@ -185,6 +186,8 @@ __attribute__((weak)) bool keepkey_before_message_dispatch(MessageType msg_id) {
   return true;
 }
 
+/* Firmware samples its auto-lock clock here; board-only targets have none. */
+__attribute__((weak)) void keepkey_idle_clock_sample(void) {}
 __attribute__((weak)) void keepkey_after_message_dispatch(void) {}
 
 /*
@@ -393,6 +396,9 @@ static CONFIDENTIAL uint8_t msg_tiny[MSG_TINY_BFR_SZ];
 static uint16_t msg_tiny_id = MSG_TINY_TYPE_ERROR; /* Default to error type */
 
 void msg_reject_short_tiny_packet(void) {
+  /* A short packet ends every receive in progress: drop any partly
+   * reassembled message too, so the next request is not read as its tail. */
+  frame_arena_rx_reset();
   if (msg_tiny_flag) {
     reject_tiny_message(FailureType_Failure_UnexpectedMessage,
                         "Malformed tiny packet");
@@ -497,6 +503,30 @@ void handle_usb_rx(const void* msg, size_t len) {
   }
 }
 
+bool msg_set_tiny(bool set) {
+  const bool previous = msg_tiny_flag;
+  msg_tiny_flag = set;
+  /* Back at top level no handler is suspended: a rejection answered while in
+   * tiny mode must not suppress later replies. */
+  if (!set) tiny_handler_rejected = false;
+  return previous;
+}
+
+bool msg_take_tiny_rejection(void) {
+  const bool rejected = tiny_handler_rejected;
+  tiny_handler_rejected = false;
+  return rejected;
+}
+
+MessageType msg_take_tiny_id(void) {
+  const MessageType id = msg_tiny_id;
+  if (id != MSG_TINY_TYPE_ERROR) {
+    msg_tiny_id = MSG_TINY_TYPE_ERROR;
+    memzero(msg_tiny, sizeof(msg_tiny));
+  }
+  return id;
+}
+
 #if DEBUG_LINK
 void handle_debug_usb_rx(const void* msg, size_t len) {
   if (msg_tiny_flag) {
@@ -524,15 +554,22 @@ static MessageType tiny_msg_poll_and_buffer(bool block, uint8_t* buf) {
   msg_tiny_id = MSG_TINY_TYPE_ERROR;
   tiny_handler_rejected = false;
   msg_tiny_flag = true;
+  /* A confirm, PIN, passphrase or dice prompt is waiting. U2F frames get the
+   * busy reply meanwhile: a U2F session started here would draw over this
+   * prompt and could take its button press as U2F presence. Trezor's
+   * protectButton() does the same with usbTiny(1). */
+  const char u2f_tiny = usbTiny(1);
 
   while (msg_tiny_id == MSG_TINY_TYPE_ERROR && !tiny_handler_rejected) {
     usbPoll();
+    keepkey_idle_clock_sample();
 
     if (!block) {
       break;
     }
   }
 
+  usbTiny(u2f_tiny);
   msg_tiny_flag = false;
 
   if (tiny_handler_rejected) {

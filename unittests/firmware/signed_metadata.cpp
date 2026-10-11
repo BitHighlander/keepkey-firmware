@@ -8,17 +8,22 @@
  * slot 3 with alias "CI Test"; all vectors are signed in-process with the
  * matching private key (f6d19e15...068a260) and embed key_id=3.
  *
- * No OLED/button I/O is exercised: signed_metadata_process() and
- * signed_metadata_matches_tx() never draw, and signed_metadata_confirm() is
- * only called on its no-I/O early-return guards. The relied-path enforce truth
- * table is tested through the pure, exported signed_metadata_enforce_decision()
- * (see SECTION 2), since relied_on_metadata is only set inside confirm()'s
- * interactive tail.
+ * signed_metadata_process() and signed_metadata_matches_tx() never draw;
+ * screens in signed_metadata_confirm() are driven through kkconfirm_preload().
+ * The relied-path enforce truth table is tested through the pure, exported
+ * signed_metadata_enforce_decision() (see SECTION 2).
  */
 
 extern "C" {
 #include "messages-ethereum.pb.h" /* full EthereumSignTx definition */
+#include "messages-solana.pb.h"
+#include "keepkey/board/memory.h"
+#include "keepkey/firmware/fsm.h"
+#include "trezor/crypto/bip32.h"
+#include "trezor/crypto/bip39.h"
+#include "trezor/crypto/curves.h"
 #include "keepkey/board/draw.h"   /* draw_bitmap_mono_rle (icon decoder) */
+#include "keepkey/board/font.h"   /* calc_str_line, get_title_font */
 #include "keepkey/board/layout.h" /* LEFT_MARGIN_WITH_ICON */
 #include "keepkey/firmware/signed_metadata.h"
 #include "trezor/crypto/address.h"   /* ethereum_address_checksum */
@@ -35,6 +40,7 @@ void setup(void);
 
 #include "gtest/gtest.h"
 #include "kkconfirm_driver.h"
+#include "test_board.h"
 
 #include <cstddef>
 #include <cstdio>
@@ -42,6 +48,12 @@ void setup(void);
 #include <cstring>
 #include <string>
 #include <vector>
+
+void kkconfirm_capture_start(void);
+std::vector<std::string> kkconfirm_capture_finish(void);
+std::vector<std::string> kkconfirm_captured_titles(void);
+bool kkconfirm_readResponse(uint16_t expected, const pb_field_t* fields,
+                            void* response);
 
 namespace {
 
@@ -595,6 +607,18 @@ TEST_F(SignedMetadataTest, ArgValueTooLong) {
   uint8_t big[33] = {0};
   s.args[0] = mk_arg("to", ARG_FORMAT_BYTES, big, 33);  // > 32
   ExpectMalformed(sign_body(build_body(s)), TEST_KEY_ID);
+}
+
+/* An ADDRESS arg is drawn as a full 20-byte address, so any other length is
+ * refused at parse, not later in the middle of the review. */
+TEST_F(SignedMetadataTest, AddressArgMustBeTwentyBytes) {
+  const uint8_t word[32] = {0};
+  for (size_t len : {0u, 19u, 21u, 32u}) {
+    SCOPED_TRACE(len);
+    Spec s = base_spec();
+    s.args[0] = mk_arg("to", ARG_FORMAT_ADDRESS, word, len);
+    ExpectMalformed(sign_body(build_body(s)), TEST_KEY_ID);
+  }
 }
 
 TEST_F(SignedMetadataTest, ArgValueLengthOverrun) {
@@ -1180,14 +1204,19 @@ struct V2Arg {
   uint8_t format;
   uint8_t decimals;   /* TOKEN_AMOUNT only */
   std::string symbol; /* TOKEN_AMOUNT only */
+  std::vector<uint8_t> pinned; /* ADDRESS_PINNED only */
 };
 
 V2Arg v2_addr(const std::string& name) {
-  return V2Arg{name, ARG_FORMAT_ADDRESS, 0, ""};
+  return V2Arg{name, ARG_FORMAT_ADDRESS, 0, "", {}};
+}
+V2Arg v2_pinned(const std::string& name, const uint8_t* addr, size_t len) {
+  return V2Arg{name, ARG_FORMAT_ADDRESS_PINNED, 0, "",
+               std::vector<uint8_t>(addr, addr + len)};
 }
 V2Arg v2_token(const std::string& name, uint8_t decimals,
                const std::string& symbol) {
-  return V2Arg{name, ARG_FORMAT_TOKEN_AMOUNT, decimals, symbol};
+  return V2Arg{name, ARG_FORMAT_TOKEN_AMOUNT, decimals, symbol, {}};
 }
 
 struct V2Spec {
@@ -1233,6 +1262,9 @@ std::vector<uint8_t> build_v2_body(const V2Spec& s) {
       put_u8(b, a.decimals);
       put_u8(b, (uint8_t)a.symbol.size());
       put_bytes(b, (const uint8_t*)a.symbol.data(), a.symbol.size());
+    }
+    if (a.format == ARG_FORMAT_ADDRESS_PINNED) {
+      put_bytes(b, a.pinned.data(), a.pinned.size());
     }
   }
   put_u8(b, s.classification);
@@ -1575,6 +1607,34 @@ TEST_F(SignedMetadataTest, V2RejectsSelectorMismatch) {
   EXPECT_FALSE(signed_metadata_matches_tx(&msg));
 }
 
+/* Metadata describes an Ethereum call. A Wanchain transaction (tx_type) on
+ * the same chain id, contract and selector is not one, for either version. */
+TEST_F(SignedMetadataTest, MatchesTxRefusesWanchainTypedTx) {
+  for (uint32_t tx_type : {1u, 6u}) {
+    SCOPED_TRACE(tx_type);
+    std::vector<uint8_t> blob = base_blob();
+    ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+              METADATA_VERIFIED);
+    EthereumSignTx msg;
+    make_matching_msg(&msg);
+    ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+    msg.has_tx_type = true;
+    msg.tx_type = tx_type;
+    EXPECT_FALSE(signed_metadata_matches_tx(&msg));
+
+    blob = v2_base_blob();
+    ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+              METADATA_VERIFIED);
+    std::vector<uint8_t> data = v2_transfer_calldata();
+    make_v2_msg(&msg, CONTRACT_A, data, /*has_len=*/true,
+                (uint32_t)data.size());
+    ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+    msg.has_tx_type = true;
+    msg.tx_type = tx_type;
+    EXPECT_FALSE(signed_metadata_matches_tx(&msg));
+  }
+}
+
 /* An unsupported display format -> MALFORMED.
  *
  * v2 renders fixed single ABI words only: ADDRESS, AMOUNT, BYTES and
@@ -1626,6 +1686,38 @@ TEST_F(SignedMetadataTest, FixedBytesSchemaDecodesEntireWord) {
   ASSERT_TRUE(kkconfirm_preload(5, 1));
   EXPECT_FALSE(signed_metadata_confirm());
   EXPECT_EQ(0, kkconfirm_drain());
+}
+
+/* Titles do not move the body down when they wrap, so a 64-character method
+ * name used as a title would draw over the contract, arguments and byte pages.
+ * Every screen's title must fit one title row. */
+TEST_F(SignedMetadataTest, LongMethodNameNeverWrapsTheTitle) {
+  Spec s = base_spec();
+  s.method = std::string(METADATA_MAX_METHOD_LEN, 'W');
+  const uint8_t raw[20] = {0xab};
+  s.args.push_back(mk_arg("data", ARG_FORMAT_BYTES, raw, sizeof(raw)));
+  std::vector<uint8_t> blob = sign_body(build_body(s));
+  ASSERT_EQ(METADATA_VERIFIED,
+            signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID));
+  EthereumSignTx msg;
+  make_matching_msg(&msg);
+  ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+  // identity, call (two pages), contract, to, amount, two byte pages.
+  ASSERT_TRUE(kkconfirm_preload(8, 0));
+  kkconfirm_capture_start();
+  EXPECT_TRUE(signed_metadata_confirm());
+  const std::vector<std::string> bodies = kkconfirm_capture_finish();
+  EXPECT_EQ(0, kkconfirm_drain());
+  const std::vector<std::string> titles = kkconfirm_captured_titles();
+  ASSERT_EQ(8u, titles.size());
+  // The Call screen still discloses the whole name.
+  EXPECT_NE(std::string::npos, (bodies[1] + bodies[2]).find(s.method));
+  for (std::string title : titles) {
+    for (char& c : title) c = (char)toupper((unsigned char)c);
+    EXPECT_EQ(1u, calc_str_line(get_title_font(), title.c_str(),
+                                TITLE_WIDTH_WITH_ICON))
+        << title;
+  }
 }
 
 /* Tampered v2 body must fail the signature check. */
@@ -1693,6 +1785,46 @@ TEST_F(SignedMetadataTest, V2SchemaDecodedFlagNotStaleAfterMismatch) {
   make_v2_msg(&bad, CONTRACT_B, data, /*has_len=*/true, (uint32_t)data.size());
   EXPECT_FALSE(signed_metadata_matches_tx(&bad));
   EXPECT_FALSE(signed_metadata_schema_decoded());
+}
+
+/* A pinned address lets a template name the party in words ("Uniswap"), so
+ * the schema must match ONLY a word holding exactly that address. */
+TEST_F(SignedMetadataTest, PinnedAddressMatchesOnlyThePinnedAddress) {
+  V2Spec s = v2_base_spec();
+  s.args[0] = v2_pinned("spender", RECIPIENT, 20);
+  std::vector<uint8_t> blob = sign_body(build_v2_body(s));
+  ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+  const SignedMetadata* md = signed_metadata_get();
+  ASSERT_NE(md, nullptr);
+  EXPECT_EQ(md->args[0].format, ARG_FORMAT_ADDRESS_PINNED);
+
+  EthereumSignTx msg;
+  std::vector<uint8_t> data = v2_transfer_calldata();
+  make_v2_msg(&msg, CONTRACT_A, data, true, (uint32_t)data.size());
+  EXPECT_TRUE(signed_metadata_matches_tx(&msg));
+  EXPECT_EQ(memcmp(md->args[0].value, RECIPIENT, 20), 0);
+
+  // Another spender: no match, and the pin survives for the next attempt.
+  std::vector<uint8_t> other = data;
+  other[4 + 31] ^= 0x01;
+  make_v2_msg(&msg, CONTRACT_A, other, true, (uint32_t)other.size());
+  EXPECT_FALSE(signed_metadata_matches_tx(&msg));
+  EXPECT_EQ(memcmp(md->args[0].value, RECIPIENT, 20), 0);
+
+  // The right address in a dirty word is not the pinned address.
+  std::vector<uint8_t> dirty = data;
+  dirty[4] = 0x01;
+  make_v2_msg(&msg, CONTRACT_A, dirty, true, (uint32_t)dirty.size());
+  EXPECT_FALSE(signed_metadata_matches_tx(&msg));
+}
+
+TEST_F(SignedMetadataTest, PinnedAddressMustCarryTwentyBytes) {
+  V2Spec s = v2_base_spec();
+  s.args[0] = v2_pinned("spender", RECIPIENT, 19);
+  std::vector<uint8_t> blob = sign_body(build_v2_body(s));
+  EXPECT_NE(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
 }
 
 /* ---- v2 enforce truth table (pure, no I/O) ------------------------------ */
@@ -2354,17 +2486,16 @@ TEST_F(SignedMetadataTest, V4PortalsRejectsMalformedCallArrayBoundaries) {
 }
 
 /* ===================================================================== *
- *  Clearsign attestor: the issuer/verifier digest contract
+ *  Externally issued schema: the verifier's digest contract
  *
- *  fsm_msgClearsignAttestorSign signs sha256(payload) as a 64-byte compact
- *  ECDSA signature; verifying devices check it through
- *  signed_metadata_verify_attestation. Those two constructions living in
- *  different files is exactly how SignIdentity ended up unusable for this
- *  (Bitcoin message header + double hash, 65 bytes). This pins the contract
- *  so a change on either side fails here rather than in the field.
+ *  This build verifies schemas issued outside the device; it has no
+ *  ClearsignAttestorSign handler or wire mapping. The fixture signs the
+ *  single SHA256(payload) with a test key and exercises the production
+ *  verifier. It does not cover a device-side issuer. SignIdentity's Bitcoin
+ *  message framing and 65-byte signature are not this attestation format.
  * ===================================================================== */
 
-TEST(ClearsignAttestor, SignedSchemaVerifiesOnTheVerifyingDevice) {
+TEST(SignedMetadataAttestation, ExternallySignedSchemaVerifies) {
   set_advanced_mode_for_test(true);
   /* Smallest valid KKSOLSC1 payload: no args, no accounts. What matters here
    * is the digest construction, not the schema body. */
@@ -2387,9 +2518,9 @@ TEST(ClearsignAttestor, SignedSchemaVerifiesOnTheVerifyingDevice) {
 
   SolanaInstrSchema schema;
   ASSERT_TRUE(solana_parseInstrSchema(payload.data(), payload.size(), &schema))
-      << "the attestor refuses to sign what it cannot parse";
+      << "the fixture must be a valid schema";
 
-  /* Issuer side, byte for byte what the handler does. */
+  /* External issuer fixture: compact ECDSA over a single SHA256. */
   uint8_t digest[32];
   sha256_Raw(payload.data(), payload.size(), digest);
   uint8_t sig[64];
@@ -2403,13 +2534,228 @@ TEST(ClearsignAttestor, SignedSchemaVerifiesOnTheVerifyingDevice) {
   EXPECT_TRUE(signed_metadata_verify_attestation(
       TEST_KEY_ID, payload.data(), payload.size(), sig, sizeof(sig)));
 
-  /* A schema the attestor never saw must not ride the same signature. */
+  /* A schema the issuer never signed must not ride the same signature. */
   payload[9] ^= 0x01; /* first byte of the program id */
   EXPECT_FALSE(signed_metadata_verify_attestation(
       TEST_KEY_ID, payload.data(), payload.size(), sig, sizeof(sig)));
 
   signed_metadata_clear_signers();
   set_advanced_mode_for_test(false);
+}
+
+/* ===================================================================== *
+ *  Solana schema path: every signed companion is shown
+ * ===================================================================== */
+
+class SolanaSchemaSignTest : public ::testing::Test {
+ protected:
+  std::vector<uint8_t> flash = std::vector<uint8_t>(FLASH_TOTAL_SIZE, 0xff);
+  uint8_t* previous_flash = nullptr;
+
+  void SetUp() override {
+    kk_test_board_init();
+    fsm_init();
+    previous_flash = emulator_flash_base;
+    emulator_flash_base = flash.data();
+    storage_init();
+    LoadDevice load = {};
+    load.has_mnemonic = true;
+    strcpy(load.mnemonic, "all all all all all all all all all all all all");
+    storage_loadDevice(&load);
+    storage_commit();
+    ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+    signed_metadata_clear_signers();
+    ASSERT_TRUE(signed_metadata_store_signer(TEST_KEY_ID, EXPECTED_SLOT3_PUB,
+                                             TEST_ALIAS, NULL, 0, 0, 0, false));
+  }
+
+  void TearDown() override {
+    signed_metadata_clear_signers();
+    storage_reset();
+    emulator_flash_base = previous_flash;
+  }
+};
+
+/* A schema-matched instruction plus a Memo: the memo (swap intents and
+ * destinations ride in it) must be paged before the signature is made. */
+TEST_F(SolanaSchemaSignTest, MemoCompanionIsShown) {
+  const uint32_t path[4] = {0x80000000u | 44, 0x80000000u | 501, 0x80000000u,
+                            0x80000000u};
+  uint8_t seed[64];
+  mnemonic_to_seed("all all all all all all all all all all all all", "", seed,
+                   NULL);
+  HDNode node;
+  ASSERT_EQ(1, hdnode_from_seed(seed, sizeof(seed), ED25519_NAME, &node));
+  for (uint32_t i : path) ASSERT_EQ(1, hdnode_private_ckd(&node, i));
+  hdnode_fill_public_key(&node);
+
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  const std::string memo =
+      "=:ETH.ETH:0x4E9B2CA2A1Bb8e5c1C5A0bdf0fA7F5F3dDeadBeE";
+
+  /* Legacy message: [payer, program, memo program]; ix0 = schema match
+   * (one-byte discriminator, no args), ix1 = Memo. */
+  std::vector<uint8_t> raw = {1, 0, 2, 3};
+  raw.insert(raw.end(), node.public_key + 1, node.public_key + 33);
+  raw.insert(raw.end(), program, program + 32);
+  raw.insert(raw.end(), SOL_MEMO_PROGRAM, SOL_MEMO_PROGRAM + 32);
+  raw.insert(raw.end(), 32, 0xBB); /* recent blockhash */
+  raw.push_back(2);
+  raw.insert(raw.end(), {1, 0, 1, 0x0d});
+  raw.insert(raw.end(), {2, 0, (uint8_t)memo.size()});
+  raw.insert(raw.end(), memo.begin(), memo.end());
+
+  std::vector<uint8_t> payload;
+  payload.insert(payload.end(), {'K', 'K', 'S', 'O', 'L', 'S', 'C', '1', 1});
+  payload.insert(payload.end(), program, program + 32);
+  payload.insert(payload.end(), {1, 0x0d, 5, 'R', 'e', 'l', 'a', 'y', 7, 'd',
+                                 'e', 'p', 'o', 's', 'i', 't', 0, 0});
+  uint8_t digest[32];
+  sha256_Raw(payload.data(), payload.size(), digest);
+  uint8_t sig[64];
+  ASSERT_EQ(0,
+            ecdsa_sign_digest(&secp256k1, TEST_PRIV, digest, sig, NULL, NULL));
+
+  SolanaSignTx msg = {};
+  msg.address_n_count = 4;
+  memcpy(msg.address_n, path, sizeof(path));
+  msg.has_raw_tx = true;
+  msg.raw_tx.size = raw.size();
+  memcpy(msg.raw_tx.bytes, raw.data(), raw.size());
+  msg.has_schema_payload = true;
+  msg.schema_payload.size = payload.size();
+  memcpy(msg.schema_payload.bytes, payload.data(), payload.size());
+  msg.has_schema_signature = true;
+  msg.schema_signature.size = sizeof(sig);
+  memcpy(msg.schema_signature.bytes, sig, sizeof(sig));
+  msg.has_schema_signer_key_id = true;
+  msg.schema_signer_key_id = TEST_KEY_ID;
+
+  /* Schema signer, instruction, memo, blind-sign warning, final confirm. */
+  ASSERT_TRUE(kkconfirm_preload(5, 0));
+  kkconfirm_capture_start();
+  fsm_test_clearLastFailure();
+  fsm_msgSolanaSignTx(&msg);
+  const std::vector<std::string> bodies = kkconfirm_capture_finish();
+  EXPECT_EQ(0, fsm_test_lastFailureCode()) << fsm_test_lastFailureMessage();
+  EXPECT_EQ(0, kkconfirm_drain());
+  std::string shown;
+  for (const std::string& b : bodies) shown += b;
+  EXPECT_NE(std::string::npos, shown.find(memo)) << shown;
+}
+
+TEST_F(SolanaSchemaSignTest, FeaturesReportLutAttestation) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  GetFeatures request = {};
+  fsm_msgGetFeatures(&request);
+  static Features features;
+  features = Features{};
+  ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_Features,
+                                     Features_fields, &features));
+  EXPECT_TRUE(features.has_supports_solana_lut_attestation);
+  EXPECT_TRUE(features.supports_solana_lut_attestation);
+  bool reported = false;
+  for (pb_size_t i = 0; i < features.capabilities_count; ++i)
+    reported |= features.capabilities[i] ==
+                Features_Capability_CAPABILITY_SOLANA_LUT_ATTESTATION;
+  EXPECT_TRUE(reported);
+}
+
+TEST_F(SolanaSchemaSignTest,
+       LutAttestationBindsAccountsToTransactionAndSigner) {
+  const uint32_t path[4] = {0x80000000u | 44, 0x80000000u | 501, 0x80000000u,
+                            0x80000000u};
+  uint8_t seed[64];
+  mnemonic_to_seed("all all all all all all all all all all all all", "", seed,
+                   NULL);
+  HDNode node;
+  ASSERT_EQ(1, hdnode_from_seed(seed, sizeof(seed), ED25519_NAME, &node));
+  for (uint32_t i : path) ASSERT_EQ(1, hdnode_private_ckd(&node, i));
+  hdnode_fill_public_key(&node);
+
+  /* v0 message with two static keys and one writable lookup-table account.
+   * The loaded account is absent from the signed transaction bytes. */
+  std::vector<uint8_t> raw = {0x80, 1, 0, 1, 2};
+  raw.insert(raw.end(), node.public_key + 1, node.public_key + 33);
+  raw.insert(raw.end(), 32, 0);    /* system program */
+  raw.insert(raw.end(), 32, 0xBB); /* blockhash at offset 69 */
+  raw.insert(raw.end(), {1, 1, 1, 2, 4, 2, 0, 0, 0, 1});
+  raw.insert(raw.end(), 32, 0x77);  /* lookup table address */
+  raw.insert(raw.end(), {1, 3, 0}); /* writable index 3, no readonly keys */
+
+  SolanaSignTx original = {};
+  original.address_n_count = 4;
+  memcpy(original.address_n, path, sizeof(path));
+  original.has_raw_tx = true;
+  original.raw_tx.size = raw.size();
+  memcpy(original.raw_tx.bytes, raw.data(), raw.size());
+  original.lut_account_count = 1;
+  original.lut_account[0].size = 32;
+  memset(original.lut_account[0].bytes, 0x51, 32);
+  original.has_lut_signer_key_id = true;
+  original.lut_signer_key_id = TEST_KEY_ID;
+
+  /* Independent issuer construction, not the firmware's trust helper. */
+  const char tag[] = "KeepKeySolanaTxAccounts/1";
+  std::vector<uint8_t> preimage(tag, tag + sizeof(tag) - 1);
+  uint8_t digest[32];
+  sha256_Raw(raw.data(), raw.size(), digest);
+  preimage.insert(preimage.end(), digest, digest + sizeof(digest));
+  preimage.insert(preimage.end(), {1, 0, 0, 0}); /* le32 account count */
+  preimage.insert(preimage.end(), 32, 0x51);
+  sha256_Raw(preimage.data(), preimage.size(), digest);
+  original.has_lut_signature = true;
+  original.lut_signature.size = 64;
+  ASSERT_EQ(0, ecdsa_sign_digest(&secp256k1, TEST_PRIV, digest,
+                                 original.lut_signature.bytes, NULL, NULL));
+
+  /* Independently encoded base58 of 32 bytes of 0x51. */
+  const char account[] = "6URwbPipuA4MJLG7LCRRZuWnms3JZ9cRG3z9indXWz8G";
+  const std::vector<std::string> blind_titles = {"Blind Sign", "Solana"};
+  const std::vector<std::string> blind_bodies = {
+      "Sign unverified Solana transaction? "
+      "The device cannot fully verify the contents.",
+      "Sign this Solana transaction?"};
+  for (int mutation = 0; mutation < 6; ++mutation) {
+    SCOPED_TRACE(mutation);
+    ASSERT_TRUE(kkconfirm_preload(mutation == 0 ? 4 : 2, 0));
+    signed_metadata_clear_signers();
+    if (mutation != 5)
+      ASSERT_TRUE(signed_metadata_store_signer(
+          TEST_KEY_ID, EXPECTED_SLOT3_PUB, TEST_ALIAS, NULL, 0, 0, 0, false));
+    SolanaSignTx msg = original;
+    if (mutation == 1) msg.raw_tx.bytes[69] ^= 1;
+    if (mutation == 2) msg.lut_account[0].bytes[0] ^= 1;
+    if (mutation == 3) msg.lut_signature.bytes[0] ^= 1;
+    if (mutation == 4) msg.lut_signer_key_id = 256; /* must not narrow */
+    kkconfirm_capture_start();
+    fsm_test_clearLastFailure();
+    fsm_msgSolanaSignTx(&msg);
+    const auto bodies = kkconfirm_capture_finish();
+    const auto titles = kkconfirm_captured_titles();
+    EXPECT_EQ(0, fsm_test_lastFailureCode()) << fsm_test_lastFailureMessage();
+    SolanaSignedTx response = {};
+    ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_SolanaSignedTx,
+                                       SolanaSignedTx_fields, &response));
+    EXPECT_EQ(64u, response.signature.size);
+    EXPECT_EQ(0, kkconfirm_drain());
+    if (mutation == 0) {
+      ASSERT_EQ(4u, bodies.size());
+      EXPECT_EQ((std::vector<std::string>{"Lookup Accounts", "Lookup Account",
+                                          "Blind Sign", "Solana"}),
+                titles);
+      EXPECT_NE(std::string::npos, bodies[0].find(TEST_ALIAS));
+      EXPECT_NE(std::string::npos, bodies[0].find("NOT verified by KeepKey."));
+      EXPECT_EQ(std::string("1/1\n") + account, bodies[1]);
+      EXPECT_EQ(blind_bodies[0], bodies[2]);
+      EXPECT_EQ(blind_bodies[1], bodies[3]);
+    } else {
+      EXPECT_EQ(blind_titles, titles);
+      EXPECT_EQ(blind_bodies, bodies);
+    }
+  }
 }
 
 }  // namespace
@@ -2565,6 +2911,9 @@ std::vector<uint8_t> build_intent_body(const IntentSpec& s) {
       put_u8(b, (uint8_t)a.symbol.size());
       put_bytes(b, (const uint8_t*)a.symbol.data(), a.symbol.size());
     }
+    if (a.format == ARG_FORMAT_ADDRESS_PINNED) {
+      put_bytes(b, a.pinned.data(), a.pinned.size());
+    }
     put_u8(b, s.roles[i]);
   }
   put_u8(b, s.value_role);
@@ -2591,7 +2940,7 @@ IntentSpec relay_intent() {
   s.v2.method = "bridgeDeposit";
   s.v2.args.clear();
   s.v2.args.push_back(v2_addr("depositor"));
-  s.v2.args.push_back(V2Arg{"orderId", ARG_FORMAT_BYTES, 0, ""});
+  s.v2.args.push_back(V2Arg{"orderId", ARG_FORMAT_BYTES, 0, "", {}});
   s.roles = {METADATA_ROLE_NONE, METADATA_ROLE_NONE};
   s.value_role = METADATA_ROLE_SPEND_EXACT;
   s.title = "Relay";
@@ -2609,6 +2958,109 @@ bool collect_shown(void* ctx, const char* title, const char* body,
   return true;
 }
 }  // namespace
+
+/* Uniswap's first step on any chain: an unlimited approve to Permit2. The
+ * pinned spender lets the sentence name the party; the allowance role states
+ * the limit as someone else's permission, not as the user's spend. */
+TEST_F(SignedMetadataTest, IntentSchemaPermit2ApproveReviewsWhoWhatWhyLimit) {
+  static const uint8_t PERMIT2[20] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x22, 0xd4,
+                                      0x73, 0x03, 0x0f, 0x11, 0x6d, 0xde, 0xe9,
+                                      0xf6, 0xb4, 0x3a, 0xc7, 0x8b, 0xa3};
+  static const uint8_t SEL_APPROVE[4] = {0x09, 0x5e, 0xa7, 0xb3};
+  IntentSpec s;
+  s.v2 = v2_base_spec();
+  s.v2.selector.assign(SEL_APPROVE, SEL_APPROVE + 4);
+  s.v2.method = "approve";
+  s.v2.args.clear();
+  s.v2.args.push_back(v2_pinned("Spender", PERMIT2, 20));
+  s.v2.args.push_back(v2_token("Allowance", 6, "USDC"));
+  s.roles = {METADATA_ROLE_NONE, METADATA_ROLE_ALLOWANCE};
+  s.value_role = METADATA_ROLE_NONE;
+  s.title = "Uniswap";
+  s.intent = "Let the Uniswap approval contract spend up to {1} for trades you sign";
+  std::vector<uint8_t> blob = sign_body(build_intent_body(s));
+  ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+
+  std::vector<uint8_t> data(SEL_APPROVE, SEL_APPROVE + 4);
+  put_addr_word(data, PERMIT2);
+  for (int i = 0; i < 32; i++) data.push_back(0xff);
+  EthereumSignTx msg;
+  make_v2_msg(&msg, s.v2.contract.data(), data, true, (uint32_t)data.size());
+  ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+
+  std::vector<Shown> got;
+  ASSERT_TRUE(signed_metadata_build_intent_review(
+      signed_metadata_get(), true, "KeepKey Alpha 716", "A9531B9D",
+      collect_shown, &got));
+  ASSERT_GE(got.size(), 3u);
+  EXPECT_EQ(got[0].title, "Uniswap");
+  EXPECT_EQ(got[0].body,
+            "Let the Uniswap approval contract spend up to UNLIMITED USDC for "
+            "trades you sign");
+  EXPECT_EQ(got[1].title, "Limits");
+  EXPECT_EQ(got[1].body, "Can spend up to\nUNLIMITED USDC");
+  char permit2[43] = "0x";
+  ethereum_address_checksum(PERMIT2, permit2 + 2, false, 1);
+  bool spender_shown = false;
+  for (const Shown& sh : got) {
+    if (sh.title == "Spender" && sh.body == permit2) spender_shown = true;
+  }
+  EXPECT_TRUE(spender_shown);  // the full address is never hidden
+
+  // Role 7 does not exist: the schema is refused, not reinterpreted.
+  s.roles[1] = 7;
+  blob = sign_body(build_intent_body(s));
+  EXPECT_NE(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+            METADATA_VERIFIED);
+}
+
+/* ERC-7730's threshold: a token amount of 2^255 or more reads UNLIMITED;
+ * 2^255 - 1 is shown exactly, never as unlimited. */
+TEST_F(SignedMetadataTest, TokenAmountIsUnlimitedFromTwoToThe255) {
+  static const uint8_t PERMIT2[20] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x22, 0xd4,
+                                      0x73, 0x03, 0x0f, 0x11, 0x6d, 0xde, 0xe9,
+                                      0xf6, 0xb4, 0x3a, 0xc7, 0x8b, 0xa3};
+  static const uint8_t SEL_APPROVE[4] = {0x09, 0x5e, 0xa7, 0xb3};
+  IntentSpec s;
+  s.v2 = v2_base_spec();
+  s.v2.selector.assign(SEL_APPROVE, SEL_APPROVE + 4);
+  s.v2.method = "approve";
+  s.v2.args.clear();
+  s.v2.args.push_back(v2_pinned("Spender", PERMIT2, 20));
+  s.v2.args.push_back(v2_token("Allowance", 6, "USDC"));
+  s.roles = {METADATA_ROLE_NONE, METADATA_ROLE_ALLOWANCE};
+  s.value_role = METADATA_ROLE_NONE;
+  s.title = "Uniswap";
+  s.intent = "Let the Uniswap approval contract spend up to {1} for trades you sign";
+  const struct {
+    uint8_t top, rest;
+    const char* limit;
+  } cases[] = {
+      {0x80, 0x00, "Can spend up to\nUNLIMITED USDC"},
+      {0x7f, 0xff,
+       "Can spend up to\n57896044618658097711785492504343953926634992332820282"
+       "019728792003956564.819967 USDC"},
+  };
+  for (const auto& c : cases) {
+    std::vector<uint8_t> blob = sign_body(build_intent_body(s));
+    ASSERT_EQ(signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID),
+              METADATA_VERIFIED);
+    std::vector<uint8_t> data(SEL_APPROVE, SEL_APPROVE + 4);
+    put_addr_word(data, PERMIT2);
+    data.push_back(c.top);
+    for (int i = 1; i < 32; i++) data.push_back(c.rest);
+    EthereumSignTx msg;
+    make_v2_msg(&msg, s.v2.contract.data(), data, true, (uint32_t)data.size());
+    ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+    std::vector<Shown> got;
+    ASSERT_TRUE(signed_metadata_build_intent_review(
+        signed_metadata_get(), true, "KeepKey Alpha 716", "A9531B9D",
+        collect_shown, &got));
+    ASSERT_GE(got.size(), 2u);
+    EXPECT_EQ(got[1].body, c.limit);
+  }
+}
 
 TEST_F(SignedMetadataTest, IntentSchemaRelayDepositReviewsWhoWhatWhyLimits) {
   IntentSpec s = relay_intent();
@@ -2848,4 +3300,481 @@ TEST_F(CertifiedMetadataTest, NameRecordParsesTheServerSerializedBody) {
             Process(envelope(mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
                                        EXPECTED_SLOT3_PUB),
                              sign_body(body))));
+}
+
+/* ---- v0x07: certified Uniswap Universal Router decoder ------------------- */
+
+#include "uniswap_ur_sample.h"
+#include "uniswap_ur_vectors.h"
+
+namespace {
+
+std::vector<uint8_t> ur_unhex(const std::string& h) {
+  std::vector<uint8_t> out;
+  for (size_t i = 0; i + 1 < h.size(); i += 2)
+    out.push_back((uint8_t)std::stoul(h.substr(i, 2), nullptr, 16));
+  return out;
+}
+
+std::string hex_of(const uint8_t* p, size_t n) {
+  static const char* d = "0123456789abcdef";
+  std::string s;
+  for (size_t i = 0; i < n; i++) {
+    s += d[p[i] >> 4];
+    s += d[p[i] & 15];
+  }
+  return s;
+}
+
+/* Real Base call 0xd873988f...: PERMIT2_PERMIT + V3_SWAP_EXACT_IN, an
+ * unlimited Permit2 allowance on 0x41b4..35ef, swap into Base USDC. */
+const urv::Vec& base_permit_swap() {
+  for (const auto& v : urv::accepted())
+    if (v.tx.rfind("0xd873988f", 0) == 0) return v;
+  static urv::Vec none;
+  return none;
+}
+
+struct UrToken {
+  std::string address, symbol;
+  uint8_t decimals;
+};
+
+std::vector<uint8_t> build_decoder_body(const std::vector<uint8_t>& router,
+                                        uint32_t chain,
+                                        const std::vector<UrToken>& tokens) {
+  std::vector<uint8_t> b;
+  put_u8(b, METADATA_VERSION_DECODER);
+  put_be32(b, chain);
+  put_bytes(b, router.data(), router.size());
+  const uint8_t sel[4] = {0x35, 0x93, 0x56, 0x4c};
+  put_bytes(b, sel, 4);
+  put_be16(b, 7);
+  put_bytes(b, (const uint8_t*)"execute", 7);
+  put_u8(b, METADATA_DECODER_UNISWAP_UR);
+  put_u8(b, 7);
+  put_bytes(b, (const uint8_t*)"Uniswap", 7);
+  put_u8(b, (uint8_t)tokens.size());
+  for (const UrToken& t : tokens) {
+    std::vector<uint8_t> a = ur_unhex(t.address);
+    put_bytes(b, a.data(), 20);
+    put_u8(b, t.decimals);
+    put_u8(b, (uint8_t)t.symbol.size());
+    put_bytes(b, (const uint8_t*)t.symbol.data(), t.symbol.size());
+  }
+  put_u8(b, METADATA_VERIFIED);
+  put_be32(b, 0);
+  put_u8(b, TEST_KEY_ID);
+  return b;
+}
+
+const std::vector<UrToken> kSwapTokens = {
+    {"41b481c3d2e3960f8f312212adfeecf6ce7c35ef", "TOKA", 18},
+    {"833589fcd6edb6e08f4c7c32d4f71b54bda02913", "USDC", 6},
+};
+
+void make_ur_msg(EthereumSignTx* msg, const std::vector<uint8_t>& router,
+                 const std::vector<uint8_t>& data) {
+  make_v2_msg(msg, router.data(), data, true, (uint32_t)data.size());
+  msg->has_chain_id = true;
+  msg->chain_id = 8453;
+}
+
+}  // namespace
+
+TEST_F(CertifiedMetadataTest, UniswapSwapReviewsWhoWhatLimitsFromCalldata) {
+  const urv::Vec& v = base_permit_swap();
+  ASSERT_FALSE(v.calldata.empty());
+  std::vector<uint8_t> router = ur_unhex(v.router);
+  std::vector<uint8_t> data = ur_unhex(v.calldata);
+  auto e = envelope(
+      mint_cert(8453, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+      sign_body(build_decoder_body(router, 8453, kSwapTokens)));
+  ASSERT_EQ(METADATA_VERIFIED, Process(e));
+
+  EthereumSignTx msg;
+  make_ur_msg(&msg, router, data);
+  ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+  EXPECT_TRUE(signed_metadata_may_suppress(8453));
+  EXPECT_FALSE(signed_metadata_schema_moves_value());
+
+  std::vector<Shown> got;
+  ASSERT_TRUE(signed_metadata_build_ur_review(
+      signed_metadata_get(), "Test Delegate", "A9531B9D", collect_shown,
+      &got));
+  char r[43] = "0x";
+  ethereum_address_checksum(router.data(), r + 2, false, 8453);
+  std::vector<std::pair<std::string, std::string>> want = {
+      {"Uniswap",
+       "Swap 366.279323182464682886 TOKA for at least 17.41144 USDC"},
+      {"Limits", "You spend\n366.279323182464682886 TOKA"},
+      {"Limits", "You receive at least\n17.41144 USDC"},
+      {"Allowance",
+       "This router may spend up to UNLIMITED TOKA until 2026-11-02 UTC"},
+      {"Contract", std::string("execute\n") + r},
+      {"KeepKey ClearSign",
+       "Described by Test Delegate A9531B9D\ncertified by KeepKey"},
+  };
+  ASSERT_EQ(got.size(), want.size());
+  for (size_t i = 0; i < want.size(); i++) {
+    EXPECT_EQ(got[i].title, want[i].first) << i;
+    EXPECT_EQ(got[i].body, want[i].second) << i;
+  }
+
+  // One changed byte (the swap's minimum) and the entry no longer matches.
+  std::vector<uint8_t> other = data;
+  other[other.size() - 40] ^= 0x01;
+  make_ur_msg(&msg, router, other);
+  EXPECT_FALSE(signed_metadata_matches_tx(&msg) &&
+               memcmp(signed_metadata_get()->ur.amount_out,
+                      ur_unhex(v.steps[1].limit).data(), 32) == 0);
+}
+
+TEST_F(CertifiedMetadataTest, UniswapSwapWithoutEveryTokenIdentityIsRefused) {
+  const urv::Vec& v = base_permit_swap();
+  std::vector<uint8_t> router = ur_unhex(v.router);
+  std::vector<uint8_t> data = ur_unhex(v.calldata);
+  auto e = envelope(
+      mint_cert(8453, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+      sign_body(build_decoder_body(router, 8453, {kSwapTokens[1]})));
+  ASSERT_EQ(METADATA_VERIFIED, Process(e));
+  EthereumSignTx msg;
+  make_ur_msg(&msg, router, data);
+  EXPECT_FALSE(signed_metadata_matches_tx(&msg));
+  // The claim stays visible: SignTx refuses rather than blind-signing.
+  EXPECT_TRUE(signed_metadata_certified_claimed());
+}
+
+/* Ahead of a typed-data request (a Permit2 PermitSingle), a certified 0x07
+ * entry lends the review its token identities and names its own contract;
+ * only on its own chain and only for the tokens it lists. */
+TEST_F(CertifiedMetadataTest, DecoderRecordLendsTokenIdentitiesToTypedData) {
+  const std::vector<uint8_t> router =
+      ur_unhex("6ff5693b99212da76ad316178a184ab56d299b43");
+  const std::vector<UrToken> tokens = {
+      {"cbb7c0000ab88b473b1f5afd9ef808440eed33bf", "cbBTC", 8},
+      {"833589fcd6edb6e08f4c7c32d4f71b54bda02913", "USDC", 6},
+  };
+  ASSERT_EQ(METADATA_VERIFIED,
+            Process(envelope(mint_cert(8453, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+                                       EXPECTED_SLOT3_PUB),
+                             sign_body(build_decoder_body(router, 8453,
+                                                          tokens)))));
+  MetadataNameRecord r;
+  signed_metadata_take_name(&r);
+  ASSERT_TRUE(r.valid);
+  EXPECT_EQ(r.chain_id, 8453u);
+  EXPECT_EQ(memcmp(r.address, router.data(), 20), 0);
+  EXPECT_STREQ(r.name, "Uniswap");
+  EXPECT_STREQ(r.alias, "Test Delegate");
+  ASSERT_EQ(r.num_tokens, 2u);
+
+  const std::vector<uint8_t> cbbtc = ur_unhex(tokens[0].address);
+  const MetadataToken* t = signed_metadata_record_token(&r, 8453, cbbtc.data());
+  ASSERT_NE(t, nullptr);
+  EXPECT_STREQ(t->symbol, "cbBTC");
+  EXPECT_EQ(t->decimals, 8);
+  // Another chain, or a token the entry does not list: no identity.
+  EXPECT_EQ(signed_metadata_record_token(&r, 42161, cbbtc.data()), nullptr);
+  std::vector<uint8_t> other = cbbtc;
+  other[19] ^= 1;
+  EXPECT_EQ(signed_metadata_record_token(&r, 8453, other.data()), nullptr);
+  // Taken once.
+  signed_metadata_take_name(&r);
+  EXPECT_FALSE(r.valid);
+  EXPECT_EQ(signed_metadata_record_token(&r, 8453, cbbtc.data()), nullptr);
+
+  // A name record carries no token identities.
+  ASSERT_EQ(METADATA_VERIFIED,
+            Process(envelope(
+                mint_cert(8453, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+                          EXPECTED_SLOT3_PUB),
+                sign_body(name_body(8453, router.data(), "Uniswap Router",
+                                    METADATA_KEYID_DELEGATE)))));
+  signed_metadata_take_name(&r);
+  ASSERT_TRUE(r.valid);
+  EXPECT_EQ(signed_metadata_record_token(&r, 8453, cbbtc.data()), nullptr);
+}
+
+TEST_F(CertifiedMetadataTest, UniswapDecoderEntryIsCertifiedOrNothing) {
+  const urv::Vec& v = base_permit_swap();
+  std::vector<uint8_t> router = ur_unhex(v.router);
+  std::vector<uint8_t> runtime = sign_body(build_decoder_body(router, 8453,
+                                                              kSwapTokens));
+  set_advanced_mode_for_test(true);
+  EXPECT_EQ(METADATA_MALFORMED,
+            signed_metadata_process(runtime.data(), runtime.size(),
+                                    TEST_KEY_ID));
+  set_advanced_mode_for_test(false);
+  // A certificate for another chain does not certify Base.
+  auto e = envelope(
+      mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+      sign_body(build_decoder_body(router, 8453, kSwapTokens)));
+  EXPECT_EQ(METADATA_MALFORMED, Process(e));
+}
+
+/* Token -> ETH (permit, swap, unwrap) is 1,028-1,178 B on Base: past the
+ * first chunk. The device holds every byte and reviews only after the last
+ * one; a prefix never matches. */
+namespace {
+const urv::Vec* token_to_eth_over_first_chunk() {
+  for (const auto& v : urv::accepted()) {
+    if (v.calldata.size() / 2 > 1024 && v.steps.size() == 3 &&
+        v.steps[0].kind == UR_PERMIT2_PERMIT &&
+        v.steps[1].kind == UR_V3_SWAP_EXACT_IN &&
+        v.steps[2].kind == UR_UNWRAP_WETH)
+      return &v;
+  }
+  return nullptr;
+}
+
+/* SignTx's first chunk: never a match from a prefix, only pending. */
+bool defer_first_chunk(const urv::Vec& v, const std::vector<uint8_t>& data,
+                       EthereumSignTx* msg) {
+  std::vector<uint8_t> router = ur_unhex(v.router);
+  std::vector<uint8_t> first(data.begin(), data.begin() + 1024);
+  make_ur_msg(msg, router, first);
+  msg->data_length = (uint32_t)data.size();
+  return !signed_metadata_matches_tx(msg) && signed_metadata_ur_pending();
+}
+}  // namespace
+
+TEST_F(CertifiedMetadataTest, UniswapTokenToEthIsReviewedAfterTheLastByte) {
+  const urv::Vec* v = token_to_eth_over_first_chunk();
+  ASSERT_NE(v, nullptr);
+  std::vector<uint8_t> data = ur_unhex(v->calldata);
+  auto e = envelope(
+      mint_cert(8453, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+      sign_body(build_decoder_body(ur_unhex(v->router), 8453,
+                                   {{v->steps[0].token_in, "TOKA", 6}})));
+  ASSERT_EQ(METADATA_VERIFIED, Process(e));
+
+  EthereumSignTx msg;
+  ASSERT_TRUE(defer_first_chunk(*v, data, &msg));
+  EXPECT_FALSE(signed_metadata_relied());
+  ASSERT_TRUE(signed_metadata_ur_feed(data.data() + 1024,
+                                      (uint32_t)data.size() - 1024));
+  EXPECT_FALSE(signed_metadata_ur_pending());
+
+  const SignedMetadata* md = signed_metadata_get();
+  EXPECT_TRUE(md->ur.out_is_eth);
+  EXPECT_FALSE(md->ur.in_is_eth);
+  EXPECT_EQ(0, memcmp(md->ur.amount_in, ur_unhex(v->steps[1].amount).data(), 32));
+  // The floor is the unwrap's minimum, which sits past byte 1024.
+  EXPECT_EQ(0, memcmp(md->ur.amount_out, ur_unhex(v->steps[2].amount).data(), 32));
+  std::vector<Shown> got;
+  ASSERT_TRUE(signed_metadata_build_ur_review(md, "Test Delegate", "A9531B9D",
+                                              collect_shown, &got));
+  ASSERT_FALSE(got.empty());
+  EXPECT_EQ(got[0].title, "Uniswap");
+  EXPECT_NE(got[0].body.find(" ETH"), std::string::npos) << got[0].body;
+}
+
+TEST_F(CertifiedMetadataTest, UniswapDeferredReviewRefusesShortLongOrTamperedCalls) {
+  const urv::Vec* v = token_to_eth_over_first_chunk();
+  ASSERT_NE(v, nullptr);
+  std::vector<uint8_t> data = ur_unhex(v->calldata);
+  auto e = envelope(
+      mint_cert(8453, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+      sign_body(build_decoder_body(ur_unhex(v->router), 8453,
+                                   {{v->steps[0].token_in, "TOKA", 6}})));
+  ASSERT_EQ(METADATA_VERIFIED, Process(e));
+  EthereumSignTx msg;
+  const uint32_t tail = (uint32_t)data.size() - 1024;
+
+  // A byte short: still pending, nothing decoded (SignTx needs every byte).
+  ASSERT_TRUE(defer_first_chunk(*v, data, &msg));
+  EXPECT_TRUE(signed_metadata_ur_feed(data.data() + 1024, tail - 1));
+  EXPECT_TRUE(signed_metadata_ur_pending());
+  EXPECT_FALSE(signed_metadata_relied());
+
+  // A byte over.
+  ASSERT_TRUE(defer_first_chunk(*v, data, &msg));
+  std::vector<uint8_t> more(data.begin() + 1024, data.end());
+  more.push_back(0);
+  EXPECT_FALSE(signed_metadata_ur_feed(more.data(), (uint32_t)more.size()));
+  EXPECT_FALSE(signed_metadata_ur_pending());
+
+  // The tail decides what is shown: a changed unwrap minimum is shown as is.
+  std::vector<uint8_t> other = data;
+  other[other.size() - 33] ^= 0x01;  // inside the unwrap's amountMin word
+  ASSERT_TRUE(defer_first_chunk(*v, other, &msg));
+  ASSERT_TRUE(signed_metadata_ur_feed(other.data() + 1024, tail));
+  EXPECT_NE(0, memcmp(signed_metadata_get()->ur.amount_out,
+                      ur_unhex(v->steps[2].amount).data(), 32));
+
+  // Past the old 1,472-byte buffer: held and decoded, not refused for its
+  // length. Bytes after the last input are not read (nor by abi.decode).
+  std::vector<uint8_t> big = data;
+  big.resize(1473);
+  ASSERT_TRUE(defer_first_chunk(*v, big, &msg));
+  EXPECT_TRUE(signed_metadata_ur_feed(big.data() + 1024,
+                                      (uint32_t)big.size() - 1024));
+  EXPECT_FALSE(signed_metadata_ur_pending());
+
+  // A call that fits the first chunk is decoded at once, never pending.
+  std::vector<uint8_t> small(data.begin(), data.begin() + 1024);
+  make_ur_msg(&msg, ur_unhex(v->router), small);
+  EXPECT_FALSE(signed_metadata_matches_tx(&msg));  // truncated: no decode
+  EXPECT_FALSE(signed_metadata_ur_pending());
+}
+
+/* D-021: a real split-route call past the old 1,472-byte buffer, which the
+ * device refused for its length. Streamed in SignTx's chunks it is reviewed
+ * like any other. */
+TEST_F(CertifiedMetadataTest, UniswapCallPastTheOldBufferIsReviewed) {
+  const std::vector<uint8_t> router =
+      ur_unhex("d6145b2d3f379919e8cdeda7b97e37c4b2ca9c40");
+  const uint8_t zero[32] = {0};
+  const urs::Call* call = nullptr;
+  UrPlan plan;
+  UrSummary want;
+  for (const auto& c : urs::calls()) {
+    if (c.calldata.size() > 1472 &&
+        ur_decode(c.calldata.data(), c.calldata.size(), &plan) &&
+        ur_summarize(&plan, router.data(), zero, &want)) {
+      call = &c;
+      break;
+    }
+  }
+  ASSERT_NE(call, nullptr) << "no reviewable call over 1,472 B in the sample";
+  const std::vector<uint8_t>& data = call->calldata;
+  std::vector<UrToken> tokens;
+  if (!want.in_is_eth)
+    tokens.push_back({hex_of(want.token_in, 20), "TOKA", 6});
+  if (!want.out_is_eth)
+    tokens.push_back({hex_of(want.token_out, 20), "TOKB", 18});
+  auto e = envelope(
+      mint_cert(8453, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+      sign_body(build_decoder_body(router, 8453, tokens)));
+  ASSERT_EQ(METADATA_VERIFIED, Process(e));
+
+  EthereumSignTx msg;
+  std::vector<uint8_t> first(data.begin(), data.begin() + 1024);
+  make_ur_msg(&msg, router, first);
+  msg.data_length = (uint32_t)data.size();
+  ASSERT_FALSE(signed_metadata_matches_tx(&msg));
+  ASSERT_TRUE(signed_metadata_ur_pending());
+  size_t at = 1024;
+  while (data.size() - at > 200) {  // uneven chunks
+    ASSERT_TRUE(signed_metadata_ur_feed(data.data() + at, 200)) << call->tx;
+    EXPECT_TRUE(signed_metadata_ur_pending());
+    at += 200;
+  }
+  ASSERT_TRUE(signed_metadata_ur_feed(data.data() + at,
+                                      (uint32_t)(data.size() - at)))
+      << call->tx;
+  EXPECT_FALSE(signed_metadata_ur_pending());
+  const SignedMetadata* md = signed_metadata_get();
+  EXPECT_EQ(0, memcmp(&md->ur, &want, sizeof(want))) << call->tx;
+  std::vector<Shown> got;
+  ASSERT_TRUE(signed_metadata_build_ur_review(md, "Test Delegate", "A9531B9D",
+                                              collect_shown, &got));
+  ASSERT_FALSE(got.empty());
+  EXPECT_EQ(got[0].title, "Uniswap");
+}
+
+/* D-019/D-021: real UR 2.1.2 V4 swaps on Base, a plain one and one through a
+ * hooked pool, streamed in 200-byte data chunks after the first 1,024. */
+namespace {
+void review_v4_call(bool hooked, std::vector<Shown>* got) {
+  const std::vector<uint8_t> router =
+      ur_unhex("d6145b2d3f379919e8cdeda7b97e37c4b2ca9c40");
+  const urs::Call* call = nullptr;
+  UrPlan plan;
+  UrSummary want;
+  for (const auto& c : urs::calls()) {
+    bool v4 = false;
+    if (c.calldata.size() <= 1024 || !c.ok ||
+        !ur_decode(c.calldata.data(), c.calldata.size(), &plan))
+      continue;
+    for (size_t i = 0; i < plan.n; i++)
+      v4 = v4 || plan.steps[i].kind == UR_V4_SWAP_EXACT_IN;
+    if (v4 && plan.n == 1 && (plan.n_hooks > 0) == hooked &&
+        ur_summarize(&plan, router.data(), c.value.data(), &want)) {
+      call = &c;
+      break;
+    }
+  }
+  ASSERT_NE(call, nullptr);
+  const std::vector<uint8_t>& data = call->calldata;
+  std::vector<UrToken> tokens;
+  if (!want.in_is_eth) tokens.push_back({hex_of(want.token_in, 20), "TOKA", 6});
+  if (!want.out_is_eth)
+    tokens.push_back({hex_of(want.token_out, 20), "TOKB", 18});
+  auto e = envelope(
+      mint_cert(8453, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+      sign_body(build_decoder_body(router, 8453, tokens)));
+  ASSERT_EQ(METADATA_VERIFIED, signed_metadata_process(e.data(), e.size(),
+                                                       METADATA_KEYID_DELEGATE));
+  EthereumSignTx msg;
+  std::vector<uint8_t> first(data.begin(), data.begin() + 1024);
+  make_ur_msg(&msg, router, first);
+  msg.data_length = (uint32_t)data.size();
+  msg.value.size = 32;
+  memcpy(msg.value.bytes, call->value.data(), 32);
+  ASSERT_FALSE(signed_metadata_matches_tx(&msg));
+  ASSERT_TRUE(signed_metadata_ur_pending());
+  size_t at = 1024;
+  while (data.size() - at > 200) {
+    ASSERT_TRUE(signed_metadata_ur_feed(data.data() + at, 200)) << call->tx;
+    at += 200;
+  }
+  ASSERT_TRUE(signed_metadata_ur_feed(data.data() + at,
+                                      (uint32_t)(data.size() - at)))
+      << call->tx;
+  EXPECT_FALSE(signed_metadata_ur_pending());
+  const SignedMetadata* md = signed_metadata_get();
+  EXPECT_EQ(0, memcmp(&md->ur, &want, sizeof(want))) << call->tx;
+  ASSERT_TRUE(signed_metadata_build_ur_review(md, "Test Delegate", "A9531B9D",
+                                              collect_shown, got));
+  printf("%s (%zu B, %s):\n", call->tx.c_str(), data.size(),
+         hooked ? "hooked pool" : "plain pool");
+  for (const auto& s : *got)
+    printf("  [%s] %s\n", s.title.c_str(), s.body.c_str());
+}
+}  // namespace
+
+TEST_F(CertifiedMetadataTest, UniswapV4SwapIsReviewedFromItsChunks) {
+  std::vector<Shown> got;
+  review_v4_call(false, &got);
+  ASSERT_FALSE(got.empty());
+  EXPECT_EQ(got[0].title, "Uniswap");
+  for (const auto& s : got) EXPECT_EQ(s.title.find("Pool hook"), std::string::npos);
+}
+
+TEST_F(CertifiedMetadataTest, UniswapV4HookIsShown) {
+  std::vector<Shown> got;
+  review_v4_call(true, &got);
+  size_t hooks = 0;
+  for (const auto& s : got) hooks += s.title == "Pool hook";
+  EXPECT_EQ(hooks, 1u);
+}
+
+/* The 2026-10-03 root ceremony (Base, Arbitrum): the device's own verifier,
+ * under the compiled-in alpha root, accepts each certificate for its chain
+ * only. Certificates are public; the root's private key never left the root
+ * KeepKey. */
+TEST(ClearsignRootCeremony20261003, RealCertificatesVerifyOnTheirChainOnly) {
+  const char* certs[2] = {
+      "0101000021056b359b004b6565704b657920416c706861203731360000000000000000000000000000000342f5f9704494b3f9bd72295eecaf29d783d23ea02b2dc9f48abcd2e46d4850cfd3f4638bcd78bd822b88d56dc66bb34c167e3509597a8d3e86a37f14c5b89a504b04f2868e5fcb3ff93f317e2cae7b1cfca149559a272a3ea713125d37757a98",
+      "01010000a4b16b359b004b6565704b657920416c706861203731360000000000000000000000000000000342f5f9704494b3f9bd72295eecaf29d783d23ea02b2dc9f48abcd2e46d4850cf2fe56b2ec1cd8540b8c5eff6ad5c30b5aea85edd7499c3340074e0df12cba0d31a973fb36ab9cc9e3ca759fba08dd96908e3f5541b891f00fc6ff941e9365a6c"};
+  const uint32_t scopes[2] = {8453, 42161};
+  clearsign_root_set_test_root(NULL);  // the real compiled-in root
+  ASSERT_TRUE(clearsign_root_is_present());
+  for (int i = 0; i < 2; i++) {
+    std::vector<uint8_t> c = ur_unhex(certs[i]);
+    ASSERT_EQ(c.size(), (size_t)CLEARSIGN_CERT_LEN);
+    uint8_t pub[CLEARSIGN_PUBKEY_LEN];
+    char alias[CLEARSIGN_ALIAS_LEN + 1];
+    EXPECT_TRUE(clearsign_root_cert_delegate(c.data(), c.size(), scopes[i],
+                                             pub, alias)) << scopes[i];
+    EXPECT_STREQ(alias, "KeepKey Alpha 716");
+    EXPECT_EQ(memcmp(pub, EXPECTED_SLOT3_PUB, 33) == 0, false);  // not the CI key
+    EXPECT_FALSE(clearsign_root_cert_delegate(c.data(), c.size(), 1, pub,
+                                              alias)) << "Ethereum scope";
+    c[60] ^= 1;  // inside the delegate key
+    EXPECT_FALSE(clearsign_root_cert_delegate(c.data(), c.size(), scopes[i],
+                                              pub, alias));
+  }
 }

@@ -2,12 +2,16 @@ extern "C" {
 #include "keepkey/board/messages.h"
 #include "keepkey/board/usb.h"
 #include "keepkey/firmware/fsm.h"
+#include "keepkey/firmware/pin_sm.h"
 #include "messages.pb.h"
 #include "pb_decode.h"
 }
 
 #include <arpa/inet.h>
 #include <cstring>
+#include <string>
+#include <thread>
+#include <vector>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -30,10 +34,31 @@ extern "C" {
  * exercise security disclosures through confirm_bytes().
  */
 
+static bool capture_screens;
+static std::vector<std::string> captured_screens;
+static std::vector<std::string> captured_titles;
+extern "C" void emulator_confirm_screen(const char* title, const char* body) {
+  if (!capture_screens) return;
+  captured_screens.emplace_back(body ? body : "");
+  captured_titles.emplace_back(title ? title : "");
+}
+void kkconfirm_capture_start(void) {
+  captured_screens.clear();
+  captured_titles.clear();
+  capture_screens = true;
+}
+// Titles of the last capture, in screen order.
+std::vector<std::string> kkconfirm_captured_titles(void) {
+  return captured_titles;
+}
+std::vector<std::string> kkconfirm_capture_finish(void) {
+  capture_screens = false;
+  return std::move(captured_screens);
+}
+
 static int kkconfirm_fd = -1;
 
-static bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload,
-                               uint8_t len) {
+bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload, uint8_t len) {
   if (kkconfirm_fd < 0) kkconfirm_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   if (kkconfirm_fd < 0) return false;
 
@@ -177,6 +202,35 @@ bool kkconfirm_readResponse(uint16_t expected, const pb_field_t* fields,
   return false;
 }
 
+// Message ids of every response already sent, in order, consuming them. A
+// refusal test uses it to show a response type was never emitted.
+std::vector<uint16_t> kkconfirm_readResponseIds(void) {
+  std::vector<uint16_t> ids;
+  size_t announced = 0, consumed = 0;
+  for (int idle_us = 0; idle_us < KKCONFIRM_DRAIN_GRACE_US;) {
+    uint8_t frame[64] = {};
+    const ssize_t count =
+        recv(kkconfirm_fd, frame, sizeof(frame), MSG_DONTWAIT);
+    if (count <= 0) {
+      usleep(1000);
+      idle_us += 1000;
+      continue;
+    }
+    size_t offset = 1;
+    if (consumed == announced) {
+      ids.push_back((uint16_t(frame[3]) << 8) | frame[4]);
+      announced = (uint32_t(frame[5]) << 24) | (uint32_t(frame[6]) << 16) |
+                  (uint32_t(frame[7]) << 8) | frame[8];
+      consumed = 0;
+      offset = 9;
+    }
+    const size_t available = sizeof(frame) - offset;
+    consumed +=
+        announced - consumed < available ? announced - consumed : available;
+  }
+  return ids;
+}
+
 #include "gtest/gtest.h"
 extern "C" {
 #include "keepkey/board/confirm_sm.h"
@@ -208,4 +262,61 @@ TEST(Confirmation, BackupSubpagesConsumeTheirOwnAcknowledgements) {
   EXPECT_TRUE(confirm_constant_power_paged(
       ButtonRequestType_ButtonRequest_ConfirmWord, "Backup", body));
   EXPECT_EQ(0, kkconfirm_drain());
+}
+
+// A client of the emulator's debug "usb" port. The emulator answers PING with
+// PONG and from then on sends debug-channel output to this socket.
+static int kkconfirm_debug_fd = -1;
+bool kkconfirm_openDebugPeer(void) {
+  if (!kkconfirm_preload(0, 0)) return false;  // one-time usbInit()
+  if (kkconfirm_debug_fd < 0)
+    kkconfirm_debug_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (kkconfirm_debug_fd < 0) return false;
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(11045);  // emulator debug "usb" port
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  static const char ping[] = {'P', 'I', 'N', 'G', 'P', 'I', 'N', 'G'};
+  if (sendto(kkconfirm_debug_fd, ping, sizeof(ping), 0,
+             (struct sockaddr*)&addr, sizeof(addr)) != (ssize_t)sizeof(ping))
+    return false;
+  if (kkconfirm_drain() != 0) return false;  // polls the ports
+  uint8_t pong[64] = {};
+  return recv(kkconfirm_debug_fd, pong, sizeof(pong), MSG_DONTWAIT) == 8 &&
+         memcmp(pong, "PONGPONG", 8) == 0;
+}
+
+bool kkconfirm_readDebugFrame(uint8_t frame[64]) {
+  for (int idle_us = 0; idle_us < KKCONFIRM_DRAIN_GRACE_US; idle_us += 1000) {
+    if (recv(kkconfirm_debug_fd, frame, 64, MSG_DONTWAIT) == 64) return true;
+    usleep(1000);
+  }
+  return false;
+}
+
+// Answers the device's next PinMatrixRequest as a host does, from its own
+// thread while the caller blocks in pin_protect(): once the request frame
+// arrives the scrambled matrix is final, so send the positions of `pin` in it.
+std::thread kkconfirm_answerPinMatrix(const std::string& pin) {
+  // Bind the emulator's main port to this client before the wait starts.
+  kkconfirm_preload(0, 0);
+  kkconfirm_drain();
+  return std::thread([pin] {
+    PinMatrixRequest request = {};
+    bool requested = false;
+    for (int i = 0; i < 25 && !requested; ++i) {
+      requested = kkconfirm_readResponse(MessageType_MessageType_PinMatrixRequest,
+                                         PinMatrixRequest_fields, &request);
+    }
+    const std::string matrix = get_pin_matrix();
+    std::string positions;
+    for (char digit : pin) {
+      positions += static_cast<char>('1' + matrix.find(digit));
+    }
+    std::vector<uint8_t> ack = {0x0a, static_cast<uint8_t>(positions.size())};
+    ack.insert(ack.end(), positions.begin(), positions.end());
+    kkconfirm_sendTiny(MessageType_MessageType_PinMatrixAck, ack.data(),
+                       static_cast<uint8_t>(ack.size()));
+  });
 }

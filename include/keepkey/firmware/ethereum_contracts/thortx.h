@@ -38,23 +38,30 @@
 #define THOR_ROUTER "d37bbe5744d730a1d98d8dc97c42f0ca46ad7146"
 
 /* THORChain deploys its Router at a DIFFERENT address on every EVM chain, so
- * the pin must be chain-scoped (see thor_router_for_chain): a deposit on any
+ * the pin must be chain-scoped (see thor_router_pins): a deposit on any
  * chain but mainnet can never match THOR_ROUTER and would fall to the
  * blind-sign gate. Avalanche C-Chain router, verified live against THORChain
  * /inbound_addresses via a Pioneer quote (2026-07). Lowercase, no 0x, to match
- * thor_format_to_addr's output. Same migration caveat as THOR_ROUTER.
- * ponytail: BSC (chainId 56) and Base (8453) routers also exist on-chain but
- * are omitted until verified against a live node — the shipped Pioneer catalog
- * lists STALE addresses (its AVAX entry 8f66c4ae.. is already wrong vs the live
- * 00dc6100..), and Pioneer currently routes BSC/Base swaps via Relay, not a
- * THORChain deposit, so no such tx reaches the device today. Add each here once
- * verified live. */
+ * the hex this decoder formats. Same migration caveat as THOR_ROUTER. */
 #define THOR_ROUTER_AVAX "00dc6100103bc402d490aee3f9a5560cbd91f1d4"
 
-/* Maya Protocol ETH router v4 (mainnet), verified on Etherscan
+/* BNB Smart Chain (56) and Base (8453) routers, from THORChain
+ * /inbound_addresses (2026-10-07) and checked against each chain's verified
+ * source (Sourcify). Base is a THORChain_RouterV6 at the SAME address as the
+ * Avalanche one; the pin is still per chain. Same migration caveat. */
+#define THOR_ROUTER_BSC "b30ec53f98ff5947ede720d32ac2da7e52a5f56b"
+#define THOR_ROUTER_BASE "00dc6100103bc402d490aee3f9a5560cbd91f1d4"
+
+/* Maya Protocol deposits through its OWN router, with the same calldata shape,
+ * and this decoder narrates both. Same migration caveat as THOR_ROUTER.
+ * Ethereum router v4 (mainnet), verified on Etherscan
  * (0xe3985e6b61b814f7cdb188766562ba71b446b46d). The prior pin
  * d89dce57.. has never held contract code on mainnet. */
 #define MAYA_ROUTER "e3985e6b61b814f7cdb188766562ba71b446b46d"
+/* Maya's Arbitrum One (42161) router, from Mayanode /inbound_addresses
+ * (2026-10-07), verified source checked: same deposit ABI and native-value
+ * semantics as the mainnet router. */
+#define MAYA_ROUTER_ARB "700e97ef07219440487840dc472e7120a7ff11f4"
 
 /* deposit(address,address,uint256,string) — legacy selector */
 #define THOR_SELECTOR_DEPOSIT "\x1f\xec\xe7\xb4"
@@ -70,5 +77,8 @@ bool thor_isThorchainTx(const EthereumSignTx* msg);
 bool thor_isMayachainTx(const EthereumSignTx* msg);
 bool thor_confirmThorTx(uint32_t data_total, const EthereumSignTx* msg);
 bool thor_confirmMayaTx(uint32_t data_total, const EthereumSignTx* msg);
+/* Why the pinned router this deposit goes to can only revert it, or NULL.
+ * Checked before any screen so a doomed deposit is refused, not signed. */
+const char* thor_depositRefusal(const EthereumSignTx* msg);
 
 #endif

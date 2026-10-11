@@ -31,45 +31,60 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "keepkey/firmware/signed_metadata.h"
 #include "messages-ethereum.pb.h"
 
-/* Longest Solidity type string we will render: "uint256[10][10][10][10]" and
- * friends, plus a struct name at EthereumTypedDataStructRequest.name's 80. */
+/* Longest type string we render: a struct name (< EIP712_MAX_STRUCT_NAME) or
+ * an elementary type, plus array suffixes such as "[10][10][10][10]". */
 #define EIP712_MAX_TYPE_NAME 112
 
-/* How deep the value walk may nest: message -> struct -> array -> struct ...
- * Every level costs one frame on the C stack, so this is the recursion bound
- * as well as the semantic one. EIP712_MAX_DEPTH is checked BEFORE descending,
- * never after. */
-#define EIP712_MAX_DEPTH 3
+/* Nesting bound and C-stack recursion bound; checked BEFORE descending. Each
+ * nested struct and each array dimension is one frame: UniswapX's V3 Dutch
+ * order witness.baseOutputs[i].curve.relativeAmounts needs six. */
+#define EIP712_MAX_DEPTH 6
 
-/* Slots in the shared encoding pool. Each open container holds one 32-byte
- * slot per member encoded so far; when it completes, those collapse to a
- * single 32-byte digest written into the parent's next slot.
- *
- * This is the whole memory argument. A SHA3_CTX is ~400 bytes, so keeping one
- * open per container costs 2,000 bytes at depth 5 -- more than the entire SRAM
- * reserve above the linker floor. Buffering 32-byte encodings instead costs
- * EIP712_MAX_SLOTS * 32, and only ONE SHA3_CTX is ever live: the one folding a
- * finished container.
- *
- * Slots along one path add up: a child starts after all of its parent's
- * members. Seaport's OrderComponents (11 members) holding an offer or
- * consideration array of n items (6-member ConsiderationItem) needs
- * 11 + n + 6, so 24 slots take up to seven items. */
+/* Longest review path ("witness.baseOutputs[0].curve.relativeAmounts[0]"),
+ * with its NUL. The member names along the open frames share one buffer of
+ * this size: whatever fits the path fits the buffer. */
+#define EIP712_MAX_PATH 160
+
+/* Shared pool of 32-byte member encodings; a completed container collapses to
+ * one digest in its parent's slot. Only ONE SHA3_CTX (~400 B) is ever live,
+ * which is what fits SRAM. Struct widths along a path add up. The outermost
+ * open array hashes its elements as they arrive and takes no slots, so
+ * Seaport needs 11 + 6 whatever its item counts. An array of fixed-size
+ * leaves nested inside it hashes into that one SHA3_CTX, so a UniswapX V3
+ * curve inside baseOutputs[] takes none; any other nested array takes one
+ * slot per element. */
 #define EIP712_MAX_SLOTS 24
 
-/* Widest single leaf the device will absorb. A dynamic `bytes` or `string` is
- * hashed, not stored, so this bounds one chunk rather than the whole value. */
+/* Widest value one EthereumTypedDataValueAck carries, and the chunk size of a
+ * longer one. */
 #define EIP712_MAX_LEAF 1024
 
-/* Distinct struct types one primary type may reference, including itself.
- * Permit2's PermitSingle needs 2, Seaport's OrderComponents 3. */
-#define EIP712_MAX_STRUCTS 3
+/* Longest dynamic `bytes` or `string` value, sent in EIP712_MAX_LEAF chunks
+ * that are hashed and shown as they arrive, never held whole. Real documents
+ * run past 64 KB: Safe MultiSend data to 174,084 B (ENS endowment Safe) and
+ * Snapshot bodies to 50,000 characters, up to 150,000 B of UTF-8. 1 MiB is
+ * more than a mainnet block's worth of non-zero calldata. */
+#define EIP712_MAX_VALUE (1024u * 1024u)
 
-/* Longest struct name we will hold. The wire allows 80; names this long do
- * not occur in practice and every one costs EIP712_MAX_STRUCTS bytes. */
-#define EIP712_MAX_STRUCT_NAME 32
+/* Distinct struct types one primary type may reference, including itself.
+ * Permit2's PermitSingle needs 2, Seaport's OrderComponents 3, Across 4, a
+ * UniswapX PriorityOrder witness 6 and a UniswapX V3DutchOrder witness 7. */
+#define EIP712_MAX_STRUCTS 7
+
+/* The wire allows 80; each byte costs EIP712_MAX_STRUCTS + 4 of SRAM. 48 holds
+ * Hyperliquid's "HyperliquidTransaction:ApproveBuilderFee" (40). */
+#define EIP712_MAX_STRUCT_NAME 48
+
+/* Member names: hashed, and shown in every review path. */
+#define EIP712_MAX_MEMBER_NAME 32
+
+/* A domain member the facts cannot hold (Ethermint's string verifyingContract
+ * and salt, chainId 0, a name that is not a string) is shown and hashed, but
+ * nothing may bind to that domain. */
+#define EIP712_DOMAIN_UNBINDABLE 0x80
 
 typedef struct {
   uint64_t chain_id;
@@ -79,18 +94,22 @@ typedef struct {
   bool has_verifying_contract;
   bool has_primary_type_hash;
   uint8_t domain_hashes[3][32]; /* name, version, salt */
+  /* Bit i: member i (name, version, salt, chainId, verifyingContract) was
+   * seen, plus EIP712_DOMAIN_UNBINDABLE. */
   uint8_t domain_present;
 } Eip712DomainFacts;
 
-/* Canonical ASCII Solidity identifier. Besides being part of encodeType, a
- * member name is also the review-screen title, so this guarantees the exact
- * bytes hashed are the exact bytes rendered (no truncation/control glyphs). */
+/* Canonical ASCII identifier: the bytes hashed are the bytes rendered. Member
+ * names are [A-Za-z_$][A-Za-z0-9_$]*, shorter than EIP712_MAX_MEMBER_NAME. */
 bool eip712_identifier_ok(const char* name);
 
-/* Fetch one struct's member list by name. Returns NULL if the host has not
- * supplied it. Firmware backs this with the streaming state machine; the unit
- * tests back it with a fixture table, which is what makes encodeType testable
- * without a device. */
+/* A struct type name: as a member name, but ':' may follow the first
+ * character ("HyperliquidTransaction:UsdSend"), and shorter than
+ * EIP712_MAX_STRUCT_NAME. ':' is never one of encodeType's delimiters. */
+bool eip712_type_identifier_ok(const char* name);
+
+/* Member list by struct name, NULL if not supplied. Unit tests back it with
+ * a fixture table. */
 typedef const EthereumTypedDataStructAck* (*Eip712StructLookup)(
     const char* name, void* ctx);
 
@@ -134,8 +153,8 @@ bool eip712_validate_leaf(
     const EthereumTypedDataStructAck_EthereumFieldType* field,
     const uint8_t* value, uint16_t value_len);
 
-/* Retain only lookup facts that the canonical domain stream itself proves.
- * Unknown domain fields are ignored; duplicate binding fields fail closed. */
+/* Keep only facts the domain stream proves; duplicates fail closed. A member
+ * of a type the facts cannot hold marks them unbindable instead of failing. */
 bool eip712_domain_facts_observe(
     Eip712DomainFacts* facts, const char* member_name,
     const EthereumTypedDataStructAck_EthereumFieldType* field,
@@ -208,11 +227,20 @@ extern const uint8_t EIP712_PERMIT2_ADDRESS[20];
 typedef bool (*Eip712ReviewEmit)(void* ctx, const char* title,
                                  const char* body);
 
-/* Summary, limits, details, who. spender_name is a ClearSign-vouched name
- * for the spender (NULL if none); alias/fp name the vouching delegate. */
-bool eip712_permit2_review(const Eip712Permit2* p, const char* spender_name,
-                           const char* alias, const char* fp,
-                           Eip712ReviewEmit emit, void* ctx);
+/* Summary, limits, details, who. identity is a KeepKey-certified token
+ * identity sent for this request on this chain (NULL if none; used only when
+ * it names p->token and the firmware table does not); spender_name is a
+ * ClearSign-vouched name for the spender (NULL if none); alias/fp name the
+ * vouching delegate. */
+bool eip712_permit2_review(const Eip712Permit2* p,
+                           const MetadataToken* identity,
+                           const char* spender_name, const char* alias,
+                           const char* fp, Eip712ReviewEmit emit, void* ctx);
+
+/* UNLIMITED: a uint256 at or above 2^255 (ERC-7730's threshold), or exactly
+ * the maximum of a narrower width (Permit2's uint160, whose maximum alone is
+ * the allowance Permit2 never decrements). value is big-endian, len bytes. */
+bool eip712_amount_unlimited(const uint8_t* value, uint16_t len);
 
 /* "2026-05-10 06:19 UTC"; Unix time past year 9999 is shown as a number. */
 void eip712_format_utc(uint64_t t, char* out, size_t len);
@@ -222,6 +250,9 @@ typedef struct {
   char struct_name[EIP712_MAX_STRUCT_NAME];
   uint32_t member_path[EIP712_MAX_DEPTH + 2];
   uint8_t member_path_len;
+  /* A chunked value: the offset of the bytes wanted next. */
+  bool has_value_offset;
+  uint32_t value_offset;
   const char* error;
   uint8_t domain_separator[32];
   uint8_t message_hash[32];
@@ -230,7 +261,8 @@ typedef struct {
   /* For the final signing screen. */
   char primary_type[EIP712_MAX_STRUCT_NAME];
   bool message_empty;
-  bool domain_only; /* primaryType EIP712Domain: sign keccak(0x1901 || ds) */
+  bool domain_empty; /* no domain member was shown: it has none */
+  bool domain_only;  /* primaryType EIP712Domain: sign keccak(0x1901 || ds) */
   Eip712Permit2 permit2; /* valid: review it in words before signing */
 } Eip712Next;
 
@@ -244,8 +276,8 @@ bool eip712_stream_definition_accepted(void);
  * The reviewed domain and signing path remain fixed across these passes. */
 bool eip712_stream_resume_for_field(void);
 
-/* Feed the machine. Each returns false and tears the session down on any
- * protocol or validation error, having already sent a Failure. */
+/* False = session torn down and EIP712_REQ_FAIL or EIP712_REQ_CANCELLED
+ * staged; the caller must still pump it to send the terminal response. */
 bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack);
 bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack);
 

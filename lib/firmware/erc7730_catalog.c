@@ -4,7 +4,6 @@
 
 #include "keepkey/firmware/clearsign_root.h"
 #include "keepkey/firmware/erc7730_capabilities.h"
-#include "keepkey/firmware/storage.h"
 #include "trezor/crypto/memzero.h"
 
 #define ERC7730_ENVELOPE_FIXED_SIZE (4u + 1u + 1u + 4u + 1u + 2u + 64u + 1u)
@@ -96,11 +95,9 @@ static bool verify_runtime_delegate(
   return true;
 }
 
-/* Root-certified tier: the record is a delegate certificate the compiled-in
- * ClearSign root signed for this chain with MAY_SUPPRESS_RAW, and the envelope
- * signature verifies under its delegate (clearsign_root.c does both). This
- * changes only the provenance shown. AdvancedMode is still required, as on the
- * runtime tier, and the raw-data review is unchanged. */
+/* Root-certified tier (D-007): a verified KeepKey certificate for this chain,
+ * with MAY_SUPPRESS_RAW, signs without AdvancedMode and replaces the raw-data
+ * review. Every other tier still needs AdvancedMode. */
 _Static_assert(ERC7730_DELEGATE_RECORD_LEN == CLEARSIGN_CERT_LEN &&
                    ERC7730_DELEGATE_ALIAS_LEN == CLEARSIGN_ALIAS_LEN &&
                    ERC7730_DELEGATE_OFF_PUBKEY == CLEARSIGN_CERT_OFF_PUBKEY,
@@ -110,8 +107,7 @@ static bool verify_certified_delegate(
     const Erc7730CatalogVerifier* v, uint32_t expected_scope,
     char out_alias[ERC7730_DELEGATE_ALIAS_LEN + 1],
     char out_fingerprint[METADATA_FINGERPRINT_LEN]) {
-  if (!storage_isPolicyEnabled("AdvancedMode") ||
-      !clearsign_root_verify_erc7730_catalog(
+  if (!clearsign_root_verify_erc7730_catalog(
           v->cert, sizeof(v->cert), expected_scope, v->merkle, v->signature,
           sizeof(v->signature), out_alias))
     return false;
@@ -833,6 +829,9 @@ static bool validate_display_instruction(Erc7730CatalogVerifier* v) {
   if (opcode < 1 || opcode > 10 || flags != 0 ||
       !erc7730_cap_display(&executable, pc))
     return false;
+  /* The runtime leaves the review only at an end instruction, so the last
+   * instruction must be one. */
+  if (pc + 1u == v->entry_count && opcode != 10) return false;
   /* Iteration: one array at a time, calldata only, and every field inside
    * reads that array; an argument that iterates only inside it. */
   if (opcode == 7) {

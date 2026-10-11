@@ -58,6 +58,7 @@ bool erc7730_workflow_begin(Erc7730Workflow* workflow,
     fail(workflow);
     return false;
   }
+  workflow->review_tier = identity->tier;
   return begin_replay(workflow, identity);
 }
 
@@ -70,6 +71,7 @@ bool erc7730_workflow_begin_eip712(Erc7730Workflow* workflow,
     return false;
   }
   workflow->typed_data = true;
+  workflow->review_tier = identity->tier;
   if (!begin_replay(workflow, identity)) return false;
   /* The definition applies only at a signed deployment on the typed data's
    * own chain; the loader refuses the replay unless one lists it. */
@@ -558,8 +560,9 @@ static bool normalize_eip712_capture(const Erc7730AbiNode* node,
 bool erc7730_workflow_eip712_observe(Erc7730Workflow* workflow,
                                      const uint32_t* member_path,
                                      size_t member_path_count,
-                                     const uint8_t* value, size_t value_len) {
-  if (!workflow || !member_path || !value ||
+                                     const uint8_t* value, size_t value_len,
+                                     size_t whole_len, bool continuation) {
+  if (!workflow || !member_path || !value || whole_len < value_len ||
       workflow->phase != ERC7730_WORKFLOW_TYPED_DATA ||
       !workflow->calldata.capture_enabled || member_path_count < 2 ||
       member_path[0] != 1)
@@ -588,6 +591,11 @@ bool erc7730_workflow_eip712_observe(Erc7730Workflow* workflow,
   for (size_t i = 0; i < workflow->calldata.capture_path_count; i++)
     if (member_path[i + 1u] != (uint32_t)workflow->calldata.capture_path[i])
       return true;
+  /* A long value is observed once, at its first chunk. The later chunks only
+   * have to continue a value that was too long to capture. */
+  if (continuation)
+    return workflow->calldata.capture_found &&
+           workflow->calldata.capture_overflow;
   if (workflow->calldata.capture_found) return false;
   Erc7730AbiProgram program;
   if (!erc7730_program_loader_complete(&workflow->loader, &program) ||
@@ -595,12 +603,13 @@ bool erc7730_workflow_eip712_observe(Erc7730Workflow* workflow,
     return false;
   const Erc7730AbiNode* leaf = &program.nodes[workflow->calldata.capture.node];
   if ((leaf->kind == ERC7730_ABI_BYTES || leaf->kind == ERC7730_ABI_STRING) &&
-      value_len > sizeof(workflow->calldata.capture.data)) {
+      whole_len > sizeof(workflow->calldata.capture.data)) {
     /* Too long to capture: keep only its length, as a calldata pass does. */
     workflow->calldata.capture_overflow = true;
-    workflow->calldata.located_length = value_len;
+    workflow->calldata.located_length = whole_len;
     workflow->calldata.capture.length = 0;
-  } else if (!normalize_eip712_capture(leaf, value, value_len,
+  } else if (whole_len != value_len ||
+             !normalize_eip712_capture(leaf, value, value_len,
                                        &workflow->calldata.capture)) {
     return false;
   }
@@ -764,6 +773,12 @@ uint8_t erc7730_workflow_tier(const Erc7730Workflow* workflow) {
   const uint8_t own = workflow->identity.tier;
   if (workflow->depth == 0 || own < workflow->outer_tier) return own;
   return workflow->outer_tier;
+}
+
+bool erc7730_workflow_certified(const Erc7730Workflow* workflow) {
+  return workflow && workflow->review_tier == METADATA_TIER_KEEPKEY &&
+         (erc7730_workflow_active(workflow) ||
+          erc7730_workflow_complete(workflow));
 }
 
 bool erc7730_workflow_preserve_selected_string(Erc7730Workflow* workflow,
@@ -955,6 +970,8 @@ bool erc7730_workflow_fetch_complete(Erc7730Workflow* workflow) {
                                          : workflow->identity.contract_address,
              20);
       workflow->depth = 1;
+      if (identity.tier < workflow->review_tier)
+        workflow->review_tier = identity.tier;
       workflow->identity_confirmed = false;
       workflow->intent_confirmed = false;
       workflow->calldata_validated = false;
@@ -1002,15 +1019,34 @@ bool erc7730_workflow_field_embedded(Erc7730Workflow* workflow) {
       workflow->field.pending_role != 1 || workflow->field.has_inner ||
       !workflow->calldata.capture_locate ||
       !erc7730_workflow_captured(workflow, &capture, &cls) ||
-      cls != ERC7730_CLASS_BYTES || capture.length > 4 ||
+      cls != ERC7730_CLASS_BYTES ||
+      capture.length > ERC7730_ABI_LOCATE_PREFIX ||
       workflow->calldata.located_length > UINT32_MAX ||
       workflow->calldata.located_offset > UINT32_MAX) {
     memzero(&capture, sizeof(capture));
     return false;
   }
   Erc7730Field* field = &workflow->field;
-  memcpy(field->inner_selector, capture.data, capture.length);
-  field->inner_selector_length = (uint8_t)capture.length;
+  /* An inner approve() or increaseAllowance() gets the top-level policy
+   * (ethereum.c): a dirty spender word is refused, and 2^256-1 signs only
+   * after the UNLIMITED warning. */
+  if (capture.length == ERC7730_ABI_LOCATE_PREFIX &&
+      (memcmp(capture.data, "\x09\x5e\xa7\xb3", 4) == 0 ||
+       memcmp(capture.data, "\x39\x50\x93\x51", 4) == 0)) {
+    bool unlimited = true;
+    for (size_t i = 4; i < 68; i++) {
+      if (i < 16 && capture.data[i] != 0) {
+        memzero(&capture, sizeof(capture));
+        return false;
+      }
+      if (i >= 36) unlimited &= capture.data[i] == 0xff;
+    }
+    field->unlimited_approve = unlimited;
+    if (unlimited) memcpy(field->approve_spender, capture.data + 16, 20);
+  }
+  const size_t selector_length = capture.length < 4 ? capture.length : 4;
+  memcpy(field->inner_selector, capture.data, selector_length);
+  field->inner_selector_length = (uint8_t)selector_length;
   field->inner_length = (uint32_t)workflow->calldata.located_length;
   field->inner_offset = (uint32_t)workflow->calldata.located_offset;
   field->has_inner = true;

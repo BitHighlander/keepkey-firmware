@@ -133,3 +133,25 @@ paths = [
   '''^docs/''',
   '''^tests/''',
 ]
+
+# Release/security docs record the exact submodule commits a build pins, e.g.
+#   - python-keepkey: `c406a1ba9120da410c356dbff7f4d4bd1e1758fa`;
+# A 40-char lowercase hex git SHA has enough entropy to trip generic-api-key.
+# Scoped with condition = "AND" so this only exempts SHA-shaped strings inside
+# markdown docs — a real credential in docs/ is still reported.
+[[allowlists]]
+description = "Git commit SHAs quoted in markdown docs"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)docs/.*\.md$''']
+regexes = ['''\b[0-9a-f]{40}\b''']
+
+# EIP-712 fixtures name public token contract addresses, not API credentials.
+# Keep the exception limited to address-valued token fields in this corpus.
+[[allowlists]]
+description = "Public token addresses in the EIP-712 corpus"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)unittests/firmware/eip712_corpus\.json$''']
+regexTarget = "line"
+regexes = ['''^\s*"(?:token|baseInputToken|buyToken|inputToken|makerToken|outputToken|sellToken|takerToken)"\s*:\s*"0x[0-9a-fA-F]{40}"\s*,?\s*$''']

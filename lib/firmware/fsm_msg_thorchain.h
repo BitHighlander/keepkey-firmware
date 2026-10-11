@@ -151,10 +151,13 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
 
   const ThorchainSignTx* sign_tx = thorchain_getThorchainSignTx();
 
-  if (msg->has_send) {
-    const char* coin_denom =
-        (msg->send.has_denom && msg->send.denom[0]) ? msg->send.denom : "rune";
+  // Validated before any display or signing JSON (default "rune").
+  const char* coin_denom =
+      (msg->has_send && msg->send.has_denom && msg->send.denom[0])
+          ? msg->send.denom
+          : "rune";
 
+  if (msg->has_send) {
     // Validate before any display so untrusted strings never reach the UI.
     if (!thorchain_isValidDenom(coin_denom)) {
       thorchain_signAbort();
@@ -352,13 +355,22 @@ void fsm_msgThorchainMsgAck(const ThorchainMsgAck* msg) {
     memset(node_str, 0, sizeof(node_str));
   }
 
-  /* Disclose the fee and gas that are hashed into the StdSignDoc. The base
-     wording ("Additional network fees apply.") named neither, so a host could
-     sign away an arbitrary fee against a screen that never showed it. Same
-     shape as the Osmosis screen above. */
+  /* fee_amount is in base units; show it in whole coins, as the amount
+     screens do. The raw count overstated it 10^8-fold for RUNE. */
+  char fee_str[32];
+  if (!thorchain_formatAmount(sign_tx->fee_amount, "RUNE", fee_str,
+                              sizeof(fee_str))) {
+    thorchain_signAbort();
+    fsm_sendFailure(FailureType_Failure_SyntaxError, "Invalid fee amount");
+    layoutHome();
+    return;
+  }
+
   if (!confirm(ButtonRequestType_ButtonRequest_SignTx, node_str,
-               "Sign RUNE on %s? Fee: %" PRIu32 " rune. Gas: %" PRIu32 ".",
-               sign_tx->chain_id, sign_tx->fee_amount, sign_tx->gas)) {
+               "Sign %s on %s? Fee: %s. Gas: %" PRIu32 ".",
+               (msg->has_send && strcmp(coin_denom, "rune") != 0) ? coin_denom
+                                                                  : "RUNE",
+               sign_tx->chain_id, fee_str, sign_tx->gas)) {
     thorchain_signAbort();
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();

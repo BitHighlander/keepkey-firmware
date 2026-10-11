@@ -54,10 +54,10 @@ static bool solana_confirmPubkey(const char* title, const char* label,
 /* Compute-budget prices are micro-lamports per compute unit. Raw price/limit
  * screens do not tell the user the SOL at risk, and the fee is charged even
  * when execution fails. Show the fee payer and a non-understated maximum,
- * using Solana's 1.4M-CU transaction cap when no explicit limit is present. */
+ * using the derived default limit when no explicit limit is present. */
 static bool solana_confirmPriorityFee(const SolanaParsedTx* tx) {
   uint64_t price = 0;
-  uint64_t limit = 1400000u;
+  uint64_t limit = solana_defaultComputeUnitLimit(tx);
   bool have_price = false;
 
   for (uint8_t i = 0; i < tx->num_instructions; i++) {
@@ -599,6 +599,7 @@ static bool solana_confirmSchemaTransaction(
   return true;
 }
 
+/* Off-chain message format 0: restricted ASCII -- printable, space included. */
 static bool solana_offchain_payload_is_ascii(const uint8_t* data, size_t size) {
   for (size_t i = 0; i < size; i++) {
     if (data[i] < 0x20 || data[i] > 0x7e) return false;
@@ -795,6 +796,15 @@ static SolanaSchemaReviewResult solana_confirmAttestedSchema(
     solana_pubkeyToStr(tx->accounts[account_index], account, sizeof(account));
     approved = confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                        schema.accounts[i].label, "%s", account);
+  }
+
+  /* solana_schemaApplies admits Memo companions; swap intents and
+   * destinations ride in them, so page each one in full. */
+  for (uint8_t i = 0; approved && i < tx->num_instructions; i++) {
+    if (tx->instructions[i].type == SOL_INSTR_MEMO) {
+      approved = solana_confirmInstruction(&tx->instructions[i], i,
+                                           tx->num_instructions, NULL);
+    }
   }
 
   memzero(&schema, sizeof(schema));
@@ -1183,15 +1193,16 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
        the user still sees "the device cannot fully verify the contents" and
        still has to approve it. If the attestation is absent, malformed, or
        fails to verify, nothing extra is drawn and the flow is byte-for-byte
-       what it was. */
+       what it was. It is shown only when it lists every account the lookup
+       tables load; a partial list would mislead. */
     /* nanopb gives each repeated `bytes` element as a {size, bytes[32]}
        struct, NOT a bare 32-byte array -- casting the array to
        (uint8_t(*)[32]) would hash the size word plus 28 bytes of the first
        key. Flatten explicitly, and require every element to be a full
        SOL_PUBKEY_SIZE key so a short one cannot silently hash as zero-padded.
      */
-    if (lut_well_formed && lut_n > 0 && msg->has_lut_signature &&
-        msg->has_lut_signer_key_id &&
+    if (lut_well_formed && solana_lut_attestation_complete(&parsed, lut_n) &&
+        msg->has_lut_signature && msg->has_lut_signer_key_id &&
         solana_lut_accounts_trusted(
             msg->raw_tx.bytes, msg->raw_tx.size,
             (const uint8_t (*)[32])lut_keys, lut_n, msg->lut_signer_key_id,
@@ -1437,8 +1448,9 @@ void fsm_msgSolanaSignOffchainMessage(const SolanaSignOffchainMessage* msg) {
   if (!node) return;
   hdnode_fill_public_key(node);
 
-  /* The off-chain envelope signs its version, format, and every message byte.
-   * Show the envelope fields explicitly and page the complete payload. */
+  /* The envelope signs both fields below and every message byte. Show the
+   * fields explicitly, then page the complete payload; never substitute a
+   * prefix-plus-length preview for signed content. */
   const char* format_label = format == 0 ? "ASCII" : "UTF-8 limited";
   if (!confirm(ButtonRequestType_ButtonRequest_ProtectCall, "Solana Off-chain",
                "Version: 0. Format: %s.", format_label) ||

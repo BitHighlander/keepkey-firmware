@@ -13,6 +13,8 @@ extern "C" {
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/eos.h"
 #include "keepkey/firmware/ethereum.h"
+#include "keepkey/firmware/ethereum_tokens.h"
+#include "keepkey/firmware/ethereum_contracts/thortx.h"
 #include "keepkey/firmware/eip712_stream.h"
 #include "keepkey/firmware/erc7730_catalog.h"
 #include "keepkey/firmware/erc7730_workflow.h"
@@ -21,9 +23,11 @@ extern "C" {
 #include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/mayachain.h"
 #include "keepkey/firmware/osmosis.h"
+#include "keepkey/firmware/pin_sm.h"
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/signed_metadata.h"
+#include "keepkey/firmware/contact_book.h"
 #include "keepkey/firmware/signtx_tendermint.h"
 #include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/storage.h"
@@ -38,13 +42,30 @@ bool keepkey_before_message_dispatch(MessageType msg_id);
 
 #include <cstring>
 #include <algorithm>
+#include <string>
+#include <thread>
 #include <vector>
+#include <unistd.h>
 
 // The shared bootstrap initializes the canvas and timer queues exactly once.
 // Calling timer_init() again relinks the static runnable nodes into a cycle.
 #include "test_board.h"
 bool kkconfirm_preload(int nYes, int nNo);
+bool kkconfirm_preload_no_sentinel(int nYes, int nNo);
 int kkconfirm_drain(void);
+bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload, uint8_t len);
+void kkconfirm_capture_start(void);
+std::vector<std::string> kkconfirm_capture_finish(void);
+std::vector<std::string> kkconfirm_captured_titles(void);
+bool kkconfirm_openDebugPeer(void);
+bool kkconfirm_readDebugFrame(uint8_t frame[64]);
+extern "C" void keepkey_user_activity(void);  // lib/firmware/home_sm.c
+
+// Auto-lock reads home_clock_ms(). The real 1 ms tick would make the deadline
+// checks below racy, so this binary's clock moves only when a test says so.
+static uint32_t fake_clock_ms = 0;
+extern "C" uint32_t home_clock_ms(void) { return fake_clock_ms; }
+static void advance_clock(uint32_t ms) { fake_clock_ms += ms; }
 
 TEST(Fsm, CoinTableRetainsPredecessorPageCapacity) {
   const CoinTable response = {};
@@ -282,11 +303,11 @@ TEST(Fsm, AutoLockTerminatesSigningWhileWaitingAwayFromHome) {
   ASSERT_TRUE(signing_is_active());
 
   leave_home();
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   toggle_screensaver();
   EXPECT_TRUE(signing_is_active());
 
-  increment_idle_time(1);
+  advance_clock(1);
   toggle_screensaver();
   EXPECT_FALSE(signing_is_active());
 
@@ -313,15 +334,23 @@ TEST(Fsm, AutoLockKeepsTheScreensaverAfterAbortingSigning) {
   ASSERT_TRUE(signing_is_active());
 
   leave_home();
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT);
   toggle_screensaver();
   ASSERT_FALSE(signing_is_active());
   ASSERT_EQ(SCREENSAVER, home_get_state());
 
-  increment_idle_time(1000);
+  advance_clock(1000);
   toggle_screensaver();
   EXPECT_EQ(SCREENSAVER, home_get_state())
       << "a locked device must stay on the screensaver, not wake to home";
+
+  // ~49.7 days of further idling must not wrap the counter into "activity".
+  // It holds STORAGE_MIN_SCREENSAVER_TIMEOUT + 1000 here; this brings an
+  // unsaturated counter to exactly 0.
+  advance_clock(UINT32_MAX - (STORAGE_MIN_SCREENSAVER_TIMEOUT + 1000) + 1);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state())
+      << "the idle counter wrapped and woke the locked screen";
 
   layoutHomeForced();
 }
@@ -366,6 +395,22 @@ struct ScopedFlash {
     emulator_flash_base = previous;
   }
 };
+
+LoadDevice allLoad() {
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  return load;
+}
+
+// The "all" wallet, signing idle, minimum auto-lock delay.
+void loadAllWallet() {
+  signing_abort();
+  LoadDevice load = allLoad();
+  storage_loadDevice(&load);
+  storage_commit();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+}
 
 // Boot from a future-format sector, using the real loader rather than a test
 // setter for either lock flag. Every refusal below traverses the USB decoder.
@@ -707,6 +752,7 @@ class AutoLockProgress : public ::testing::Test {
     setup_abort();
     layoutHomeForced();
     storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+    keepkey_user_activity();  // the press that approved the SignTx
     SignTx start = {};
     start.inputs_count = start.outputs_count = 1;
     HDNode root = {};
@@ -721,18 +767,181 @@ class AutoLockProgress : public ::testing::Test {
     setup_abort();
   }
 };
+
+// Plays the host: waits for the next PIN prompt, then sends `pin` as matrix
+// positions, the way a host relays the user's clicks on the scrambled grid.
+std::thread answerPinPrompt(const char* pin) {
+  return std::thread([pin] {
+    for (int tries = 0; tries < 5000; tries++, usleep(1000)) {
+      if (std::strcmp(get_pin_matrix(), "XXXXXXXXX") == 0) continue;
+      usleep(50000);  // let the prompt finish shuffling
+      const std::string matrix = get_pin_matrix();
+      std::string positions;
+      for (const char* d = pin; *d; d++)
+        positions += (char)('1' + matrix.find(*d));
+      uint8_t ack[2 + 9] = {0x0a, (uint8_t)positions.size()};
+      std::memcpy(&ack[2], positions.data(), positions.size());
+      kkconfirm_sendTiny(MessageType_MessageType_PinMatrixAck, ack,
+                         (uint8_t)(2 + positions.size()));
+      return;
+    }
+  });
+}
+
+// Locks a PIN-protected session by idling, then unlocks it with a protected
+// Ping answered with `pin`.
+void lockThenEnterPin(const char* pin) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  storage_setPin("1234");
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  layoutHomeForced();
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  toggle_screensaver();
+  ASSERT_EQ(SCREENSAVER, home_get_state());
+  ASSERT_FALSE(session_isPinCached());
+
+  Ping ping = {};
+  ping.has_pin_protection = true;
+  ping.pin_protection = true;
+  std::thread host = answerPinPrompt(pin);
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+  host.join();
+}
 }  // namespace
+
+// Host-side PIN entry presses no button, so without this the device would
+// re-lock on the next main-loop tick after every unlock.
+TEST(Fsm, CorrectPinAfterAutoLockRenewsTheDeadline) {
+  ScopedFlash flash;
+  lockThenEnterPin("1234");
+  ASSERT_EQ((FailureType)0, fsm_test_lastFailureCode());
+  ASSERT_TRUE(session_isPinCached());
+
+  toggle_screensaver();
+  EXPECT_NE(SCREENSAVER, home_get_state());
+  EXPECT_TRUE(session_isPinCached());
+  layoutHomeForced();
+}
+
+// Time spent nested in a long wait never reaches the main loop: a U2F frame
+// stretched to its timeout, a prompt the host leaves open. Each main-loop pass
+// must charge the real time since the last one, not a single tick, or a host
+// can keep a PIN-unlocked session alive indefinitely without the user.
+TEST(Fsm, AutoLockCountsTimeSpentOutsideTheMainLoop) {
+  kk_test_board_init();
+  ScopedFlash flash;
+  fsm_init();
+  storage_setPin("1234");
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  layoutHomeForced();
+  keepkey_user_activity();
+
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT / 2);  // nested stall
+  toggle_screensaver();                                // one main-loop pass
+  ASSERT_EQ(AT_HOME, home_get_state());
+  ASSERT_TRUE(session_isPinCached());
+
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT / 2);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+  EXPECT_FALSE(session_isPinCached());
+  layoutHomeForced();
+}
+
+TEST(Fsm, UserActivityRenewsTheAutoLockDeadline) {
+  kk_test_board_init();
+  fsm_init();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  layoutHomeForced();
+  keepkey_user_activity();
+
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  keepkey_user_activity();
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  toggle_screensaver();
+  ASSERT_EQ(AT_HOME, home_get_state());
+
+  advance_clock(1);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+  layoutHomeForced();
+}
+
+// The ms counter wraps after ~49.7 days of uptime; a deadline that straddles
+// the wrap must still expire on time.
+TEST(Fsm, AutoLockDeadlineSurvivesClockWrap) {
+  kk_test_board_init();
+  fsm_init();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  layoutHomeForced();
+  advance_clock(0u - fake_clock_ms - STORAGE_MIN_SCREENSAVER_TIMEOUT / 2);
+  keepkey_user_activity();
+
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  ASSERT_LT(fake_clock_ms, STORAGE_MIN_SCREENSAVER_TIMEOUT) << "no wrap";
+  toggle_screensaver();
+  ASSERT_EQ(AT_HOME, home_get_state());
+
+  advance_clock(1);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+  layoutHomeForced();
+}
+
+TEST(Fsm, WrongPinAfterAutoLockDoesNotRenewTheDeadline) {
+  ScopedFlash flash;
+  lockThenEnterPin("5678");
+  ASSERT_EQ(FailureType_Failure_PinInvalid, fsm_test_lastFailureCode());
+  ASSERT_FALSE(session_isPinCached());
+
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+  layoutHomeForced();
+}
+
+// An ECDSA message signature has no taproot form; labelling one with a bc1p
+// address yields a signature that can never verify.
+TEST(Fsm, SignMessageRefusesTaprootBeforeAnyScreen) {
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  ScopedFlash flash;
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  storage_commit();
+
+  SignMessage msg = {};
+  const uint32_t path[] = {0x80000056, 0x80000000, 0x80000000, 0, 0};
+  std::memcpy(msg.address_n, path, sizeof(path));
+  msg.address_n_count = 5;
+  msg.message.size = 5;
+  std::memcpy(msg.message.bytes, "hello", 5);
+  msg.has_script_type = true;
+  msg.script_type = InputScriptType_SPENDTAPROOT;
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_SignMessage, SignMessage_fields, &msg);
+
+  EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+  EXPECT_EQ(2, kkconfirm_drain())  // one screen's ButtonAck + decision
+      << "no confirmation may be shown";
+}
 
 TEST_F(AutoLockProgress, FeaturePollingCannotKeepStalledSigningUnlocked) {
   GetFeatures poll = {};
-  for (int i = 0; i < 4; ++i) {
-    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT / 4);
+  for (int i = 0; i < 3; ++i) {
+    advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT / 4);
     receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
                    &poll);
     ASSERT_EQ(AWAY_FROM_HOME, home_get_state());
     ASSERT_TRUE(signing_is_active());
     toggle_screensaver();
   }
+  // The poll that arrives at the deadline is answered by a locked device.
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT / 4);
+  receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
+                 &poll);
   EXPECT_FALSE(signing_is_active());
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
@@ -764,12 +973,12 @@ TEST(Fsm, InactiveBitcoinAckGetsATerminalResponse) {
 }
 
 TEST_F(AutoLockProgress, IncompleteFrameCannotKeepStalledSigningUnlocked) {
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   // Valid Ping header, but its 60-byte payload has not arrived in full.
   uint8_t frame[64] = {'?', '#', '#', 0, 1, 0, 0, 0, 60};
   usb_test_receive(frame, sizeof(frame));
   ASSERT_TRUE(signing_is_active());
-  increment_idle_time(1);
+  advance_clock(1);
   toggle_screensaver();
   EXPECT_FALSE(signing_is_active());
   EXPECT_EQ(SCREENSAVER, home_get_state());
@@ -778,17 +987,19 @@ TEST_F(AutoLockProgress, IncompleteFrameCannotKeepStalledSigningUnlocked) {
   usb_test_receive(tail, sizeof(tail));
 }
 
-TEST_F(AutoLockProgress, ValidBitcoinStreamProgressRenewsTheIdleDeadline) {
+// A stream still making validated progress is not locked mid-flow, but a
+// stall of one full delay is.
+TEST_F(AutoLockProgress, ValidBitcoinStreamProgressDefersTheLockMidFlow) {
   TxAck ack = {};
   ack.has_tx = true;
   ack.tx.inputs_count = 1;
   ack.tx.inputs[0].prev_hash.size = 32;
   ack.tx.inputs[0].has_script_type = true;
   ack.tx.inputs[0].script_type = InputScriptType_SPENDADDRESS;
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &ack);
   ASSERT_TRUE(signing_is_active());
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   toggle_screensaver();
   ASSERT_TRUE(signing_is_active());
 
@@ -798,10 +1009,10 @@ TEST_F(AutoLockProgress, ValidBitcoinStreamProgressRenewsTheIdleDeadline) {
   ack.tx.has_inputs_cnt = ack.tx.has_outputs_cnt = true;
   ack.tx.inputs_cnt = ack.tx.outputs_cnt = 1;
   receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &ack);
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   toggle_screensaver();
   ASSERT_TRUE(signing_is_active());
-  increment_idle_time(1);
+  advance_clock(1);
   toggle_screensaver();
   EXPECT_FALSE(signing_is_active());
   EXPECT_EQ(SCREENSAVER, home_get_state());
@@ -810,20 +1021,20 @@ TEST_F(AutoLockProgress, ValidBitcoinStreamProgressRenewsTheIdleDeadline) {
 TEST_F(AutoLockProgress, FeaturePollingAtHomeDoesNotRenewTheIdleDeadline) {
   signing_abort();
   layoutHomeForced();
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   GetFeatures poll = {};
   receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
                  &poll);
-  increment_idle_time(1);
+  advance_clock(1);
   toggle_screensaver();
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
 TEST_F(AutoLockProgress, PingCannotRenewAStalledSigningDeadline) {
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   Ping ping = {};
   receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
-  increment_idle_time(1);
+  advance_clock(1);
   toggle_screensaver();
   EXPECT_FALSE(signing_is_active());
   EXPECT_EQ(SCREENSAVER, home_get_state());
@@ -896,10 +1107,10 @@ TEST_F(AutoLockProgress, Bip85RequestEndsAnArmedCeremonyInBothVariants) {
 }
 
 TEST_F(AutoLockProgress, HostDrivenLayoutChangesDoNotRenewTheDeadline) {
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   layoutHome();
   leave_home();
-  increment_idle_time(1);
+  advance_clock(1);
   toggle_screensaver();
   EXPECT_FALSE(signing_is_active());
   EXPECT_EQ(SCREENSAVER, home_get_state());
@@ -963,14 +1174,14 @@ TEST(Fsm, SolanaCertificateIsRejectedAtTheProductionHandler) {
 #endif
 
 TEST_F(AutoLockProgress, InvalidBitcoinAckEndsTheStream) {
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   TxAck invalid = {};
   invalid.has_tx = true;
   // Decodable protobuf, but the required 32-byte previous hash is missing.
   invalid.tx.inputs_count = 1;
   receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &invalid);
   EXPECT_FALSE(signing_is_active());
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT);
   toggle_screensaver();
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
@@ -996,27 +1207,27 @@ TEST_F(AutoLockProgress, EmptyRecoveryCharacterAbortsWithoutRenewingDeadline) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-TEST_F(AutoLockProgress, RecoveryEditsRenewButPollingAndEmptyDeleteDoNot) {
+TEST_F(AutoLockProgress, RecoveryEditsDeferButPollingAndEmptyDeleteDoNot) {
   signing_abort();
   ASSERT_TRUE(kkconfirm_preload(1, 0));
   recovery_cipher_init(12, false, false, "english", "idle test", false,
                        STORAGE_MIN_SCREENSAVER_TIMEOUT, 0, false);
   ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
   ASSERT_EQ(0, kkconfirm_drain());
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   CharacterAck character = {};
   character.has_character = true;
   character.character[0] = 'a';  // Every a-z character belongs to the cipher.
   receiveMessage(MessageType_MessageType_CharacterAck, CharacterAck_fields,
                  &character);
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   toggle_screensaver();
   ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
   character = {};
   character.has_delete = character.del = true;
   receiveMessage(MessageType_MessageType_CharacterAck, CharacterAck_fields,
                  &character);
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   toggle_screensaver();
   ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
   // The mnemonic is now empty: another delete makes no progress.
@@ -1025,10 +1236,366 @@ TEST_F(AutoLockProgress, RecoveryEditsRenewButPollingAndEmptyDeleteDoNot) {
   GetFeatures poll = {};
   receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
                  &poll);
-  increment_idle_time(1);
+  advance_clock(1);
   toggle_screensaver();
   EXPECT_FALSE(setup_isArmed());
   EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+namespace {
+// Starts a non-segwit input and answers the previous-transaction metadata
+// request with a large but well-formed prev tx, so every further TxAck is a
+// genuine, validated stage the host can pace as it likes without a button.
+void startLongPrevTxStream(TxAck* prev_input) {
+  TxAck ack = {};
+  ack.has_tx = true;
+  ack.tx.inputs_count = 1;
+  ack.tx.inputs[0].prev_hash.size = 32;
+  ack.tx.inputs[0].has_script_type = true;
+  ack.tx.inputs[0].script_type = InputScriptType_SPENDADDRESS;
+  receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &ack);
+  ASSERT_TRUE(signing_is_active());
+  ack = {};
+  ack.has_tx = true;
+  ack.tx.has_inputs_cnt = ack.tx.has_outputs_cnt = true;
+  ack.tx.inputs_cnt = 1000;
+  ack.tx.outputs_cnt = 1;
+  receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &ack);
+  ASSERT_TRUE(signing_is_active());
+  *prev_input = {};
+  prev_input->has_tx = true;
+  prev_input->tx.inputs_count = 1;
+  prev_input->tx.inputs[0].prev_hash.size = 32;
+}
+
+void loadPinProtectedWallet(void) {
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  storage_setPin("1234");
+  storage_commit();
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+}
+
+// Asks for an xpub with a Cancel already queued for any PIN prompt. Returns
+// the failure code: 0 means the key was served from the cached PIN.
+FailureType requestPublicKey(void) {
+  kkconfirm_sendTiny(MessageType_MessageType_Cancel, nullptr, 0);
+  GetPublicKey get = {};
+  const uint32_t path[] = {0x8000002c, 0x80000000, 0x80000000};
+  std::memcpy(get.address_n, path, sizeof(path));
+  get.address_n_count = 3;
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_GetPublicKey, GetPublicKey_fields,
+                 &get);
+  const FailureType code = fsm_test_lastFailureCode();
+  // Drop the Cancel if the request never prompted for it.
+  kkconfirm_preload(0, 0);
+  kkconfirm_drain();
+  return code;
+}
+}  // namespace
+
+// F1: validated stream progress is host-driven. Pacing it past the deadline
+// with no button press, then ending it with Initialize, must leave a locked
+// session: the very next PIN-gated read prompts for the PIN, even before the
+// main loop gets a pass.
+TEST_F(AutoLockProgress, HostPacedSigningStreamCannotKeepThePinCached) {
+  ScopedFlash flash;
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  signing_abort();
+  loadPinProtectedWallet();
+  keepkey_user_activity();
+  SignTx start = {};
+  start.inputs_count = start.outputs_count = 1;
+  HDNode root = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &root));
+  signing_init(&start, coinByName("Bitcoin"), &root);
+  leave_home();
+
+  TxAck prev_input;
+  startLongPrevTxStream(&prev_input);
+  for (int i = 0; i < 4; ++i) {
+    advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2000);
+    receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &prev_input);
+    toggle_screensaver();
+    ASSERT_TRUE(signing_is_active()) << "locked mid-flow at ack " << i;
+    ASSERT_TRUE(session_isPinCached());
+  }
+
+  Initialize init = {};
+  receiveMessage(MessageType_MessageType_Initialize, Initialize_fields, &init);
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_FALSE(session_isPinCached())
+      << "the stream ended past the deadline; the session must lock now";
+  EXPECT_NE((FailureType)0, requestPublicKey())
+      << "an expired deadline served an xpub from the cached PIN";
+  EXPECT_FALSE(session_isPinCached());
+}
+
+// The same stream, but the user pressed the button partway through: the
+// deadline runs from that press, so ending the stream inside it is no lock.
+TEST_F(AutoLockProgress, ButtonPressDuringAStreamRenewsTheDeadline) {
+  ScopedFlash flash;
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  signing_abort();
+  loadPinProtectedWallet();
+  keepkey_user_activity();
+  SignTx start = {};
+  start.inputs_count = start.outputs_count = 1;
+  HDNode root = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &root));
+  signing_init(&start, coinByName("Bitcoin"), &root);
+  leave_home();
+
+  TxAck prev_input;
+  startLongPrevTxStream(&prev_input);
+  for (int i = 0; i < 3; ++i) {
+    advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2000);
+    receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &prev_input);
+    toggle_screensaver();
+    ASSERT_TRUE(signing_is_active());
+  }
+  keepkey_user_activity();
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2000);
+  receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &prev_input);
+
+  Initialize init = {};
+  receiveMessage(MessageType_MessageType_Initialize, Initialize_fields, &init);
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_TRUE(session_isPinCached());
+  toggle_screensaver();
+  EXPECT_NE(SCREENSAVER, home_get_state());
+  EXPECT_TRUE(session_isPinCached());
+
+  advance_clock(2000);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+  EXPECT_FALSE(session_isPinCached());
+}
+
+// A host-paced stream past the deadline, then a Ping that needs the PIN. The
+// gate lets Ping through without ending the stream, so the Ping handler must
+// lock before its PIN check, or one PIN-gated answer is served on the cached
+// PIN.
+static void expectPingPastTheStreamDeadlineNeedsThePin(const Ping& ping) {
+  ScopedFlash flash;
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  signing_abort();
+  loadPinProtectedWallet();
+  keepkey_user_activity();
+  SignTx start = {};
+  start.inputs_count = start.outputs_count = 1;
+  HDNode root = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &root));
+  signing_init(&start, coinByName("Bitcoin"), &root);
+  leave_home();
+
+  TxAck prev_input;
+  startLongPrevTxStream(&prev_input);
+  for (int i = 0; i < 2; ++i) {
+    advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2000);
+    receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &prev_input);
+    toggle_screensaver();
+    ASSERT_TRUE(signing_is_active()) << "locked mid-flow at ack " << i;
+    ASSERT_TRUE(session_isPinCached());
+  }
+
+  kkconfirm_sendTiny(MessageType_MessageType_Cancel, nullptr, 0);
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+  const FailureType code = fsm_test_lastFailureCode();
+  kkconfirm_preload(0, 0);
+  kkconfirm_drain();
+
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_EQ(FailureType_Failure_PinCancelled, code)
+      << "the Ping was answered from the PIN cached before the deadline";
+  EXPECT_FALSE(session_isPinCached());
+}
+
+TEST_F(AutoLockProgress, AuthenticatorPingPastAStreamDeadlineNeedsThePin) {
+  Ping ping = {};
+  ping.has_message = true;
+  std::strcpy(ping.message, "\x17getAccount:0");
+  expectPingPastTheStreamDeadlineNeedsThePin(ping);
+}
+
+TEST_F(AutoLockProgress, PinProtectedPingPastAStreamDeadlineNeedsThePin) {
+  Ping ping = {};
+  ping.has_pin_protection = ping.pin_protection = true;
+  expectPingPastTheStreamDeadlineNeedsThePin(ping);
+}
+
+#if !BITCOIN_ONLY
+// Progress belongs to the workflow that made it. Bitcoin progress just before
+// the deadline must not defer the lock for a Cosmos sign started after the
+// Bitcoin stream was aborted; Cosmos never notes progress of its own.
+TEST_F(AutoLockProgress, AbortedStreamProgressDoesNotDeferTheNextWorkflow) {
+  TxAck ack = {};
+  ack.has_tx = true;
+  ack.tx.inputs_count = 1;
+  ack.tx.inputs[0].prev_hash.size = 32;
+  ack.tx.inputs[0].has_script_type = true;
+  ack.tx.inputs[0].script_type = InputScriptType_SPENDADDRESS;
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1000);
+  receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &ack);
+  ASSERT_TRUE(signing_is_active());
+
+  fsm_abort_workflows();
+
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+  TendermintSignTx cosmos = {};
+  cosmos.has_msg_count = true;
+  cosmos.msg_count = 1;
+  cosmos.has_chain_id = true;
+  std::strcpy(cosmos.chain_id, "cosmoshub-4");
+  cosmos.has_chain_name = true;
+  std::strcpy(cosmos.chain_name, "Cosmos");
+  cosmos.has_denom = true;
+  std::strcpy(cosmos.denom, "uatom");
+  cosmos.has_message_type_prefix = true;
+  std::strcpy(cosmos.message_type_prefix, "cosmos-sdk");
+  ASSERT_TRUE(tendermint_signTxInit(&node, &cosmos, sizeof(cosmos), "uatom",
+                                    TENDERMINT_SIGNING_GENERIC));
+
+  advance_clock(1000);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state())
+      << "the aborted Bitcoin stream's progress deferred the Cosmos sign";
+  EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_GENERIC));
+}
+#endif
+
+// Recovery words are typed on the host. They keep the ceremony from locking
+// mid-entry, but once it ends the deadline still runs from the last press.
+TEST_F(AutoLockProgress, RecoveryCharacterStreamDoesNotRenewTheDeadline) {
+  signing_abort();
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  recovery_cipher_init(12, false, false, "english", "idle test", false,
+                       STORAGE_MIN_SCREENSAVER_TIMEOUT, 0, false);
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+  ASSERT_EQ(0, kkconfirm_drain());
+  keepkey_user_activity();  // the press that confirmed the recovery
+  for (int i = 0; i < 4; ++i) {
+    advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2000);
+    // Type a letter, then delete it: every message is a real edit.
+    CharacterAck character = {};
+    if (i % 2 == 0) {
+      character.has_character = true;
+      character.character[0] = 'a';
+    } else {
+      character.has_delete = character.del = true;
+    }
+    receiveMessage(MessageType_MessageType_CharacterAck, CharacterAck_fields,
+                   &character);
+    toggle_screensaver();
+    ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY)) << "locked mid-entry " << i;
+  }
+
+  Cancel cancel = {};
+  receiveMessage(MessageType_MessageType_Cancel, Cancel_fields, &cancel);
+  EXPECT_FALSE(setup_isArmed());
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state())
+      << "host-typed characters renewed the deadline";
+}
+
+// A dry-run recovery keeps the PIN cached, and its host-typed characters
+// defer the lock indefinitely. Nothing PIN-gated may be served beside it, even
+// past the deadline: the dispatch gate refuses it before its handler runs.
+TEST_F(AutoLockProgress, DryRunRecoveryPastTheDeadlineServesNoPinGatedRead) {
+  ScopedFlash flash;
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  signing_abort();
+  loadPinProtectedWallet();
+  ASSERT_TRUE(session_isPinCached());
+  // A dry run asks for the PIN, then for confirmation.
+  ASSERT_TRUE(kkconfirm_preload_no_sentinel(0, 0));
+  std::thread host([] {
+    answerPinPrompt("1234").join();
+    static const uint8_t yes[] = {0x08, 0x01};
+    kkconfirm_sendTiny(MessageType_MessageType_ButtonAck, nullptr, 0);
+    kkconfirm_sendTiny(MessageType_MessageType_DebugLinkDecision, yes, 2);
+  });
+  recovery_cipher_init(12, false, false, "english", "dry run", false,
+                       STORAGE_MIN_SCREENSAVER_TIMEOUT, 0, /*dry_run=*/true);
+  host.join();
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+  keepkey_user_activity();  // the press that confirmed the dry run
+  for (int i = 0; i < 4; ++i) {
+    advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2000);
+    CharacterAck character = {};
+    if (i % 2 == 0) {
+      character.has_character = true;
+      character.character[0] = 'a';
+    } else {
+      character.has_delete = character.del = true;
+    }
+    receiveMessage(MessageType_MessageType_CharacterAck, CharacterAck_fields,
+                   &character);
+    toggle_screensaver();
+    ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY)) << "locked mid-entry " << i;
+    ASSERT_TRUE(session_isPinCached());
+  }
+
+  EXPECT_EQ(FailureType_Failure_UnexpectedMessage, requestPublicKey())
+      << "an xpub was served beside a dry run past the deadline";
+  EXPECT_STREQ("Device is in the middle of setup. Send Initialize or Cancel "
+               "first.",
+               fsm_test_lastFailureMessage());
+
+  Ping auth = {};
+  auth.has_message = true;
+  std::strcpy(auth.message, "\x17getAccount:0");
+  kkconfirm_sendTiny(MessageType_MessageType_Cancel, nullptr, 0);
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &auth);
+  EXPECT_EQ(FailureType_Failure_UnexpectedMessage, fsm_test_lastFailureCode())
+      << "an authenticator Ping was served beside a dry run";
+  kkconfirm_preload(0, 0);
+  kkconfirm_drain();
+  EXPECT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+
+  Cancel cancel = {};
+  receiveMessage(MessageType_MessageType_Cancel, Cancel_fields, &cancel);
+  EXPECT_FALSE(setup_isArmed());
+}
+
+// F2: a nested wait that never returns to the main loop (a confirm left up,
+// a U2F exchange kept alive by pings) can outlast the 2^32 ms counter. Its
+// poll loop must keep sampling the clock, or the main loop's one subtraction
+// sees the wrapped remainder: here, 5 s.
+TEST(Fsm, NestedWaitLongerThanTheClockWrapStillLocks) {
+  kk_test_board_init();
+  ScopedFlash flash;
+  fsm_init();
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  storage_setPin("1234");
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  layoutHomeForced();
+  keepkey_user_activity();
+
+  uint8_t buf[MSG_TINY_BFR_SZ];
+  for (int i = 0; i < 4; ++i) {  // the nested wait's own poll iterations
+    advance_clock(1u << 30);
+    check_for_tiny_msg(buf);
+  }
+  advance_clock(5000);
+  toggle_screensaver();  // back in the main loop: 2^32 + 5000 ms later
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+  EXPECT_FALSE(session_isPinCached());
+  layoutHomeForced();
 }
 
 #if !BITCOIN_ONLY
@@ -1081,7 +1648,7 @@ TEST_F(AutoLockProgress, EthereumChunksRenewButFeaturePollingDoesNot) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-TEST_F(AutoLockProgress, TypedDataProgressRenewsButPollingEventuallyLocks) {
+TEST_F(AutoLockProgress, TypedDataProgressDefersButPollingEventuallyLocks) {
   signing_abort();
   ScopedFlash flash;
   storage_setMnemonic("all all all all all all all all all all all all");
@@ -1116,6 +1683,7 @@ TEST_F(AutoLockProgress, TypedDataProgressRenewsButPollingEventuallyLocks) {
 TEST(Fsm, TypedDataContinuationAndSessionBoundariesAreExplicit) {
   kk_test_board_init();
   fsm_init();
+  keepkey_user_activity();  // a fresh deadline; dispatch checks it
   for (auto boundary :
        {MessageType_MessageType_Initialize, MessageType_MessageType_Cancel,
         MessageType_MessageType_ClearSession,
@@ -1138,6 +1706,238 @@ TEST(Fsm, TypedDataContinuationAndSessionBoundariesAreExplicit) {
   fsm_abort_workflows();
   EXPECT_FALSE(keepkey_before_message_dispatch(
       MessageType_MessageType_EthereumClearSignDefinitionChunk));
+}
+
+// Both loads clear the metadata binding, so a waiting typed-data stream must
+// refuse them before their handlers run, exactly as an EVM tx signer does.
+TEST(Fsm, TypedDataStreamRefusesMetadataAndSignerLoads) {
+  kk_test_board_init();
+  fsm_init();
+  for (auto load : {MessageType_MessageType_EthereumTxMetadata,
+                    MessageType_MessageType_LoadClearsignSigner}) {
+    EthereumSignTypedData start{};
+    std::strcpy(start.primary_type, "Mail");
+    ASSERT_TRUE(eip712_stream_begin(&start, false));
+    ASSERT_EQ(eip712_stream_waiting(), EIP712_WANT_STRUCT);
+    fsm_test_clearLastFailure();
+    EXPECT_FALSE(keepkey_before_message_dispatch(load));
+    EXPECT_EQ(FailureType_Failure_UnexpectedMessage,
+              fsm_test_lastFailureCode());
+    eip712_stream_abort();
+  }
+}
+
+// An ordinary Ping between typed-data acks is answered without ending the
+// stream, so it must not draw home over the review while the stream is live.
+TEST(Fsm, PingDuringTypedDataStreamKeepsTheSigningScreen) {
+  kk_test_board_init();
+  fsm_init();
+  keepkey_user_activity();
+  EthereumSignTypedData start{};
+  std::strcpy(start.primary_type, "Mail");
+  ASSERT_TRUE(eip712_stream_begin(&start, false));
+  leave_home();
+  Ping ping = {};
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+  EXPECT_EQ(eip712_stream_waiting(), EIP712_WANT_STRUCT);
+  EXPECT_EQ(AWAY_FROM_HOME, home_get_state());
+
+  // With no stream waiting, the same Ping does go home.
+  eip712_stream_abort();
+  leave_home();
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+  EXPECT_EQ(AT_HOME, home_get_state());
+}
+
+// The final screen names the action being authorised. A primary type longer
+// than a row (Hyperliquid's are up to 40 characters) is paged, never cut.
+TEST(Fsm, TypedDataFinalScreenShowsTheWholePrimaryType) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  loadAllWallet();
+  const char* primary = "HyperliquidTransaction:ApproveBuilderFee";
+  EthereumTypedDataStructAck domain{};
+  EthereumTypedDataStructAck message{};
+  message.members_count = 1;
+  std::strcpy(message.members[0].name, "nonce");
+  message.members[0].type.data_type =
+      EthereumTypedDataStructAck_EthereumDataType_UINT;
+  message.members[0].type.has_size = true;
+  message.members[0].type.size = 8;
+  ASSERT_TRUE(kkconfirm_preload(10, 0));
+  kkconfirm_capture_start();
+  EthereumSignTypedData start{};
+  std::strcpy(start.primary_type, primary);
+  receiveMessage(MessageType_MessageType_EthereumSignTypedData,
+                 EthereumSignTypedData_fields, &start);
+  for (int step = 0; step < 20 && eip712_stream_waiting() != EIP712_IDLE;
+       step++) {
+    if (eip712_stream_waiting() == EIP712_WANT_STRUCT) {
+      const bool is_domain =
+          std::strcmp(eip712_stream_next()->struct_name, "EIP712Domain") == 0;
+      receiveMessage(MessageType_MessageType_EthereumTypedDataStructAck,
+                     EthereumTypedDataStructAck_fields,
+                     is_domain ? &domain : &message);
+    } else {
+      EthereumTypedDataValueAck value{};
+      value.value.size = 8;
+      value.value.bytes[7] = 1;
+      receiveMessage(MessageType_MessageType_EthereumTypedDataValueAck,
+                     EthereumTypedDataValueAck_fields, &value);
+    }
+  }
+  const std::vector<std::string> bodies = kkconfirm_capture_finish();
+  const std::vector<std::string> titles = kkconfirm_captured_titles();
+  kkconfirm_drain();
+  ASSERT_GE(bodies.size(), 2u);
+  // The leaf, then the final screen's pages; pages are verbatim slices.
+  std::string final_screen;
+  for (size_t i = 1; i < bodies.size(); i++) {
+    EXPECT_EQ(0u, titles[i].rfind("Sign Typed Data", 0)) << titles[i];
+    final_screen += bodies[i];
+  }
+  EXPECT_NE(std::string::npos,
+            final_screen.find(std::string("Sign ") + primary +
+                              " (EMPTY domain)\nfrom 0x"))
+      << final_screen;
+}
+
+// A domain with no member has no screen of its own, so the final screen says
+// it is empty, in the pages it already takes.
+TEST(Fsm, TypedDataFinalScreenFlagsAnEmptyDomain) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  loadAllWallet();
+  EthereumTypedDataStructAck empty{};
+  EthereumTypedDataStructAck named{};
+  named.members_count = 1;
+  std::strcpy(named.members[0].name, "name");
+  named.members[0].type.data_type =
+      EthereumTypedDataStructAck_EthereumDataType_STRING;
+  EthereumTypedDataStructAck message{};
+  message.members_count = 1;
+  std::strcpy(message.members[0].name, "nonce");
+  message.members[0].type.data_type =
+      EthereumTypedDataStructAck_EthereumDataType_UINT;
+  message.members[0].type.has_size = true;
+  message.members[0].type.size = 8;
+  struct Case {
+    const char* primary;
+    const EthereumTypedDataStructAck* domain;
+    size_t leaves;
+    const char* final_screen;
+  };
+  const Case cases[] = {
+      {"Mail", &named, 2, "Sign Mail\nfrom 0x"},
+      {"Mail", &empty, 1, "Sign Mail (EMPTY domain)\nfrom 0x"},
+      {"EIP712Domain", &named, 1, "Sign EIP712Domain (domain only)\nfrom 0x"},
+      {"EIP712Domain", &empty, 0,
+       "Sign EMPTY EIP712Domain (domain only)\nfrom 0x"},
+  };
+  for (const Case& c : cases) {
+    SCOPED_TRACE(c.final_screen);
+    ASSERT_TRUE(kkconfirm_preload(10, 0));
+    kkconfirm_capture_start();
+    EthereumSignTypedData start{};
+    std::strcpy(start.primary_type, c.primary);
+    receiveMessage(MessageType_MessageType_EthereumSignTypedData,
+                   EthereumSignTypedData_fields, &start);
+    for (int step = 0; step < 20 && eip712_stream_waiting() != EIP712_IDLE;
+         step++) {
+      const Eip712Next* next = eip712_stream_next();
+      if (eip712_stream_waiting() == EIP712_WANT_STRUCT) {
+        const bool is_domain =
+            std::strcmp(next->struct_name, "EIP712Domain") == 0;
+        receiveMessage(MessageType_MessageType_EthereumTypedDataStructAck,
+                       EthereumTypedDataStructAck_fields,
+                       is_domain ? c.domain : &message);
+      } else {
+        EthereumTypedDataValueAck value{};
+        if (next->member_path[0] == 0) {
+          value.value.size = 3;
+          std::memcpy(value.value.bytes, "App", 3);
+        } else {
+          value.value.size = 8;
+          value.value.bytes[7] = 1;
+        }
+        receiveMessage(MessageType_MessageType_EthereumTypedDataValueAck,
+                       EthereumTypedDataValueAck_fields, &value);
+      }
+    }
+    const std::vector<std::string> bodies = kkconfirm_capture_finish();
+    kkconfirm_drain();
+    // The leaves, then the final screen: two pages with or without the flag.
+    ASSERT_EQ(bodies.size(), c.leaves + 2);
+    EXPECT_EQ(0u, bodies[c.leaves].rfind(c.final_screen, 0))
+        << bodies[c.leaves];
+  }
+}
+
+// Ping between typed-data acks must not draw home over a live stream.
+TEST(Fsm, PingKeepsAWaitingTypedDataStreamOnScreen) {
+  kk_test_board_init();
+  fsm_init();
+  keepkey_user_activity();  // a fresh deadline; dispatch checks it
+  EthereumSignTypedData start{};
+  std::strcpy(start.primary_type, "Mail");
+  ASSERT_TRUE(eip712_stream_begin(&start, false));
+  leave_home();
+  ASSERT_EQ(AWAY_FROM_HOME, home_get_state());
+  Ping ping = {};
+  ASSERT_TRUE(keepkey_before_message_dispatch(MessageType_MessageType_Ping));
+  fsm_msgPing(&ping);
+  EXPECT_EQ(AWAY_FROM_HOME, home_get_state());
+  EXPECT_EQ(eip712_stream_waiting(), EIP712_WANT_STRUCT);
+  eip712_stream_abort();
+  layoutHomeForced();
+}
+
+// Every ERC-7730 phase is driven by the host between screens, so a Ping in
+// any of them must not draw home over the live workflow.
+TEST(Fsm, PingKeepsALiveErc7730WorkflowOnScreen) {
+  kk_test_board_init();
+  fsm_init();
+  for (auto phase : {ERC7730_WORKFLOW_REPLAY, ERC7730_WORKFLOW_SELECT,
+                     ERC7730_WORKFLOW_FETCH, ERC7730_WORKFLOW_CALLDATA}) {
+    auto* workflow = erc7730_workflow_state();
+    workflow->phase = phase;
+    leave_home();
+    ASSERT_EQ(AWAY_FROM_HOME, home_get_state());
+    Ping ping = {};
+    ASSERT_TRUE(keepkey_before_message_dispatch(MessageType_MessageType_Ping));
+    fsm_msgPing(&ping);
+    EXPECT_EQ(AWAY_FROM_HOME, home_get_state()) << phase;
+    workflow->phase = ERC7730_WORKFLOW_IDLE;
+    layoutHomeForced();
+  }
+}
+
+// A definition chunk refused for AdvancedMode ends the certified workflow
+// (and the typed-data stream it belongs to) instead of leaving it armed.
+TEST(Fsm, Erc7730ChunkRefusedWithoutAdvancedModeEndsTheWorkflow) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;  // storage_init(): the policy table this test sets
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+  for (auto phase : {ERC7730_WORKFLOW_REPLAY, ERC7730_WORKFLOW_SELECT,
+                     ERC7730_WORKFLOW_FETCH}) {
+    EthereumSignTypedData start{};
+    std::strcpy(start.primary_type, "Mail");
+    ASSERT_TRUE(eip712_stream_begin(&start, false));
+    auto* workflow = erc7730_workflow_state();
+    workflow->phase = phase;
+    workflow->typed_data = true;
+    EthereumClearSignDefinitionChunk chunk{};
+    fsm_test_clearLastFailure();
+    fsm_msgEthereumClearSignDefinitionChunk(&chunk);
+    EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+    EXPECT_EQ(ERC7730_WORKFLOW_IDLE, workflow->phase) << phase;
+    EXPECT_EQ(EIP712_IDLE, eip712_stream_waiting()) << phase;
+    EXPECT_FALSE(keepkey_before_message_dispatch(
+        MessageType_MessageType_EthereumClearSignDefinitionChunk));
+  }
 }
 
 TEST_F(AutoLockProgress, EosDataProgressRenewsButEmptyChunksDoNot) {
@@ -1189,8 +1989,8 @@ TEST_F(AutoLockProgress, EosDataProgressRenewsButEmptyChunksDoNot) {
 #endif
 
 // Drive the real protobuf dispatch at the old deadline. Each initial request
-// must buy a fresh interval; polling during the next interval must not.
-TEST_F(AutoLockProgress, ResetEntropyRequestRenewsButPollingDoesNot) {
+// defers the lock for one interval; polling during it must not.
+TEST_F(AutoLockProgress, ResetEntropyRequestDefersButPollingDoesNot) {
   ScopedFlash flash;
   signing_abort();
   storage_reset();
@@ -1219,39 +2019,42 @@ TEST_F(AutoLockProgress, ResetEntropyRequestRenewsButPollingDoesNot) {
 }
 
 #if !BITCOIN_ONLY
-TEST_F(AutoLockProgress, CosmosStartRenewsButPollingDoesNot) {
+// A signer's start defers the idle lock; a GetFeatures poll does not.
+static void expectStartDefersButPollingDoesNot(MessageType type,
+                                               const pb_field_t* fields,
+                                               const void* start,
+                                               bool (*inited)()) {
   ScopedFlash flash;
-  signing_abort();
-  LoadDevice load = {};
-  load.has_mnemonic = true;
-  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
-  storage_loadDevice(&load);
-  storage_commit();
-  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  loadAllWallet();
   leave_home();
   increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  receiveMessage(type, fields, start);
+  ASSERT_TRUE(inited());
+  increment_idle_time(1);
+  toggle_screensaver();
+  ASSERT_TRUE(inited());
+  GetFeatures poll = {};
+  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2);
+  receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
+                 &poll);
+  toggle_screensaver();
+  ASSERT_TRUE(inited());
+  increment_idle_time(1);
+  toggle_screensaver();
+  EXPECT_FALSE(inited());
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+}
+
+TEST_F(AutoLockProgress, CosmosStartDefersButPollingDoesNot) {
   CosmosSignTx start = {};
   start.has_msg_count = true;
   start.msg_count = 2;
   start.has_account_number = start.has_chain_id = start.has_sequence = true;
   std::strcpy(start.chain_id, "chain-1");
   start.has_fee_amount = start.has_gas = true;
-  receiveMessage(MessageType_MessageType_CosmosSignTx, CosmosSignTx_fields,
-                 &start);
-  ASSERT_TRUE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
-  increment_idle_time(1);
-  toggle_screensaver();
-  ASSERT_TRUE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
-  GetFeatures poll = {};
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2);
-  receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
-                 &poll);
-  toggle_screensaver();
-  ASSERT_TRUE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
-  increment_idle_time(1);
-  toggle_screensaver();
-  EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
-  EXPECT_EQ(SCREENSAVER, home_get_state());
+  expectStartDefersButPollingDoesNot(
+      MessageType_MessageType_CosmosSignTx, CosmosSignTx_fields, &start,
+      [] { return tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS); });
 }
 
 // Generic Tendermint is compiled but has no message-map entries. Do not
@@ -1277,120 +2080,45 @@ TEST_F(AutoLockProgress, UnregisteredTendermintCannotRenewTheDeadline) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-TEST_F(AutoLockProgress, OsmosisStartRenewsButPollingDoesNot) {
-  ScopedFlash flash;
-  signing_abort();
-  LoadDevice load = {};
-  load.has_mnemonic = true;
-  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
-  storage_loadDevice(&load);
-  storage_commit();
-  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
-  leave_home();
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+TEST_F(AutoLockProgress, OsmosisStartDefersButPollingDoesNot) {
   OsmosisSignTx start = {};
   start.has_msg_count = true;
   start.msg_count = 2;
   start.has_account_number = start.has_chain_id = start.has_sequence = true;
   std::strcpy(start.chain_id, "chain-1");
   start.has_fee_amount = start.has_gas = true;
-  receiveMessage(MessageType_MessageType_OsmosisSignTx, OsmosisSignTx_fields,
-                 &start);
-  ASSERT_TRUE(osmosis_signingIsInited());
-  increment_idle_time(1);
-  toggle_screensaver();
-  ASSERT_TRUE(osmosis_signingIsInited());
-  GetFeatures poll = {};
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2);
-  receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
-                 &poll);
-  toggle_screensaver();
-  ASSERT_TRUE(osmosis_signingIsInited());
-  increment_idle_time(1);
-  toggle_screensaver();
-  EXPECT_FALSE(osmosis_signingIsInited());
-  EXPECT_EQ(SCREENSAVER, home_get_state());
+  expectStartDefersButPollingDoesNot(MessageType_MessageType_OsmosisSignTx,
+                                     OsmosisSignTx_fields, &start,
+                                     osmosis_signingIsInited);
 }
 
-TEST_F(AutoLockProgress, ThorchainStartRenewsButPollingDoesNot) {
-  ScopedFlash flash;
-  signing_abort();
-  LoadDevice load = {};
-  load.has_mnemonic = true;
-  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
-  storage_loadDevice(&load);
-  storage_commit();
-  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
-  leave_home();
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+TEST_F(AutoLockProgress, ThorchainStartDefersButPollingDoesNot) {
   ThorchainSignTx start = {};
   start.has_msg_count = true;
   start.msg_count = 2;
   start.has_account_number = start.has_chain_id = start.has_sequence = true;
   std::strcpy(start.chain_id, "chain-1");
   start.has_fee_amount = start.has_gas = true;
-  receiveMessage(MessageType_MessageType_ThorchainSignTx,
-                 ThorchainSignTx_fields, &start);
-  ASSERT_TRUE(thorchain_signingIsInited());
-  increment_idle_time(1);
-  toggle_screensaver();
-  ASSERT_TRUE(thorchain_signingIsInited());
-  GetFeatures poll = {};
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2);
-  receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
-                 &poll);
-  toggle_screensaver();
-  ASSERT_TRUE(thorchain_signingIsInited());
-  increment_idle_time(1);
-  toggle_screensaver();
-  EXPECT_FALSE(thorchain_signingIsInited());
-  EXPECT_EQ(SCREENSAVER, home_get_state());
+  expectStartDefersButPollingDoesNot(MessageType_MessageType_ThorchainSignTx,
+                                     ThorchainSignTx_fields, &start,
+                                     thorchain_signingIsInited);
 }
 
-TEST_F(AutoLockProgress, MayachainStartRenewsButPollingDoesNot) {
-  ScopedFlash flash;
-  signing_abort();
-  LoadDevice load = {};
-  load.has_mnemonic = true;
-  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
-  storage_loadDevice(&load);
-  storage_commit();
-  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
-  leave_home();
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+TEST_F(AutoLockProgress, MayachainStartDefersButPollingDoesNot) {
   MayachainSignTx start = {};
   start.has_msg_count = true;
   start.msg_count = 2;
   start.has_account_number = start.has_chain_id = start.has_sequence = true;
   std::strcpy(start.chain_id, "chain-1");
   start.has_fee_amount = start.has_gas = true;
-  receiveMessage(MessageType_MessageType_MayachainSignTx,
-                 MayachainSignTx_fields, &start);
-  ASSERT_TRUE(mayachain_signingIsInited());
-  increment_idle_time(1);
-  toggle_screensaver();
-  ASSERT_TRUE(mayachain_signingIsInited());
-  GetFeatures poll = {};
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2);
-  receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
-                 &poll);
-  toggle_screensaver();
-  ASSERT_TRUE(mayachain_signingIsInited());
-  increment_idle_time(1);
-  toggle_screensaver();
-  EXPECT_FALSE(mayachain_signingIsInited());
-  EXPECT_EQ(SCREENSAVER, home_get_state());
+  expectStartDefersButPollingDoesNot(MessageType_MessageType_MayachainSignTx,
+                                     MayachainSignTx_fields, &start,
+                                     mayachain_signingIsInited);
 }
 
-TEST_F(AutoLockProgress, CosmosContinuationRenewsAndMalformedAckTerminates) {
+TEST_F(AutoLockProgress, CosmosContinuationDefersAndMalformedAckTerminates) {
   ScopedFlash flash;
-  signing_abort();
-  LoadDevice load = {};
-  load.has_mnemonic = true;
-  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
-  storage_loadDevice(&load);
-  storage_commit();
-  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  loadAllWallet();
   CosmosSignTx start = {};
   start.has_msg_count = true;
   start.msg_count = 3;
@@ -1410,7 +2138,10 @@ TEST_F(AutoLockProgress, CosmosContinuationRenewsAndMalformedAckTerminates) {
   ASSERT_TRUE(tendermint_getAddress(&recipient, "cosmos", ack.send.to_address));
   for (int i = 0; i < 2; ++i) {
     ASSERT_TRUE(kkconfirm_preload(1, 0));
-    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+    // No press renews the deadline, so each continuation must land inside the
+    // window its predecessor's progress opened (one delay after it, the
+    // stalled stream is locked at dispatch).
+    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1 - i);
     receiveMessage(MessageType_MessageType_CosmosMsgAck, CosmosMsgAck_fields,
                    &ack);
     ASSERT_EQ(0, kkconfirm_drain());
@@ -1429,15 +2160,9 @@ TEST_F(AutoLockProgress, CosmosContinuationRenewsAndMalformedAckTerminates) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-TEST_F(AutoLockProgress, OsmosisContinuationRenewsAndMalformedAckTerminates) {
+TEST_F(AutoLockProgress, OsmosisContinuationDefersAndMalformedAckTerminates) {
   ScopedFlash flash;
-  signing_abort();
-  LoadDevice load = {};
-  load.has_mnemonic = true;
-  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
-  storage_loadDevice(&load);
-  storage_commit();
-  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  loadAllWallet();
   OsmosisSignTx start = {};
   start.has_msg_count = true;
   start.msg_count = 3;
@@ -1459,7 +2184,10 @@ TEST_F(AutoLockProgress, OsmosisContinuationRenewsAndMalformedAckTerminates) {
   std::strcpy(ack.send.denom, "uosmo");
   for (int i = 0; i < 2; ++i) {
     ASSERT_TRUE(kkconfirm_preload(2, 0));
-    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+    // No press renews the deadline, so each continuation must land inside the
+    // window its predecessor's progress opened (one delay after it, the
+    // stalled stream is locked at dispatch).
+    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1 - i);
     receiveMessage(MessageType_MessageType_OsmosisMsgAck, OsmosisMsgAck_fields,
                    &ack);
     ASSERT_EQ(0, kkconfirm_drain());
@@ -1478,7 +2206,7 @@ TEST_F(AutoLockProgress, OsmosisContinuationRenewsAndMalformedAckTerminates) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-TEST_F(AutoLockProgress, ThorchainContinuationRenewsAndMalformedAckTerminates) {
+TEST_F(AutoLockProgress, ThorchainContinuationDefersAndMalformedAckTerminates) {
   ScopedFlash flash;
   signing_abort();
   LoadDevice load = {};
@@ -1508,7 +2236,10 @@ TEST_F(AutoLockProgress, ThorchainContinuationRenewsAndMalformedAckTerminates) {
   std::strcpy(ack.send.denom, "rune");
   for (int i = 0; i < 2; ++i) {
     ASSERT_TRUE(kkconfirm_preload(2, 0));
-    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+    // No press renews the deadline, so each continuation must land inside the
+    // window its predecessor's progress opened (one delay after it, the
+    // stalled stream is locked at dispatch).
+    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1 - i);
     receiveMessage(MessageType_MessageType_ThorchainMsgAck,
                    ThorchainMsgAck_fields, &ack);
     ASSERT_EQ(0, kkconfirm_drain());
@@ -1527,7 +2258,7 @@ TEST_F(AutoLockProgress, ThorchainContinuationRenewsAndMalformedAckTerminates) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-TEST_F(AutoLockProgress, MayachainContinuationRenewsAndMalformedAckTerminates) {
+TEST_F(AutoLockProgress, MayachainContinuationDefersAndMalformedAckTerminates) {
   ScopedFlash flash;
   signing_abort();
   LoadDevice load = {};
@@ -1557,7 +2288,10 @@ TEST_F(AutoLockProgress, MayachainContinuationRenewsAndMalformedAckTerminates) {
   std::strcpy(ack.send.denom, "cacao");
   for (int i = 0; i < 2; ++i) {
     ASSERT_TRUE(kkconfirm_preload(2, 0));
-    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+    // No press renews the deadline, so each continuation must land inside the
+    // window its predecessor's progress opened (one delay after it, the
+    // stalled stream is locked at dispatch).
+    increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1 - i);
     receiveMessage(MessageType_MessageType_MayachainMsgAck,
                    MayachainMsgAck_fields, &ack);
     ASSERT_EQ(0, kkconfirm_drain());
@@ -1576,36 +2310,14 @@ TEST_F(AutoLockProgress, MayachainContinuationRenewsAndMalformedAckTerminates) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
-TEST_F(AutoLockProgress, EosStartRenewsButPollingDoesNot) {
-  ScopedFlash flash;
-  signing_abort();
-  LoadDevice load = {};
-  load.has_mnemonic = true;
-  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
-  storage_loadDevice(&load);
-  storage_commit();
-  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
-  leave_home();
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+TEST_F(AutoLockProgress, EosStartDefersButPollingDoesNot) {
   EosSignTx start = {};
   start.has_chain_id = start.has_header = start.has_num_actions = true;
   start.chain_id.size = 32;
   start.num_actions = 2;
-  receiveMessage(MessageType_MessageType_EosSignTx, EosSignTx_fields, &start);
-  ASSERT_TRUE(eos_signingIsInited());
-  increment_idle_time(1);
-  toggle_screensaver();
-  ASSERT_TRUE(eos_signingIsInited());
-  GetFeatures poll = {};
-  increment_idle_time(STORAGE_MIN_SCREENSAVER_TIMEOUT - 2);
-  receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
-                 &poll);
-  toggle_screensaver();
-  ASSERT_TRUE(eos_signingIsInited());
-  increment_idle_time(1);
-  toggle_screensaver();
-  EXPECT_FALSE(eos_signingIsInited());
-  EXPECT_EQ(SCREENSAVER, home_get_state());
+  expectStartDefersButPollingDoesNot(MessageType_MessageType_EosSignTx,
+                                     EosSignTx_fields, &start,
+                                     eos_signingIsInited);
 }
 
 #endif
@@ -1745,6 +2457,46 @@ TEST(Fsm, CrossWorkflowAcknowledgementsTerminateTheActiveSigner) {
   EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
 }
 
+// The Tendermint abort only clears state, so the gate itself has to take the
+// aborted transaction's approval screen down. An armed ceremony keeps its own.
+TEST(Fsm, StaleAckTakesTheAbortedSignersScreenDown) {
+  kk_test_board_init();
+  fsm_init();
+  fsm_abort_workflows();
+  layoutHomeForced();
+  keepkey_user_activity();  // or a due auto-lock takes the screen instead
+  HDNode node = {};
+  node.curve = &secp256k1_info;
+
+  TendermintSignTx cosmos = {};
+  cosmos.has_msg_count = true;
+  cosmos.msg_count = 1;
+  cosmos.has_chain_id = true;
+  std::strcpy(cosmos.chain_id, "cosmoshub-4");
+  ASSERT_TRUE(tendermint_signTxInit(&node, &cosmos, sizeof(cosmos), "uatom",
+                                    TENDERMINT_SIGNING_COSMOS));
+  leave_home();  // its last approval screen is still up
+  ASSERT_EQ(AWAY_FROM_HOME, home_get_state());
+
+  TxAck stale = {};
+  stale.has_tx = true;
+  receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &stale);
+  EXPECT_FALSE(tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS));
+  EXPECT_EQ(AT_HOME, home_get_state())
+      << "the aborted transaction is still on screen";
+
+  ASSERT_TRUE(setup_stage(false, "english", "reset", 0, 0, false));
+  setup_arm(SETUP_RESET);
+  leave_home();
+  receiveMessage(MessageType_MessageType_TxAck, TxAck_fields, &stale);
+  EXPECT_TRUE(setup_isArmedAs(SETUP_RESET));
+  EXPECT_EQ(AWAY_FROM_HOME, home_get_state())
+      << "a stale ACK drew home over an armed ceremony";
+
+  setup_abort();
+  layoutHomeForced();
+}
+
 TEST(Fsm, StaleEthereumAckCannotReplaceARecoveryCeremony) {
   kk_test_board_init();
   fsm_init();
@@ -1821,6 +2573,44 @@ TEST(Fsm, Erc7730PreloadEndsAtEverySessionBoundary) {
   erc7730_catalog_clear_preload();
 }
 
+// Without AdvancedMode a definition is accepted only if it verifies as
+// KeepKey-certified, which is known when the last chunk arrives. A chunk the
+// preload refuses before that reports the AdvancedMode failure and discards
+// the partial preload, so a later chunk cannot continue it.
+TEST(Fsm, Erc7730DefinitionRefusedWithoutAdvancedModeClearsPreload) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  LoadDevice load = allLoad();
+  storage_loadDevice(&load);
+  ASSERT_TRUE(storage_isInitialized());
+  const uint8_t head[6] = {'K', '7', '7', '3', 1, 1};
+  const uint8_t length[4] = {0, 0, 1, 0};
+  uint8_t id[32] = {7};
+  uint32_t next = 0;
+  bool complete = false;
+  erc7730_catalog_clear_preload();
+  ASSERT_EQ(erc7730_catalog_preload_chunk(id, 0, 300, head, sizeof(head), &next,
+                                          &complete),
+            ERC7730_CATALOG_MORE);
+
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+  EthereumClearSignDefinition definition{};
+  definition.definition_id.size = sizeof(id);
+  std::memcpy(definition.definition_id.bytes, id, sizeof(id));
+  definition.offset = sizeof(head) + 1;  // out of sequence: refused
+  definition.total_length = 300;
+  definition.data.size = sizeof(length);
+  std::memcpy(definition.data.bytes, length, sizeof(length));
+  fsm_test_clearLastFailure();
+  fsm_msgEthereumClearSignDefinition(&definition);
+  EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+  EXPECT_EQ(erc7730_catalog_preload_chunk(id, sizeof(head), 300, length,
+                                          sizeof(length), &next, &complete),
+            ERC7730_CATALOG_BAD_SEQUENCE);
+  erc7730_catalog_clear_preload();
+}
+
 // Pre-0.8 Solidity masks an address argument's high bytes, so a dirty spender
 // word still grants the allowance. It must not slip past the approval policy
 // into generic signing.
@@ -1860,13 +2650,15 @@ TEST(Fsm, DirtySpenderWordCannotBypassApprovalPolicy) {
   }
 }
 
-TEST(Fsm, PaddedZeroUnlimitedApprovalReachesTheGlobalRefusal) {
-  kk_test_board_init();
-  fsm_init();
-  fsm_test_clearLastFailure();
-  kkconfirm_drain();
-  ASSERT_TRUE(kkconfirm_preload(0, 1));
+namespace {
 
+const uint8_t kUsdc[20] = {0xa0, 0xb8, 0x69, 0x91, 0xc6, 0x21, 0x8b,
+                           0x36, 0xc1, 0xd1, 0x9d, 0x4a, 0x2e, 0x9e,
+                           0xb0, 0xce, 0x36, 0x06, 0xeb, 0x48};
+// The spender is 0x2222...2222; checksummed, as the warning shows it.
+const char kSpender[] = "0x2222222222222222222222222222222222222222";
+
+EthereumSignTx usdcApproval(uint8_t amount_byte) {
   EthereumSignTx msg = {};
   msg.has_chain_id = true;
   msg.chain_id = 1;
@@ -1875,33 +2667,113 @@ TEST(Fsm, PaddedZeroUnlimitedApprovalReachesTheGlobalRefusal) {
   msg.gas_price.bytes[0] = msg.gas_limit.bytes[0] = 1;
   msg.has_to = true;
   msg.to.size = 20;
-  msg.to.bytes[0] = 1;
+  memcpy(msg.to.bytes, kUsdc, 20);
+  msg.has_data_length = msg.has_data_initial_chunk = true;
+  msg.data_length = msg.data_initial_chunk.size = 68;
+  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
+  memset(msg.data_initial_chunk.bytes + 16, 0x22, 20);
+  memset(msg.data_initial_chunk.bytes + 36, amount_byte, 32);
+  return msg;
+}
+
+struct Shown {
+  std::vector<std::string> titles, bodies;
+};
+
+// Runs signing with `yes` accepted screens, then rejects the next.
+Shown signApproval(EthereumSignTx* msg, int yes) {
+  kk_test_board_init();
+  fsm_init();
+  fsm_test_clearLastFailure();
+  kkconfirm_drain();
+  EXPECT_TRUE(kkconfirm_preload(yes, 1));
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  EXPECT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+  kkconfirm_capture_start();
+  ethereum_signing_init(msg, &node, true);
+  Shown shown;
+  shown.bodies = kkconfirm_capture_finish();
+  shown.titles = kkconfirm_captured_titles();
+  kkconfirm_drain();
+  return shown;
+}
+
+}  // namespace
+
+// Owner decision 2026-10-07: an unlimited approve is signed, never refused,
+// after a warning that names the full spender and the token. The warning is
+// the first screen, and a non-canonical zero value does not change that.
+TEST(Fsm, UnlimitedApprovalSignsAfterTheWarning) {
+  EthereumSignTx msg = usdcApproval(0xff);
   msg.has_value = true;
   msg.value.size = 32;  // Non-canonical spelling of zero.
-  msg.has_data_length = msg.has_data_initial_chunk = true;
-  msg.data_length = msg.data_initial_chunk.size = 68;
-  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
-  memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
-
-  HDNode node = {};
-  const uint8_t seed[32] = {1};
-  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
-  ethereum_signing_init(&msg, &node, false);
-
+  Shown shown = signApproval(&msg, 3);
+  EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
+      << fsm_test_lastFailureMessage();
   EXPECT_FALSE(ethereum_signing_isInProgress());
-  EXPECT_EQ(0u, msg.value.size)
-      << "the global ERC-20 classifier never saw canonical zero";
-  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
-  EXPECT_EQ(2, kkconfirm_drain())
-      << "a generic-signing confirmation ran before the global refusal";
+  ASSERT_EQ(3u, shown.titles.size()) << ::testing::PrintToString(shown.titles);
+  EXPECT_EQ("UNLIMITED approval", shown.titles[0]);
+  EXPECT_EQ(std::string("Allow ") + kSpender + " to spend ALL your USDC",
+            shown.bodies[0]);
+  EXPECT_EQ("Approve", shown.titles[1]);
+  EXPECT_EQ(std::string("Unlock full USDC balance for withdrawal by ") +
+                kSpender + "?",
+            shown.bodies[1]);
+  EXPECT_EQ("Transaction", shown.titles[2]);
 }
-TEST(Fsm, NativeValueCannotBypassUnlimitedApprovalRefusal) {
-  kk_test_board_init();
-  fsm_init();
-  fsm_test_clearLastFailure();
-  kkconfirm_drain();
-  ASSERT_TRUE(kkconfirm_preload(0, 1));
 
+TEST(Fsm, DecliningTheUnlimitedWarningSignsNothing) {
+  EthereumSignTx msg = usdcApproval(0xff);
+  Shown shown = signApproval(&msg, 0);
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  ASSERT_EQ(1u, shown.titles.size());
+  EXPECT_EQ("UNLIMITED approval", shown.titles[0]);
+}
+
+// increaseAllowance(spender, 2^256-1) grants the same allowance as an
+// unlimited approve, so it gets the same warning, first. A finite one does not.
+TEST(Fsm, UnlimitedIncreaseAllowanceShowsTheWarningFirst) {
+  EthereumSignTx msg = usdcApproval(0xff);
+  memcpy(msg.data_initial_chunk.bytes, "\x39\x50\x93\x51", 4);
+  Shown shown = signApproval(&msg, 0);
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  ASSERT_EQ(1u, shown.titles.size());
+  EXPECT_EQ("UNLIMITED approval", shown.titles[0]);
+  EXPECT_EQ(std::string("Allow ") + kSpender + " to spend ALL your USDC",
+            shown.bodies[0]);
+
+  msg = usdcApproval(0x00);
+  memcpy(msg.data_initial_chunk.bytes, "\x39\x50\x93\x51", 4);
+  msg.data_initial_chunk.bytes[67] = 1;
+  shown = signApproval(&msg, 0);
+  EXPECT_EQ(0, std::count(shown.titles.begin(), shown.titles.end(),
+                          "UNLIMITED approval"));
+}
+
+// Control: a finite approve has no warning and reads as before.
+TEST(Fsm, FiniteApprovalHasNoUnlimitedWarning) {
+  EthereumSignTx msg = usdcApproval(0x00);
+  msg.data_initial_chunk.bytes[67] = 1;
+  Shown shown = signApproval(&msg, 3);
+  EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
+      << fsm_test_lastFailureMessage();
+  EXPECT_EQ(
+      (std::vector<std::string>{"Approve 1/2", "Approve 2/2", "Transaction"}),
+      shown.titles);
+  const std::string review = shown.bodies[0] + shown.bodies[1];
+  EXPECT_EQ(0u, review.find("Approve withdrawal of up to 0.000001 USDC by"))
+      << review;
+  EXPECT_NE(std::string::npos, review.find(kSpender)) << review;
+}
+
+// A THORChain deposit of an unlisted token shows the raw amount. The largest
+// one, 2^256 - 1 (78 digits), renders in full and the transaction signs.
+TEST(Fsm, ThorchainDepositOfAnUnknownTokenSignsTheLargestAmount) {
+  static const char kMemo[] = "=:ETH.ETH:0x41e5560054824ea6b0732e656e3ad64e20e94e45:0";
+  const size_t memo_len = sizeof(kMemo) - 1;
   EthereumSignTx msg = {};
   msg.has_chain_id = true;
   msg.chain_id = 1;
@@ -1910,26 +2782,38 @@ TEST(Fsm, NativeValueCannotBypassUnlimitedApprovalRefusal) {
   msg.gas_price.bytes[0] = msg.gas_limit.bytes[0] = 1;
   msg.has_to = true;
   msg.to.size = 20;
-  msg.to.bytes[0] = 1;
-  msg.has_value = true;
-  msg.value.size = 1;
-  msg.value.bytes[0] = 1;  // A payable token may accept value with approve.
+  for (size_t i = 0; i < 20; i++) {
+    const char byte[3] = {THOR_ROUTER[2 * i], THOR_ROUTER[2 * i + 1], 0};
+    msg.to.bytes[i] = (uint8_t)strtoul(byte, nullptr, 16);
+  }
+  uint8_t* d = msg.data_initial_chunk.bytes;
+  memcpy(d, THOR_SELECTOR_DEPOSIT, 4);
+  memset(d + 4 + 12, 0x11, 20);       // vault
+  memset(d + 4 + 32 + 12, 0x42, 20);  // an unlisted token
+  memset(d + 4 + 2 * 32, 0xff, 32);   // amount 2^256 - 1
+  d[4 + 3 * 32 + 31] = 0x80;          // memo offset
+  d[4 + 4 * 32 + 31] = (uint8_t)memo_len;
+  memcpy(d + 4 + 5 * 32, kMemo, memo_len);
   msg.has_data_length = msg.has_data_initial_chunk = true;
-  msg.data_length = msg.data_initial_chunk.size = 68;
-  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
-  memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
+  msg.data_length = msg.data_initial_chunk.size =
+      4 + 5 * 32 + ((memo_len + 31) / 32) * 32;
+  ASSERT_EQ(UnknownToken, tokenByChainAddress(1, d + 4 + 32 + 12));
 
-  HDNode node = {};
-  const uint8_t seed[32] = {1};
-  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
-  ethereum_signing_init(&msg, &node, false);
-
+  Shown shown = signApproval(&msg, 20);
+  EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
+      << fsm_test_lastFailureMessage();
   EXPECT_FALSE(ethereum_signing_isInProgress());
-  EXPECT_EQ(1u, msg.value.size);
-  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
-  EXPECT_EQ(2, kkconfirm_drain())
-      << "a generic-signing confirmation ran before the global refusal";
+  ASSERT_FALSE(shown.titles.empty());
+  EXPECT_EQ("Transaction", shown.titles.back())
+      << ::testing::PrintToString(shown.titles);
+  std::string pages;  // A long body is paged; nothing is cut.
+  for (const std::string& page : shown.bodies) pages += page;
+  EXPECT_NE(std::string::npos,
+            pages.find("amount 115792089237316195423570985008687907853269984665"
+                       "640564039457584007913129639935 unformatted"))
+      << pages;
 }
+
 /* SRS R-1.4 at the signing path: a certified claim that cannot be honoured
  * (here, an envelope whose certificate is garbage) is refused before any
  * screen -- not downgraded to the raw review. The no-claim control signs the
@@ -1982,7 +2866,119 @@ TEST(Fsm, FailedCertifiedClaimIsRefusedBeforeAnyScreen) {
     }
   }
 }
-TEST(Fsm, TrailingCalldataCannotBypassUnlimitedApprovalRefusal) {
+
+// An unknown token is named by its full contract address. The body is
+// longer than one page, so confirm() pages it; nothing is cut.
+TEST(Fsm, UnlimitedApprovalOfAnUnknownTokenNamesItsContract) {
+  EthereumSignTx msg = usdcApproval(0xff);
+  memset(msg.to.bytes, 0x33, 20);
+  Shown shown = signApproval(&msg, 6);
+  ASSERT_LE(3u, shown.titles.size()) << ::testing::PrintToString(shown.titles);
+  EXPECT_EQ("UNLIMITED approval 1/2", shown.titles[0]);
+  EXPECT_EQ("UNLIMITED approval 2/2", shown.titles[1]);
+  EXPECT_EQ(0u, shown.bodies[0].find(std::string("Allow ") + kSpender));
+  EXPECT_EQ(std::string("Allow ") + kSpender +
+                " to spend ALL your 0x3333333333333333333333333333333333333333",
+            shown.bodies[0] + shown.bodies[1]);
+  // The unknown-token review then shows UNLIMITED, not a 78-digit number.
+  std::string review;
+  for (size_t i = 2; i < shown.titles.size(); i++)
+    if (shown.titles[i].rfind("Approve", 0) == 0) review += shown.bodies[i];
+  EXPECT_NE(std::string::npos, review.find("withdraw up to UNLIMITED?"))
+      << review;
+}
+
+// Native value or trailing calldata make it no standard approve, but the
+// warning still comes first, before any generic or blind-signing screen.
+TEST(Fsm, NonStandardUnlimitedApprovalShowsTheWarningFirst) {
+  for (bool trailing : {false, true}) {
+    EthereumSignTx msg = usdcApproval(0xff);
+    if (trailing) {
+      msg.data_length = msg.data_initial_chunk.size = 69;
+    } else {
+      msg.has_value = true;
+      msg.value.size = 1;
+      msg.value.bytes[0] = 1;  // A payable token may accept value.
+    }
+    Shown shown = signApproval(&msg, 0);
+    EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+    ASSERT_EQ(1u, shown.titles.size()) << trailing;
+    EXPECT_EQ("UNLIMITED approval", shown.titles[0]) << trailing;
+  }
+}
+TEST(Fsm, PaddedZeroUnlimitedApprovalIsReviewedNotSigned) {
+  kk_test_board_init();
+  fsm_init();
+  fsm_test_clearLastFailure();
+  kkconfirm_drain();
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+
+  EthereumSignTx msg = {};
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.has_gas_price = msg.has_gas_limit = true;
+  msg.gas_price.size = msg.gas_limit.size = 1;
+  msg.gas_price.bytes[0] = msg.gas_limit.bytes[0] = 1;
+  msg.has_to = true;
+  msg.to.size = 20;
+  msg.to.bytes[0] = 1;
+  msg.has_value = true;
+  msg.value.size = 32;  // Non-canonical spelling of zero.
+  msg.has_data_length = msg.has_data_initial_chunk = true;
+  msg.data_length = msg.data_initial_chunk.size = 68;
+  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
+  memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
+
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+  ethereum_signing_init(&msg, &node, false);
+
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  EXPECT_EQ(0u, msg.value.size)
+      << "the global ERC-20 classifier never saw canonical zero";
+  // Unlimited is reviewed, not refused (owner policy 2026-10-03): the first
+  // review screen consumed the preloaded decline, and nothing was signed.
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_EQ(0, kkconfirm_drain()) << "the approval was never reviewed";
+}
+TEST(Fsm, NativeValueUnlimitedApprovalIsReviewedNotSigned) {
+  kk_test_board_init();
+  fsm_init();
+  fsm_test_clearLastFailure();
+  kkconfirm_drain();
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+
+  EthereumSignTx msg = {};
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.has_gas_price = msg.has_gas_limit = true;
+  msg.gas_price.size = msg.gas_limit.size = 1;
+  msg.gas_price.bytes[0] = msg.gas_limit.bytes[0] = 1;
+  msg.has_to = true;
+  msg.to.size = 20;
+  msg.to.bytes[0] = 1;
+  msg.has_value = true;
+  msg.value.size = 1;
+  msg.value.bytes[0] = 1;  // A payable token may accept value with approve.
+  msg.has_data_length = msg.has_data_initial_chunk = true;
+  msg.data_length = msg.data_initial_chunk.size = 68;
+  memcpy(msg.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
+  memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
+
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+  ethereum_signing_init(&msg, &node, false);
+
+  EXPECT_FALSE(ethereum_signing_isInProgress());
+  EXPECT_EQ(1u, msg.value.size);
+  // Unlimited is reviewed, not refused (owner policy 2026-10-03): the first
+  // review screen consumed the preloaded decline, and nothing was signed.
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_EQ(0, kkconfirm_drain()) << "the approval was never reviewed";
+}
+TEST(Fsm, TrailingCalldataUnlimitedApprovalIsReviewedNotSigned) {
   kk_test_board_init();
   fsm_init();
   fsm_test_clearLastFailure();
@@ -2013,9 +3009,10 @@ TEST(Fsm, TrailingCalldataCannotBypassUnlimitedApprovalRefusal) {
 
   EXPECT_FALSE(ethereum_signing_isInProgress());
   EXPECT_EQ(1u, msg.value.size);
+  // Unlimited is reviewed, not refused (owner policy 2026-10-03): the first
+  // review screen consumed the preloaded decline, and nothing was signed.
   EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
-  EXPECT_EQ(2, kkconfirm_drain())
-      << "a generic-signing confirmation ran before the global refusal";
+  EXPECT_EQ(0, kkconfirm_drain()) << "the approval was never reviewed";
 }
 TEST(Fsm, SplitCalldataCannotBypassUnlimitedApprovalRefusal) {
   for (size_t initial : {1u, 2u, 3u, 4u, 16u, 67u}) {
@@ -2054,6 +3051,226 @@ TEST(Fsm, SplitCalldataCannotBypassUnlimitedApprovalRefusal) {
     EXPECT_EQ(2, kkconfirm_drain())
         << "a generic-signing confirmation ran before the global refusal";
   }
+}
+
+/* Address-book ClearSign through the real USB dispatch: EthereumTxMetadata
+ * carrying the vault's KKABPRF1 proof, then EthereumSignTx, as KeepKey Desktop
+ * sends them. Vectors are signed by the "all" wallet's attestor key. */
+#include "contact_book_vectors.h"
+namespace {
+std::vector<uint8_t> contactHex(const char* value) {
+  std::vector<uint8_t> out;
+  for (size_t i = 0; value[i] && value[i + 1]; i += 2) {
+    unsigned byte = 0;
+    sscanf(value + i, "%2x", &byte);
+    out.push_back(static_cast<uint8_t>(byte));
+  }
+  return out;
+}
+
+const char kAliceChecksum[] = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+
+void sendContactProof(const char* proof) {
+  const auto bytes = contactHex(proof);
+  EthereumTxMetadata meta = {};
+  meta.has_signed_payload = true;
+  meta.signed_payload.size = bytes.size();
+  std::memcpy(meta.signed_payload.bytes, bytes.data(), bytes.size());
+  meta.has_metadata_version = true;  // hdwallet always writes it (as 0)
+  receiveMessage(MessageType_MessageType_EthereumTxMetadata,
+                 EthereumTxMetadata_fields, &meta);
+}
+
+EthereumSignTx contactTx(const uint8_t to[20]) {
+  EthereumSignTx tx = {};
+  tx.address_n_count = 5;
+  const uint32_t path[5] = {0x8000002c, 0x8000003c, 0x80000000, 0, 0};
+  std::memcpy(tx.address_n, path, sizeof(path));
+  tx.has_chain_id = true;
+  tx.chain_id = 1;
+  tx.has_nonce = tx.has_gas_price = tx.has_gas_limit = true;
+  tx.nonce.size = tx.gas_price.size = tx.gas_limit.size = 1;
+  tx.gas_price.bytes[0] = tx.gas_limit.bytes[0] = 1;
+  tx.has_to = true;
+  tx.to.size = 20;
+  std::memcpy(tx.to.bytes, to, 20);
+  tx.has_value = true;
+  tx.value.size = 8;
+  const uint8_t one_eth[8] = {0x0d, 0xe0, 0xb6, 0xb3, 0xa7, 0x64, 0, 0};
+  std::memcpy(tx.value.bytes, one_eth, 8);
+  return tx;
+}
+
+/* Runs `tx` through dispatch, accepting `yes` screens and rejecting the next;
+ * returns the bodies shown. */
+std::vector<std::string> contactReview(const EthereumSignTx& tx, int yes) {
+  fsm_test_clearLastFailure();
+  kkconfirm_drain();
+  EXPECT_TRUE(kkconfirm_preload(yes, 1));
+  kkconfirm_capture_start();
+  receiveMessage(MessageType_MessageType_EthereumSignTx, EthereumSignTx_fields,
+                 &tx);
+  auto screens = kkconfirm_capture_finish();
+  EXPECT_EQ(0, kkconfirm_drain());
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  return screens;
+}
+
+class ContactBookSigning : public ::testing::Test {
+ protected:
+  ScopedFlash flash;
+  std::vector<uint8_t> alice = contactHex(kAliceChecksum + 2);
+  void SetUp() override {
+    kk_test_board_init();
+    fsm_init();
+    signing_abort();
+    storage_reset();
+    storage_setMnemonic("all all all all all all all all all all all all");
+    ASSERT_TRUE(storage_isInitialized());
+    ASSERT_FALSE(storage_isPolicyEnabled("AdvancedMode"));
+  }
+  void TearDown() override { contact_book_clear(); }
+};
+}  // namespace
+
+TEST_F(ContactBookSigning, LabelsAPlainSendThenShowsTheAddress) {
+  sendContactProof(PROOF3_0);
+  ASSERT_STREQ("Alice", contact_book_label()) << "no AdvancedMode needed";
+
+  auto screens = contactReview(contactTx(alice.data()), 2);
+  ASSERT_EQ(3u, screens.size());
+  EXPECT_EQ("Send 1 ETH to Alice", screens[0]);
+  EXPECT_EQ(kAliceChecksum, screens[1]);
+  EXPECT_EQ(nullptr, contact_book_label());
+
+  /* One proof, one request: the next send shows the address. */
+  screens = contactReview(contactTx(alice.data()), 0);
+  ASSERT_EQ(1u, screens.size());
+  EXPECT_EQ(std::string("Send 1 ETH to ") + kAliceChecksum, screens[0]);
+}
+
+TEST_F(ContactBookSigning, LabelsAKnownTokenTransferRecipient) {
+  static const uint8_t usdc[20] = {0xa0, 0xb8, 0x69, 0x91, 0xc6, 0x21, 0x8b,
+                                   0x36, 0xc1, 0xd1, 0x9d, 0x4a, 0x2e, 0x9e,
+                                   0xb0, 0xce, 0x36, 0x06, 0xeb, 0x48};
+  EthereumSignTx tx = contactTx(usdc);
+  tx.value.size = 0;
+  tx.has_data_length = tx.has_data_initial_chunk = true;
+  tx.data_length = tx.data_initial_chunk.size = 68;
+  std::memcpy(tx.data_initial_chunk.bytes, "\xa9\x05\x9c\xbb", 4);
+  std::memcpy(tx.data_initial_chunk.bytes + 16, alice.data(), 20);
+  tx.data_initial_chunk.bytes[67] = 1;
+
+  sendContactProof(PROOF3_0);
+  auto screens = contactReview(tx, 1);
+  ASSERT_EQ(2u, screens.size());
+  EXPECT_EQ("Send 0.000001 USDC to Alice", screens[0]);
+  EXPECT_EQ(kAliceChecksum, screens[1]);
+}
+
+/* A label is for a plain recipient only: a call with calldata to the same
+ * address keeps the raw address and the AdvancedMode gate. */
+TEST_F(ContactBookSigning, NeverLabelsAContractCall) {
+  EthereumSignTx tx = contactTx(alice.data());
+  tx.has_data_length = tx.has_data_initial_chunk = true;
+  tx.data_length = tx.data_initial_chunk.size = 4;
+  std::memcpy(tx.data_initial_chunk.bytes, "\xde\xad\xbe\xef", 4);
+
+  sendContactProof(PROOF3_0);
+  auto screens = contactReview(tx, 0);
+  ASSERT_EQ(1u, screens.size());
+  EXPECT_EQ(std::string("Send 1 ETH to ") + kAliceChecksum, screens[0]);
+}
+
+/* One metadata message per transaction, the last one wins, so a contact
+ * label never coexists with a contract description, certified or not. */
+TEST_F(ContactBookSigning, ContactAndContractMetadataReplaceEachOther) {
+  sendContactProof(PROOF3_0);
+  ASSERT_STREQ("Alice", contact_book_label());
+
+  EthereumTxMetadata envelope = {};
+  envelope.has_signed_payload = envelope.has_key_id = true;
+  envelope.key_id = METADATA_KEYID_DELEGATE;
+  envelope.signed_payload.size = 1 + 139 + 80;
+  envelope.signed_payload.bytes[0] = METADATA_VERSION_CERTIFIED;
+  receiveMessage(MessageType_MessageType_EthereumTxMetadata,
+                 EthereumTxMetadata_fields, &envelope);
+  EXPECT_EQ(nullptr, contact_book_label());
+  ASSERT_TRUE(signed_metadata_certified_claimed());
+
+  sendContactProof(PROOF3_0);
+  EXPECT_STREQ("Alice", contact_book_label());
+  EXPECT_FALSE(signed_metadata_certified_claimed());
+  EXPECT_FALSE(signed_metadata_available());
+}
+
+TEST_F(ContactBookSigning, AnotherWalletsCertificationIsRefused) {
+  sendContactProof(PROOF3_0_OTHER_KEY);
+  EXPECT_EQ(nullptr, contact_book_label());
+  auto screens = contactReview(contactTx(alice.data()), 0);
+  ASSERT_EQ(1u, screens.size());
+  EXPECT_EQ(std::string("Send 1 ETH to ") + kAliceChecksum, screens[0]);
+}
+
+TEST_F(ContactBookSigning, OtherRequestsDropTheProof) {
+  sendContactProof(PROOF3_0);
+  Ping ping = {};
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+  EXPECT_STREQ("Alice", contact_book_label()) << "status polls keep it";
+  Cancel cancel = {};
+  receiveMessage(MessageType_MessageType_Cancel, Cancel_fields, &cancel);
+  EXPECT_EQ(nullptr, contact_book_label());
+}
+
+/* Certification needs no AdvancedMode and shows every contact before the
+ * root is signed. The last screen is declined, so nothing is signed here. */
+TEST_F(ContactBookSigning, CertificationReviewsEveryContact) {
+  const auto request = contactHex(REQ3);
+  ClearsignAttestorSign sign = {};
+  sign.has_payload = true;
+  sign.payload.size = request.size();
+  std::memcpy(sign.payload.bytes, request.data(), request.size());
+
+  fsm_test_clearLastFailure();
+  kkconfirm_drain();
+  ASSERT_TRUE(kkconfirm_preload(6, 1));
+  kkconfirm_capture_start();
+  receiveMessage(MessageType_MessageType_ClearsignAttestorSign,
+                 ClearsignAttestorSign_fields, &sign);
+  const auto screens = kkconfirm_capture_finish();
+  EXPECT_EQ(0, kkconfirm_drain());
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  const std::vector<std::string> expected = {
+      "Approve 3 contacts?\nRevision 7",
+      "Alice\neip155:1",
+      kAliceChecksum,
+      "Bob Base\neip155:8453",
+      "0x2222222222222222222222222222222222222222",
+      "Carol\neip155:1",
+      "0x3333333333333333333333333333333333333333"};
+  EXPECT_EQ(expected, screens);
+
+  /* More than 16 contacts is refused before any screen. */
+  const auto too_many = contactHex(REQ17);
+  sign.payload.size = too_many.size();
+  std::memcpy(sign.payload.bytes, too_many.data(), too_many.size());
+  fsm_test_clearLastFailure();
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  receiveMessage(MessageType_MessageType_ClearsignAttestorSign,
+                 ClearsignAttestorSign_fields, &sign);
+  EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
+/* Verified against this session's attestor key: a lock or a passphrase change
+ * ends it. */
+TEST(Fsm, SessionClearDropsTheContactProof) {
+  const auto proof = contactHex(PROOF3_0);
+  const auto key = contactHex(ATTESTOR_PUBKEY_ALL);
+  ASSERT_TRUE(
+      contact_book_process_proof(proof.data(), proof.size(), key.data()));
+  session_clear(/*clear_pin=*/true);
+  EXPECT_EQ(nullptr, contact_book_label());
 }
 #endif
 
@@ -2385,6 +3602,94 @@ TEST(DiceCeremonyPrivacy, AbortAtEveryPhaseWipesAndAllowsOrdinaryRestart) {
   }
 }
 
+// Gated tests key on Features.capabilities: one that stops being reported
+// turns its tests into accepted skips. Dropping a capability therefore has to
+// be a visible edit here. A block that adds a capability appends it.
+TEST(Fsm, FeaturesReportExactlyTheStagedCapabilities) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  fsm_msgGetFeatures(nullptr);
+  size_t size = 0;
+  Features features;
+  ASSERT_GE((fsm_test_responseArena(&size), size), sizeof(features));
+  std::memcpy(&features, fsm_test_responseArena(&size), sizeof(features));
+  const std::vector<Features_Capability> expected = {
+      Features_Capability_CAPABILITY_ENTROPY_AUDIT_BUDGET,
+      Features_Capability_CAPABILITY_PROMPT_WORKFLOW_UNWIND,
+      Features_Capability_CAPABILITY_PROTECTED_PING_PRESENCE,
+      Features_Capability_CAPABILITY_SAFE_RESET_CEREMONY,
+      Features_Capability_CAPABILITY_SESSION_TRUST_LIFETIME,
+#if !BITCOIN_ONLY
+      Features_Capability_CAPABILITY_LEGACY_EVM_ROUTER_SIGNING,
+      Features_Capability_CAPABILITY_THOR_DEPOSIT_REVIEW,
+      Features_Capability_CAPABILITY_EVM_MAX_AMOUNT_REVIEW,
+      Features_Capability_CAPABILITY_EVM_UNKNOWN_TOKEN_REVIEW,
+      Features_Capability_CAPABILITY_EVM_TX_METADATA,
+      Features_Capability_CAPABILITY_ERC20_UNLIMITED_APPROVE_REVIEW,
+      Features_Capability_CAPABILITY_ERC20_UNLIMITED_PERMIT_REVIEW,
+      Features_Capability_CAPABILITY_EIP712_CHUNKED_VALUES,
+      Features_Capability_CAPABILITY_ERC7730_RUNTIME_REVIEW,
+      Features_Capability_CAPABILITY_OSMOSIS_WIRE_GUARDS,
+      Features_Capability_CAPABILITY_RIPPLE_MEMO_POLICY,
+      Features_Capability_CAPABILITY_HIVE_RELEASE_REVIEW,
+      Features_Capability_CAPABILITY_SOLANA_RUNTIME_REVIEW,
+      Features_Capability_CAPABILITY_MAYA_SINGLE_MESSAGE,
+      Features_Capability_CAPABILITY_TENDERMINT_PROGRESS,
+      Features_Capability_CAPABILITY_TRON_TRC20_REVIEW,
+      Features_Capability_CAPABILITY_SOLANA_LUT_ATTESTATION,
+      Features_Capability_CAPABILITY_EVM_CERTIFIED_INTENT,
+      Features_Capability_CAPABILITY_PERMIT2_REVIEW,
+      Features_Capability_CAPABILITY_SOLANA_CERTIFIED_REVIEW,
+#endif
+  };
+  EXPECT_EQ(expected, std::vector<Features_Capability>(
+                          features.capabilities,
+                          features.capabilities + features.capabilities_count));
+}
+
+// DebugLinkGetState is also serviced inside the PIN, passphrase and confirm
+// waits. The suspended outer handler may already hold its pending response in
+// the shared RESP_INIT arena, so the debug reply must not be built there.
+TEST(Fsm, DebugLinkGetStateLeavesPendingResponseIntact) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  size_t size = 0;
+  uint8_t* arena = fsm_test_responseArena(&size);
+  ASSERT_NE(nullptr, arena);
+  ASSERT_GT(size, 0u);
+  std::memset(arena, 0x5a, size);
+  DebugLinkGetState get = {};
+  fsm_msgDebugLinkGetState(&get);
+  for (size_t i = 0; i < size; ++i) ASSERT_EQ(0x5a, arena[i]) << "offset " << i;
+}
+
+// FlashDump arrives on the debug endpoint, so its private-display refusal must
+// be answered there, without memory; a normal-channel Failure leaves the debug
+// caller waiting.
+TEST(Fsm, PrivateDisplayFlashDumpRefusalAnswersOnDebugChannel) {
+  ASSERT_TRUE(kkconfirm_openDebugPeer());
+  DebugLinkFlashDump dump = {};
+  dump.has_address = dump.has_length = true;
+  dump.address = 0x20000000;
+  dump.length = 32;
+  bip85_set_private_display(true);
+  fsm_test_clearLastFailure();
+  fsm_msgDebugLinkFlashDump(&dump);
+  bip85_set_private_display(false);
+  EXPECT_EQ(FailureType_Failure_UnexpectedMessage, fsm_test_lastFailureCode());
+
+  // One frame: an empty DebugLinkFlashDumpResponse, i.e. no memory bytes.
+  uint8_t frame[64] = {};
+  ASSERT_TRUE(kkconfirm_readDebugFrame(frame));
+  EXPECT_EQ('#', frame[1]);
+  EXPECT_EQ('#', frame[2]);
+  EXPECT_EQ(MessageType_MessageType_DebugLinkFlashDumpResponse,
+            (frame[3] << 8) | frame[4]);
+  EXPECT_EQ(0, frame[5] | frame[6] | frame[7] | frame[8]);
+}
+
 TEST(DiceCeremonyPrivacy, AbortClearsCanvasBeforeDiagnosticsResume) {
   kk_test_board_init();
   fsm_init();
@@ -2466,3 +3771,129 @@ TEST(Fsm, LockedStorageRefusesResetAndSetupCommitWithoutChangingFlash) {
     EXPECT_EQ(before, flash.bytes);
   }
 }
+
+// 7.14.3: every settings handler refuses a locked wallet before asking for a
+// button press. firmware-unit maps no flash (see ScopedFlash), so the locked
+// image is a scratch one instead of setup()'s global mapping.
+TEST(Fsm, BitcoinOnlyLockRefusesSettingsHandlersBeforeAnyConfirm) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+
+  flash_erase_word(FLASH_STORAGE1);
+  flash_erase_word(FLASH_STORAGE2);
+  flash_erase_word(FLASH_STORAGE3);
+#if BITCOIN_ONLY
+  // In-band but NEWER than this build understands -- the only way a
+  // bitcoin-only image reaches the same lock.
+  const uint32_t version = STORAGE_VERSION_BTC_ONLY + 1;
+#else
+  const uint32_t version = STORAGE_VERSION_BTC_ONLY;
+#endif
+  ASSERT_TRUE(flash_write(FLASH_STORAGE1, 0, STORAGE_MAGIC_LEN,
+                          (const uint8_t*)STORAGE_MAGIC_STR));
+  // Offset 44: the version word, immediately after the 44-byte Metadata.
+  ASSERT_TRUE(flash_write(FLASH_STORAGE1, 44, sizeof(version),
+                          (const uint8_t*)&version));
+  storage_init();
+  ASSERT_TRUE(storage_isBitcoinOnlyLocked());
+  ASSERT_FALSE(storage_isInitialized());
+
+  ApplyPolicies policies = {};
+  policies.policy_count = 1;
+  policies.policy[0].has_policy_name = true;
+  std::strcpy(policies.policy[0].policy_name, "AdvancedMode");
+  policies.policy[0].has_enabled = true;
+  policies.policy[0].enabled = true;
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  fsm_msgApplyPolicies(&policies);
+  EXPECT_EQ(0, kkconfirm_drain())
+      << "ApplyPolicies asked for a button press it could never persist";
+  EXPECT_FALSE(storage_isPolicyEnabled("AdvancedMode"))
+      << "the policy changed in RAM only, so this boot disagrees with flash";
+
+  ApplySettings settings = {};
+  settings.has_label = true;
+  std::strcpy(settings.label, "locked");
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  fsm_msgApplySettings(&settings);
+  EXPECT_EQ(0, kkconfirm_drain())
+      << "ApplySettings asked for a button press it could never persist";
+
+  ChangePin pin = {};
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  fsm_msgChangePin(&pin);
+  EXPECT_EQ(0, kkconfirm_drain())
+      << "ChangePin ran the Create PIN ceremony on a device it cannot write";
+
+  // Authenticator account changes persist too; storage_commit() would drop
+  // them silently, so the command must be refused rather than succeed.
+  Ping auth = {};
+  auth.has_message = true;
+  std::strcpy(auth.message, "\x15initializeAuth:JBSWY3DPEHPK3PXP");
+  fsm_test_clearLastFailure();
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  fsm_msgPing(&auth);
+  EXPECT_EQ(0, kkconfirm_drain());
+  EXPECT_EQ(FailureType_Failure_UnexpectedMessage, fsm_test_lastFailureCode())
+      << "an authenticator write on a locked wallet must be refused";
+
+  storage_wipe();
+  EXPECT_FALSE(storage_isBitcoinOnlyLocked());
+  layoutHomeForced();
+}
+
+#if !BITCOIN_ONLY
+// 7.14.3: a recipient-mismatch compile error must still scrub the derived
+// node. Uses ScopedFlash for the same reason as the test above.
+TEST(Fsm, EthereumTransferRecipientMismatchWipesDerivedNode) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  storage_wipe();
+  LoadDevice load = allLoad();
+  storage_loadDevice(&load);
+  ASSERT_TRUE(storage_isInitialized());
+
+  const uint8_t usdc[20] = {0xa0, 0xb8, 0x69, 0x91, 0xc6, 0x21, 0x8b,
+                            0x36, 0xc1, 0xd1, 0x9d, 0x4a, 0x2e, 0x9e,
+                            0xb0, 0xce, 0x36, 0x06, 0xeb, 0x48};
+  const TokenType* token = tokenByChainAddress(1, usdc);
+  ASSERT_NE(UnknownToken, token);
+  EthereumSignTx msg = {};
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.has_address_type = true;
+  msg.address_type = OutputAddressType_TRANSFER;
+  msg.to_address_n_count = 5;
+  const uint32_t path[5] = {0x8000002c, 0x8000003c, 0x80000000, 0, 0};
+  memcpy(msg.to_address_n, path, sizeof(path));
+  msg.has_to = true;
+  msg.to.size = 20;
+  memcpy(msg.to.bytes, token->address, 20);
+  msg.has_data_length = true;
+  msg.data_length = 68;
+  msg.has_data_initial_chunk = true;
+  msg.data_initial_chunk.size = 68;
+  memcpy(msg.data_initial_chunk.bytes, "\xa9\x05\x9c\xbb", 4);
+  msg.data_initial_chunk.bytes[67] = 1;
+  ASSERT_TRUE(ethereum_isStandardERC20Transfer(&msg));
+
+  // The ABI recipient is zero; prove it differs from the derived account.
+  HDNode node = {};
+  ASSERT_TRUE(storage_getRootNode(SECP256K1_NAME, true, &node));
+  ASSERT_TRUE(hdnode_private_ckd_cached(&node, path, 5, nullptr));
+  uint8_t recipient[20] = {};
+  ASSERT_TRUE(hdnode_get_ethereum_pubkeyhash(&node, recipient));
+  const uint8_t zeros[20] = {};
+  ASSERT_NE(0, memcmp(recipient, zeros, sizeof(recipient)));
+
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  fsm_test_seedDerivedNode();
+  fsm_msgEthereumSignTx(&msg);
+  EXPECT_EQ(0, kkconfirm_drain()) << "must reach the transfer approval";
+  EXPECT_TRUE(fsm_test_derivedNodeIsZero());
+  storage_wipe();
+  layoutHomeForced();
+}
+#endif

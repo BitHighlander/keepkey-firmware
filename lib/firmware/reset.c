@@ -102,7 +102,6 @@ void setup_abort(void) {
   /* The recovery half owns its own word buffers. Clearing them is a memzero
    * too; like everything here it touches no storage. */
   recovery_cipher_reset();
-  mnemonic_clear();
 
   memzero(&setup, sizeof(setup));
   memzero(int_entropy, sizeof(int_entropy));
@@ -416,9 +415,8 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
     if (dice_rolls_look_biased(dice_rolls, rolls_needed)) {
       memzero(dice_rolls, sizeof(dice_rolls));
       setup_abort();
-      fsm_sendFailure(
-          FailureType_Failure_SyntaxError,
-          _("Dice rolls look biased: one face exceeds 30% of the rolls"));
+      fsm_sendFailure(FailureType_Failure_SyntaxError,
+                      _("Dice rolls look biased: one face came up too often"));
       layoutHome();
       return;
     }

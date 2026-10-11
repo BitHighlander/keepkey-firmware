@@ -41,7 +41,10 @@ class TestStack10Disclosure(Erc7730Harness, common.KeepKeyTest):
 
     def test_exact_raw_values_contract_and_counterparty(self):
         for approve in (False, True):
-            for amount in (0, 1, (1 << 256) - (2 if approve else 1)):
+            # An allowance of 2^255 or more reads UNLIMITED, so the largest
+            # exact approval is one below it.
+            for amount in (0, 1,
+                           (1 << 255) - 1 if approve else (1 << 256) - 1):
                 self._signed(self._tx(approve, amount))
                 title, body = self._first_pages()[0]
                 self.assertEqual(title, "Approve" if approve else "Send")
@@ -52,6 +55,11 @@ class TestStack10Disclosure(Erc7730Harness, common.KeepKeyTest):
                              "24" * 20 + "?")
                 self.assertEqual(body, expected)
                 self.assertTrue(any("data" in t.lower() for t, _ in self.screens))
+        self._signed(self._tx(True, 1 << 255))
+        self.assertEqual(
+            self._first_pages()[0][1],
+            "Unknown token contract 0x" + "42" * 20 + "\nAllow 0x" + "24" * 20 +
+            " to withdraw up to UNLIMITED?")
 
     def test_padded_zero_value_keeps_exact_token_review(self):
         for approve in (False, True):
@@ -190,11 +198,31 @@ class TestStack10Disclosure(Erc7730Harness, common.KeepKeyTest):
             self.assertEqual(retried.signature_r, baseline.signature_r)
             self.assertEqual(retried.signature_s, baseline.signature_s)
 
-    def test_unlimited_approval_and_disabled_advanced_mode_still_refuse(self):
-        result, buttons, _, _ = self._walk(self._tx(True, (1 << 256) - 1))
+    def test_unlimited_approval_warns_and_raw_signing_requires_advanced_mode(self):
+        tx = self._tx(True, (1 << 256) - 1)
+        # Unlimited approvals are allowed after the explicit warning. Pin its
+        # spender and unknown token contract, and prove it cannot be bypassed
+        # by declining the first screen.
+        self._signed(tx)
+        self.assertEqual(self._first_pages()[0], (
+            "UNLIMITED approval", "Allow 0x" + "24" * 20 +
+            " to spend ALL your 0x" + "42" * 20))
+        result, buttons, _, _ = self._walk(tx, cancel_button=1)
         assert_failure(self, result, types.Failure_ActionCancelled,
-                       "Unlimited ERC20 approval is disabled")
-        self.assertEqual(buttons, 0)
+                       "Signing cancelled by user")
+        self.assertEqual(buttons, 1)
+        self.client.apply_policy("AdvancedMode", 0)
+        result, _, _, _ = self._walk(self._tx())
+        assert_failure(self, result, types.Failure_ActionCancelled,
+                       "Arbitrary contract data signing disabled by policy")
+
+    def test_unlimited_approval_is_reviewed_and_disabled_advanced_mode_still_refuses(self):
+        # D-010: an unlimited approve() is reviewed on screen and signed, not
+        # refused (it was refused before 7.16).
+        result, buttons, _, _ = self._walk(self._tx(True, (1 << 256) - 1))
+        self.assertIsInstance(result, eth.EthereumTxRequest)
+        self.assertTrue(result.HasField("signature_r"))
+        self.assertGreater(buttons, 0)
         self.client.apply_policy("AdvancedMode", 0)
         result, _, _, _ = self._walk(self._tx())
         assert_failure(self, result, types.Failure_ActionCancelled,

@@ -55,6 +55,8 @@ if(NOT ${KK_BITCOIN_ONLY})
       osmosis.cpp
       ripple.cpp
       signed_metadata.cpp
+      uniswap_ur.cpp
+      uniswap_ur_oracle.c
       erc7730_abi.cpp
       erc7730_abi_stream.cpp
       erc7730_catalog.cpp
@@ -88,6 +90,11 @@ include_directories(
 
 add_executable(firmware-unit ${sources})
 
+# Real Base Universal Router calls for the streaming decoder's differential
+# test (scripts/uniswap/gen_ur_vectors.py pack).
+target_compile_definitions(firmware-unit PRIVATE
+    UR_SAMPLE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/uniswap_ur_sample.bin"
+    UR_EXPECTED_PATH="${CMAKE_CURRENT_SOURCE_DIR}/uniswap_ur_expected.txt")
 target_link_libraries(firmware-unit
     gmock_main
     kkfirmware
