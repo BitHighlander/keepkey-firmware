@@ -166,8 +166,10 @@ typedef struct {
    * forms when decimals == 0. */
   bool has_token_decimals;
   uint8_t extra_u8;
-  /* Instruction payload (memo body display). Points into the raw message
-   * buffer passed to solana_inspectTx — valid only while that buffer is. */
+  /* Exact instruction bytes, retained for every instruction: a Memo body, and
+   * the arguments a KKSOLSC1 schema decodes. The parser bounds this slice
+   * inside the signed message; it points into the buffer passed to
+   * solana_inspectTx and is valid only while that buffer is. */
   const uint8_t* data;
   uint16_t data_len;
   /* Account index list, same lifetime as `data`. Needed to resolve a
@@ -205,6 +207,12 @@ typedef struct {
   bool duplicate_compute_budget;
   uint8_t num_instructions;
   SolanaParsedInstruction instructions[SOL_MAX_INSTRUCTIONS];
+  /* v0 message carries an address-table section that no certified proof
+   * resolved (KKSOLSC1 refuses it). */
+  bool has_lookup_tables;
+  /* Addresses a v0 message's lookup tables load (writable + readonly); 0 for
+   * legacy and zero-LUT messages. */
+  uint32_t num_loaded_accounts;
 } SolanaParsedTx;
 
 /* Firmware review result for a Solana message */
@@ -234,13 +242,18 @@ typedef struct {
  *   - discriminator + the declared arg widths must equal the instruction
  *     data length EXACTLY, so no unaccounted byte can carry a second effect;
  *   - every account index the schema displays must exist in the instruction;
- *   - every lookup-table account must be transaction-bound by a valid Solana
- *     ClearSign certificate before an instruction may cease being `external`;
- *   - and every OTHER instruction in the transaction must be one firmware
- *     already recognises, so a schema can never green-light a message whose
+ *   - a message with an address-table section is refused, unless every
+ *     lookup-table account is transaction-bound by a valid Solana ClearSign
+ *     certificate (only then may an instruction cease being `external`);
+ *   - and every OTHER instruction in the transaction must be a compute-budget
+ *     or Memo companion (a certified review also admits the companions it
+ *     screens in full), so a schema can never green-light a message whose
  *     real effect sits in an instruction nobody described.
  *
- * Canonical payload (all integers big-endian, text printable ASCII, no '%'):
+ * Canonical payload (every numeric field is one byte; text printable ASCII,
+ * no '%'). The 8-byte instruction arguments it describes (U64, LAMPORTS,
+ * TOKEN_AMOUNT, DURATION) are read little-endian, as Solana programs encode
+ * them:
  *   magic          8   "KKSOLSC1"
  *   version        1   1, 2 or 3
  *   program_id    32
@@ -289,7 +302,7 @@ typedef enum {
   SOL_SCHEMA_ARG_U64 = 1,      /* 8 bytes, shown as a decimal integer */
   SOL_SCHEMA_ARG_U8 = 2,       /* 1 byte */
   SOL_SCHEMA_ARG_PUBKEY = 3,   /* 32 bytes, shown base58 */
-  SOL_SCHEMA_ARG_OPAQUE32 = 4, /* 32 bytes, shown in full over pages */
+  SOL_SCHEMA_ARG_OPAQUE32 = 4, /* 32 bytes, paged; non-printable as \xNN */
   SOL_SCHEMA_ARG_LAMPORTS = 5, /* 8 bytes, shown as decimal SOL */
   /* v2: 8-byte raw amount of the token whose mint is instruction account
    * mint_account. Scaled and named only by a trusted token definition for
@@ -496,6 +509,17 @@ const SolanaTokenInfo* solana_findTokenInfo(
  * match the signed instruction before trusting the amount. */
 bool solana_token_info_trusted(const SolanaTokenInfo* ti);
 
+/* Solana per-transaction compute-unit cap; also bounds an explicit limit. */
+#define SOL_MAX_COMPUTE_UNITS 1400000u
+
+/* Compute-unit limit the runtime requests when SetComputeUnitLimit is absent
+ * (an upper bound; the fee helper caps it at SOL_MAX_COMPUTE_UNITS). */
+uint64_t solana_defaultComputeUnitLimit(const SolanaParsedTx* tx);
+
+/// True iff an attestation listing `attested` accounts covers every account the
+/// message's lookup tables load, so "describes N account(s)" is complete.
+bool solana_lut_attestation_complete(const SolanaParsedTx* tx, size_t attested);
+
 /* KKSOLSW1: is the host-supplied lookup-table account list attested by a
  * clear-sign signer FOR THIS EXACT TRANSACTION?
  *
@@ -528,9 +552,10 @@ bool solana_lut_accounts_certified(const uint8_t* raw_tx, size_t raw_len,
                                    size_t certificate_len, const uint8_t* sig,
                                    size_t sig_len);
 
-/* ceil(price * limit / 1,000,000) priority-fee lamports, overflow-safe. Returns
- * false (and leaves *out untouched) if the true value exceeds UINT64_MAX — the
- * caller must then refuse to sign rather than display a wrapped figure. */
+/* ceil(price * min(limit, SOL_MAX_COMPUTE_UNITS) / 1,000,000) priority-fee
+ * lamports, overflow-safe. Returns false (and leaves *out untouched) if the
+ * true value exceeds UINT64_MAX — the caller must then refuse to sign rather
+ * than display a wrapped figure. */
 bool solana_priority_fee_lamports(uint64_t price, uint64_t limit,
                                   uint64_t* out);
 

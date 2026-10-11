@@ -753,15 +753,22 @@ TEST(Erc7730Catalog, RejectsOutOfOrderAndDuplicateChunks) {
             ERC7730_CATALOG_BAD_SEQUENCE);
 }
 
+// The declared id must be the envelope's own hash. The envelope here is
+// validly signed, so the id comparison is the only thing that can refuse it.
 TEST(Erc7730Catalog, RejectsDefinitionIdMismatch) {
-  auto e = envelope(minimalProgram());
-  auto id = digest(e);
-  id[0] ^= 1;
-  Erc7730CatalogVerifier verifier;
-  Erc7730CatalogIdentity identity = {};
-  erc7730_catalog_begin(&verifier, id.data(), (uint32_t)e.size());
-  EXPECT_EQ(erc7730_catalog_feed(&verifier, 0, e.data(), e.size(), &identity),
-            ERC7730_CATALOG_UNTRUSTED);
+  SignedFixture fixture;
+  loadRuntimeSigner(&fixture, "Approved signer");
+  const auto e = signedEnvelope(fixture, minimalProgram());
+  for (bool wrong : {false, true}) {
+    auto id = digest(e);
+    if (wrong) id[0] ^= 1;
+    Erc7730CatalogVerifier verifier;
+    Erc7730CatalogIdentity identity = {};
+    erc7730_catalog_begin(&verifier, id.data(), (uint32_t)e.size());
+    EXPECT_EQ(erc7730_catalog_feed(&verifier, 0, e.data(), e.size(), &identity),
+              wrong ? ERC7730_CATALOG_UNTRUSTED : ERC7730_CATALOG_COMPLETE);
+    erc7730_catalog_abort(&verifier);
+  }
 }
 
 TEST(Erc7730Catalog, RejectsNonCanonicalProgramHeaderAndSections) {
@@ -787,16 +794,44 @@ TEST(Erc7730Catalog, RejectsMalformedOrAliasedAbiGraphsWhileStreaming) {
   p[kFirstNode + 4] = 2;  // tuple child begins beyond the two-node table
   EXPECT_EQ(feedAll(envelope(p), 19), ERC7730_CATALOG_BAD_PROGRAM);
 
-  p = minimalProgram();
-  p[kSecondNode] = 8;      // tuple
-  p[kSecondNode + 4] = 1;  // backwards/self edge
-  p[kSecondNode + 6] = 1;
+  // root -> tuple -> uint256, each child after its parent: accepted.
+  p = withAbi(minimalProgram(),
+              {8, 0, 0, 0, 1, 0, 1, 0, 0,   // root -> node 1
+               8, 0, 0, 0, 2, 0, 1, 0, 0,   // tuple -> node 2
+               1, 1, 0, 0, 0, 0, 0, 0, 0},  // uint256
+              3);
+  EXPECT_EQ(feedAll(envelope(p), 43), ERC7730_CATALOG_UNTRUSTED);
+
+  // The same tree with the child before its parent. Every node still has
+  // exactly one parent, so only the forward-edge rule refuses it.
+  p = withAbi(minimalProgram(),
+              {8, 0, 0, 0, 2, 0, 1, 0, 0,   // root -> node 2
+               1, 1, 0, 0, 0, 0, 0, 0, 0,   // uint256
+               8, 0, 0, 0, 1, 0, 1, 0, 0},  // tuple -> node 1: backwards
+              3);
+  EXPECT_EQ(feedAll(envelope(p), 43), ERC7730_CATALOG_BAD_PROGRAM);
+
+  // A tuple that is its own only parent.
+  p = withAbi(minimalProgram(),
+              {8, 0, 0, 0, 1, 0, 1, 0, 0,   // root -> node 1
+               1, 1, 0, 0, 0, 0, 0, 0, 0,   // uint256
+               8, 0, 0, 0, 2, 0, 1, 0, 0},  // tuple -> itself
+              2);
+  EXPECT_EQ(feedAll(envelope(p), 43), ERC7730_CATALOG_BAD_PROGRAM);
+
+  // Two parents share a child: the edges all point forward, so only the
+  // one-parent rule refuses it.
+  p = withAbi(minimalProgram(),
+              {8, 0, 0, 0, 1, 0, 2, 0, 0,   // root -> nodes 1 and 2
+               8, 0, 0, 0, 2, 0, 1, 0, 0,   // tuple -> node 2 again
+               1, 1, 0, 0, 0, 0, 0, 0, 0},  // uint256
+              3);
   EXPECT_EQ(feedAll(envelope(p), 43), ERC7730_CATALOG_BAD_PROGRAM);
 }
 
 TEST(Erc7730Catalog, RecomputesSignedResourceDeclaration) {
   auto p = minimalProgram();
-  p[p.size() - 22] = 1;  // claims 256 strings instead of zero
+  p[p.size() - 22] = 1;  // claims 257 strings instead of one
   EXPECT_EQ(feedAll(envelope(p), 29), ERC7730_CATALOG_BAD_PROGRAM);
 
   p = minimalProgram();
@@ -834,8 +869,6 @@ TEST(Erc7730Catalog, ValidatesTypedPathsSlicesAndFullArraySteps) {
   auto p = programWithPaths({1, 1, 0xff, 0xff, 1, 0, 0, 0, 0}, 1);
   EXPECT_EQ(feedAll(envelope(p), 1), ERC7730_CATALOG_UNTRUSTED);
 
-  // Slices, whole-array steps, container and literal sources are not in the
-  // capability table: the runtime cannot capture them, so preload refuses.
   // @.from, @.to, @.value and a literal are executable value sources.
   for (const auto& entries : std::vector<std::vector<uint8_t>>{
            {2, 0, 0, 1}, {2, 0, 0, 2}, {2, 0, 0, 3}, {3, 0, 0, 0}}) {
@@ -843,8 +876,8 @@ TEST(Erc7730Catalog, ValidatesTypedPathsSlicesAndFullArraySteps) {
     EXPECT_EQ(feedAll(envelope(p), 23), ERC7730_CATALOG_UNTRUSTED);
   }
 
-  // Slices, whole-array steps, the other containers and out-of-table literal
-  // indices are not executed, so preload refuses them.
+  // Slices, a whole-array step on the root tuple, the other containers, a
+  // container with a step and an out-of-range literal index are refused.
   const std::vector<std::vector<uint8_t>> refused = {
       {1, 2, 0xff, 0xff, 1, 0, 0, 0, 0, 3, 1, 0xff, 0xff, 0xff, 0xec},
       {1, 1, 0xff, 0xff, 2},
@@ -860,12 +893,14 @@ TEST(Erc7730Catalog, ValidatesTypedPathsSlicesAndFullArraySteps) {
   }
 }
 
-// Calldata and typed-data captures refuse ERC7730_ABI_MAX_DEPTH or more path
-// steps, so the preload verifier must too: a longer signed path would pass
-// preload and then fail after the user had approved earlier screens.
-TEST(Erc7730Catalog, PathStepLimitMatchesExecutionCaptures) {
+// The verifier's path step limit does not cut into the paths an ABI admits:
+// the deepest one, ERC7730_ABI_MAX_DEPTH - 1 steps, passes preload. One step
+// more is refused, but that does not show the limit itself: ABI depth is
+// capped at ERC7730_ABI_MAX_DEPTH and each step descends one level, so the
+// walk has no node left for that step and refuses the path on its own.
+TEST(Erc7730Catalog, PathStepLimitAdmitsTheDeepestAbiPath) {
   // Seven nested tuples above a uint256: depth eight, the ABI maximum, and a
-  // seven-step path to the leaf, the capture maximum.
+  // seven-step path to the leaf.
   std::vector<uint8_t> nodes;
   for (uint8_t i = 0; i < ERC7730_ABI_MAX_DEPTH - 1u; i++)
     nodes.insert(nodes.end(), {8, 0, 0, 0, (uint8_t)(i + 1), 0, 1, 0, 0});
@@ -931,6 +966,14 @@ TEST(Erc7730Catalog, ValidatesFormatterOperandsAndDisplayProgram) {
   auto bad_formatter = formatter;
   bad_formatter[4] = 3;
   bad_formatter[6] = 1;  // value operand claims a missing string index
+  p = programWithPaths(path, 1);
+  p = replaceTable(p, 6, bad_formatter, 1);
+  EXPECT_EQ(feedAll(envelope(p), 31), ERC7730_CATALOG_BAD_PROGRAM);
+
+  // The same operand with its source left a path: index 1 of one path. Only
+  // the index bound can refuse this one.
+  bad_formatter = formatter;
+  bad_formatter[6] = 1;
   p = programWithPaths(path, 1);
   p = replaceTable(p, 6, bad_formatter, 1);
   EXPECT_EQ(feedAll(envelope(p), 31), ERC7730_CATALOG_BAD_PROGRAM);
@@ -1320,7 +1363,7 @@ TEST(Erc7730Catalog, VerifierRejectsDuplicateDomainFieldLikeLoader) {
 // Phase 0 of the ERC-7730 formatter plan: the preload verifier and the
 // runtime consult one capability table, so every shape the runtime cannot
 // execute is refused before the first screen. Each refusal below is paired
-// with the runtime predicate that would have refused it mid-review.
+// with the runtime check that would have refused it mid-review.
 TEST(Erc7730Catalog, PreloadRefusesDisplayInstructionsTheRuntimeCannotRun) {
   const std::vector<uint8_t> path = {1, 1, 0xff, 0xff, 1, 0, 0, 0, 0};
   EXPECT_EQ(feedAll(envelope(rawFieldProgram(path)), 7),
@@ -1352,20 +1395,29 @@ TEST(Erc7730Catalog, PreloadRefusesDisplayInstructionsTheRuntimeCannotRun) {
       feedAll(envelope(replaceTable(rawFieldProgram(path), 7, interpolated, 5)),
               7),
       ERC7730_CATALOG_UNTRUSTED);
+  // An intent part after a field. The capability predicate sees one
+  // instruction at a time and accepts it; the runtime refuses it because its
+  // index lies beyond the intent run the replay reader counted.
+  for (uint8_t opcode : {2, 3}) {
+    const std::vector<uint8_t> late = {
+        1,      0, 0,    0,    0xff, 0xff, 0xff, 0xff,  // intent
+        4,      0, 0,    0,    0,    0,    0xff, 0xff,  // field
+        opcode, 0, 0,    0,    0xff, 0xff, 0xff, 0xff,  // part
+        10,     0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+    const auto p = replaceTable(rawFieldProgram(path), 7, late, 4);
+    EXPECT_EQ(feedAll(envelope(p), 7), ERC7730_CATALOG_BAD_PROGRAM)
+        << (int)opcode;
+    const Erc7730DisplayInstruction part = {opcode, 0, 0, UINT16_MAX,
+                                            UINT16_MAX};
+    EXPECT_TRUE(erc7730_cap_display(&part, 2)) << (int)opcode;
+    Erc7730ProgramDisplay reader{};
+    const size_t payload = 2u + late.size();
+    erc7730_program_display_begin(&reader, payload, 2);
+    ASSERT_TRUE(erc7730_program_display_feed(
+        &reader, 0, p.data() + sectionOffset(p, 7) + 5, payload));
+    EXPECT_LT(reader.intent_parts, 2) << (int)opcode;
+  }
   const Case cases[] = {
-      // an intent part after a field
-      {{1,    0,    0,  0,    0xff, 0xff, 0xff, 0xff, 4,    0,    0,
-        0,    0,    0,  0xff, 0xff, 2,    0,    0,    0,    0xff, 0xff,
-        0xff, 0xff, 10, 0,    0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
-       4,
-       {2, 0, 0, UINT16_MAX, 0},
-       2},
-      {{1,    0,    0,  0,    0xff, 0xff, 0xff, 0xff, 4,    0,    0,
-        0,    0,    0,  0xff, 0xff, 3,    0,    0,    0,    0xff, 0xff,
-        0xff, 0xff, 10, 0,    0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
-       4,
-       {3, 0, 0, 0, UINT16_MAX},
-       2},
       // a group end that names no group
       {{1,    0,    0,    0,    0xff, 0xff, 0xff, 0xff, 6,    0,    0xff, 0xff,
         0xff, 0xff, 0xff, 0xff, 10,   0,    0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
@@ -1402,6 +1454,25 @@ TEST(Erc7730Catalog, PreloadRefusesDisplayInstructionsTheRuntimeCannotRun) {
         << (int)c.refused.opcode << "@" << c.pc;
     EXPECT_FALSE(erc7730_cap_display(&c.refused, c.pc))
         << (int)c.refused.opcode << "@" << c.pc;
+  }
+  // A table that does not end in an end instruction. The runtime leaves the
+  // review only at an end, so it would step past the last instruction, where
+  // the replay reader has nothing to select.
+  const std::vector<std::vector<uint8_t>> unterminated = {
+      {1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff},  // intent
+      {1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff,   // intent
+       4, 0, 0, 0, 0,    0,    0xff, 0xff},  // field
+  };
+  for (const auto& display : unterminated) {
+    const uint16_t count = (uint16_t)(display.size() / 8u);
+    const auto p = replaceTable(rawFieldProgram(path), 7, display, count);
+    EXPECT_EQ(feedAll(envelope(p), 7), ERC7730_CATALOG_BAD_PROGRAM) << count;
+    Erc7730ProgramDisplay reader{};
+    const size_t payload = 2u + display.size();
+    erc7730_program_display_begin(&reader, payload, count);
+    EXPECT_FALSE(erc7730_program_display_feed(
+        &reader, 0, p.data() + sectionOffset(p, 7) + 5, payload))
+        << count;
   }
   // A field may carry an "optional" condition, which only ever shows it.
   const Erc7730DisplayInstruction conditional = {4, 0, 0, 0, 0};
@@ -1505,7 +1576,10 @@ TEST(Erc7730Catalog, RuntimePathPredicateMatchesTheTable) {
   EXPECT_TRUE(erc7730_cap_path(&path));
   path.steps[0].opcode = 3;
   EXPECT_FALSE(erc7730_cap_path(&path));
-  path.steps[0].opcode = 1;
+  // Every step is an index, so only the step count tells these two apart.
+  for (uint8_t i = 0; i < ERC7730_ABI_MAX_DEPTH; i++) path.steps[i].opcode = 1;
+  path.step_count = ERC7730_ABI_MAX_DEPTH - 1u;
+  EXPECT_TRUE(erc7730_cap_path(&path));
   path.step_count = ERC7730_ABI_MAX_DEPTH;
   EXPECT_FALSE(erc7730_cap_path(&path));
   path.step_count = 0;
@@ -1540,7 +1614,8 @@ std::vector<uint8_t> tokenProgram(const std::vector<uint8_t>& formatter,
 
 }  // namespace
 
-// Phase A: tokenAmount, addressName, container and literal values. Every
+// Phase A: arguments of tokenAmount and addressName, from container and
+// literal values. Every
 // argument is type-checked at preload against the class the runtime needs, so
 // a mistyped program is refused before the first screen. Each refusal below
 // has an accepted neighbour differing only in the offending byte.
@@ -1893,9 +1968,11 @@ TEST(Erc7730Catalog, OnlyARawFieldShowsASignerConstant) {
 }
 
 TEST(Erc7730Catalog, AnEnumMapsADecodedValueNeverAConstant) {
-  // literal 0 = 1 (the constant, also the map's key); literal 1 = a
-  // one-entry map. Path 2 is literal 0, path 1 the uint256 argument.
-  const std::vector<uint8_t> literals = {1, 0, 1, 1,  //
+  // literal 0 = 256 (the constant, also the map's key); literal 1 = a
+  // one-entry map. Path 2 is literal 0, path 1 the uint256 argument. Two
+  // bytes give the constant the class of a decoded uint256, so only the
+  // signer-constant rule tells the two programs apart.
+  const std::vector<uint8_t> literals = {1, 0, 2, 1, 0,  //
                                          8, 0, 6, 0, 1, 0, 0, 0, 0};
   EXPECT_EQ(feedAll(envelope(tokenProgram({8, 0, 2, 1, 1, 0, 1, 10, 2, 0, 1},
                                           literals, 2)),

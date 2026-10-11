@@ -77,6 +77,8 @@ typedef struct {
   uint8_t inner_selector[4];
   uint8_t inner_selector_length;
   uint8_t spender[20];
+  uint8_t approve_spender[20]; /* of an inner approve(spender, 2^256-1) */
+  bool unlimited_approve;
   bool has_inner;
   bool has_spender;
   uint8_t list_count;
@@ -217,10 +219,14 @@ bool erc7730_workflow_restore_and_start_length(Erc7730Workflow* workflow,
                                                const Erc7730Path* path);
 bool erc7730_workflow_start_eip712_capture(Erc7730Workflow* workflow,
                                            const Erc7730Path* path);
+/* One typed-data value ack. A value too long for one ack arrives in chunks
+ * under the same member path: whole_len is the whole value's length, and
+ * continuation marks every ack after the first. */
 bool erc7730_workflow_eip712_observe(Erc7730Workflow* workflow,
                                      const uint32_t* member_path,
                                      size_t member_path_count,
-                                     const uint8_t* value, size_t value_len);
+                                     const uint8_t* value, size_t value_len,
+                                     size_t whole_len, bool continuation);
 bool erc7730_workflow_eip712_finish(Erc7730Workflow* workflow);
 bool erc7730_workflow_eip712_commit(Erc7730Workflow* workflow,
                                     const uint8_t domain[32],

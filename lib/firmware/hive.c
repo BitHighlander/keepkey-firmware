@@ -59,6 +59,13 @@ bool hive_slip48_path_valid_for_role(const uint32_t* address_n, size_t count,
 
 bool hive_deriveRawKey(const HDNode* root, uint32_t role_hardened,
                        uint32_t account_index_hardened, uint8_t out[33]) {
+  /* The contract is a Hive role key: refuse any other role or a
+   * non-hardened account index rather than derive an unrelated path. */
+  if (role_hardened != HIVE_ROLE_OWNER && role_hardened != HIVE_ROLE_ACTIVE &&
+      role_hardened != HIVE_ROLE_MEMO && role_hardened != HIVE_ROLE_POSTING) {
+    return false;
+  }
+  if ((account_index_hardened & 0x80000000u) == 0) return false;
   HDNode node;
   memcpy(&node, root, sizeof(HDNode));
   if (!hdnode_private_ckd(&node, HIVE_SLIP48_PURPOSE)) goto fail;
@@ -90,6 +97,8 @@ bool hive_getPublicKeys(const HDNode* root, uint32_t account_index,
   char* outs[4] = {owner_out, active_out, memo_out, posting_out};
   const size_t lens[4] = {owner_len, active_len, memo_len, posting_len};
 
+  // Bit 31 is the hardening flag; accepting it would alias a lower account.
+  if (account_index > 0x7FFFFFFFu) return false;
   uint32_t account_hardened = account_index | 0x80000000u;
 
   for (int i = 0; i < 4; i++) {
@@ -931,14 +940,20 @@ static bool hive_account_name_ok(const char* name) {
   return true;
 }
 
+/* TaPoS references a 16-bit block number. A wider host value is refused,
+ * never silently masked to a different block. */
+static bool hive_ref_block_num_ok(uint32_t ref_block_num) {
+  return ref_block_num <= 0xFFFF;
+}
+
 bool hive_validateTransfer(const HiveSignTx* msg) {
   const char *wire, *display;
   uint8_t precision;
   return msg->has_from && msg->has_to && msg->has_amount &&
-         msg->has_ref_block_num && msg->has_ref_block_prefix &&
-         msg->has_expiration && hive_account_name_ok(msg->from) &&
-         hive_account_name_ok(msg->to) && msg->amount > 0 &&
-         msg->amount <= INT64_MAX &&
+         msg->has_ref_block_num && hive_ref_block_num_ok(msg->ref_block_num) &&
+         msg->has_ref_block_prefix && msg->has_expiration &&
+         hive_account_name_ok(msg->from) && hive_account_name_ok(msg->to) &&
+         msg->amount > 0 && msg->amount <= INT64_MAX &&
          (!msg->has_chain_id || msg->chain_id.size == HIVE_CHAIN_ID_LEN) &&
          (!msg->has_memo ||
           strnlen(msg->memo, sizeof(msg->memo)) <= HIVE_MAX_MEMO_LEN) &&
@@ -947,8 +962,9 @@ bool hive_validateTransfer(const HiveSignTx* msg) {
 
 bool hive_validateAccountCreate(const HiveSignAccountCreate* msg) {
   return msg->has_creator && msg->has_new_account_name &&
-         msg->has_ref_block_num && msg->has_ref_block_prefix &&
-         msg->has_expiration && hive_account_name_ok(msg->creator) &&
+         msg->has_ref_block_num && hive_ref_block_num_ok(msg->ref_block_num) &&
+         msg->has_ref_block_prefix && msg->has_expiration &&
+         hive_account_name_ok(msg->creator) &&
          hive_account_name_ok(msg->new_account_name) &&
          (!msg->has_fee_amount || msg->fee_amount <= INT64_MAX) &&
          (!msg->has_chain_id || msg->chain_id.size == HIVE_CHAIN_ID_LEN);
@@ -956,6 +972,7 @@ bool hive_validateAccountCreate(const HiveSignAccountCreate* msg) {
 
 bool hive_validateAccountUpdate(const HiveSignAccountUpdate* msg) {
   return msg->has_account && msg->has_ref_block_num &&
+         hive_ref_block_num_ok(msg->ref_block_num) &&
          msg->has_ref_block_prefix && msg->has_expiration &&
          hive_account_name_ok(msg->account) &&
          (!msg->has_chain_id || msg->chain_id.size == HIVE_CHAIN_ID_LEN);

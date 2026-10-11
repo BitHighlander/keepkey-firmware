@@ -50,9 +50,6 @@ else
   export KK_REQUIRE_ERC7730_EVIDENCE=0
 fi
 
-# Dice setup keeps every DebugLinkState field private through commit/abort.
-export KK_DICE_DEBUG_PRIVATE=1
-
 mkdir -p /kkemu/test-reports/python-keepkey
 # This volume can survive retries. Stale frames would make the new report look
 # more complete than the exact run really was, so every capture starts empty.
@@ -183,9 +180,6 @@ pytest -v $PYTEST_TIMEOUT_ARGS . /kkemu/unittests/host/test_p02_transport.py \
   --junitxml=/kkemu/test-reports/python-keepkey/junit.xml
 PYTEST_RC=$?
 
-# Stack 06 owns legacy runtime metadata and session trust. The later ERC-7730
-# capability must not hide these already implemented contracts.
-KK_RELEASE_MISSING_CAPABILITIES= \
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v --tb=short \

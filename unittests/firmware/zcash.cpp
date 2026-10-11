@@ -11,7 +11,15 @@ extern "C" {
 }
 
 #include "gtest/gtest.h"
+#include "zcash_note_vectors.h"
+#include "zcash_zip244_vectors.h"
+
+#include <cstdint>
+#include <cstdio>
+#include <cctype>
 #include <cstring>
+#include <cstring>
+#include <string>
 
 /* ── Pallas curve constants ──────────────────────────────────────── */
 
@@ -492,6 +500,32 @@ static const char ORCHARD_ONLY_UA_TESTNET_1[] =
 
 /* ── ZIP-32 Derivation Tests ─────────────────────────────────────── */
 
+// Pallas base-field modulus, from its published value (not the library).
+static void pallas_modulus_le(uint8_t out[32]) {
+  const char* hex =
+      "40000000000000000000000000000000224698fc094cf91b992d30ed00000001";
+  for (int i = 0; i < 32; i++) {
+    unsigned byte;
+    sscanf(hex + 2 * i, "%2x", &byte);
+    out[31 - i] = (uint8_t)byte;
+  }
+}
+
+TEST(Zcash, OrchardNullifierMustBeBelowTheFieldModulus) {
+  uint8_t value[32] = {0};
+  EXPECT_TRUE(zcash_orchard_nullifier_canonical(value));  // zero
+
+  pallas_modulus_le(value);
+  EXPECT_FALSE(zcash_orchard_nullifier_canonical(value))
+      << "the modulus itself has bit 255 clear but is not canonical";
+  value[0] -= 1;  // modulus - 1 (low byte is 0x01)
+  EXPECT_TRUE(zcash_orchard_nullifier_canonical(value));
+
+  memset(value, 0, sizeof(value));
+  value[31] = 0x80;
+  EXPECT_FALSE(zcash_orchard_nullifier_canonical(value));
+}
+
 TEST(Zcash, DeriveOrchardKeys_ReferenceVector_Account0) {
   /*
    * Reference vector test: derive keys from known "all" mnemonic seed
@@ -532,12 +566,15 @@ TEST(Zcash, DeriveOrchardKeys_ReferenceVector_Account0) {
   curve_point ak_point;
   redpallas_scalar_mult_spendauth_G(&ask_scalar, &ak_point);
 
+  /* The sign of ak is the parity of y; the x encoding below never carries
+   * it. */
+  EXPECT_FALSE(bn_is_odd(&ak_point.y))
+      << "ak sign bit must be 0 after ask normalization";
+
   uint8_t ak_bytes[32];
   bignum256 x_copy;
   bn_copy(&ak_point.x, &x_copy);
   bn_write_le(&x_copy, ak_bytes);
-  EXPECT_EQ(ak_bytes[31] & 0x80, 0)
-      << "ak sign bit must be 0 after ask normalization";
 
   EXPECT_TRUE(memcmp(ak_bytes, EXPECTED_AK_ALL_0, 32) == 0)
       << "ak mismatch for all-mnemonic account 0";
@@ -914,6 +951,23 @@ TEST(Zcash, OrchardUnifiedAddress_FromDerivedKeys) {
   memzero(&keys, sizeof(keys));
 }
 
+// An address is built from the cached public ak: with the spending key wiped
+// from the key set it is still the reference address.
+TEST(Zcash, OrchardUnifiedAddress_DoesNotUseTheSpendingKey) {
+  ZcashOrchardKeys keys;
+  ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
+  memzero(keys.ask, sizeof(keys.ask));
+
+  char address[ZCASH_ZIP316_ORCHARD_ONLY_MAX_ADDRESS_SIZE];
+  const uint8_t index0[11] = {0};
+  ASSERT_TRUE(zcash_orchard_derive_unified_address(&keys, index0, "u", address,
+                                                   sizeof(address)));
+  EXPECT_STREQ(address, ORCHARD_ONLY_UA_MAINNET_0);
+
+  memzero(address, sizeof(address));
+  memzero(&keys, sizeof(keys));
+}
+
 TEST(Zcash, OrchardUnifiedAddress_RejectsInvalidInputs) {
   ZcashOrchardKeys keys;
   ASSERT_TRUE(zcash_derive_orchard_keys(SEED_ALL, 64, 0, &keys));
@@ -1026,6 +1080,146 @@ TEST(Zcash, IronwoodNoteCommitment_V3KnownVector) {
   memzero(cmx, sizeof(cmx));
 }
 
+/* A ZcashNoteVector decoded into wire-sized buffers. */
+struct DecodedNote {
+  uint8_t receiver[ZCASH_ORCHARD_RAW_RECEIVER_SIZE];
+  uint64_t value;
+  uint8_t rseed[32], rho[32], cmx[32], epk[32], c_enc[580];
+};
+
+static void decode_hex(const char* hex, uint8_t* out, size_t len) {
+  ASSERT_EQ(2 * len, strlen(hex));
+  for (size_t i = 0; i < len; i++) {
+    unsigned int byte = 0;
+    ASSERT_EQ(1, sscanf(hex + 2 * i, "%2x", &byte));
+    out[i] = (uint8_t)byte;
+  }
+}
+
+static void decode_note(const ZcashNoteVector& v, DecodedNote* n) {
+  decode_hex(v.d, n->receiver, 11);
+  decode_hex(v.pk_d, n->receiver + 11, 32);
+  n->value = v.value;
+  decode_hex(v.rseed, n->rseed, 32);
+  decode_hex(v.rho, n->rho, 32);
+  decode_hex(v.cmx, n->cmx, 32);
+  decode_hex(v.epk, n->epk, 32);
+  decode_hex(v.c_enc, n->c_enc, 580);
+}
+
+static bool note_ciphertext_valid(const DecodedNote& n, bool ironwood) {
+  return zcash_orchard_note_ciphertext_valid(n.receiver, n.value, n.rho,
+                                             n.rseed, ironwood, n.epk, n.c_enc,
+                                             n.c_enc + 52, n.c_enc + 564,
+                                             nullptr);
+}
+
+// The memo is signed, and the host can compute the key that authenticates
+// it, so the check hands back the plaintext for the screen. These are the
+// official vectors' own memos, not values this code produced.
+TEST(Zcash, OrchardNoteCiphertext_ReturnsTheMemo) {
+  for (const auto& vector : kZcashOrchardNoteVectors) {
+    DecodedNote n;
+    decode_note(vector, &n);
+    uint8_t expected[ZCASH_MEMO_SIZE], memo[ZCASH_MEMO_SIZE];
+    decode_hex(vector.memo, expected, sizeof(expected));
+    memset(memo, 0xAB, sizeof(memo));
+    ASSERT_TRUE(zcash_orchard_note_ciphertext_valid(
+        n.receiver, n.value, n.rho, n.rseed, false, n.epk, n.c_enc,
+        n.c_enc + 52, n.c_enc + 564, memo));
+    EXPECT_EQ(0, memcmp(expected, memo, sizeof(memo)));
+
+    // A refused note hands back nothing.
+    n.c_enc[100] ^= 1;
+    EXPECT_FALSE(zcash_orchard_note_ciphertext_valid(
+        n.receiver, n.value, n.rho, n.rseed, false, n.epk, n.c_enc,
+        n.c_enc + 52, n.c_enc + 564, memo));
+    const uint8_t zeros[ZCASH_MEMO_SIZE] = {};
+    EXPECT_EQ(0, memcmp(zeros, memo, sizeof(memo)));
+  }
+}
+
+TEST(Zcash, MemoShownLengthFollowsZip302) {
+  uint8_t memo[ZCASH_MEMO_SIZE] = {};
+  EXPECT_EQ(0u, zcash_memo_shown_length(memo));  // all zero
+  memo[0] = 0xF6;
+  EXPECT_EQ(0u, zcash_memo_shown_length(memo));  // "no memo"
+  memo[5] = 1;
+  EXPECT_EQ(6u, zcash_memo_shown_length(memo));  // 0xF6 with a tail is data
+  memset(memo, 0, sizeof(memo));
+  memcpy(memo, "thanks for lunch!", 17);
+  EXPECT_EQ(17u, zcash_memo_shown_length(memo));
+  memset(memo, 0xFF, sizeof(memo));
+  EXPECT_EQ((size_t)ZCASH_MEMO_SIZE, zcash_memo_shown_length(memo));
+}
+
+TEST(Zcash, OrchardNoteCiphertext_ReferenceVectors) {
+  for (const auto& vector : kZcashOrchardNoteVectors) {
+    DecodedNote note;
+    decode_note(vector, &note);
+    uint8_t cmx[32];
+    ASSERT_TRUE(zcash_orchard_compute_cmx_with_progress(
+        note.receiver, note.value, note.rho, note.rseed, cmx, NULL, NULL));
+    EXPECT_EQ(0, memcmp(cmx, note.cmx, 32));
+    EXPECT_TRUE(note_ciphertext_valid(note, false));
+    // An Orchard (0x02) plaintext is not an Ironwood note.
+    EXPECT_FALSE(note_ciphertext_valid(note, true));
+  }
+}
+
+TEST(Zcash, IronwoodNoteCiphertext_V3Vector) {
+  DecodedNote note;
+  decode_note(kZcashIronwoodNoteVector, &note);
+  uint8_t cmx[32];
+  ASSERT_TRUE(zcash_ironwood_compute_cmx_with_progress(
+      note.receiver, note.value, note.rho, note.rseed, cmx, NULL, NULL));
+  EXPECT_EQ(0, memcmp(cmx, note.cmx, 32));
+  EXPECT_TRUE(note_ciphertext_valid(note, true));
+  EXPECT_FALSE(note_ciphertext_valid(note, false));
+}
+
+TEST(Zcash, OrchardNoteCiphertext_RejectsEveryTamperedField) {
+  DecodedNote good;
+  decode_note(kZcashOrchardNoteVectors[0], &good);
+  ASSERT_TRUE(note_ciphertext_valid(good, false));
+
+  // Ciphertext: lead byte, d, value, rseed, memo, tag; and epk.
+  for (size_t offset : {0u, 1u, 12u, 20u, 51u, 52u, 563u, 564u, 579u}) {
+    SCOPED_TRACE(offset);
+    DecodedNote note = good;
+    note.c_enc[offset] ^= 0x01;
+    EXPECT_FALSE(note_ciphertext_valid(note, false));
+  }
+  for (size_t offset : {0u, 31u}) {
+    SCOPED_TRACE(offset);
+    DecodedNote note = good;
+    note.epk[offset] ^= 0x01;
+    EXPECT_FALSE(note_ciphertext_valid(note, false));
+  }
+
+  // The verified note fields must be the ones the ciphertext carries.
+  DecodedNote note = good;
+  note.value++;
+  EXPECT_FALSE(note_ciphertext_valid(note, false));
+  note = good;
+  note.rseed[0] ^= 0x01;
+  EXPECT_FALSE(note_ciphertext_valid(note, false));
+  note = good;
+  note.rho[0] ^= 0x01;
+  EXPECT_FALSE(note_ciphertext_valid(note, false));
+  note = good;
+  note.receiver[0] ^= 0x01;  // d
+  EXPECT_FALSE(note_ciphertext_valid(note, false));
+  note = good;
+  note.receiver[11] ^= 0x01;  // pk_d
+  EXPECT_FALSE(note_ciphertext_valid(note, false));
+
+  // A pk_d that is not a curve point (the identity encoding) is refused.
+  note = good;
+  memset(note.receiver + 11, 0, 32);
+  EXPECT_FALSE(note_ciphertext_valid(note, false));
+}
+
 TEST(Zcash, OrchardReceiverToUnifiedAddress_KnownVector) {
   const uint8_t recipient[ZCASH_ORCHARD_RAW_RECEIVER_SIZE] = {
       0x3c, 0x15, 0x0e, 0x60, 0x98, 0xb8, 0x61, 0x71, 0x6c, 0xc7, 0xf6,
@@ -1043,6 +1237,307 @@ TEST(Zcash, OrchardReceiverToUnifiedAddress_KnownVector) {
   EXPECT_FALSE(
       zcash_orchard_receiver_to_unified_address(recipient, "u", address, 16));
   memzero(address, sizeof(address));
+}
+
+/* ZIP 374 user_address check. Real addresses only: the official ZIP 316
+ * vectors (zcash-test-vectors unified_address.json and _r2.json), addresses
+ * from librustzcash (zcash_keys 0.16.1 for the "all" seed; zcash_address
+ * 0.13.0 for note vector 0's receiver), and malformed strings built with the
+ * zcash-test-vectors reference F4Jumble/Bech32m encoder. */
+struct UserAddressVector {
+  const char* address;
+  const char* orchard; /* hex raw receiver checked against */
+  ZcashUserAddressCheck expected;
+};
+
+static const UserAddressVector kUserAddressVectors[] = {
+    {/* unified_address.json #3: P2PKH+Sapling+Orchard */
+     "u1pg2aaph7jp8rpf6yhsza25722sg5fcn3vaca6ze27hqjw7jvvhhuxkpcg0ge9xh6"
+     "drsgdkda8qjq5chpehkcpxf87rnjryjqwymdheptpvnljqqrjqzjwkc2ma6hcq666k"
+     "gwfytxwac8eyex6ndgr6ezte66706e3vaqrd25dzvzkc69kw0jgywtd0cmq52q5lkw"
+     "6uh7hyvzjse8ksx",
+     "cecbe5e689a453a3fe10ccf7617e6c1fb382819d7fc9200a1f42092ac84a30378f8c1fb90dff71a6d5042d",
+     ZCASH_USER_ADDRESS_MATCH},
+    {/* unified_address.json #6: Sapling+Orchard */
+     "u1ay3aawlldjrmxqnjf5medr5ma6p3acnet464ht8lmwplq5cd3ugytcmlf96rrmtg"
+     "wldc75x94qn4n8pgen36y8tywlq6yjk7lkf3fa8wzjrav8z2xpxqnrnmjxh8tmz6jh"
+     "fh425t7f3vy6p4pd3zmqayq49efl2c4xydc0gszg660q9p",
+     "953f3c78d103c32b60559299462ebb27348964b892acad10482fe502c99f0d524959ba7be4f188e3a27138",
+     ZCASH_USER_ADDRESS_MATCH},
+    {/* unified_address.json #9: P2PKH+Orchard */
+     "u1snf9yr883aj2hm8pksp9aymnqdwzy42rpzuffevj35hhxeckays5pcpeq7vy2mtg"
+     "zlcuc4mnh9443qnuyje0yx6h59angywka4v2ap6kchh2j96ezf9w0c0auyz3wwts2l"
+     "x5gmk2sk9",
+     "31844683a07bf8e30057902b0d23e2b2ce9cad0b22190238ca4f329da92c7979052b00f735cb210671bdb0",
+     ZCASH_USER_ADDRESS_MATCH},
+    {/* unified_address.json #27: Orchard */
+     "u1ddnjsdcpm36r6aq79n3s68shjweksnmwtdltrh046s8m6xcws9ygyawalxx8n6hg"
+     "6vegk0wh8zjnafxgh6msppjsljvyt0ynece3lvm0",
+     "e340636542ece1c81285ed4eab448adbb5a8c0f4d386eeff337e88e6915f6c3ec1b6ea835a88d56612d2bd",
+     ZCASH_USER_ADDRESS_MATCH},
+    {/* unified_address.json #0: P2PKH+Sapling, no Orchard */
+     "u1l8xunezsvhq8fgzfl7404m450nwnd76zshscn6nfys7vyz2ywyh4cc5daaq0c7q2"
+     "su5lqfh23sp7fkf3kt27ve5948mzpfdvckzaect2jtte308mkwlycj2u0eac077wu7"
+     "0vqcetkxf",
+     "56e84b1adc9423c3676c0463f7125df4836fd2816b024ee70efe09fb9a7b3863c6eacdf95e03894950692c",
+     ZCASH_USER_ADDRESS_MISMATCH},
+    {/* unified_address.json #33: P2PKH+Orchard +unknown 0xfffb, 509 chars */
+     "u1tqx832p4wsfe9pd67ggm3qsmfuvdhqvw2259y7uwug7y0lpeu87fmgpqh3zmamex"
+     "3fzs0d4ct4hhsg2csj5z0q5f3f7n656ap8e4nlng9c4440rz9s7ekxanfw6g84f7vu"
+     "82fumtmlz3vstl2a9ufa0970k4knsz2wpsjt2xycqeay76pt4fx3ak9y7mps2q6qe2"
+     "n2h7wkakxr7xu6vd36zhhzgln7ttmrzc0f9ye3jmyu2pp8l8rect87lfxj2fgckcwz"
+     "3svdx70a947fz04kgu7e907enzrk676zdkdmuyw2kyrclkmj62kmyy2rjetpus7knm"
+     "xfuu7z0m63uwfhdynhuu3yrjqu5y089v8zwnh60mw5ngc0kszdjmc339fk9mjn396m"
+     "5ekv7h7td7fa0u9097xph3y5vth9af4sw6ykxdms84wr544mxxqtmgj027d9e8rnlr"
+     "azge0kwyydyhder3chwhmaqjk9skuxgxzternw4xx962qed",
+     "24fd59f32b2d39dde66e46c39206a31bc04fa5c6847976ea6bbd3163ee14f58f584acc131479ea558d3f84",
+     ZCASH_USER_ADDRESS_INVALID},
+    {/* unified_address_r2.json #0: Sapling+Orchard */
+     "zu1wpmyzjrdtsw2n0kgku0pr6raf7jhwe70e45ucfcruk9qrxv59fxegvrlwmqs8uy"
+     "dq57re5rm79eth5hu5hzcqetl39nphtyp74qu5prrpwy8kzqlxagwz24f2c3z0939m"
+     "wt3cngyfrx5nyk270q4eaj5jqdqepadhq4n6kmf0cdca58t",
+     "d4714ee761d1ae823b6972152e20957fefa3f6e3129ea4dfb0a9e98703a63dab929589d6dc51c970f935b3",
+     ZCASH_USER_ADDRESS_MATCH},
+    {/* unified_address_r2.json #12: P2PKH+Sapling+Orchard */
+     "tu1fm5xassnx4us9jm60l0ntfcyy6awx7xy02nf2yfkq24uungm3pt0uuvtkjemrav"
+     "8xvvzm6c4j3clpqwlx5qscvt4lyagng0jqxgu9jjd2cf42pwqnj7uwzua7swgjzfm4"
+     "swmauuz0lu42nrv7vkx9kjkgjluvddsya20tsat5ejujgg66ulw8r0pdhh5vzhjy2y"
+     "elhrh2wcsx06kf4z",
+     "165082de84f2ad7204426ffafd6b6c7de9cab6d25c13846a1786715268c415948db788f4a5e0daa03d699e",
+     ZCASH_USER_ADDRESS_MATCH},
+    {/* unified_address_r2.json #3: Orchard +E0 */
+     "zu1jn75qa00cea69xtz3ncl6d4lvxqzzyxq500km3jd4g3gupc5s5hf00gxf9truqg"
+     "f7n32vhwy0qg3qevvcdgk2e0my9fn269hcjvzsf2umpwq8ew2d2",
+     "d8e5ecb4e005c28718e61a5c336a4f369e771ccdb3363f4f7a04b02a966901a4c05da662d5fd75678f7fb4",
+     ZCASH_USER_ADDRESS_UNSUPPORTED},
+    {/* unified_address_r2.json #9: Sapling+Orchard +E0 +E1 */
+     "zu134mt78g5tgkmxgmfjhn6kpxqppqnwjqclk74atpr7ak7mstqgsvzlg20vp8qykr"
+     "25hnrdvu8d2eu8qmzkced5s0we9z3kk26xmh42270ytjaqc2d9pv6x97azlughk34w"
+     "cedaf09flzv9ceesxxf27hjm8tqcx8vyhmhm7ltlcjk44wkghpv0ceygr4235zu5a4"
+     "qu73ge4",
+     "31844683a07bf8e30057902b0d23e2b2ce9cad0b22190238ca4f329da92c7979052b00f735cb210671bdb0",
+     ZCASH_USER_ADDRESS_UNSUPPORTED},
+    {/* unified_address_r2.json #18: P2SH+Sapling+Orchard +E1 */
+     "tu165npws03eh8a5gxx6s0zesc3yag5ajdf9zkt0z22fyue96sasvjx369d4ddfe9v"
+     "vpp5c83vrhypxa59jk345334df0kw0ec0up3cxefwt87fq2lfpgvvfzuys4g69shzt"
+     "fq78kkhf2jllpfs2rz9nxxyjkkf0lcqutpls84vgcey3l6ukpa877advxg8l8hccze"
+     "5kfzpan6plapyvpdrp4y8nasxjf5k7fz",
+     "3c40246912b6efefab9a55244ac2c174e1a9f8c0bc0fd526933963c6ecb9b84ec8b0f6b40dc858fa23c72b",
+     ZCASH_USER_ADDRESS_UNSUPPORTED},
+    {/* zcash_keys 0.16.1, "all" seed, account 0, j=0: P2PKH+Orchard */
+     "u17hrk2qpmyt3mvsx3ppzdqa6la5c556vpy2l05rp2gma4yspp8p7nty53v5gzjwyj"
+     "psqdq9306wrfedcmk4y3wxz9269n3ul59a4qwkp0e7y0wr668dse9qmprjk9w6e8ps"
+     "7lqduw4gk",
+     "da973031634a8938ad1c480f978780693ec7709ba5caf58d8a7eb945586cbed645520f17387437bcfdc216",
+     ZCASH_USER_ADDRESS_MATCH},
+    {/* zcash_keys 0.16.1, "all" seed, account 0, j=1: P2PKH+Sapling+Orchard */
+     "u1elnjt36zcqfelwj62v8lujthlqefztqcy02jfm2p5vs9phrzr8fj68j3mpzmvlkt"
+     "ayk9fdz4zd4k3x6f7z3n62dw09w8sr9a8a0ka5m6xktd8hl6x5ekd0qky8h8t0an6p"
+     "8eqk3ggwnl30dkv7txlw5r2qef330j94r0lftqktn0ev70kc78h8ev43ja5x7de27r"
+     "vvhf0h4ku663uw6",
+     "bb0c08c20f078f5989391c3691b897eacf289a02022f45b3b13f5fa1aad5959faa290156c240b8ae1c0725",
+     ZCASH_USER_ADDRESS_MATCH},
+    {/* zcash_address 0.13.0: note 0 receiver +Sapling+P2PKH, mainnet */
+     "u16065qzvddm89jcmzufxjs5pe6dr006tezvd7pap2nc58cctca8tt373s2he7xx76"
+     "cnlyfatutph9kfl5g35cnuw6szxlf0qhpqajh0xrujjny6rxh6wej6mx6x5zuz4aua"
+     "ffd5hd56t8kwxnnquasruhg8qv3344cn6dauw00waq8ak2lmlyn8r84jumahr2nrd2"
+     "46gdxw932t8uvgs",
+     "56e84b1adc9423c3676c0463f7125df4836fd2816b024ee70efe09fb9a7b3863c6eacdf95e03894950692c",
+     ZCASH_USER_ADDRESS_MATCH},
+    {/* the same address against the "all" seed receiver */
+     "u16065qzvddm89jcmzufxjs5pe6dr006tezvd7pap2nc58cctca8tt373s2he7xx76"
+     "cnlyfatutph9kfl5g35cnuw6szxlf0qhpqajh0xrujjny6rxh6wej6mx6x5zuz4aua"
+     "ffd5hd56t8kwxnnquasruhg8qv3344cn6dauw00waq8ak2lmlyn8r84jumahr2nrd2"
+     "46gdxw932t8uvgs",
+     "da973031634a8938ad1c480f978780693ec7709ba5caf58d8a7eb945586cbed645520f17387437bcfdc216",
+     ZCASH_USER_ADDRESS_MISMATCH},
+    {/* zcash_address 0.13.0: the same receivers, testnet */
+     "utest1wdfcuzut02dsngcvcl2hn675kc2g6lxp2l3990tzr55472uduj6st84ckwdu"
+     "tzegl870tvrt82r0rnu2jw70e003x7jve2l0rwptm562q30ch8jfaclcj3shkrvxrq"
+     "2eqxmpej3w34dmlw8859h3vxdmdjsd0rpxp8j4elakv9kcgagcw7n3kqd43cjf8lct"
+     "ktm9l4gc5rfhxaxwqcf",
+     "56e84b1adc9423c3676c0463f7125df4836fd2816b024ee70efe09fb9a7b3863c6eacdf95e03894950692c",
+     ZCASH_USER_ADDRESS_NOT_MAINNET},
+    {/* ZIP 316 encoder (zcash-test-vectors): bad padding */
+     "u1dmru3wv3c9um7vwmtg438uakauhj7fr6d9h6kwm0jkc4tajy0ynffwcfzl9cz0r6"
+     "cvjdfeuxxwnyfzj5rtntkrt6dhm0kze6ekqf0mfqfnxgxgczyef7cvx0cznuu5escw"
+     "tl8zdarwygma8avjvczull88npw0jsvu2hv3yquvdgwpzn",
+     "56e84b1adc9423c3676c0463f7125df4836fd2816b024ee70efe09fb9a7b3863c6eacdf95e03894950692c",
+     ZCASH_USER_ADDRESS_INVALID},
+    {/* ZIP 316 encoder (zcash-test-vectors): wrong order */
+     "u1u2u93rhc6nq3qmzuhwlupalqdcmzfz5mdflhsh9y0mrfd3kk8kwnv3ucacr5apzs"
+     "vphpte82sf7k92ar3gzju3lkdvn905mrttgjjnaj7mmlwkyy8hg2xsh6e2f6vjjayj"
+     "35chfjxswl73qt486f7rl4x2d72gcmqfwj0cy9vc77krsz",
+     "56e84b1adc9423c3676c0463f7125df4836fd2816b024ee70efe09fb9a7b3863c6eacdf95e03894950692c",
+     ZCASH_USER_ADDRESS_INVALID},
+    {/* ZIP 316 encoder (zcash-test-vectors): duplicate orchard */
+     "u1hqss0vk3as20x4vfmaeckz0ywtzptas0sexwtvjrgmm8a2nwqfpvwpll8tl828fq"
+     "jhl9p00hjz4geg0hn0k9lm2u7duvnuzfnegmkhlu5z8l03pyw4m5h8tazfcd6s9pmz"
+     "7sx0tqvdz0mhmdca26d75z3ruwytechz55nhj84u0jseyw",
+     "56e84b1adc9423c3676c0463f7125df4836fd2816b024ee70efe09fb9a7b3863c6eacdf95e03894950692c",
+     ZCASH_USER_ADDRESS_INVALID},
+    {/* ZIP 316 encoder (zcash-test-vectors): p2pkh and p2sh */
+     "u1t0zp90mqvx4ag8zqdtm8lfvf4zwterucglmxtyhz2hfmafef6kqkc6652dmykjjg"
+     "yyqypycaked06g5qnmhze3g48f42fxvuy7fyth03yz2r5fft7gr7xeg2f9m7xx3e4s"
+     "vm0w4qqrdzvz77tmnddf8s5qeyjqm8m2ffzr2h6qxe50",
+     "56e84b1adc9423c3676c0463f7125df4836fd2816b024ee70efe09fb9a7b3863c6eacdf95e03894950692c",
+     ZCASH_USER_ADDRESS_INVALID},
+    {/* ZIP 316 encoder (zcash-test-vectors): must understand e2 */
+     "u1qy5skujpc7zqsytkm5z5xy5p0as4quspejl3ys9awgds0zhysadzyxez89wnpuqw"
+     "f9zg2fzg0pa4sjtlvwsatk6mgytglc4j83dlpe7fra0qa3j0fw",
+     "56e84b1adc9423c3676c0463f7125df4836fd2816b024ee70efe09fb9a7b3863c6eacdf95e03894950692c",
+     ZCASH_USER_ADDRESS_UNSUPPORTED},
+    {/* ZIP 316 encoder (zcash-test-vectors): expiry e0 in u */
+     "u1407jgw9mrkxvzlj8d9hm4np922rhuj3tak9s0a0c95plaqpq88rhza48mz6az4vn"
+     "5qghduwdsl392uje75kfw4jue9qpvsysxd75rkka45ksw6c8dt",
+     "56e84b1adc9423c3676c0463f7125df4836fd2816b024ee70efe09fb9a7b3863c6eacdf95e03894950692c",
+     ZCASH_USER_ADDRESS_UNSUPPORTED},
+    {/* ZIP 316 encoder (zcash-test-vectors): unknown c0 ignored */
+     "u180de43e45vs9l68ufh5qk3wqzdxlulr45spd049266d23t8xmrckm23exvslau2f"
+     "8xyzr3srjdl8qz47mgz54tftkarq9xgt6ywvkenfw4lzcn54djr",
+     "56e84b1adc9423c3676c0463f7125df4836fd2816b024ee70efe09fb9a7b3863c6eacdf95e03894950692c",
+     ZCASH_USER_ADDRESS_MATCH},
+    {/* ZIP 316 encoder (zcash-test-vectors): unknown fffa ignored */
+     "u1f9engyjhh4teqha6jhcwejctx9zy04x5a5279keacr6fm7fzjyy854mr5u9jae50"
+     "40uyeync2jcn52zz75cp5qkrs2seeuu88wlmhczdr3htm2vw4k9f7p70zex",
+     "56e84b1adc9423c3676c0463f7125df4836fd2816b024ee70efe09fb9a7b3863c6eacdf95e03894950692c",
+     ZCASH_USER_ADDRESS_MATCH},
+    {/* ZIP 316 encoder (zcash-test-vectors): no orchard */
+     "u1475f8aj8c7vgyu2zrfe5v0exmyt6j6dumfmdq9aljzezj2433hpcl0kwmhlulhjx"
+     "qwv9ageeq25fdujku8yqpn974ffszrrnc77czxynqacg53cje8gq4rtnwwq5c44ngu"
+     "03x4k8668",
+     "56e84b1adc9423c3676c0463f7125df4836fd2816b024ee70efe09fb9a7b3863c6eacdf95e03894950692c",
+     ZCASH_USER_ADDRESS_MISMATCH},
+    {/* ZIP 316 encoder (zcash-test-vectors): trailing byte */
+     "u1ezm3ftt03l4eyjtcnq0pas5at6ed3rexff4ty34t3h8xrmgq2yvdjvu2kq8fyz9s"
+     "f46np34mppcvl5906p25h66cgejwh3s69t0hfa32jxfse8kkf9w5kavp99skqqpuv4"
+     "45ke3ac55yz83gzl6cmqa3t33wsre5he0wc4wf9h0qfapwqn",
+     "56e84b1adc9423c3676c0463f7125df4836fd2816b024ee70efe09fb9a7b3863c6eacdf95e03894950692c",
+     ZCASH_USER_ADDRESS_INVALID},
+    {/* ZIP 316 encoder (zcash-test-vectors): noncanonical size */
+     "u1v5j7prghc4v2zgtmghczl8spt6ejmgx8p2chwhyexp7nja5ueh3dg3qmxpnqw5dp"
+     "w04wwwmj0pgh62hqgd7s3tmft4thcwtyj3kftlprwqy648cavgez4fwefevamhaha3"
+     "dwdkq9we7m03jpusumgunre3923hhsyek2kftd44fru7z90qf",
+     "56e84b1adc9423c3676c0463f7125df4836fd2816b024ee70efe09fb9a7b3863c6eacdf95e03894950692c",
+     ZCASH_USER_ADDRESS_INVALID},
+    {/* ZIP 316 encoder (zcash-test-vectors): zu with p2pkh */
+     "zu1jwx697dq8kemjsvckjzwftdmd4rep2plrml2gwaap8x055g32kw4h8a5jzqsxnh"
+     "2z07ex73ghy9m37phegsxx4ytck762tpf0rmeasfe86682cjwpv8nnhdg903t62rxm"
+     "8s6gh66vj4",
+     "56e84b1adc9423c3676c0463f7125df4836fd2816b024ee70efe09fb9a7b3863c6eacdf95e03894950692c",
+     ZCASH_USER_ADDRESS_INVALID},
+    {/* ZIP 316 encoder (zcash-test-vectors): zu ok */
+     "zu1wecejcgqm8a2h8gztph4qgdqg9cx20h2dvccnsyl4tl6v9ynwrcufm4gq89xk6x"
+     "qd8drr33utp7qpcuxfh2929gp3t2d9qsdn0jq5zmrza69ejpmcydnw9y25psr9fgra"
+     "827ypkwqzh0e79vp3jqql085f6gvv6jjdsf32n0qv54g48h",
+     "56e84b1adc9423c3676c0463f7125df4836fd2816b024ee70efe09fb9a7b3863c6eacdf95e03894950692c",
+     ZCASH_USER_ADDRESS_MATCH},
+    {/* ZIP 316 encoder (zcash-test-vectors): tu ok */
+     "tu1xqvsg4ny70gtjd8jvh8x7suhpzzs2yljwfqn4hcc3th60ane0xzwuwmyt7pp7k5"
+     "x9uj4xl3xvrfwvr7wln26t65vk25zdt2ng87dadm8mxmssz88zhdfcpv8m227kelma"
+     "jtdxg86q3zz28r7nehc7993ldmy5vh7f4jr2wyfupx583k9ujrhxntjc06caxplnww"
+     "gafenuet6vzt58tz",
+     "56e84b1adc9423c3676c0463f7125df4836fd2816b024ee70efe09fb9a7b3863c6eacdf95e03894950692c",
+     ZCASH_USER_ADDRESS_MATCH},
+    {/* ZIP 316 encoder (zcash-test-vectors): orchard short */
+     "u1357df7yqvxzkgrq8z0zhj88y0crlttd8xdt8nzstldkjdnyjgms409zm0l0u0v3z"
+     "fay2zeze9guex7dlwwva50ds3u38zjglw9wua2w22zy886wkg4vutx7g4zgp64cady"
+     "snyzkzf5e8c6rxhsn3s7v2cgsuraa76vnpexrrgqkxm7",
+     "56e84b1adc9423c3676c0463f7125df4836fd2816b024ee70efe09fb9a7b3863c6eacdf95e03894950692c",
+     ZCASH_USER_ADDRESS_INVALID},
+    {/* ZIP 316 encoder (zcash-test-vectors): length overrun */
+     "u14swya5d2wk99rzm2n5648zfw3apdyyz7hs6h2yduketdghtxlj636v9lu87pfz7y"
+     "8ruv24qnuhfcxm7rm93j85jmkaz3fkp0e5s29qpxs3ysup7ne4",
+     "56e84b1adc9423c3676c0463f7125df4836fd2816b024ee70efe09fb9a7b3863c6eacdf95e03894950692c",
+     ZCASH_USER_ADDRESS_INVALID},
+    {/* ZIP 316 encoder (zcash-test-vectors): max 255 chars */
+     "u15455y7prnpdlghe8yyzwdytp38cau64p04nm33lmlmnrpuet4pdddcupjmll8n6k"
+     "lsuds6zqsz2yjksdax8alwufvzyzn9c262gux6z7d8vm2eq095qj63k5l5mst0cqng"
+     "phkm99pzzm6l7733yyyeu8zdvfmhmkwge2f00w5293u0xz6kn6a927d7wx9j6fkvh5"
+     "gkra57vst2duka0837xy4wmfy0xv7rxn7952dz668yvz26m3yxcmxtm6n",
+     "56e84b1adc9423c3676c0463f7125df4836fd2816b024ee70efe09fb9a7b3863c6eacdf95e03894950692c",
+     ZCASH_USER_ADDRESS_MATCH},
+    {/* ZIP 316 encoder (zcash-test-vectors): over max 256 chars */
+     "u1534mhakaaa26fm4qvhq7n3lh9czl7dtphq9hu84c3ck63yccdkdegaf2s860hhnu"
+     "r05nd5rzjv6mac4ljmltxd28vr2v8gfwxc763mtnn0f2nudkd2dwya28e0s2gy7708"
+     "69388a7ysf487dlc763sx0harhueathlszuqfc9d9qrjwnjfkgkc7v4hrz393kj93q"
+     "h8np3r4xgq5ylmxy7sryhrxgh85m3tj6pdn7rq65gtpnkg0xu8wajezwtd",
+     "56e84b1adc9423c3676c0463f7125df4836fd2816b024ee70efe09fb9a7b3863c6eacdf95e03894950692c",
+     ZCASH_USER_ADDRESS_INVALID},
+};
+
+static void receiver_from_hex(const char* hex, uint8_t out[43]) {
+  for (int i = 0; i < 43; i++) {
+    unsigned byte;
+    ASSERT_EQ(1, sscanf(hex + 2 * i, "%2x", &byte));
+    out[i] = (uint8_t)byte;
+  }
+}
+
+TEST(Zcash, UserAddress_RealVectors) {
+  for (const auto& v : kUserAddressVectors) {
+    SCOPED_TRACE(v.address);
+    uint8_t receiver[43];
+    receiver_from_hex(v.orchard, receiver);
+    EXPECT_EQ(v.expected, zcash_user_address_check(v.address, receiver));
+    if (v.expected != ZCASH_USER_ADDRESS_MATCH) continue;
+    /* Control: the match is on the receiver, not on a parse alone. */
+    receiver[42] ^= 1;
+    EXPECT_EQ(ZCASH_USER_ADDRESS_MISMATCH,
+              zcash_user_address_check(v.address, receiver));
+  }
+}
+
+TEST(Zcash, UserAddress_RejectsMalformedStrings) {
+  const UserAddressVector& good = kUserAddressVectors[0]; /* P2PKH+S+O */
+  uint8_t receiver[43];
+  receiver_from_hex(good.orchard, receiver);
+  std::string ua(good.address);
+  ASSERT_EQ(ZCASH_USER_ADDRESS_MATCH,
+            zcash_user_address_check(ua.c_str(), receiver));
+
+  std::string flipped = ua;  // one data character: bad checksum
+  flipped[20] = flipped[20] == 'q' ? 'p' : 'q';
+  EXPECT_EQ(ZCASH_USER_ADDRESS_INVALID,
+            zcash_user_address_check(flipped.c_str(), receiver));
+
+  std::string bad_checksum = ua;  // the last checksum character only
+  bad_checksum.back() = bad_checksum.back() == 'q' ? 'p' : 'q';
+  EXPECT_EQ(ZCASH_USER_ADDRESS_INVALID,
+            zcash_user_address_check(bad_checksum.c_str(), receiver));
+
+  std::string upper = ua;  // all-uppercase is valid bech32m (QR codes)
+  for (auto& c : upper) c = (char)toupper((unsigned char)c);
+  ASSERT_NE(ua, upper);
+  EXPECT_EQ(ZCASH_USER_ADDRESS_MATCH,
+            zcash_user_address_check(upper.c_str(), receiver));
+  receiver[42] ^= 1;  // control: still a receiver match, not a parse alone
+  EXPECT_EQ(ZCASH_USER_ADDRESS_MISMATCH,
+            zcash_user_address_check(upper.c_str(), receiver));
+  receiver[42] ^= 1;
+  std::string upper_bad = upper;  // uppercase still runs the checksum
+  upper_bad.back() = upper_bad.back() == 'Q' ? 'P' : 'Q';
+  EXPECT_EQ(ZCASH_USER_ADDRESS_INVALID,
+            zcash_user_address_check(upper_bad.c_str(), receiver));
+  std::string mixed = ua;  // but mixed case is never valid bech32m
+  mixed[30] = (char)toupper((unsigned char)mixed[30]);
+  ASSERT_NE(ua, mixed);
+  EXPECT_EQ(ZCASH_USER_ADDRESS_INVALID,
+            zcash_user_address_check(mixed.c_str(), receiver));
+
+  EXPECT_EQ(ZCASH_USER_ADDRESS_INVALID,  // over the 255-byte field
+            zcash_user_address_check((ua + std::string(256 - ua.size(), 'q'))
+                                         .c_str(),
+                                     receiver));
+  EXPECT_EQ(ZCASH_USER_ADDRESS_INVALID,
+            zcash_user_address_check("", receiver));
+  EXPECT_EQ(ZCASH_USER_ADDRESS_INVALID,
+            zcash_user_address_check("u1qqqqqq", receiver));
+  EXPECT_EQ(ZCASH_USER_ADDRESS_INVALID,  // a transparent address
+            zcash_user_address_check("t1Rv4exT7bqhZqi2j7xz8bUHDMxwosrjADU",
+                                     receiver));
+  EXPECT_EQ(ZCASH_USER_ADDRESS_INVALID,
+            zcash_user_address_check(nullptr, receiver));
 }
 
 TEST(Zcash, OrchardDiversifyHash_ReferenceVectors) {
@@ -1112,6 +1607,63 @@ TEST(Zcash, OrchardIvk_RejectsInvalidAkEncoding) {
                                         ORCHARD_IVK_VECTORS[0].rivk, ivk));
   memzero(bad_ak, sizeof(bad_ak));
   memzero(ivk, sizeof(ivk));
+}
+
+/* zcash-test-vectors orchard_key_components (vectors 0-2): the internal
+ * (change) scope ivk from ak, nk and rivk, and each key's default external
+ * receiver d || pk_d, which belongs to ivk but not to internal_ivk. */
+TEST(Zcash, OrchardInternalIvk_ReferenceVectors) {
+  static const struct {
+    const char *ak, *nk, *rivk, *ivk, *internal_ivk, *d, *pk_d;
+  } vectors[] = {
+      {"740bbe5d0580b2cad430180d02cc128b9a140d5e07c151721dc16d25d4e20f15",
+       "9f2f826738945ad01f47f70db0c367c246c20c61ff5583948c39dea968fefd1b",
+       "021ccf89604f5f7cc6e034b32d338908b819fbe325fee6458b56b4ca71a7e43d",
+       "85c8b5cd1ac3ec3ad7092132f97f0178b075c81a139fd460bbe0dfcd75514724",
+       "906e2d20d00dc0bf7c520687d9df3ce9814d30ee05c215f8764a32c362f9262f",
+       "8ff3386971cb64b8e77899",
+       "08dd8ebd7de92a68e586a34db8fea999efd2016fae76750afae7ee941646bcb9"},
+      {"6de1349830d66d7b97fe231fc7b02ad64323629cfed1e3aa24ef052f56e4002a",
+       "a8b73d979b6eaada8924bcbdc63a9ef4e87346f230aba6bbe1e2b43c5bea6b22",
+       "dacb2f2a9ced363171821aaf5d8cd902bc5e3a5a41fb51ae61a9f02dc89d1d12",
+       "563a6db60c74c2db08492cbae3bb083f1aeabffbcf42551d0ac64f2690536711",
+       "121183cb3b8d06f599bb38b37322851e5fc95ad0c9707ee85fb65e21f1a30d13",
+       "7807ca650858814d5022a8",
+       "3d3de4d52c77fd0b630a40dc38212487b2ff6eeef56d8c6a6163e854aff04189"},
+      {"efa5f1debeead0940a619ce0017bedb426657b2d07406664d895312ea1c3b334",
+       "04514ea048b94363dea7cb3be8d62582ac52922e0865f662743b05eae8715f17",
+       "2a328f994f6e5ad29ca811ed344968ea2cfc3fd231030e37bbd56db42640231c",
+       "609ecbc3d8cee3be2b2a2362951f58b74482adfaeee1c40f94030440f558aa30",
+       "a06abd29d5a199e1c21025b0337e941f6d4d84eb7cc35a397f9e753fdaed810d",
+       "6424f71a3ad197426498f4",
+       "eccb6a5780204237987232bc098f89acc475c3f74bd69e2f35d44736f48f3c14"},
+  };
+  for (const auto& v : vectors) {
+    uint8_t ak[32], nk[32], rivk[32], ivk[32], internal_ivk[32];
+    uint8_t receiver[43];
+    decode_hex(v.ak, ak, 32);
+    decode_hex(v.nk, nk, 32);
+    decode_hex(v.rivk, rivk, 32);
+    decode_hex(v.ivk, ivk, 32);
+    decode_hex(v.internal_ivk, internal_ivk, 32);
+    decode_hex(v.d, receiver, 11);
+    decode_hex(v.pk_d, receiver + 11, 32);
+
+    uint8_t derived[32];
+    ASSERT_TRUE(zcash_orchard_derive_internal_ivk(ak, nk, rivk, derived));
+    EXPECT_EQ(0, memcmp(derived, internal_ivk, 32));
+
+    EXPECT_TRUE(zcash_orchard_receiver_matches_ivk(ivk, receiver));
+    EXPECT_FALSE(zcash_orchard_receiver_matches_ivk(internal_ivk, receiver));
+    receiver[0] ^= 1;  // another diversifier, same pk_d
+    EXPECT_FALSE(zcash_orchard_receiver_matches_ivk(ivk, receiver));
+    receiver[0] ^= 1;
+    receiver[20] ^= 1;  // another pk_d
+    EXPECT_FALSE(zcash_orchard_receiver_matches_ivk(ivk, receiver));
+
+    ak[31] |= 0x80;  // not a valid ak encoding
+    EXPECT_FALSE(zcash_orchard_derive_internal_ivk(ak, nk, rivk, derived));
+  }
 }
 
 TEST(Zcash, OrchardReceiver_ReferenceVectors) {
@@ -1187,15 +1739,6 @@ TEST(Zcash, AkSignBit_AlwaysClear) {
     EXPECT_FALSE(bn_is_odd(&ak_point.y))
         << "ak y-coordinate must be even for account " << account;
 
-    /* Check serialized sign bit */
-    uint8_t ak_bytes[32];
-    bignum256 x_copy;
-    bn_copy(&ak_point.x, &x_copy);
-    bn_write_le(&x_copy, ak_bytes);
-
-    EXPECT_EQ(ak_bytes[31] & 0x80, 0)
-        << "ak sign bit must be clear for account " << account;
-
     memzero(&keys, sizeof(keys));
   }
 }
@@ -1258,6 +1801,23 @@ TEST(Zcash, PCZTSigningPolicy_RequiresIronwoodDigestForV6Pool) {
             ZCASH_PCZT_SIGNING_REQUEST_MISSING_TX_DIGESTS);
 }
 
+TEST(Zcash, V6OrchardIronwoodDigest_OnlyAbsentOrEmptyAccepted) {
+  /* ZIP-229 empty Ironwood digest (BLAKE2b-256 "ZTxIdIronwd_H_v6", no data). */
+  static const uint8_t empty[32] = {
+      0xb9, 0xcf, 0xe6, 0x43, 0xce, 0x45, 0xb2, 0x8c, 0x33, 0x19, 0x0f,
+      0x0d, 0x52, 0x23, 0xe4, 0x75, 0x97, 0x2f, 0x2a, 0x14, 0x9d, 0xc5,
+      0x44, 0x04, 0xfd, 0x83, 0x65, 0x52, 0x1f, 0x84, 0x16, 0xc5};
+  uint8_t other[32];
+  memcpy(other, empty, sizeof(other));
+  other[31] ^= 0x01;
+
+  EXPECT_TRUE(zcash_v6_orchard_ironwood_digest_valid(false, 0, NULL));
+  EXPECT_TRUE(zcash_v6_orchard_ironwood_digest_valid(true, 32, empty));
+  EXPECT_FALSE(zcash_v6_orchard_ironwood_digest_valid(true, 32, other));
+  EXPECT_FALSE(zcash_v6_orchard_ironwood_digest_valid(true, 31, empty));
+  EXPECT_FALSE(zcash_v6_orchard_ironwood_digest_valid(true, 0, empty));
+}
+
 TEST(Zcash, PCZTSigningPolicy_RejectsMissingPlaintextHeaderFields) {
   ZcashPCZTSigningRequestMeta meta = clear_pczt_meta();
 
@@ -1292,14 +1852,56 @@ TEST(Zcash, PCZTSigningPolicy_RejectsInvalidOptionalDigests) {
   EXPECT_FALSE(zcash_pczt_signing_request_is_clear(&meta));
 }
 
-TEST(Zcash, PCZTSigningPolicy_RejectsSaplingComponent) {
-  ZcashPCZTSigningRequestMeta meta = clear_pczt_meta();
+// Sapling is unsupported, so only the canonical empty digest (the one the
+// device signs over) may be supplied; any other value is refused.
+TEST(Zcash, PCZTSigningPolicy_AcceptsOnlyTheEmptySaplingDigest) {
+  /* ZIP-244 empty Sapling digest (BLAKE2b-256 "ZTxIdSaplingHash", no data). */
+  static const uint8_t empty[32] = {
+      0x6f, 0x2f, 0xc8, 0xf9, 0x8f, 0xea, 0xfd, 0x94, 0xe7, 0x4a, 0x0d,
+      0xf4, 0xbe, 0xd7, 0x43, 0x91, 0xee, 0x0b, 0x5a, 0x69, 0x94, 0x5e,
+      0x4c, 0xed, 0x8c, 0xa8, 0xa0, 0x95, 0x20, 0x6f, 0x00, 0xae};
+  uint8_t other[32];
+  memcpy(other, empty, sizeof(other));
+  other[0] ^= 0x01;
 
+  ZcashPCZTSigningRequestMeta meta = clear_pczt_meta();
   meta.has_sapling_digest = true;
   meta.sapling_digest_size = 32;
+  meta.sapling_digest = empty;
+  EXPECT_EQ(zcash_pczt_signing_request_status(&meta),
+            ZCASH_PCZT_SIGNING_REQUEST_OK);
+
+  meta.sapling_digest = other;
   EXPECT_EQ(zcash_pczt_signing_request_status(&meta),
             ZCASH_PCZT_SIGNING_REQUEST_UNSUPPORTED_SAPLING_COMPONENT);
   EXPECT_FALSE(zcash_pczt_signing_request_is_clear(&meta));
+
+  meta.sapling_digest = empty;
+  meta.sapling_digest_size = 31;
+  EXPECT_EQ(zcash_pczt_signing_request_status(&meta),
+            ZCASH_PCZT_SIGNING_REQUEST_UNSUPPORTED_SAPLING_COMPONENT);
+
+  meta.sapling_digest_size = 32;
+  meta.sapling_digest = NULL;
+  EXPECT_EQ(zcash_pczt_signing_request_status(&meta),
+            ZCASH_PCZT_SIGNING_REQUEST_UNSUPPORTED_SAPLING_COMPONENT);
+}
+
+// ZIP 320 reference: t1VmmGiyjVNeCjxDZzg7vZmd99WyzVby9yC carries this key
+// hash, and the ZIP's TEX form of it is the address below (also recomputed
+// with an independent bech32m encoder and by zcash_address).
+TEST(Zcash, TexAddress_Zip320Vector) {
+  static const uint8_t hash[20] = {0x82, 0x86, 0xbf, 0x79, 0x08, 0x66, 0x80,
+                                   0x53, 0x97, 0xe3, 0xa9, 0x47, 0x64, 0x0b,
+                                   0x77, 0xa4, 0x3f, 0x0b, 0x43, 0xa5};
+  char address[64];
+  ASSERT_TRUE(zcash_tex_address(hash, address, sizeof(address)));
+  EXPECT_STREQ("tex1s2rt77ggv6q989lr49rkgzmh5slsksa9khdgte", address);
+
+  char exact[43];
+  EXPECT_TRUE(zcash_tex_address(hash, exact, sizeof(exact)));
+  EXPECT_FALSE(zcash_tex_address(hash, exact, sizeof(exact) - 1));
+  EXPECT_FALSE(zcash_tex_address(NULL, address, sizeof(address)));
 }
 
 TEST(Zcash, PCZTSigningPolicy_RejectsTransparentComponentsWithoutDigest) {
@@ -1414,6 +2016,39 @@ TEST(Zcash, ComputeHeaderDigest_FromPlaintextFields) {
   ASSERT_TRUE(zcash_compute_header_digest(5, 0x26a7270a, 0xc2d6d0b4, 123456,
                                           987654, digest));
   EXPECT_TRUE(memcmp(digest, ZIP244_EXPECTED_HEADER_DIGEST, 32) == 0);
+}
+
+TEST(Zcash, TxVersionSupported_OnlyV5AndV6Pairs) {
+  EXPECT_TRUE(zcash_tx_version_supported(5, 0x26A7270A));
+  EXPECT_TRUE(zcash_tx_version_supported(6, 0xD884B698));
+  EXPECT_FALSE(zcash_tx_version_supported(5, 0xD884B698));
+  EXPECT_FALSE(zcash_tx_version_supported(6, 0x26A7270A));
+  EXPECT_FALSE(zcash_tx_version_supported(4, 0x892F2085));
+  EXPECT_FALSE(zcash_tx_version_supported(7, 0xD884B698));
+  EXPECT_FALSE(zcash_tx_version_supported(0, 0));
+}
+
+TEST(Zcash, P2pkhScriptMatchesPubkey_ComparesHash160) {
+  /* Compressed secp256k1 generator (private key 1); HASH160 is the public
+   * value behind 1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH. */
+  static const uint8_t pubkey[33] = {
+      0x02, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0,
+      0x62, 0x95, 0xce, 0x87, 0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d,
+      0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81, 0x5b, 0x16, 0xf8, 0x17, 0x98};
+  uint8_t script[25] = {0x76, 0xa9, 0x14, 0x75, 0x1e, 0x76, 0xe8, 0x19, 0x91,
+                        0x96, 0xd4, 0x54, 0x94, 0x1c, 0x45, 0xd1, 0xb3, 0xa3,
+                        0x23, 0xf1, 0x43, 0x3b, 0xd6, 0x88, 0xac};
+  EXPECT_TRUE(
+      zcash_p2pkh_script_matches_pubkey(script, sizeof(script), pubkey));
+  script[22] ^= 0x01;
+  EXPECT_FALSE(
+      zcash_p2pkh_script_matches_pubkey(script, sizeof(script), pubkey));
+  script[22] ^= 0x01;
+  script[24] = 0x87;
+  EXPECT_FALSE(
+      zcash_p2pkh_script_matches_pubkey(script, sizeof(script), pubkey));
+  script[24] = 0xac;
+  EXPECT_FALSE(zcash_p2pkh_script_matches_pubkey(script, 24, pubkey));
 }
 
 TEST(Zcash, ComputeTransparentDigest_DistinctFromPerInputSighash) {
@@ -1572,7 +2207,7 @@ TEST(Zcash, ComputeShieldedSighash_KnownVector) {
    * ZIP-244 sighash test vector.
    *
    * The sighash personalization is "ZcashTxHash_" || branch_id_LE.
-   * For NU5 (branch_id = 0x37519621):
+   * For branch_id = 0x37519621 (not the NU5 id, which is 0xc2d6d0b4):
    *   personalization = "ZcashTxHash_" || 0x21965137
    *
    * Input: BLAKE2b-256(personalization, header || transparent || sapling ||
@@ -1589,12 +2224,9 @@ TEST(Zcash, ComputeShieldedSighash_KnownVector) {
                                              orchard, branch_id, sighash));
 
   /*
-   * Independently verified: BLAKE2b-256 with personalization
-   * "ZcashTxHash_\x21\x96\x51\x37" over 128 zero bytes.
-   *
-   * This is a self-consistency check — the value was computed by
-   * running the same BLAKE2b-256 offline. If the sighash function
-   * changes its algorithm, this test will catch it.
+   * BLAKE2b-256 with personalization "ZcashTxHash_\x21\x96\x51\x37" over
+   * 128 zero bytes, recomputed here: it checks the construction, and is not
+   * a stored vector. Zip244OfficialVectors_V5Sighash holds the spec vectors.
    */
   uint8_t expected[32];
   BLAKE2B_CTX ctx;
@@ -1610,6 +2242,91 @@ TEST(Zcash, ComputeShieldedSighash_KnownVector) {
 
   EXPECT_TRUE(memcmp(sighash, expected, 32) == 0)
       << "Sighash must match direct BLAKE2b computation";
+}
+
+/* Official ZIP-244 vectors (provenance in zcash_zip244_vectors.h): the
+ * firmware builds header and transparent digests from the plaintext fields,
+ * then the sighash; expected values come from the vectors only. */
+static size_t zip244_hex(const char* hex, uint8_t* out, size_t out_size) {
+  size_t n = strlen(hex) / 2;
+  if (n > out_size) return SIZE_MAX;
+  for (size_t i = 0; i < n; i++) {
+    unsigned int byte = 0;
+    sscanf(hex + 2 * i, "%2x", &byte);
+    out[i] = (uint8_t)byte;
+  }
+  return n;
+}
+
+static void zip244_hex32(const char* hex, uint8_t out[32]) {
+  ASSERT_EQ(zip244_hex(hex, out, 32), 32u);
+}
+
+TEST(Zcash, Zip244OfficialVectors_V5Sighash) {
+  for (const Zip244Vector& v : kZip244Vectors) {
+    SCOPED_TRACE(testing::Message() << "zip_0244.json vector " << v.index);
+
+    uint8_t prevouts[3][32], in_scripts[3][16], out_scripts[3][16];
+    ZcashTransparentInputDigestInfo inputs[3] = {};
+    ZcashTransparentOutputDigestInfo outputs[3] = {};
+    ASSERT_LE(v.n_inputs, 3u);
+    ASSERT_LE(v.n_outputs, 3u);
+    for (size_t i = 0; i < v.n_inputs; i++) {
+      zip244_hex32(v.inputs[i].prevout_txid, prevouts[i]);
+      inputs[i].prevout_txid = prevouts[i];
+      inputs[i].prevout_index = v.inputs[i].prevout_index;
+      inputs[i].sequence = v.inputs[i].sequence;
+      inputs[i].value = v.inputs[i].amount;
+      inputs[i].script_pubkey = in_scripts[i];
+      inputs[i].script_pubkey_size =
+          zip244_hex(v.inputs[i].script_pubkey, in_scripts[i], 16);
+      ASSERT_NE(inputs[i].script_pubkey_size, SIZE_MAX);
+    }
+    for (size_t i = 0; i < v.n_outputs; i++) {
+      outputs[i].value = v.outputs[i].value;
+      outputs[i].script_pubkey = out_scripts[i];
+      outputs[i].script_pubkey_size =
+          zip244_hex(v.outputs[i].script_pubkey, out_scripts[i], 16);
+      ASSERT_NE(outputs[i].script_pubkey_size, SIZE_MAX);
+    }
+
+    uint8_t sapling[32], orchard[32], expected_txid[32], expected_sighash[32];
+    zip244_hex32(v.sapling_digest, sapling);
+    zip244_hex32(v.orchard_digest, orchard);
+    zip244_hex32(v.txid, expected_txid);
+    zip244_hex32(v.sighash_shielded, expected_sighash);
+
+    uint8_t header[32], t_digest[32], t_sig_digest[32], out[32];
+    ASSERT_TRUE(zcash_compute_header_digest(5, v.version_group_id, v.branch_id,
+                                            v.lock_time, v.expiry_height,
+                                            header));
+
+    /* txid: T.2 transparent_digest. */
+    ASSERT_TRUE(zcash_compute_transparent_digest(inputs, v.n_inputs, outputs,
+                                                 v.n_outputs, t_digest));
+    ASSERT_TRUE(zcash_compute_shielded_sighash(header, t_digest, sapling,
+                                               orchard, v.branch_id, out));
+    EXPECT_EQ(memcmp(out, expected_txid, 32), 0) << "txid";
+
+    /* sighash_shielded: S.2 with SIGHASH_ALL and empty txin_sig_digest. */
+    ASSERT_TRUE(zcash_compute_orchard_transparent_sig_digest(
+        inputs, v.n_inputs, outputs, v.n_outputs, t_sig_digest));
+    ASSERT_TRUE(zcash_compute_shielded_sighash(header, t_sig_digest, sapling,
+                                               orchard, v.branch_id, out));
+    EXPECT_EQ(memcmp(out, expected_sighash, 32), 0) << "sighash_shielded";
+
+    /* sighash_all for the vector's transparent input. */
+    if (v.transparent_input >= 0) {
+      uint8_t expected_all[32];
+      zip244_hex32(v.sighash_all, expected_all);
+      ASSERT_TRUE(zcash_compute_transparent_sighash_digest(
+          inputs, v.n_inputs, outputs, v.n_outputs,
+          (uint32_t)v.transparent_input, 0x01, t_sig_digest));
+      ASSERT_TRUE(zcash_compute_shielded_sighash(header, t_sig_digest, sapling,
+                                                 orchard, v.branch_id, out));
+      EXPECT_EQ(memcmp(out, expected_all, 32), 0) << "sighash_all";
+    }
+  }
 }
 
 /* ── RedPallas Signing Smoke Test ────────────────────────────────── */
@@ -1842,7 +2559,8 @@ TEST(Zcash, RedPallasSign_DifferentSighash) {
  * fsm_msg_zcash.h.
  *
  * These expected bytes are NOT taken from our own constants; they are the
- * specification values, so this test catches a mistyped literal as well as a
+ * specification values, and the digest the handlers use for each component is
+ * compared with them, so this test catches a mistyped literal as well as a
  * wrong personalization string. A wrong Orchard value would reject every
  * Ironwood transaction, which is safe but would look like an Ironwood bug.
  */
@@ -1864,12 +2582,19 @@ TEST(Zcash, EmptyBundleDigests_MatchZip244AndZip229) {
        "b9cfe643ce45b28c33190f0d5223e475972f2a149dc54404fd8365521f8416c5"},
   };
 
+  // In the component order of zcash_test_emptyDigest().
+  int component = 0;
   for (const Case& c : cases) {
     BLAKE2B_CTX ctx;
     ASSERT_EQ(blake2b_InitPersonal(&ctx, 32, c.personal, 16), 0)
         << "personalization " << c.personal;
     uint8_t out[32];
     ASSERT_EQ(blake2b_Final(&ctx, out, 32), 0) << c.personal;
+
+    uint8_t device[32];
+    zcash_test_emptyDigest(component++, device);
+    EXPECT_EQ(0, memcmp(device, out, 32))
+        << "the device's empty digest for " << c.personal;
 
     char hex[65];
     for (int i = 0; i < 32; i++) {

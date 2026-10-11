@@ -68,8 +68,10 @@ bool tendermint_validateValidatorAddress(const char* address,
 bool tendermint_validateBech32Address(const char* address,
                                       const char* expected_prefix);
 
+// Denom: non-empty [a-z0-9./-] only, so it is safe in JSON without escaping.
 bool tendermint_isValidDenom(const char* denom);
 
+// Deposit asset: as above, plus uppercase and '~' (trade assets).
 bool tendermint_isValidAsset(const char* asset);
 
 bool tendermint_isValidSigner(const char* signer, const char* hrp);

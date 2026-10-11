@@ -134,6 +134,9 @@ bool confirm_body_fits_constant_power(const char* body, uint16_t body_width);
 #if DEBUG_LINK
 const char* confirm_debug_title(void);
 const char* confirm_debug_body(void);
+/// Forget the retained confirmation text, e.g. the last page of a private
+/// seed display, before DebugLinkState is allowed to report it again.
+void confirm_debug_clear(void);
 #endif
 
 bool confirm(ButtonRequestType type, const char* request_title,

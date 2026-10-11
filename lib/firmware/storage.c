@@ -1882,11 +1882,11 @@ void storage_reset_impl(SessionState* ss, ConfigFlash* cfg) {
 
   storage_resetPolicies(&cfg->storage);
 
-  /* Every fresh/wiped record needs a new per-installation PIN-KDF salt. The
-   * legacy migration path already minted one, but records created after V2
-   * otherwise persisted zeroes for the device's lifetime. Keep the draw in
-   * the common reset implementation so factory init, WipeDevice, invalid
-   * storage recovery, and LoadDevice cannot diverge again. */
+  /* A record reset or wiped on this firmware gets its own PIN-KDF salt, drawn
+   * before storage_setPin_impl() derives the wrapping key from it. A record
+   * written by earlier firmware is loaded with the salt it has, which is zero
+   * unless it was migrated from a v1-v10 layout, and keeps it until the device
+   * is wiped: the wipe-code wrapping derives from the same salt. */
   storage_drawKeyMaterial(cfg->storage.pub.random_salt, RANDOM_SALT_LEN);
 
   storage_setPin_impl(ss, &cfg->storage, "");
@@ -2009,6 +2009,10 @@ pintest_t session_clear_impl(SessionState* ss, Storage* storage,
     signed_metadata_clear_signers();
 #endif
     storage_setPolicy_impl(storage->pub.policies, "AdvancedMode", false);
+    /* trezor-crypto caches the mnemonic, passphrase, seed and derived nodes
+     * of recent derivations. A lock must not leave them in RAM. */
+    bip39_cache_clear();
+    bip32_cache_clear();
   }
 
   bip32_cache_clear();

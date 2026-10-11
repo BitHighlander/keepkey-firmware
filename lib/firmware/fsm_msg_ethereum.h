@@ -291,14 +291,13 @@ static bool confirm_erc7730_text(const char* title, const char* label,
   return true;
 }
 
-/* Signer-authored program strings reach the screen escaped, exactly like
- * captured values: the OLED font draws every non-ASCII byte as one glyph and
- * the pager drops edge spaces, so raw text is not shown one-to-one. */
+/* Signer-authored strings are escaped as labels: raw text is not shown
+ * one-to-one (non-ASCII glyphs, dropped edge spaces). */
 static bool confirm_erc7730_escaped(const char* title, const char* label,
                                     const char* raw) {
   char text[ERC7730_FORMATTED_VALUE_MAX + 1u];
-  const bool shown = erc7730_format_text((const uint8_t*)raw, strlen(raw), text,
-                                         sizeof(text)) &&
+  const bool shown = erc7730_format_label((const uint8_t*)raw, strlen(raw),
+                                          text, sizeof(text)) &&
                      confirm_erc7730_text(title, label, text);
   memzero(text, sizeof(text));
   return shown;
@@ -349,8 +348,8 @@ static Erc7730UiResult confirm_erc7730_source_and_intent(
 static bool confirm_erc7730_field(const char* title, const char* label,
                                   const char* value) {
   char escaped[ERC7730_FORMATTED_VALUE_MAX + 1u];
-  const bool shown = erc7730_format_text((const uint8_t*)label, strlen(label),
-                                         escaped, sizeof(escaped)) &&
+  const bool shown = erc7730_format_label((const uint8_t*)label, strlen(label),
+                                          escaped, sizeof(escaped)) &&
                      confirm_erc7730_text(title, escaped, value);
   memzero(escaped, sizeof(escaped));
   return shown;
@@ -369,6 +368,16 @@ static void fail_erc7730_field(Erc7730Workflow* workflow, FailureType type,
   if (typed) eip712_stream_abort();
   fsm_sendFailure(type, message);
   layoutHome();
+}
+
+/* A refused source/intent screen: invalid identity or a user decline. */
+static void fail_erc7730_ui(Erc7730Workflow* workflow, Erc7730UiResult ui) {
+  fail_erc7730_field(
+      workflow,
+      ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
+                               : FailureType_Failure_ActionCancelled,
+      ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
+                               : _("Signing cancelled by user"));
 }
 
 typedef enum {
@@ -514,8 +523,8 @@ static void show_erc7730_value(Erc7730Workflow* workflow, const char* text) {
   char escaped[ERC7730_FORMATTED_VALUE_MAX + 1u];
   char formatted[ERC7730_FORMATTED_VALUE_MAX + 1u];
   bool ok = field->has_value &&
-            (!text || erc7730_format_text((const uint8_t*)text, strlen(text),
-                                          escaped, sizeof(escaped)));
+            (!text || erc7730_format_label((const uint8_t*)text, strlen(text),
+                                           escaped, sizeof(escaped)));
   const uint64_t chain_id = workflow->identity.chain_id;
   if (ok) {
     switch (field->kind) {
@@ -788,9 +797,24 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
     return;
   }
   if (field->kind == 13) {
-    /* Clear-sign the inner call when its definition exists: one level, not
-     * inside an iteration, and only for inner bytes that hold a selector and
-     * whole ABI words. Otherwise it is shown blind (7.15). */
+    /* An inner approve(spender, 2^256-1) signs only after the device's own
+     * UNLIMITED warning, before its inner or blind screens. */
+    if (field->unlimited_approve && field->has_address) {
+      const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
+      if (ui != ERC7730_UI_OK) {
+        fail_erc7730_ui(workflow, ui);
+        return;
+      }
+      if (!ethereum_confirmUnlimitedApproval(
+              (uint32_t)workflow->identity.chain_id, field->approve_spender,
+              field->address)) {
+        fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
+                           _("Signing cancelled by user"));
+        return;
+      }
+    }
+    /* Clear-sign the inner call at depth 1, outside iterations, for whole ABI
+     * words; otherwise it is shown blind (7.15). */
     const bool fetchable = workflow->depth == 0 && !workflow->iterating &&
                            !workflow->inner_refused && field->has_address &&
                            field->inner_selector_length == 4 &&
@@ -1295,8 +1319,14 @@ void fsm_msgEthereumClearSignDefinition(
     const EthereumClearSignDefinition* msg) {
   CHECK_INITIALIZED
   CHECK_PIN
-  CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),
-              _("AdvancedMode required for ERC-7730"));
+  /* A refusal discards any partial preload, like the chunk refusals below. */
+  if (!storage_isPolicyEnabled("AdvancedMode")) {
+    erc7730_catalog_clear_preload();
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _("AdvancedMode required for ERC-7730"));
+    layoutHome();
+    return;
+  }
 
   /* Dispatch has already ended any signing session before this runs. */
   if (msg->definition_id.size != 32 || msg->data.size == 0 ||
@@ -1361,9 +1391,15 @@ static void fail_erc7730_domain(void) {
 
 void fsm_msgEthereumClearSignDefinitionChunk(
     const EthereumClearSignDefinitionChunk* msg) {
-  CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),
-              _("AdvancedMode required for ERC-7730"));
   Erc7730Workflow* workflow = erc7730_workflow_state();
+  if (!storage_isPolicyEnabled("AdvancedMode")) {
+    /* Refuse as the SignTx-time gate does: end the workflow, its typed-data
+     * stream and the preload, never leave them armed behind a Failure. */
+    erc7730_catalog_clear_preload();
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("AdvancedMode required for ERC-7730"));
+    return;
+  }
   if (!erc7730_workflow_active(workflow)) {
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
                     _("No ERC-7730 definition requested"));
@@ -1721,8 +1757,9 @@ void fsm_msgEthereumClearSignDefinitionChunk(
         show_erc7730_value(workflow, text);
       } else {
         char escaped[ERC7730_FORMATTED_VALUE_MAX + 1u];
-        if (erc7730_format_text((const uint8_t*)text, length, escaped,
-                                sizeof(escaped))) {
+        /* A signed constant or an intent text part: signer-authored. */
+        if (erc7730_format_label((const uint8_t*)text, length, escaped,
+                                 sizeof(escaped))) {
           show_erc7730_field(workflow, escaped);
         } else {
           fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
@@ -1825,19 +1862,8 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
   }
   CHECK_PIN
 
-  /* Metadata must arrive before signing starts. signed_metadata_process()
-   * clears the binding on entry, so accepting metadata mid-signing would
-   * drop the tx<->metadata binding without aborting: a host could approve a
-   * benign decode (suppressing the blind-sign gate), then inject metadata to
-   * clear the binding and stream attacker-chosen calldata for the rest.
-   * Refuse and abort any in-progress signing session. */
-  if (ethereum_signing_isInProgress()) {
-    ethereum_signing_abort();
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
-                    _("Metadata not allowed during signing"));
-    layoutHome();
-    return;
-  }
+  /* Metadata during signing never reaches here: the dispatch hook refuses
+   * it (see keepkey_before_message_dispatch()). */
 
   RESP_INIT(EthereumMetadataAck);
 
@@ -1896,20 +1922,8 @@ void fsm_msgLoadClearsignSigner(const LoadClearsignSigner* msg) {
   CHECK_INITIALIZED
   CHECK_PIN
 
-  /* Same reasoning as fsm_msgEthereumTxMetadata above, and the same fix.
-   * Storing a signer ends in signed_metadata_clear(), which drops the
-   * tx<->metadata binding along with relied_on_metadata -- so loading a
-   * signer mid-signing let a host approve a benign decode and then stream
-   * different calldata, with signed_metadata_enforce() seeing relied=false
-   * and passing. The guard was on the metadata message but not on its
-   * sibling. */
-  if (ethereum_signing_isInProgress()) {
-    ethereum_signing_abort();
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
-                    _("Signer load not allowed during signing"));
-    layoutHome();
-    return;
-  }
+  /* A signer load during signing never reaches here: the dispatch hook
+   * refuses it (see keepkey_before_message_dispatch()). */
 
   CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),
               _("AdvancedMode required for clearsign signers"));
@@ -2356,6 +2370,8 @@ static void eip712_pump(void) {
       resp->member_path_count = next->member_path_len;
       memcpy(resp->member_path, next->member_path,
              next->member_path_len * sizeof(uint32_t));
+      resp->has_value_offset = next->has_value_offset;
+      resp->value_offset = next->value_offset;
       note_workflow_progress();
       msg_write(MessageType_MessageType_EthereumTypedDataValueRequest, resp);
       return;
@@ -2445,11 +2461,18 @@ static void eip712_pump(void) {
       ethereum_address_checksum(pubkeyhash, address + 2, false, 0);
 
       /* The one screen that names the action being authorised and the
-       * account authorising it; every leaf before it was part of the review. */
+       * account authorising it; every leaf before it was part of the review.
+       * A message or a domain with no member had no screen, so it is named
+       * here as empty. */
       if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Sign Typed Data",
                    "Sign %s%s%s\nfrom %s?",
-                   done.message_empty && !done.domain_only ? "EMPTY " : "",
-                   done.primary_type, done.domain_only ? " (domain only)" : "",
+                   (done.domain_only ? done.domain_empty : done.message_empty)
+                       ? "EMPTY "
+                       : "",
+                   done.primary_type,
+                   done.domain_only    ? " (domain only)"
+                   : done.domain_empty ? " (EMPTY domain)"
+                                       : "",
                    address)) {
         fsm_sendFailure(FailureType_Failure_ActionCancelled,
                         _("Signing cancelled by user"));
@@ -2561,9 +2584,15 @@ void fsm_msgEthereumTypedDataValueAck(const EthereumTypedDataValueAck* msg) {
     return;
   }
   Erc7730Workflow* workflow = erc7730_workflow_state();
+  /* The stream accepted this ack, so an offset marks a later chunk of a long
+   * value and a total length marks its first. */
   if (workflow->phase == ERC7730_WORKFLOW_TYPED_DATA &&
       !erc7730_workflow_eip712_observe(workflow, member_path, member_path_count,
-                                       msg->value.bytes, msg->value.size)) {
+                                       msg->value.bytes, msg->value.size,
+                                       msg->has_value_total_length
+                                           ? msg->value_total_length
+                                           : msg->value.size,
+                                       msg->has_value_offset)) {
     memzero(member_path, sizeof(member_path));
     eip712_stream_abort();
     erc7730_workflow_abort(workflow);

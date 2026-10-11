@@ -211,13 +211,14 @@ const char* fsm_test_lastFailureMessage(void) {
  * anything is handled structurally instead: storage_commit() aborts an armed
  * ceremony, so a handler that writes can never have its write consumed by
  * one -- the worst it can do is end it. */
-#define CHECK_NO_CEREMONY                                     \
-  if (setup_isArmed()) {                                      \
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,    \
-                    "Device is in the middle of setup. Send " \
-                    "Initialize or Cancel first.");           \
-    layoutHome();                                             \
-    return;                                                   \
+#define CHECK_NO_CEREMONY                                                \
+  if (setup_isArmed()) {                                                 \
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,               \
+                    "Device is in the middle of setup. Send "            \
+                    "Initialize or Cancel first.");                      \
+    /* Keep the armed ceremony on screen; its ACKs still continue it. */ \
+    if (setup_isArmedAs(SETUP_RECOVERY)) recovery_cipher_redraw();       \
+    return;                                                              \
   }
 
 #define CHECK_NOT_BTC_ONLY_LOCKED                                   \
@@ -340,6 +341,12 @@ typedef union {
 #include "messagemap.def"
 
 static uint8_t msg_resp[sizeof(FsmResponse)] __attribute__((aligned(8)));
+#if DEBUG_LINK
+uint8_t* fsm_test_responseArena(size_t* size) {
+  *size = sizeof(msg_resp);
+  return msg_resp;
+}
+#endif
 extern bool reset_msg_stack;
 
 static const CoinType* fsm_getCoin(bool has_name, const char* name) {
@@ -427,6 +434,26 @@ static void sendFailureWrapper(FailureType code, const char* text) {
   fsm_sendFailure(code, text);
 }
 
+/* True while a setup ceremony is armed or any signer waits for the host. */
+bool fsm_workflowInProgress(void) {
+  if (setup_isArmed() || signing_is_active()) return true;
+#if !BITCOIN_ONLY
+  if (ethereum_signing_isInProgress() ||
+      eip712_stream_waiting() != EIP712_IDLE ||
+      erc7730_workflow_active(erc7730_workflow_state()) ||
+      tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS) ||
+      tendermint_signingIsInited(TENDERMINT_SIGNING_GENERIC) ||
+      osmosis_signingIsInited() || eos_signingIsInited() ||
+      thorchain_signingIsInited() || mayachain_signingIsInited()) {
+    return true;
+  }
+#endif
+#if ZCASH_PRIVACY
+  if (zcash_signing_is_active()) return true;
+#endif
+  return false;
+}
+
 void fsm_init(void) {
   msg_map_init(MessagesMap, sizeof(MessagesMap) / sizeof(MessagesMap_t));
   set_msg_failure_handler(&sendFailureWrapper);
@@ -443,21 +470,23 @@ void fsm_init(void) {
   txin_dgst_initialize();
 }
 
-/* Reject continuation packets unless their signing workflow is active. */
 static void abort_signing_engines(void);
 
+/* Reject continuation packets unless their signing workflow is active. */
 static bool reject_stale_continuation(const char* text) {
   /* A decoded request always gets a terminal response. Silently dropping an
    * inactive ACK leaves the host blocked forever, while dispatching it would
    * let the handler replace an unrelated recovery screen. End signing, keep
-   * any setup ceremony armed, and reject on the wire without changing OLED
-   * state. */
+   * any setup ceremony armed and on its own screen, and reject on the wire.
+   * Several signer aborts only clear state, so with no ceremony armed go home
+   * rather than leave the aborted transaction's approval screen up. */
   fsm_abort_signing_workflows();
   fsm_sendFailure(FailureType_Failure_UnexpectedMessage, text);
+  if (!setup_isArmed()) layoutHome();
   return false;
 }
 
-bool keepkey_before_message_dispatch(MessageType msg_id) {
+static bool fsm_dispatchGate(MessageType msg_id) {
   switch (msg_id) {
     case MessageType_MessageType_GetFeatures:
     case MessageType_MessageType_GetCoinTable:
@@ -476,6 +505,25 @@ bool keepkey_before_message_dispatch(MessageType msg_id) {
         return reject_stale_continuation("Not in Recovery mode");
       return true;
 #if !BITCOIN_ONLY
+    case MessageType_MessageType_EthereumTxMetadata:
+      /* Metadata must arrive before signing starts: signed_metadata_process()
+       * clears the tx<->metadata binding, so accepting it mid-signing would
+       * let a host approve one decode and then sign different calldata
+       * without the enforce check. The default path below would end the
+       * signer and then accept the metadata, so refuse it here instead. A
+       * typed-data stream waiting for its next ack counts as signing too. */
+      if (fsm_workflowInProgress())
+        return reject_stale_continuation("Metadata not allowed during signing");
+      fsm_abort_signing_workflows();
+      return true;
+    case MessageType_MessageType_LoadClearsignSigner:
+      /* Storing a signer clears the same binding (signed_metadata_clear()),
+       * so it is refused mid-signing for the same reason. */
+      if (fsm_workflowInProgress())
+        return reject_stale_continuation(
+            "Signer load not allowed during signing");
+      fsm_abort_signing_workflows();
+      return true;
     case MessageType_MessageType_EthereumTxAck:
       if (!ethereum_signing_isInProgress() &&
           erc7730_workflow_state()->phase != ERC7730_WORKFLOW_CALLDATA)
@@ -527,7 +575,12 @@ bool keepkey_before_message_dispatch(MessageType msg_id) {
     default:
       /* A new signing operation may replace an old signer, but it must never
        * coexist with recovery/reset and borrow that ceremony's progress or
-       * blocking screens. Administrative requests still preserve ceremonies. */
+       * blocking screens. While a ceremony is armed, anything else is refused
+       * without touching the screen or the cached PIN: a dry run keeps the
+       * PIN cached and its character stream defers the lock, so a read served
+       * here could outlive the deadline. Only requests that end the ceremony
+       * (Initialize, Cancel, ClearSession) or are refused by their handler (a
+       * second ResetDevice/RecoveryDevice) get through. */
       switch (msg_id) {
         case MessageType_MessageType_SignTx:
         case MessageType_MessageType_SignMessage:
@@ -566,9 +619,27 @@ bool keepkey_before_message_dispatch(MessageType msg_id) {
 #if ZCASH_PRIVACY
         case MessageType_MessageType_ZcashSignPCZT:
 #endif
+        {
+          const bool was_armed = setup_isArmed();
           setup_abort();
+          /* The handler may fail before it draws anything, which would leave
+           * the ended ceremony's screen up. */
+          if (was_armed) layoutHome();
+          break;
+        }
+        case MessageType_MessageType_Initialize:
+        case MessageType_MessageType_Cancel:
+        case MessageType_MessageType_ClearSession:
+        case MessageType_MessageType_ResetDevice:
+        case MessageType_MessageType_RecoveryDevice:
           break;
         default:
+          if (setup_isArmed()) {
+            fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
+                            "Device is in the middle of setup. Send "
+                            "Initialize or Cancel first.");
+            return false;
+          }
           break;
       }
       switch (msg_id) {
@@ -586,6 +657,20 @@ bool keepkey_before_message_dispatch(MessageType msg_id) {
       }
       return true;
   }
+}
+
+/* An expired idle deadline must never serve a PIN-gated request. The main
+ * loop checks it only once per pass, and a workflow defers it only while it
+ * runs; the gate above ends that workflow for any unrelated request, which
+ * would then run on the cached PIN before the next pass. So check on both
+ * sides of the gate: before, so a stalled workflow's own ACK is refused as
+ * "not in progress"; after, so the request that just ended a workflow runs
+ * on a locked session. */
+bool keepkey_before_message_dispatch(MessageType msg_id) {
+  auto_lock_if_due();
+  if (!fsm_dispatchGate(msg_id)) return false;
+  auto_lock_if_due();
+  return true;
 }
 
 void keepkey_after_message_dispatch(void) {
@@ -642,10 +727,8 @@ void fsm_abort_workflows(void) {
   fsm_abort_signing_workflows();
 }
 
-/* The signing half of the above. Clearing PIN authorization revokes retained
- * signing state, but must not discard a setup ceremony: recovery stages its
- * ceremony before prompting for the PIN, and every routine PIN entry clears
- * the session while checking the entered digits against the wipe code. */
+/* End every signing engine. A preloaded ERC-7730 definition that no review
+ * has started on is kept, for the signing request that consumes it. */
 static void abort_signing_engines(void) {
   signing_abort();
 #if !BITCOIN_ONLY
@@ -663,11 +746,20 @@ static void abort_signing_engines(void) {
 #endif
   authenticator_clear_cache();
   memzero(&fsm_derived_node, sizeof(fsm_derived_node));
+  drop_workflow_progress_if_idle();
 }
 
-/* A preloaded ERC-7730 definition is consumed only by the signing request that
- * follows it. Every other abort -- Initialize, Cancel, ClearSession, autolock,
- * a rejected frame or any unrelated request -- discards it too. */
+/* The signing half of fsm_abort_workflows(). Clearing PIN authorization
+ * revokes retained signing state, but must not discard a setup ceremony:
+ * recovery stages its ceremony before prompting for the PIN, and every routine
+ * PIN entry clears the session while checking the entered digits against the
+ * wipe code.
+ *
+ * A preloaded ERC-7730 definition is for the next signing request only, and
+ * any message that reaches this abort discards it. Messages that return
+ * earlier in keepkey_before_message_dispatch() keep it: the status requests
+ * answered there (GetFeatures, GetCoinTable, unprotected Ping), an active
+ * workflow's own acks, and the preload's own chunks and consumers. */
 void fsm_abort_signing_workflows(void) {
   abort_signing_engines();
 #if !BITCOIN_ONLY
@@ -716,9 +808,10 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_clearsign_attestor.h"
 #else
 // Bitcoin-only: the coin engines above are compiled out, but the always-on
-// Initialize/ClearSession/Cancel handlers still call their *_abort() hooks,
-// and factory-reset calls signed_metadata_clear_signers() (EVM clearsign).
-// With no state to reset, no-ops are correct.
+// Initialize/ClearSession/Cancel handlers still call their *_abort() hooks.
+// With no state to reset, no-ops are correct. Every call to
+// signed_metadata_clear_signers() (EVM clearsign) is compiled out with the
+// engines, so nothing reaches its stub in this build.
 void ethereum_signing_abort(void) {}
 void tendermint_signAbort(void) {}
 void eos_signingAbort(void) {}

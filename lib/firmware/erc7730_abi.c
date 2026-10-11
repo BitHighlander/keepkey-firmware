@@ -41,9 +41,9 @@ static bool read_word_size(const AbiContext* ctx, size_t off, size_t* out) {
   return true;
 }
 
-static bool node_dynamic(const Erc7730AbiProgram* p, uint16_t index,
-                         uint8_t depth, bool* dynamic) {
-  if (!p || !p->nodes || index >= p->node_count ||
+bool erc7730_abi_node_dynamic(const Erc7730AbiProgram* p, uint16_t index,
+                              uint8_t depth, bool* dynamic) {
+  if (!p || !p->nodes || !dynamic || index >= p->node_count ||
       depth > ERC7730_ABI_MAX_DEPTH)
     return false;
   const Erc7730AbiNode* n = &p->nodes[index];
@@ -57,13 +57,13 @@ static bool node_dynamic(const Erc7730AbiProgram* p, uint16_t index,
         *dynamic = true;
         return true;
       }
-      return node_dynamic(p, n->first_child, depth + 1, dynamic);
+      return erc7730_abi_node_dynamic(p, n->first_child, depth + 1, dynamic);
     }
     case ERC7730_ABI_TUPLE:
       for (uint16_t i = 0; i < n->child_count; i++) {
         bool child_dynamic = false;
-        if (!node_dynamic(p, (uint16_t)(n->first_child + i), depth + 1,
-                          &child_dynamic))
+        if (!erc7730_abi_node_dynamic(p, (uint16_t)(n->first_child + i),
+                                      depth + 1, &child_dynamic))
           return false;
         if (child_dynamic) {
           *dynamic = true;
@@ -81,7 +81,8 @@ static bool node_dynamic(const Erc7730AbiProgram* p, uint16_t index,
 static bool static_size(const Erc7730AbiProgram* p, uint16_t index,
                         uint8_t depth, size_t* out) {
   bool dynamic = false;
-  if (!node_dynamic(p, index, depth, &dynamic) || dynamic) return false;
+  if (!erc7730_abi_node_dynamic(p, index, depth, &dynamic) || dynamic)
+    return false;
   const Erc7730AbiNode* n = &p->nodes[index];
   if (n->kind != ERC7730_ABI_TUPLE && n->kind != ERC7730_ABI_ARRAY) {
     *out = 32;
@@ -171,7 +172,8 @@ Erc7730AbiResult erc7730_abi_validate_program(const Erc7730AbiProgram* p) {
                                          : (UINT64_C(1) << p->node_count) - 2u;
   if (child_mask != expected_children) return ERC7730_ABI_BAD_PROGRAM;
   bool ignored = false;
-  if (!node_dynamic(p, p->root, 0, &ignored)) return ERC7730_ABI_RESOURCE_LIMIT;
+  if (!erc7730_abi_node_dynamic(p, p->root, 0, &ignored))
+    return ERC7730_ABI_RESOURCE_LIMIT;
   return ERC7730_ABI_OK;
 }
 
@@ -190,7 +192,7 @@ static Erc7730AbiResult validate_sequence(AbiContext* ctx, uint16_t first_node,
     uint16_t child = node_count ? (uint16_t)(first_node + i) : repeated_node;
     bool dynamic = false;
     size_t slot = 0;
-    if (!node_dynamic(ctx->program, child, depth + 1, &dynamic))
+    if (!erc7730_abi_node_dynamic(ctx->program, child, depth + 1, &dynamic))
       return ERC7730_ABI_BAD_PROGRAM;
     if (dynamic) {
       slot = 32;
@@ -206,7 +208,7 @@ static Erc7730AbiResult validate_sequence(AbiContext* ctx, uint16_t first_node,
   for (size_t i = 0; i < count; i++) {
     uint16_t child = node_count ? (uint16_t)(first_node + i) : repeated_node;
     bool dynamic = false;
-    if (!node_dynamic(ctx->program, child, depth + 1, &dynamic))
+    if (!erc7730_abi_node_dynamic(ctx->program, child, depth + 1, &dynamic))
       return ERC7730_ABI_BAD_PROGRAM;
     size_t child_len = 0;
     if (dynamic) {
@@ -416,7 +418,7 @@ static Erc7730AbiResult locate_child(AbiContext* ctx, uint16_t parent,
     uint16_t child = repeated ? first : (uint16_t)(first + i);
     bool dynamic = false;
     size_t slot = 0;
-    if (!node_dynamic(ctx->program, child, 0, &dynamic))
+    if (!erc7730_abi_node_dynamic(ctx->program, child, 0, &dynamic))
       return ERC7730_ABI_BAD_PROGRAM;
     if (dynamic)
       slot = 32;

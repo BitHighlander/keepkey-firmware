@@ -16,9 +16,8 @@ typedef struct _EthereumSignTx EthereumSignTx;
 #define METADATA_MAX_TOKEN_SYMBOL_LEN 10
 #define METADATA_MAX_KEYS 4
 #define METADATA_ALIAS_MAX_LEN 31
-/* Identity icon cap (1bpp mono RLE). Must equal the device-protocol
- * LoadClearsignSigner.icon max_size (and storage.h CLEARSIGN_ICON_MAX where
- * that header defines it). Identities are never persisted. */
+/* Identity icon cap (1bpp mono RLE). Must equal LoadClearsignSigner.icon
+ * max_size (messages-ethereum.options). Identities are never persisted. */
 #define METADATA_ICON_MAX 384
 /* hex(first 8 bytes of sha256(pubkey)) + NUL. 64 bits: a 32-bit prefix
  * collision can be ground in hours, which would let a different key pass for
@@ -138,8 +137,8 @@ typedef enum {
   ARG_FORMAT_ADDRESS = 1, /* 20 bytes -> full EIP-55 address, never truncated */
   ARG_FORMAT_AMOUNT = 2,  /* big-endian uint256 -> raw integer, "wei" */
   ARG_FORMAT_BYTES = 3,   /* hex dump (all bytes, paginated) */
-  /* Attested printable label, e.g. protocol: "Uniswap V2". Same character
-   * rules as the signer alias minus length (printable subset, no '%'). */
+  /* Attested label, e.g. protocol: "Uniswap V2": 1..32 printable ASCII
+   * bytes, '%' excluded. */
   ARG_FORMAT_STRING = 4,
   /* decimals(1) + symbol_len(1) + symbol(<=10, [A-Za-z0-9]) + amount(1..32
    * big-endian). Rendered as a decimal-scaled amount with the symbol, e.g.
@@ -222,10 +221,12 @@ bool signed_metadata_is_certified_envelope(const uint8_t* payload,
  * match). The v2 enforce path requires it; exported for unit testing. */
 bool signed_metadata_schema_decoded(void);
 
-/* True when the matched schema is v2 AND the transaction moves native value.
- * A v2 schema cannot express a value binding, so the caller MUST still show
- * the amount/recipient screen; only the raw-calldata screen may be replaced
- * by the decoded display. */
+/* True when the matched schema is v2 AND the transaction carries native value
+ * the schema cannot bind. On the runtime tier this is informational: the
+ * ordinary amount screen always runs after metadata. Where
+ * signed_metadata_may_suppress() lets the decoded display replace the
+ * raw-calldata screen, the caller MUST still show the amount/recipient screen
+ * when this is true. */
 bool signed_metadata_schema_moves_value(void);
 
 void signed_metadata_clear(void);
@@ -327,8 +328,11 @@ bool signed_metadata_signer_fingerprint(uint8_t key_id,
 bool signed_metadata_matches_tx(const EthereumSignTx* msg);
 bool signed_metadata_confirm(void);
 
-/* True once a verified confirm has suppressed the raw-data confirmation, i.e.
- * the signature is now gated on the metadata matching the final tx hash. */
+/* True once the user approved the decoded metadata screens, so signing is
+ * gated on the metadata matching the final tx hash. On the runtime tier the
+ * screens are additive: the ordinary amount and raw-data review still follows
+ * them. Only signed_metadata_may_suppress() lets them replace the raw-data
+ * review. */
 bool signed_metadata_relied(void);
 
 /* Authoritative binding, called after the real Ethereum sighash is finalized

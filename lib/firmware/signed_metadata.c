@@ -37,8 +37,9 @@ static bool certified_claimed;
  * the tx calldata. The v2 enforce path REQUIRES it — v2 has no committed
  * tx_hash, so this is the explicit proof (not an implicit call-order
  * assumption) that the displayed values came from the calldata being signed. */
-/* Set during matching: this tx carries native value, so the amount screen
- * must NOT be suppressed even though the schema matched. */
+/* Set during matching: this tx carries native value the schema cannot bind.
+ * The runtime tier is additive, so its amount screen runs regardless; the
+ * KeepKey tier must NOT suppress the amount screen when this is set. */
 static bool metadata_schema_moves_value = false;
 static bool metadata_schema_decoded = false;
 static SignedMetadata stored_metadata;
@@ -208,6 +209,9 @@ static bool arg_value_ok(uint8_t format, const uint8_t* value, uint16_t len) {
       }
       return true;
     }
+    case ARG_FORMAT_ADDRESS:
+      /* Shown whole as an address: nothing but 20 bytes can be. */
+      return len == 20;
     default:
       return len <= 32;
   }
@@ -827,24 +831,16 @@ static IconType stage_runtime_icon(Image* img, AnimationFrame* frame,
 bool signed_metadata_confirm_load(const char* alias, const char* fingerprint,
                                   const uint8_t* icon, uint8_t icon_w,
                                   uint8_t icon_h, uint16_t icon_len) {
-  /* Draw the logo only in a build that also keeps the session icon cache. In a
-   * build without it, signed_metadata_signer_icon() returns false for the rest
-   * of the session, so no per-tx screen can repeat the logo -- and a logo shown
-   * once here would train the user to expect one, making its later absence
-   * carry no signal. Show the same text-only identity the per-tx screens will
-   * show. */
-#if !ZCASH_PRIVACY
+#if ZCASH_PRIVACY
+  /* This build keeps no session icons (SRAM), so every per-transaction
+   * identity screen is text-only. The consent screen shows the identity
+   * exactly as it will reappear, so it is text-only too. */
+  icon_len = 0;
+#endif
   Image icon_img;
   AnimationFrame icon_frame;
   IconType id_icon = stage_runtime_icon(&icon_img, &icon_frame, icon, icon_w,
                                         icon_h, icon_len);
-#else
-  IconType id_icon = NO_ICON;
-  (void)icon;
-  (void)icon_w;
-  (void)icon_h;
-  (void)icon_len;
-#endif
 
   char body[160];
   memset(body, 0, sizeof(body));
@@ -1122,6 +1118,12 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
     return false;
   }
 
+  /* Metadata describes an Ethereum call. A Wanchain transaction (tx_type)
+   * with the same chain id, contract and selector is not one. */
+  if (msg->has_tx_type) {
+    return false;
+  }
+
   /* Contract address binding */
   if (memcmp(stored_metadata.contract_address, msg->to.bytes,
              sizeof(stored_metadata.contract_address)) != 0) {
@@ -1142,14 +1144,14 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
   if (stored_metadata.version == METADATA_VERSION_SCHEMA ||
       stored_metadata.version == METADATA_VERSION_DYNAMIC_SCHEMA ||
       stored_metadata.version == METADATA_VERSION_SCHEMA_INTENT) {
-    /* v2 commits to calldata only — never to msg->value. A v2 match otherwise
-     * suppresses the native-value confirm screen in ethereum.c, which would
-     * let a payable method clear-sign an ETH transfer whose amount is never
-     * shown. Rather than refuse every payable call (which forced blind-signing
-     * on exactly the routes that most need review), record that this tx moves
-     * value; ethereum.c keeps the amount/recipient screen when it does. The
-     * device reads that amount from the transaction it is signing, so nothing
-     * unattested is displayed and the schema stays transaction-independent. */
+    /* v2 commits to calldata only — never to msg->value; record nonzero
+     * value. On the runtime tier the amount screen runs regardless, because
+     * that review is additive. A KeepKey-tier match replaces the raw review,
+     * which would let a payable method clear-sign an ETH transfer whose amount
+     * is never shown, so ethereum.c keeps the amount/recipient screen when
+     * this is set. The device reads that amount from the transaction it is
+     * signing, so nothing unattested is displayed and the schema stays
+     * transaction-independent. */
     metadata_schema_moves_value = false;
     for (uint32_t i = 0; i < msg->value.size; i++) {
       if (msg->value.bytes[i] != 0) {
@@ -1658,15 +1660,15 @@ static bool signed_metadata_confirm_screens(void) {
 
   /* Screen 2: Contract address — ALWAYS show full address, never truncate.
    * Truncation is a spoofing vector (attacker crafts matching prefix+suffix).
-   */
+   * The title stays fixed: a 64-char method name wraps over the body, and the
+   * Call screen above already shows it in full. */
   char contract_addr[43] = "0x";
   ethereum_address_checksum(stored_metadata.contract_address, contract_addr + 2,
                             false, stored_metadata.chain_id);
   memset(body, 0, sizeof(body));
   snprintf(body, sizeof(body), "Contract:\n%s", contract_addr);
   if (!confirm_with_icon(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                         screen_icon, stored_metadata.method_name, "%s",
-                         body)) {
+                         screen_icon, "Clearsign", "%s", body)) {
     return false;
   }
 
@@ -1767,8 +1769,7 @@ static bool signed_metadata_confirm_screens(void) {
           snprintf(body, sizeof(body), "%s (%u/%u):\n%s", arg->name,
                    (unsigned)(page + 1), (unsigned)(pages ? pages : 1), hex);
           if (!confirm_with_icon(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                                 screen_icon, stored_metadata.method_name, "%s",
-                                 body)) {
+                                 screen_icon, "Clearsign", "%s", body)) {
             return false;
           }
         }
@@ -1777,14 +1778,15 @@ static bool signed_metadata_confirm_screens(void) {
     }
 
     if (!confirm_with_icon(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                           screen_icon, stored_metadata.method_name, "%s",
-                           body)) {
+                           screen_icon, "Clearsign", "%s", body)) {
       return false;
     }
   }
 
-  /* User approved the decoded who/what/why. From here the raw-data confirm is
-   * suppressed, so the signature MUST be bound to this metadata's tx hash. */
+  /* User approved the decoded who/what/why. On the runtime tier the screens
+   * are additive (the amount and raw-data review still follow); only
+   * signed_metadata_may_suppress() lets them replace the raw-data review.
+   * Either way the signature MUST be bound to this metadata's tx hash. */
   relied_on_metadata = true;
   return true;
 }
