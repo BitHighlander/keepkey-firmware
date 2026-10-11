@@ -1214,10 +1214,13 @@ jobs:
           # The DLL must load on a stock Windows install, so it may import
           # system DLLs only. MinGW's emulated thread-locals once pulled in
           # libgcc_s_seh-1.dll and this job stayed green.
-          x86_64-w64-mingw32-objdump -p "$DLL" | awk '/DLL Name:/ {print tolower($3)}' | sort -u > win-imports.txt
+          x86_64-w64-mingw32-objdump -p "$DLL" > win-objdump.txt
+          awk '/DLL Name:/ {print tolower($3)}' win-objdump.txt | sort -u > win-imports.txt
           cat win-imports.txt
+          # An empty list means the imports were not read, not that there are none.
+          grep -qx kernel32.dll win-imports.txt || (echo "::error::could not read libkkemu.dll imports" && exit 1)
           if grep -v -E '^(kernel32|bcrypt|api-ms-win-crt-.*)\.dll$' win-imports.txt; then
-            echo "::error::libkkemu.dll imports a DLL that Windows does not ship"
+            echo "::error::libkkemu.dll imports a DLL outside the allowed system set"
             exit 1
           fi
           echo "WIN_DLL_PATH=$(pwd)/$DLL" >> "$GITHUB_ENV"
