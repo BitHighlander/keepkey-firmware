@@ -62,6 +62,7 @@
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/signtx_tendermint.h"
 #include "keepkey/firmware/signed_metadata.h"
+#include "keepkey/firmware/contact_book.h"
 #include "keepkey/firmware/solana.h"
 #include "keepkey/firmware/zcash.h"
 #include "keepkey/firmware/hive.h"
@@ -764,6 +765,7 @@ void fsm_abort_signing_workflows(void) {
   abort_signing_engines();
 #if !BITCOIN_ONLY
   erc7730_catalog_clear_preload();
+  contact_book_clear(); /* as the preload: next signing request only */
 #endif
 }
 

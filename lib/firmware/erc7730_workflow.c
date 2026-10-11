@@ -58,6 +58,7 @@ bool erc7730_workflow_begin(Erc7730Workflow* workflow,
     fail(workflow);
     return false;
   }
+  workflow->review_tier = identity->tier;
   return begin_replay(workflow, identity);
 }
 
@@ -70,6 +71,7 @@ bool erc7730_workflow_begin_eip712(Erc7730Workflow* workflow,
     return false;
   }
   workflow->typed_data = true;
+  workflow->review_tier = identity->tier;
   if (!begin_replay(workflow, identity)) return false;
   /* The definition applies only at a signed deployment on the typed data's
    * own chain; the loader refuses the replay unless one lists it. */
@@ -773,6 +775,12 @@ uint8_t erc7730_workflow_tier(const Erc7730Workflow* workflow) {
   return workflow->outer_tier;
 }
 
+bool erc7730_workflow_certified(const Erc7730Workflow* workflow) {
+  return workflow && workflow->review_tier == METADATA_TIER_KEEPKEY &&
+         (erc7730_workflow_active(workflow) ||
+          erc7730_workflow_complete(workflow));
+}
+
 bool erc7730_workflow_preserve_selected_string(Erc7730Workflow* workflow,
                                                bool intent) {
   const char* value = NULL;
@@ -962,6 +970,8 @@ bool erc7730_workflow_fetch_complete(Erc7730Workflow* workflow) {
                                          : workflow->identity.contract_address,
              20);
       workflow->depth = 1;
+      if (identity.tier < workflow->review_tier)
+        workflow->review_tier = identity.tier;
       workflow->identity_confirmed = false;
       workflow->intent_confirmed = false;
       workflow->calldata_validated = false;

@@ -27,6 +27,7 @@ extern "C" {
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/signed_metadata.h"
+#include "keepkey/firmware/contact_book.h"
 #include "keepkey/firmware/signtx_tendermint.h"
 #include "keepkey/firmware/tendermint.h"
 #include "keepkey/firmware/storage.h"
@@ -2572,8 +2573,10 @@ TEST(Fsm, Erc7730PreloadEndsAtEverySessionBoundary) {
   erc7730_catalog_clear_preload();
 }
 
-// A definition refused for AdvancedMode discards the partial preload too, so
-// a later chunk cannot continue it.
+// Without AdvancedMode a definition is accepted only if it verifies as
+// KeepKey-certified, which is known when the last chunk arrives. A chunk the
+// preload refuses before that reports the AdvancedMode failure and discards
+// the partial preload, so a later chunk cannot continue it.
 TEST(Fsm, Erc7730DefinitionRefusedWithoutAdvancedModeClearsPreload) {
   kk_test_board_init();
   fsm_init();
@@ -2595,7 +2598,7 @@ TEST(Fsm, Erc7730DefinitionRefusedWithoutAdvancedModeClearsPreload) {
   EthereumClearSignDefinition definition{};
   definition.definition_id.size = sizeof(id);
   std::memcpy(definition.definition_id.bytes, id, sizeof(id));
-  definition.offset = sizeof(head);
+  definition.offset = sizeof(head) + 1;  // out of sequence: refused
   definition.total_length = 300;
   definition.data.size = sizeof(length);
   std::memcpy(definition.data.bytes, length, sizeof(length));
@@ -3048,6 +3051,226 @@ TEST(Fsm, SplitCalldataCannotBypassUnlimitedApprovalRefusal) {
     EXPECT_EQ(2, kkconfirm_drain())
         << "a generic-signing confirmation ran before the global refusal";
   }
+}
+
+/* Address-book ClearSign through the real USB dispatch: EthereumTxMetadata
+ * carrying the vault's KKABPRF1 proof, then EthereumSignTx, as KeepKey Desktop
+ * sends them. Vectors are signed by the "all" wallet's attestor key. */
+#include "contact_book_vectors.h"
+namespace {
+std::vector<uint8_t> contactHex(const char* value) {
+  std::vector<uint8_t> out;
+  for (size_t i = 0; value[i] && value[i + 1]; i += 2) {
+    unsigned byte = 0;
+    sscanf(value + i, "%2x", &byte);
+    out.push_back(static_cast<uint8_t>(byte));
+  }
+  return out;
+}
+
+const char kAliceChecksum[] = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+
+void sendContactProof(const char* proof) {
+  const auto bytes = contactHex(proof);
+  EthereumTxMetadata meta = {};
+  meta.has_signed_payload = true;
+  meta.signed_payload.size = bytes.size();
+  std::memcpy(meta.signed_payload.bytes, bytes.data(), bytes.size());
+  meta.has_metadata_version = true;  // hdwallet always writes it (as 0)
+  receiveMessage(MessageType_MessageType_EthereumTxMetadata,
+                 EthereumTxMetadata_fields, &meta);
+}
+
+EthereumSignTx contactTx(const uint8_t to[20]) {
+  EthereumSignTx tx = {};
+  tx.address_n_count = 5;
+  const uint32_t path[5] = {0x8000002c, 0x8000003c, 0x80000000, 0, 0};
+  std::memcpy(tx.address_n, path, sizeof(path));
+  tx.has_chain_id = true;
+  tx.chain_id = 1;
+  tx.has_nonce = tx.has_gas_price = tx.has_gas_limit = true;
+  tx.nonce.size = tx.gas_price.size = tx.gas_limit.size = 1;
+  tx.gas_price.bytes[0] = tx.gas_limit.bytes[0] = 1;
+  tx.has_to = true;
+  tx.to.size = 20;
+  std::memcpy(tx.to.bytes, to, 20);
+  tx.has_value = true;
+  tx.value.size = 8;
+  const uint8_t one_eth[8] = {0x0d, 0xe0, 0xb6, 0xb3, 0xa7, 0x64, 0, 0};
+  std::memcpy(tx.value.bytes, one_eth, 8);
+  return tx;
+}
+
+/* Runs `tx` through dispatch, accepting `yes` screens and rejecting the next;
+ * returns the bodies shown. */
+std::vector<std::string> contactReview(const EthereumSignTx& tx, int yes) {
+  fsm_test_clearLastFailure();
+  kkconfirm_drain();
+  EXPECT_TRUE(kkconfirm_preload(yes, 1));
+  kkconfirm_capture_start();
+  receiveMessage(MessageType_MessageType_EthereumSignTx, EthereumSignTx_fields,
+                 &tx);
+  auto screens = kkconfirm_capture_finish();
+  EXPECT_EQ(0, kkconfirm_drain());
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  return screens;
+}
+
+class ContactBookSigning : public ::testing::Test {
+ protected:
+  ScopedFlash flash;
+  std::vector<uint8_t> alice = contactHex(kAliceChecksum + 2);
+  void SetUp() override {
+    kk_test_board_init();
+    fsm_init();
+    signing_abort();
+    storage_reset();
+    storage_setMnemonic("all all all all all all all all all all all all");
+    ASSERT_TRUE(storage_isInitialized());
+    ASSERT_FALSE(storage_isPolicyEnabled("AdvancedMode"));
+  }
+  void TearDown() override { contact_book_clear(); }
+};
+}  // namespace
+
+TEST_F(ContactBookSigning, LabelsAPlainSendThenShowsTheAddress) {
+  sendContactProof(PROOF3_0);
+  ASSERT_STREQ("Alice", contact_book_label()) << "no AdvancedMode needed";
+
+  auto screens = contactReview(contactTx(alice.data()), 2);
+  ASSERT_EQ(3u, screens.size());
+  EXPECT_EQ("Send 1 ETH to Alice", screens[0]);
+  EXPECT_EQ(kAliceChecksum, screens[1]);
+  EXPECT_EQ(nullptr, contact_book_label());
+
+  /* One proof, one request: the next send shows the address. */
+  screens = contactReview(contactTx(alice.data()), 0);
+  ASSERT_EQ(1u, screens.size());
+  EXPECT_EQ(std::string("Send 1 ETH to ") + kAliceChecksum, screens[0]);
+}
+
+TEST_F(ContactBookSigning, LabelsAKnownTokenTransferRecipient) {
+  static const uint8_t usdc[20] = {0xa0, 0xb8, 0x69, 0x91, 0xc6, 0x21, 0x8b,
+                                   0x36, 0xc1, 0xd1, 0x9d, 0x4a, 0x2e, 0x9e,
+                                   0xb0, 0xce, 0x36, 0x06, 0xeb, 0x48};
+  EthereumSignTx tx = contactTx(usdc);
+  tx.value.size = 0;
+  tx.has_data_length = tx.has_data_initial_chunk = true;
+  tx.data_length = tx.data_initial_chunk.size = 68;
+  std::memcpy(tx.data_initial_chunk.bytes, "\xa9\x05\x9c\xbb", 4);
+  std::memcpy(tx.data_initial_chunk.bytes + 16, alice.data(), 20);
+  tx.data_initial_chunk.bytes[67] = 1;
+
+  sendContactProof(PROOF3_0);
+  auto screens = contactReview(tx, 1);
+  ASSERT_EQ(2u, screens.size());
+  EXPECT_EQ("Send 0.000001 USDC to Alice", screens[0]);
+  EXPECT_EQ(kAliceChecksum, screens[1]);
+}
+
+/* A label is for a plain recipient only: a call with calldata to the same
+ * address keeps the raw address and the AdvancedMode gate. */
+TEST_F(ContactBookSigning, NeverLabelsAContractCall) {
+  EthereumSignTx tx = contactTx(alice.data());
+  tx.has_data_length = tx.has_data_initial_chunk = true;
+  tx.data_length = tx.data_initial_chunk.size = 4;
+  std::memcpy(tx.data_initial_chunk.bytes, "\xde\xad\xbe\xef", 4);
+
+  sendContactProof(PROOF3_0);
+  auto screens = contactReview(tx, 0);
+  ASSERT_EQ(1u, screens.size());
+  EXPECT_EQ(std::string("Send 1 ETH to ") + kAliceChecksum, screens[0]);
+}
+
+/* One metadata message per transaction, the last one wins, so a contact
+ * label never coexists with a contract description, certified or not. */
+TEST_F(ContactBookSigning, ContactAndContractMetadataReplaceEachOther) {
+  sendContactProof(PROOF3_0);
+  ASSERT_STREQ("Alice", contact_book_label());
+
+  EthereumTxMetadata envelope = {};
+  envelope.has_signed_payload = envelope.has_key_id = true;
+  envelope.key_id = METADATA_KEYID_DELEGATE;
+  envelope.signed_payload.size = 1 + 139 + 80;
+  envelope.signed_payload.bytes[0] = METADATA_VERSION_CERTIFIED;
+  receiveMessage(MessageType_MessageType_EthereumTxMetadata,
+                 EthereumTxMetadata_fields, &envelope);
+  EXPECT_EQ(nullptr, contact_book_label());
+  ASSERT_TRUE(signed_metadata_certified_claimed());
+
+  sendContactProof(PROOF3_0);
+  EXPECT_STREQ("Alice", contact_book_label());
+  EXPECT_FALSE(signed_metadata_certified_claimed());
+  EXPECT_FALSE(signed_metadata_available());
+}
+
+TEST_F(ContactBookSigning, AnotherWalletsCertificationIsRefused) {
+  sendContactProof(PROOF3_0_OTHER_KEY);
+  EXPECT_EQ(nullptr, contact_book_label());
+  auto screens = contactReview(contactTx(alice.data()), 0);
+  ASSERT_EQ(1u, screens.size());
+  EXPECT_EQ(std::string("Send 1 ETH to ") + kAliceChecksum, screens[0]);
+}
+
+TEST_F(ContactBookSigning, OtherRequestsDropTheProof) {
+  sendContactProof(PROOF3_0);
+  Ping ping = {};
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+  EXPECT_STREQ("Alice", contact_book_label()) << "status polls keep it";
+  Cancel cancel = {};
+  receiveMessage(MessageType_MessageType_Cancel, Cancel_fields, &cancel);
+  EXPECT_EQ(nullptr, contact_book_label());
+}
+
+/* Certification needs no AdvancedMode and shows every contact before the
+ * root is signed. The last screen is declined, so nothing is signed here. */
+TEST_F(ContactBookSigning, CertificationReviewsEveryContact) {
+  const auto request = contactHex(REQ3);
+  ClearsignAttestorSign sign = {};
+  sign.has_payload = true;
+  sign.payload.size = request.size();
+  std::memcpy(sign.payload.bytes, request.data(), request.size());
+
+  fsm_test_clearLastFailure();
+  kkconfirm_drain();
+  ASSERT_TRUE(kkconfirm_preload(6, 1));
+  kkconfirm_capture_start();
+  receiveMessage(MessageType_MessageType_ClearsignAttestorSign,
+                 ClearsignAttestorSign_fields, &sign);
+  const auto screens = kkconfirm_capture_finish();
+  EXPECT_EQ(0, kkconfirm_drain());
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  const std::vector<std::string> expected = {
+      "Approve 3 contacts?\nRevision 7",
+      "Alice\neip155:1",
+      kAliceChecksum,
+      "Bob Base\neip155:8453",
+      "0x2222222222222222222222222222222222222222",
+      "Carol\neip155:1",
+      "0x3333333333333333333333333333333333333333"};
+  EXPECT_EQ(expected, screens);
+
+  /* More than 16 contacts is refused before any screen. */
+  const auto too_many = contactHex(REQ17);
+  sign.payload.size = too_many.size();
+  std::memcpy(sign.payload.bytes, too_many.data(), too_many.size());
+  fsm_test_clearLastFailure();
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  receiveMessage(MessageType_MessageType_ClearsignAttestorSign,
+                 ClearsignAttestorSign_fields, &sign);
+  EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
+/* Verified against this session's attestor key: a lock or a passphrase change
+ * ends it. */
+TEST(Fsm, SessionClearDropsTheContactProof) {
+  const auto proof = contactHex(PROOF3_0);
+  const auto key = contactHex(ATTESTOR_PUBKEY_ALL);
+  ASSERT_TRUE(
+      contact_book_process_proof(proof.data(), proof.size(), key.data()));
+  session_clear(/*clear_pin=*/true);
+  EXPECT_EQ(nullptr, contact_book_label());
 }
 #endif
 

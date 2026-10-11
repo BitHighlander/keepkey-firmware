@@ -4,6 +4,9 @@
 #include "keepkey/firmware/erc7730_workflow.h"
 #include "keepkey/firmware/contact_book.h"
 
+/* Defined in fsm_msg_clearsign_attestor.h, included later into fsm.c. */
+static HDNode* attestor_getNode(void);
+
 /*
  * This file is part of the Keepkey project
  *
@@ -313,7 +316,8 @@ static Erc7730UiResult confirm_erc7730_source_and_intent(
   const bool inner = workflow->depth != 0;
   if (!workflow->identity_confirmed) {
     /* Root-certified, and for an inner call its outer definition was too.
-     * Provenance only: AdvancedMode and the raw-data review are unchanged. */
+     * Shown on every tier: it names who vouches for the screens that follow
+     * (D-007: certified needs no AdvancedMode, so this is what it rests on). */
     if (erc7730_workflow_tier(workflow) == METADATA_TIER_KEEPKEY) {
       if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                    "Verified by KeepKey", "%s (%s)\ndescribes %s.",
@@ -583,73 +587,30 @@ static void show_erc7730_value(Erc7730Workflow* workflow, const char* text) {
   memzero(formatted, sizeof(formatted));
 }
 
-/* An embedded call the device cannot clear-sign. 7.15 shows it under a
- * blind-sign warning (AdvancedMode is already required for ERC-7730).
- * 7.16: AdvancedMode is a hard gate; reject here instead (owner rule,
- * docs/security/HANDOFF-ERC7730-PHASE-E.md section 9a). */
+/* What an ERC-7730 review cannot clear-sign is refused from 7.16; 7.15
+ * showed it under a blind-sign warning. First, an embedded call without a
+ * usable inner definition. */
 static void show_erc7730_embedded(Erc7730Workflow* workflow) {
   workflow->inner_refused = false; /* consumed: the next call may fetch */
-  const Erc7730Field* field = &workflow->field;
-  char formatted[ERC7730_FORMATTED_VALUE_MAX + 1u];
-  if (!field->has_inner || !field->has_address ||
-      !erc7730_format_embedded(
-          field->address, field->inner_selector, field->inner_selector_length,
-          field->inner_length, field->has_value ? field->value : NULL,
-          workflow->identity.chain_id,
-          field->has_spender ? field->spender : NULL, formatted,
-          sizeof(formatted))) {
-    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
-                       _("Unable to format ERC-7730 field"));
-    return;
-  }
-  const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
-  if (ui != ERC7730_UI_OK) {
-    memzero(formatted, sizeof(formatted));
-    fail_erc7730_field(
-        workflow,
-        ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
-                                 : FailureType_Failure_ActionCancelled,
-        ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
-                                 : _("Signing cancelled by user"));
-    return;
-  }
-  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Blind signature",
-               "The inner call is not clear-signed")) {
-    memzero(formatted, sizeof(formatted));
-    fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
-                       _("Signing cancelled by user"));
-    return;
-  }
-  show_erc7730_field(workflow, formatted);
-  memzero(formatted, sizeof(formatted));
+  fail_erc7730_field(workflow, FailureType_Failure_Other,
+                     _("Inner call cannot be clear-signed"));
 }
 
-/* A raw bytes/string value longer than the device captures. 7.15 shows its
- * length under a blind-sign warning. 7.16: AdvancedMode is a hard gate;
- * reject here instead (owner rule, HANDOFF-ERC7730-PHASE-E.md section 9a). */
+/* A raw bytes/string value longer than the device captures: refused in
+ * calldata; typed data has already shown it in full during its walk. */
 static void show_erc7730_long_value(Erc7730Workflow* workflow, size_t length) {
-  char formatted[48];
+  if (!workflow->typed_data) {
+    fail_erc7730_field(workflow, FailureType_Failure_Other,
+                       _("Value too long to clear-sign"));
+    return;
+  }
   const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
   if (ui != ERC7730_UI_OK) {
-    fail_erc7730_field(
-        workflow,
-        ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
-                                 : FailureType_Failure_ActionCancelled,
-        ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
-                                 : _("Signing cancelled by user"));
+    fail_erc7730_ui(workflow, ui);
     return;
   }
-  /* Typed data: the walk that captured this value has just shown every leaf
-   * in full, this one among them, so nothing is blind. */
-  const bool typed = workflow->typed_data;
-  if (!typed && !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                         "Blind signature", "The value is too long to show")) {
-    fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
-                       _("Signing cancelled by user"));
-    return;
-  }
-  snprintf(formatted, sizeof(formatted),
-           typed ? "Shown above in full: %lu bytes" : "Not shown: %lu bytes",
+  char formatted[48];
+  snprintf(formatted, sizeof(formatted), "Shown above in full: %lu bytes",
            (unsigned long)length);
   show_erc7730_field(workflow, formatted);
 }
@@ -798,7 +759,7 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
   }
   if (field->kind == 13) {
     /* An inner approve(spender, 2^256-1) signs only after the device's own
-     * UNLIMITED warning, before its inner or blind screens. */
+     * UNLIMITED warning, before its inner screens. */
     if (field->unlimited_approve && field->has_address) {
       const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
       if (ui != ERC7730_UI_OK) {
@@ -814,7 +775,7 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
       }
     }
     /* Clear-sign the inner call at depth 1, outside iterations, for whole ABI
-     * words; otherwise it is shown blind (7.15). */
+     * words; otherwise it is refused. */
     const bool fetchable = workflow->depth == 0 && !workflow->iterating &&
                            !workflow->inner_refused && field->has_address &&
                            field->inner_selector_length == 4 &&
@@ -1222,7 +1183,9 @@ void fsm_msgEthereumSignTx(EthereumSignTx* msg) {
    * back to blind signing. */
   Erc7730CatalogIdentity definition;
   if (erc7730_catalog_preloaded(&definition)) {
-    if (!storage_isPolicyEnabled("AdvancedMode")) {
+    /* D-007: KeepKey-certified needs no AdvancedMode; any other tier does. */
+    if (definition.tier != METADATA_TIER_KEEPKEY &&
+        !storage_isPolicyEnabled("AdvancedMode")) {
       memzero(&definition, sizeof(definition));
       erc7730_catalog_clear_preload();
       fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -1315,26 +1278,29 @@ void fsm_msgEthereumTxAck(EthereumTxAck* msg) {
   memzero(&tx, sizeof(tx));
 }
 
+/* D-007: without AdvancedMode only a definition that verifies as
+ * KeepKey-certified is accepted. Any other outcome refuses as 7.15 did, on
+ * the AdvancedMode path. */
+static void refuse_erc7730_definition(const char* reason) {
+  erc7730_catalog_clear_preload();
+  if (storage_isPolicyEnabled("AdvancedMode")) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError, reason);
+  } else {
+    fsm_sendFailure(FailureType_Failure_Other,
+                    _("AdvancedMode required for ERC-7730"));
+  }
+  layoutHome();
+}
+
 void fsm_msgEthereumClearSignDefinition(
     const EthereumClearSignDefinition* msg) {
   CHECK_INITIALIZED
   CHECK_PIN
-  /* A refusal discards any partial preload, like the chunk refusals below. */
-  if (!storage_isPolicyEnabled("AdvancedMode")) {
-    erc7730_catalog_clear_preload();
-    fsm_sendFailure(FailureType_Failure_Other,
-                    _("AdvancedMode required for ERC-7730"));
-    layoutHome();
-    return;
-  }
 
   /* Dispatch has already ended any signing session before this runs. */
   if (msg->definition_id.size != 32 || msg->data.size == 0 ||
       msg->data.size > ERC7730_TRANSPORT_CHUNK_MAX) {
-    erc7730_catalog_clear_preload();
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid ERC-7730 definition chunk"));
-    layoutHome();
+    refuse_erc7730_definition(_("Invalid ERC-7730 definition chunk"));
     return;
   }
 
@@ -1343,11 +1309,15 @@ void fsm_msgEthereumClearSignDefinition(
   const Erc7730CatalogResult result = erc7730_catalog_preload_chunk(
       msg->definition_id.bytes, msg->offset, msg->total_length, msg->data.bytes,
       msg->data.size, &next_offset, &complete);
-  if (result != ERC7730_CATALOG_MORE && result != ERC7730_CATALOG_COMPLETE) {
-    erc7730_catalog_clear_preload();
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid certified ERC-7730 definition"));
-    layoutHome();
+  Erc7730CatalogIdentity accepted;
+  const bool certified = result == ERC7730_CATALOG_COMPLETE &&
+                         erc7730_catalog_preloaded(&accepted) &&
+                         accepted.tier == METADATA_TIER_KEEPKEY;
+  memzero(&accepted, sizeof(accepted));
+  if ((result != ERC7730_CATALOG_MORE && result != ERC7730_CATALOG_COMPLETE) ||
+      (result == ERC7730_CATALOG_COMPLETE && !certified &&
+       !storage_isPolicyEnabled("AdvancedMode"))) {
+    refuse_erc7730_definition(_("Invalid certified ERC-7730 definition"));
     return;
   }
 
@@ -1392,7 +1362,8 @@ static void fail_erc7730_domain(void) {
 void fsm_msgEthereumClearSignDefinitionChunk(
     const EthereumClearSignDefinitionChunk* msg) {
   Erc7730Workflow* workflow = erc7730_workflow_state();
-  if (!storage_isPolicyEnabled("AdvancedMode")) {
+  if (!storage_isPolicyEnabled("AdvancedMode") &&
+      !erc7730_workflow_certified(workflow)) {
     /* Refuse as the SignTx-time gate does: end the workflow, its typed-data
      * stream and the preload, never leave them armed behind a Failure. */
     erc7730_catalog_clear_preload();
@@ -1421,12 +1392,24 @@ void fsm_msgEthereumClearSignDefinitionChunk(
       return;
     }
     if (none) {
-      show_erc7730_embedded(workflow); /* no inner definition: blind */
+      show_erc7730_embedded(workflow); /* no inner definition: refused */
       return;
     }
     if (!complete) {
       send_erc7730_fetch_request();
       return;
+    }
+    if (fetch_depth == 1 && !storage_isPolicyEnabled("AdvancedMode")) {
+      /* A certified outer call does not lift AdvancedMode for its inner one. */
+      Erc7730CatalogIdentity inner;
+      const bool certified = erc7730_catalog_preloaded(&inner) &&
+                             inner.tier == METADATA_TIER_KEEPKEY;
+      memzero(&inner, sizeof(inner));
+      if (!certified) {
+        fail_erc7730_field(workflow, FailureType_Failure_Other,
+                           _("AdvancedMode required for ERC-7730"));
+        return;
+      }
     }
     if (fetch_depth == 1) {
       /* Bound before any inner screen; then the call's context, which the
@@ -1867,12 +1850,24 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
 
   RESP_INIT(EthereumMetadataAck);
 
+  /* Range-check the uint32 wire value against the slot count BEFORE it is
+   * narrowed to the uint8 slot index below: (uint8_t)256 would alias slot 0.
+   * A slot that cannot exist is a malformed request, not an "Invalid"
+   * classification. The one value at or above the slot count that is valid is
+   * the reserved certified-delegate sentinel. */
+  CHECK_PARAM(!msg->has_key_id || msg->key_id < METADATA_MAX_KEYS ||
+                  msg->key_id == METADATA_KEYID_DELEGATE,
+              _("clearsign metadata key_id out of range"));
+
+  /* One metadata message per transaction, the last one wins: a contact proof
+   * replaces any contract description and vice versa, so a label can never
+   * ride along with (or stand in for) a certified description. */
+  contact_book_clear();
   if (contact_proof) {
-    static const uint32_t path[3] = {0x80004B4B, 0x80004353, 0x80000000};
-    HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, path, 3, NULL);
+    signed_metadata_clear();
+    HDNode* node = attestor_getNode();
     if (!node) return;
-    hdnode_fill_public_key(node);
-    bool ok = contact_book_process_proof(
+    const bool ok = contact_book_process_proof(
         msg->signed_payload.bytes, msg->signed_payload.size, node->public_key);
     memzero(node, sizeof(*node));
     resp->classification = ok ? METADATA_VERIFIED : METADATA_MALFORMED;
@@ -1882,17 +1877,6 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
     msg_write(MessageType_MessageType_EthereumMetadataAck, resp);
     return;
   }
-
-  contact_book_clear();
-
-  /* Range-check the uint32 wire value against the slot count BEFORE it is
-   * narrowed to the uint8 slot index below: (uint8_t)256 would alias slot 0.
-   * A slot that cannot exist is a malformed request, not an "Invalid"
-   * classification. The one value at or above the slot count that is valid is
-   * the reserved certified-delegate sentinel. */
-  CHECK_PARAM(!msg->has_key_id || msg->key_id < METADATA_MAX_KEYS ||
-                  msg->key_id == METADATA_KEYID_DELEGATE,
-              _("clearsign metadata key_id out of range"));
 
   MetadataClassification result = signed_metadata_process(
       msg->signed_payload.bytes, msg->signed_payload.size,
@@ -2415,9 +2399,11 @@ static void eip712_pump(void) {
             typed_data_name.chain_id == done.permit2.chain_id &&
             memcmp(typed_data_name.address, done.permit2.spender, 20) == 0;
         const bool ok = eip712_permit2_review(
-            &done.permit2, named ? typed_data_name.name : NULL,
-            typed_data_name.alias, typed_data_name.fp8, eip712_review_confirm,
-            NULL);
+            &done.permit2,
+            signed_metadata_record_token(
+                &typed_data_name, done.permit2.chain_id, done.permit2.token),
+            named ? typed_data_name.name : NULL, typed_data_name.alias,
+            typed_data_name.fp8, eip712_review_confirm, NULL);
         memzero(&typed_data_name, sizeof(typed_data_name));
         if (!ok) {
           fsm_sendFailure(FailureType_Failure_ActionCancelled,
@@ -2549,7 +2535,8 @@ void fsm_msgEthereumSignTypedData(const EthereumSignTypedData* msg) {
 
   Erc7730CatalogIdentity definition;
   const bool certified = erc7730_catalog_preloaded(&definition);
-  if (certified && !storage_isPolicyEnabled("AdvancedMode")) {
+  if (certified && definition.tier != METADATA_TIER_KEEPKEY &&
+      !storage_isPolicyEnabled("AdvancedMode")) {
     memzero(&definition, sizeof(definition));
     erc7730_catalog_clear_preload();
     fsm_sendFailure(FailureType_Failure_SyntaxError,

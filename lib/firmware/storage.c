@@ -48,6 +48,7 @@
 #include "keepkey/firmware/reset.h"
 #if !BITCOIN_ONLY
 #include "keepkey/firmware/signed_metadata.h"
+#include "keepkey/firmware/contact_book.h"
 #endif
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/u2f.h"
@@ -1945,6 +1946,7 @@ void session_clear(bool clear_pin) {
    * that tears that session down must also revoke its RAM-only signer slots. */
 #if !BITCOIN_ONLY
   signed_metadata_clear_signers();
+  contact_book_clear(); /* verified against this session's attestor key */
 #endif
   /* The Orchard spend AUTHORIZING key lives in the Zcash signing session, so it
    * belongs to the unlocked session for exactly the same reason. Clearing it

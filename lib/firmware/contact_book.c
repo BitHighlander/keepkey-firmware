@@ -2,10 +2,10 @@
 
 #include <string.h>
 
-#include "ecdsa.h"
-#include "memzero.h"
-#include "secp256k1.h"
-#include "sha2.h"
+#include "trezor/crypto/ecdsa.h"
+#include "trezor/crypto/memzero.h"
+#include "trezor/crypto/secp256k1.h"
+#include "trezor/crypto/sha2.h"
 
 #define REQUEST_MAGIC "KKABREQ1"
 #define ROOT_MAGIC "KKABRT01"
