@@ -102,7 +102,21 @@ static int g_poll_wedged = 0;
 /* This host thread owns g_fw_lock; unlock keys on this, not on
  * g_poll_running. Per thread, so a thread that got the no-poll-thread success
  * from kkemu_trylock() cannot release a lock another thread still holds. */
+#ifdef _WIN32
+/* Not _Thread_local on Windows: MinGW emulates thread-locals through the
+ * shared libgcc, so the DLL would import libgcc_s_seh-1.dll, which Windows
+ * does not ship. The owner's thread id says the same thing. It is written
+ * only while g_fw_lock is held, and a thread id is never 0. */
+static _Atomic DWORD g_host_lock_owner = 0;
+#define HOST_HOLDS_LOCK() \
+  (atomic_load(&g_host_lock_owner) == GetCurrentThreadId())
+#define HOST_HOLDS_SET(v) \
+  atomic_store(&g_host_lock_owner, (v) ? GetCurrentThreadId() : 0)
+#else
 static _Thread_local int g_host_holds_lock = 0;
+#define HOST_HOLDS_LOCK() g_host_holds_lock
+#define HOST_HOLDS_SET(v) (g_host_holds_lock = (v))
+#endif
 
 /* ── Ring buffers (replace UDP sockets) ─────────────────────────────── */
 
@@ -617,12 +631,12 @@ void kkemu_stop(void) {
 void kkemu_lock(void) {
   if (!POLL_RUNNING()) return;
   FW_LOCK();
-  g_host_holds_lock = 1;
+  HOST_HOLDS_SET(1);
 }
 
 void kkemu_unlock(void) {
-  if (!g_host_holds_lock) return;
-  g_host_holds_lock = 0;
+  if (!HOST_HOLDS_LOCK()) return;
+  HOST_HOLDS_SET(0);
   FW_UNLOCK();
 }
 
@@ -635,7 +649,7 @@ void kkemu_unlock(void) {
 int kkemu_trylock(void) {
   if (!POLL_RUNNING()) return 1;
   if (!FW_TRYLOCK()) return 0;
-  g_host_holds_lock = 1;
+  HOST_HOLDS_SET(1);
   return 1;
 }
 
