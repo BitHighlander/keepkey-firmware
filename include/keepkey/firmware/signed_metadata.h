@@ -18,12 +18,10 @@ typedef struct _EthereumSignTx EthereumSignTx;
 #define METADATA_MAX_TOKEN_SYMBOL_LEN 10
 #define METADATA_MAX_KEYS 4
 #define METADATA_ALIAS_MAX_LEN 31
-/* Identity icon cap (1bpp mono RLE). Must equal LoadClearsignSigner.icon
- * max_size (messages-ethereum.options). Identities are never persisted. */
+/* Must equal LoadClearsignSigner.icon max_size (messages-ethereum.options). */
 #define METADATA_ICON_MAX 384
-/* hex(first 8 bytes of sha256(pubkey)) + NUL. 64 bits: a 32-bit prefix
- * collision can be ground in hours, which would let a different key pass for
- * the one the user approved. */
+/* hex(sha256(pubkey)[0:8]) + NUL. 64 bits: a 32-bit prefix collision can be
+ * ground in hours, passing a different key for the approved one. */
 #define METADATA_FINGERPRINT_LEN 17
 
 typedef enum {
@@ -32,28 +30,15 @@ typedef enum {
   METADATA_MALFORMED = 2,
 } MetadataClassification;
 
-/*
- * Blob format versions (the first payload byte).
- *
- * LEGACY (v1): per-transaction. The blob carries a committed tx_hash and the
- * pre-decoded argument VALUES; the host is trusted for the decode and the
- * device only binds it to the signed digest (signed_metadata_enforce). This is
- * the format that requires an online, per-tx signer holding the attestation
- * key.
- *
- * SCHEMA (v2): static. The blob carries NO tx_hash and NO values — only how to
- * decode the call: (chainId, contract, selector, method, per-arg name + display
- * format [+ static decimals/symbol]). The DEVICE decodes the argument values
- * from the exact calldata it is about to sign, so the display is bound to the
- * signature by construction. No tx_hash, no per-tx signing: the catalog is
- * signed ONCE, offline, and can be served from a host CDN (no hot key).
- */
+/* LEGACY (v1): per-tx blob with committed tx_hash and host-decoded values;
+ * bound to the digest by signed_metadata_enforce. SCHEMA (v2): no tx_hash, no
+ * values; the DEVICE decodes args from the calldata it signs, so the display
+ * is bound by construction and the catalog can be signed once, offline. */
 #define METADATA_VERSION_LEGACY 0x01
 #define METADATA_VERSION_SCHEMA 0x02
 
-/* 7.16: a KeepKey-delegated envelope. [0x03][cert 139][device-decoded schema].
- * The certificate is verified and DISCARDED inside one message -- nothing about
- * a delegation survives into the next transaction. */
+/* 7.16: [0x03][cert 139][device-decoded schema]. The cert is verified and
+ * DISCARDED within one message; no delegation outlives it. */
 #define METADATA_VERSION_CERTIFIED 0x03
 /* v2 plus roles, a native-value role, a title and a signed intent template
  * (SRS-7.16 §3.7, docs/security/clearsign-intent-template.md). Values are
@@ -73,7 +58,9 @@ typedef enum {
 /* Widest filled summary; templates that could exceed it are rejected. */
 #define METADATA_INTENT_TEXT_MAX 280
 #define METADATA_TITLE_MAX 20
-/* Roles (shared numbering with Solana KKSOLSC1 v3). */
+/* Intent roles, shared by the EVM and Solana (KKSOLSC1 v3) schemas: the
+ * device words the limits screen from these. CAP is a per-use maximum (e.g.
+ * each bet), not an outflow. */
 #define METADATA_ROLE_NONE 0
 #define METADATA_ROLE_SPEND_MAX 1
 #define METADATA_ROLE_RECEIVE_MIN 2
@@ -98,18 +85,9 @@ typedef enum {
   METADATA_DECODER_PORTALS_NATIVE_ORDER_V1 = 1,
 } MetadataDecoder;
 
-/* The delegate is addressed by a sentinel that is >= METADATA_MAX_KEYS BY
- * CONSTRUCTION, so it can never name a runtime slot.
- *
- * That is the whole promotion defence, and it is worth stating plainly: a host
- * can write a public key into exactly one array, via exactly one message
- * (LoadClearsignSigner -> signed_metadata_store_signer), and that function
- * already rejects any key_id >= METADATA_MAX_KEYS. Promotion is prevented by
- * the ABSENCE OF A WRITER, not by a check somebody could forget to add.
- *
- * metadata_pubkey_for() is deliberately left untouched by 7.16 for the same
- * reason -- it is shared with Solana, and not modifying it means the KeepKey
- * tier cannot leak there by call-graph accident. */
+/* Delegate sentinel, >= METADATA_MAX_KEYS so it can never name a runtime slot.
+ * The only key writer (signed_metadata_store_signer) rejects such ids, so a
+ * host cannot promote a key into the KeepKey tier: no writer exists. */
 #define METADATA_KEYID_DELEGATE 0x80
 
 typedef enum {
@@ -119,40 +97,26 @@ typedef enum {
       2, /* KeepKey-delegated; MAY suppress the raw review */
 } MetadataTier;
 
-/* The single suppression predicate. Positive and conjunctive: every clause must
- * hold. Written this way rather than as an else-arm so that adding a trust tier
- * later cannot silently widen it. */
+/* The single suppression predicate; conjunctive, so a new tier cannot widen
+ * it. */
 bool signed_metadata_may_suppress(uint32_t tx_chain_id);
 
-/* True when this message carried a certified (v3) envelope, verified or not.
- * A claimed certified render that cannot be honoured must be refused, never
- * silently downgraded to the additive review (SRS R-1.4). */
+/* This message carried a v3 envelope, verified or not. A failed claim must be
+ * refused, never downgraded (SRS R-1.4). */
 bool signed_metadata_certified_claimed(void);
 
-/* Display for the KeepKey tier. Empty unless the current message carried a
- * verified certificate. */
+/* Empty unless this message carried a verified certificate. */
 const char* signed_metadata_delegate_alias(void);
-bool signed_metadata_delegate_fingerprint(char out[METADATA_FINGERPRINT_LEN]);
 
-/*
- * Argument display formats. The goal of clear-signing is that the device
- * answers WHO the user is dealing with (validated contract address, protocol
- * name), WHAT the transaction does (method + human-readable typed args:
- * recipient, "Amount: 1,000 USDC"), and WHY the decode can be trusted
- * (signer attestation bound to the exact tx hash). RAW/BYTES hex dumps are
- * the fallback, not the product.
- */
 typedef enum {
   ARG_FORMAT_RAW = 0,     /* hex dump (all bytes, paginated) */
   ARG_FORMAT_ADDRESS = 1, /* 20 bytes -> full EIP-55 address, never truncated */
   ARG_FORMAT_AMOUNT = 2,  /* big-endian uint256 -> raw integer, "wei" */
   ARG_FORMAT_BYTES = 3,   /* hex dump (all bytes, paginated) */
-  /* Attested label, e.g. protocol: "Uniswap V2": 1..32 printable ASCII
-   * bytes, '%' excluded. */
+  /* Label of 1..32 printable ASCII bytes, '%' excluded. */
   ARG_FORMAT_STRING = 4,
   /* decimals(1) + symbol_len(1) + symbol(<=10, [A-Za-z0-9]) + amount(1..32
-   * big-endian). Rendered as a decimal-scaled amount with the symbol, e.g.
-   * "1000 USDC"; an amount >= 2^255 renders "UNLIMITED <symbol>". */
+   * BE); an amount >= 2^255 renders "UNLIMITED <symbol>". */
   ARG_FORMAT_TOKEN_AMOUNT = 5,
   /* v2/0x05 only: an address that must equal the 20 bytes the schema pins
    * (e.g. a spender), so the template may name that party in words. */
@@ -205,19 +169,19 @@ typedef struct {
   char title[METADATA_TITLE_MAX + 1];
   char vouched_name[METADATA_NAME_MAX + 1]; /* v0x06 */
   uint8_t tx_value[32]; /* msg.value of the matched tx, big-endian */
-  uint8_t tx_value_len;
   /* v0x07 */
   uint8_t decoder;
   uint8_t num_tokens;
 } SignedMetadata;
 
-/* One review screen: text, or (BYTES) a byte range to page. */
-typedef bool (*MetadataReviewEmit)(void* ctx, const char* title,
-                                   const char* body, const uint8_t* bytes,
-                                   uint16_t bytes_len);
-/* Placeholders "{n}" (arg) / "{v}" (msg.value) well-formed and in range,
- * every amount covered, {v} present iff the value has a role. */
-bool signed_metadata_intent_valid(const SignedMetadata* md);
+/* Intent review helpers shared by the EVM and Solana reviews (SRS-7.16 §3.7,
+ * docs/security/clearsign-intent-template.md). One screen: body text, or a
+ * byte range to page; false cancels. */
+typedef bool (*ReviewEmit)(void* ctx, const char* title, const char* body,
+                           const uint8_t* bytes, uint16_t bytes_len);
+/* ReviewEmit on the device: text as one screen, bytes as hex pages. */
+bool signed_metadata_review_emit(void* ctx, const char* title, const char* body,
+                                 const uint8_t* bytes, uint16_t bytes_len);
 /* A KeepKey-certified record taken by the typed-data request it rides ahead
  * of: a 0x06 name, or a 0x07 decoder entry, which names its contract by its
  * title and carries the token identities its swaps use. */
@@ -247,80 +211,48 @@ const MetadataToken* signed_metadata_record_token(const MetadataNameRecord* r,
  * provenance. Emits nothing partial: false if any line cannot be built. */
 bool signed_metadata_build_ur_review(const SignedMetadata* md,
                                      const char* alias, const char* fp,
-                                     MetadataReviewEmit emit, void* ctx);
+                                     ReviewEmit emit, void* ctx);
 bool signed_metadata_build_intent_review(const SignedMetadata* md,
                                          bool certified, const char* alias,
-                                         const char* fp,
-                                         MetadataReviewEmit emit, void* ctx);
+                                         const char* fp, ReviewEmit emit,
+                                         void* ctx);
 
 bool signed_metadata_available(void);
 
-/* True only for the reserved KeepKey-certified envelope shape.  This is the
- * narrow pre-verification predicate used by the FSM to let a v3 certificate
- * reach signed_metadata_process() while AdvancedMode is off.  It grants no
- * trust by itself: the compiled root, certificate, delegate signature, and
- * device-decoded schema are still verified by signed_metadata_process(). */
+/* Shape-only v3 check letting the envelope reach signed_metadata_process()
+ * with AdvancedMode off. Grants NO trust; process() verifies everything. */
 bool signed_metadata_is_certified_envelope(const uint8_t* payload,
                                            size_t payload_len, uint32_t key_id);
 
-/* True when the stored v2 (schema) metadata was decoded from the current tx's
- * calldata by the most recent signed_metadata_matches_tx() call. Reset at the
- * top of every matches_tx() so it reflects only that call (never a stale prior
- * match). The v2 enforce path requires it; exported for unit testing. */
+/* True iff the last matches_tx() decoded v2 args from this tx's calldata;
+ * reset on every call so it is never stale. Required by v2 enforce. */
 bool signed_metadata_schema_decoded(void);
 
-/* True when the matched schema is v2 AND the transaction carries native value
- * the schema cannot bind. On the runtime tier this is informational: the
- * ordinary amount screen always runs after metadata. Where
- * signed_metadata_may_suppress() lets the decoded display replace the
- * raw-calldata screen, the caller MUST still show the amount/recipient screen
- * when this is true. */
+/* v2 schema + native value: v2 cannot bind value, so the caller MUST still
+ * show the amount/recipient screen. */
 bool signed_metadata_schema_moves_value(void);
 
 void signed_metadata_clear(void);
 
-/*
- * Runtime-loaded clearsign signers (the development/self-service path).
- *
- * A signer is a compressed secp256k1 pubkey + display alias loaded into a
- * key slot at the host's request, gated by a mandatory on-device confirm
- * (see fsm_msgLoadClearsignSigner). Loaded signers live in RAM only and are
- * gone on reboot. Metadata verified by a loaded signer always shows a
- * identity screen naming the alias before any clearsign page. A runtime signer
- * is never a warning-free path: the production path instead carries a
- * root-certified delegate in each v3 envelope.
- */
+/* Runtime-loaded signers: RAM-only, loaded after on-device consent, always
+ * shown by alias before any page; never warning-free (production uses a
+ * root-certified delegate). */
 
-/* Pure validation: slot in range, pubkey a valid compressed secp256k1 point,
- * alias non-empty printable ASCII within METADATA_ALIAS_MAX_LEN. No state, no
- * I/O. */
+/* Pure validation: slot, compressed secp256k1 point, printable alias. */
 bool signed_metadata_signer_valid(uint8_t key_id, const uint8_t* pubkey,
                                   size_t pubkey_len, const char* alias);
 
-/* Store a signer into a slot. Caller (the FSM handler) MUST have passed
- * signed_metadata_signer_valid() and obtained on-device user confirmation
- * first — this function is the post-consent write, nothing more.
- *
- * icon (optional, icon_len<=384, 1bpp mono RLE) is kept as the session icon for
- * the slot; icon_len==0 => text-only identity. RC18 rejects persist=true before
- * changing the session slot because public storage lacks authenticated
- * integrity. */
+/* Post-consent write only: caller MUST have validated and confirmed. RC18
+ * rejects persist=true (public storage lacks authenticated integrity). */
 bool signed_metadata_store_signer(uint8_t key_id, const uint8_t* pubkey,
                                   const char* alias, const uint8_t* icon,
                                   uint8_t icon_w, uint8_t icon_h,
                                   uint16_t icon_len, bool persist);
 
-/* Resolve a slot's alias / icon from the RAM session copy. alias returns NULL
- * and icon returns false when the slot has no signer / no icon (text-only).
- * Used by the per-tx confirm. */
+/* NULL when the slot has no signer. */
 const char* signed_metadata_signer_alias(uint8_t key_id);
-bool signed_metadata_signer_icon(uint8_t key_id, const uint8_t** icon_out,
-                                 uint8_t* w_out, uint8_t* h_out,
-                                 uint16_t* len_out);
 
-/* The LoadClearsignSigner consent screen: leads with the identity's logo (if
- * any) + alias + fingerprint. Returns true iff the user confirmed. The FSM
- * handler calls this before storing the signer. */
+/* LoadClearsignSigner consent: icon + alias + fingerprint. */
 bool signed_metadata_confirm_load(const char* alias, const char* fingerprint,
                                   const uint8_t* icon, uint8_t icon_w,
                                   uint8_t icon_h, uint16_t icon_len);
@@ -328,51 +260,37 @@ bool signed_metadata_confirm_load(const char* alias, const char* fingerprint,
 /* Drop all runtime-loaded signers (and any metadata they verified). */
 void signed_metadata_clear_signers(void);
 
-/* out = hex of the first 8 bytes of sha256(pubkey[33]), NUL-terminated.
- * Shown at load-confirm and on the per-tx warning screen so the user can
- * correlate the two. */
+/* Shown at load and per-tx so the user can correlate the two. */
 void signed_metadata_pubkey_fingerprint(const uint8_t pubkey[33],
                                         char out[METADATA_FINGERPRINT_LEN]);
 
 /* True when the currently stored metadata was verified by a runtime-loaded
  * signer (=> its confirm flow is warning-first, never "Insight Verified"). */
 bool signed_metadata_from_loaded_signer(void);
-/* True when key_id currently resolves to a runtime-loaded signer. This lets
- * non-EVM callers preserve their normal Advanced-mode review after showing an
- * additive schema decode. */
+/* Lets non-EVM callers keep their Advanced-mode review after a decode. */
 bool signed_metadata_signer_is_runtime(uint8_t key_id);
 MetadataClassification signed_metadata_process(const uint8_t* payload,
                                                size_t payload_len,
                                                uint8_t key_id);
 
-/* Generic attestation check reusing the (chain-agnostic) clear-sign signer
- * keyring: returns true iff a runtime signer is loaded for `key_id` AND the
- * 64-byte compact ECDSA signature `sig` verifies over sha256(data). Used by
- * non-EVM paths (e.g. Solana signed token definitions) that want to trust
- * host-supplied data only when a loaded signer attests to it. */
+/* True iff a runtime signer is loaded for key_id AND the 64-byte compact
+ * ECDSA sig verifies over sha256(data). */
 bool signed_metadata_verify_attestation(uint8_t key_id, const uint8_t* data,
                                         size_t data_len, const uint8_t* sig,
                                         size_t sig_len);
 
-/* Verify an attestation only when `pubkey` exactly matches a runtime-loaded
- * signer. This is for protocols whose signed envelope carries the delegate
- * key rather than a keyring slot (ERC-7730). AdvancedMode is enforced here,
- * and the user-approved runtime alias is returned on success. */
+/* For envelopes carrying the delegate pubkey (ERC-7730). Enforces
+ * AdvancedMode; returns the user-approved alias. */
 bool signed_metadata_verify_runtime_attestation_for_pubkey(
     const uint8_t pubkey[33], const uint8_t* data, size_t data_len,
     const uint8_t* sig, size_t sig_len,
     char out_alias[METADATA_ALIAS_MAX_LEN + 1]);
 
-/* Fingerprint (hex of sha256(pubkey)[0:8]) of the runtime signer loaded in
- * `key_id`, written NUL-terminated to `out`. Returns false if no signer is
- * present. Lets non-EVM callers disambiguate signers (aliases are not unique)
- * the same way the EVM per-tx warning does. */
+/* Aliases are not unique; the fingerprint disambiguates signers. */
 bool signed_metadata_signer_fingerprint(uint8_t key_id,
                                         char out[METADATA_FINGERPRINT_LEN]);
-/* Display gate: does this metadata plausibly describe `msg`? Binds contract
- * address, selector and chain id so the wrong method is never shown. The
- * authoritative full-tx binding is enforced later by signed_metadata_enforce().
- */
+/* Display gate binding contract, selector and chain id; the full-tx binding
+ * is signed_metadata_enforce(). */
 bool signed_metadata_matches_tx(const EthereumSignTx* msg);
 bool signed_metadata_confirm(void);
 
@@ -392,32 +310,43 @@ bool signed_metadata_ur_feed(const uint8_t* bytes, uint32_t len);
  * review. */
 bool signed_metadata_relied(void);
 
-/* Authoritative binding, called after the real Ethereum sighash is finalized
- * (in send_signature, the only point it exists). Returns true if signing may
- * proceed: either no metadata was relied upon, or the relied-upon metadata's
- * committed tx_hash equals `hash`. Fail-closed on any mismatch. */
+/* Called once the sighash exists (send_signature). Fail-closed unless no
+ * metadata was relied on or its committed tx_hash equals hash. */
 bool signed_metadata_enforce(const uint8_t hash[32]);
 
-/* Pure enforcement decision, exported for unit testing. Given the module flags
- * and the metadata's committed tx hash, decides whether signing may proceed for
- * the just-finalized `hash`. signed_metadata_enforce() is a thin wrapper that
- * feeds the module state into this function. No state, no I/O. */
+/* Pure decision behind signed_metadata_enforce(); exported for tests. */
 bool signed_metadata_enforce_decision(bool relied, bool available,
                                       int classification,
                                       const uint8_t* stored_hash,
                                       const uint8_t* hash);
 
-/* Pure enforcement decision for v2 (static schema) blobs, exported for unit
- * testing. v2 has no committed tx_hash; the binding is structural (args decoded
- * from the signed calldata), so signing proceeds when the relied-upon metadata
- * is available, VERIFIED, and was actually decoded (`decoded`) — no digest
- * comparison. `decoded` must be the recorded result of decode_v2_args() for
- * this signing operation, not inferred from call order.
- * signed_metadata_enforce() dispatches here when the stored blob's version is
- * METADATA_VERSION_SCHEMA. */
+/* v2 has no tx_hash: proceed only if relied-upon metadata is available,
+ * VERIFIED and `decoded`, which must be decode_v2_args()'s recorded result
+ * for this operation, not inferred from call order. */
 bool signed_metadata_enforce_schema_decision(bool relied, bool available,
                                              bool decoded, int classification);
 
 const SignedMetadata* signed_metadata_get(void);
+
+/* A filled template; src is the walker's schema context. */
+typedef struct {
+  const void* src;
+  char* out;
+  size_t len;
+  size_t used;
+  bool ok;
+} IntentFill;
+void intent_fill_append(IntentFill* f, const char* str, size_t n);
+/* Template literals carry no digits: every digit shown is the device's
+ * formatting of signed bytes, never server text. */
+bool intent_literal_ok(const char* lit, size_t len);
+/* "You spend at most" etc.; NULL for METADATA_ROLE_NONE. */
+const char* intent_role_text(uint8_t role);
+/* Runtime: "<alias> (NOT verified by KeepKey) says:" over the summary. */
+bool intent_emit_unverified(ReviewEmit emit, void* ctx, const char* alias,
+                            const char* intent);
+/* Certified: "Described by <alias> <fp>, certified by KeepKey". */
+bool intent_emit_provenance(ReviewEmit emit, void* ctx, const char* alias,
+                            const char* fp);
 
 #endif

@@ -32,12 +32,12 @@ extern "C" {
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha2.h"
-#include "trezor/crypto/sha3.h"
 #include "keepkey/firmware/clearsign_root.h"
 
 void setup(void);
 }
 
+#include "clearsign_test_cert.h"
 #include "gtest/gtest.h"
 #include "kkconfirm_driver.h"
 #include "test_board.h"
@@ -1935,6 +1935,10 @@ TEST(SolanaTokenDef, TrustedOnlyWithValidAttestation) {
 
   EXPECT_TRUE(solana_token_info_trusted(&ti));
 
+  // Display: attested symbol only when the signed decimals match.
+  EXPECT_STREQ(solana_displaySymbol(&ti, nullptr, 6), "USDC");
+  EXPECT_EQ(solana_displaySymbol(&ti, nullptr, 9), nullptr);
+
   // Attested-tuple disagreement: a different decimals no longer matches the
   // sig.
   ti.decimals = 9;
@@ -1952,9 +1956,23 @@ TEST(SolanaTokenDef, TrustedOnlyWithValidAttestation) {
   EXPECT_FALSE(solana_token_info_trusted(&ti));
   ti.signer_key_id = TEST_KEY_ID;
 
-  // No attestation -> not trusted (the caller falls back to unsigned display).
+  // No attestation -> not trusted, and the host's symbol is never displayed,
+  // even when its claimed decimals match the signed ones.
   ti.has_signature = false;
   EXPECT_FALSE(solana_token_info_trusted(&ti));
+  EXPECT_EQ(solana_displaySymbol(&ti, nullptr, 6), nullptr);
+  EXPECT_EQ(solana_displaySymbol(nullptr, nullptr, 6), nullptr);
+
+  // A firmware-known mint shows the table symbol whatever the host sent.
+  static const uint8_t usdc_mint[32] = {
+      0xc6, 0xfa, 0x7a, 0xf3, 0xbe, 0xdb, 0xad, 0x3a, 0x3d, 0x65, 0xf3,
+      0x6a, 0xab, 0xc9, 0x74, 0x31, 0xb1, 0xbb, 0xe4, 0xc2, 0xd2, 0xf6,
+      0xe0, 0xe4, 0x7c, 0xa6, 0x02, 0x03, 0x45, 0x2f, 0x5d, 0x61};
+  const SolanaKnownToken* known = solana_findKnownToken(usdc_mint);
+  ASSERT_NE(known, nullptr);
+  strcpy(ti.symbol, "FAKE");
+  EXPECT_STREQ(solana_displaySymbol(&ti, known, 6), "USDC");
+  EXPECT_STREQ(solana_displaySymbol(nullptr, known, 6), "USDC");
 
   signed_metadata_clear_signers();
   set_advanced_mode_for_test(false);
@@ -2016,7 +2034,7 @@ TEST(SolanaTokenDef, SchemaTokenTrustStaysInItsTier) {
       buf, sizeof(buf), 1000000000ULL, mint,
       solana_schemaTrustedToken(&msg, mint, false)));
   EXPECT_STREQ(buf,
-               "1000.000000 SDICE\n"
+               "1000 SDICE\n"
                "CZ8YUVdk7znjrUmnb5n7kgySk9yRAsQDYmyCxzfSky9t");
 
   // Validly signed, but not displayable as a bare ticker / exact scale.
@@ -2124,7 +2142,7 @@ TEST(SolanaTokenDef, SchemaTrustedSymbolIsAlwaysShownWithItsMint) {
   char value[96];
   ASSERT_TRUE(solana_schemaArgValue(&msg, false, &t.tx, ix, &arg, t.data,
                                     &cache, value, sizeof(value)));
-  EXPECT_EQ(std::string(value), std::string("1.000000 USDT\n") + kMintAB58);
+  EXPECT_EQ(std::string(value), std::string("1 USDT\n") + kMintAB58);
 
   signed_metadata_clear_signers();
   set_advanced_mode_for_test(false);
@@ -2176,7 +2194,7 @@ TEST(SolanaTokenDef, SchemaKnownSymbolOnAnotherMintIsNotTrusted) {
   }
 
   fill_token_def(ti, 0xAB, "USDCX", 6);
-  EXPECT_EQ(render(false), std::string("1.000000 USDCX\n") + kMintAB58);
+  EXPECT_EQ(render(false), std::string("1 USDCX\n") + kMintAB58);
 
   /* EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v */
   static const uint8_t kCircleUsdc[32] = {
@@ -2189,7 +2207,7 @@ TEST(SolanaTokenDef, SchemaKnownSymbolOnAnotherMintIsNotTrusted) {
   memcpy(t.tx.accounts[2], kCircleUsdc, 32);
   EXPECT_EQ(solana_schemaTrustedToken(&msg, t.tx.accounts[2], false), ti);
   EXPECT_EQ(render(false),
-            "1.000000 usdc\nEPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+            "1 usdc\nEPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
 
   signed_metadata_clear_signers();
   set_advanced_mode_for_test(false);
@@ -2223,9 +2241,9 @@ TEST(SolanaTokenDef, SchemaTokenDefinitionNeverCarriesAcrossMints) {
       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Max wager", 0},
   };
   const std::string runtime[3] = {
-      std::string("1.000000 SDICE\n") + kMintAB58,
+      std::string("1 SDICE\n") + kMintAB58,
       std::string("2000000 base units of mint\n") + kMintCD58,
-      std::string("3.000000 SDICE\n") + kMintAB58,
+      std::string("3 SDICE\n") + kMintAB58,
   };
   const std::string certified[3] = {
       std::string("1000000 base units of mint\n") + kMintAB58,
@@ -2774,25 +2792,8 @@ const uint8_t CERT_ROOT_PRIV[32] = {
 
 std::vector<uint8_t> mint_cert(uint32_t scope, uint8_t flags,
                                const uint8_t delegate_pub[33]) {
-  std::vector<uint8_t> c(CLEARSIGN_CERT_LEN, 0);
-  c[CLEARSIGN_CERT_OFF_VERSION] = CLEARSIGN_CERT_VERSION;
-  c[CLEARSIGN_CERT_OFF_FLAGS] = flags;
-  for (int i = 0; i < 4; i++) {
-    c[CLEARSIGN_CERT_OFF_SCOPE + i] = (uint8_t)(scope >> (24 - 8 * i));
-    c[CLEARSIGN_CERT_OFF_EXPIRY + i] = (uint8_t)(1818806400u >> (24 - 8 * i));
-  }
-  memcpy(&c[CLEARSIGN_CERT_OFF_ALIAS], "Test Delegate", 13);
-  memcpy(&c[CLEARSIGN_CERT_OFF_PUBKEY], delegate_pub, CLEARSIGN_PUBKEY_LEN);
-  const uint8_t ds[32] = CLEARSIGN_DOMAIN_SEPARATOR;
-  uint8_t pre[66] = {0x19, 0x01};
-  memcpy(pre + 2, ds, 32);
-  keccak_256(c.data(), CLEARSIGN_CERT_SIGNED_LEN, pre + 34);
-  uint8_t digest[32];
-  keccak_256(pre, sizeof(pre), digest);
-  uint8_t pby = 0;
-  EXPECT_EQ(0, ecdsa_sign_digest(&secp256k1, CERT_ROOT_PRIV, digest,
-                                 &c[CLEARSIGN_CERT_OFF_SIG], &pby, NULL));
-  return c;
+  return rootCert(CERT_ROOT_PRIV, delegate_pub, flags, scope, 1818806400u,
+                  "Test Delegate");
 }
 
 std::vector<uint8_t> envelope(const std::vector<uint8_t>& cert,
@@ -2848,6 +2849,17 @@ TEST_F(CertifiedMetadataTest, ScopeMustEqualTheDescribedChain) {
   ExpectRefusedButClaimed(envelope(
       mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
       sign_body(build_v2_body(other_chain))));
+}
+
+/* EVM chain ids and non-EVM scopes share one number space: a Solana-scoped
+ * certificate must not certify an EVM description on chain 501. */
+TEST_F(CertifiedMetadataTest, NonEvmScopeNeverCertifiesAnEvmChain) {
+  V2Spec chain_501 = v2_base_spec();
+  chain_501.chain_id = CLEARSIGN_SCOPE_SOLANA;
+  ExpectRefusedButClaimed(envelope(mint_cert(CLEARSIGN_SCOPE_SOLANA,
+                                             CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+                                             EXPECTED_SLOT3_PUB),
+                                   sign_body(build_v2_body(chain_501))));
 }
 
 TEST_F(CertifiedMetadataTest, CertificateWithoutMaySuppressIsRefused) {
@@ -3217,6 +3229,31 @@ TEST_F(CertifiedMetadataTest, IntentSchemaCertifiedReviewReplacesRawAndValue) {
   EXPECT_TRUE(signed_metadata_confirm());
   EXPECT_EQ(0, kkconfirm_drain());
   EXPECT_TRUE(signed_metadata_relied());
+}
+
+/* The ETH amount screen is skipped ONLY when Limits states msg.value: a
+ * certified 0x05 schema whose value has no role keeps it for a payable call. */
+TEST_F(CertifiedMetadataTest, IntentSchemaWithoutValueRoleKeepsTheValueScreen) {
+  IntentSpec s = relay_intent();
+  s.value_role = METADATA_ROLE_NONE;
+  s.intent = "Bridge through Relay for {0}; delivery is by Relay";
+  ASSERT_EQ(METADATA_VERIFIED,
+            Process(envelope(mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+                                       EXPECTED_SLOT3_PUB),
+                             sign_body(build_intent_body(s)))));
+  static const uint8_t DEPOSITOR[20] = {
+      0x90, 0x9e, 0xf6, 0xb3, 0x2d, 0xfd, 0xc1, 0x2c, 0xa8, 0x6a,
+      0xa7, 0x10, 0xb5, 0x4c, 0x99, 0x1a, 0xf3, 0xc5, 0xf8, 0x2e};
+  std::vector<uint8_t> data(s.v2.selector.begin(), s.v2.selector.end());
+  put_addr_word(data, DEPOSITOR);
+  for (int i = 0; i < 32; i++) data.push_back((uint8_t)i);
+  EthereumSignTx msg;
+  make_v2_msg(&msg, s.v2.contract.data(), data, true, (uint32_t)data.size());
+  msg.has_value = true;
+  msg.value.size = 1;
+  msg.value.bytes[0] = 1;
+  ASSERT_TRUE(signed_metadata_matches_tx(&msg));
+  EXPECT_TRUE(signed_metadata_schema_moves_value());
 }
 
 /* v0x06: a vouched address name (Permit2 spender). It names, never describes

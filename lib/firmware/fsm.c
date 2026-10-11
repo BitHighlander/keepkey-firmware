@@ -61,6 +61,7 @@
 #include "keepkey/firmware/ripple.h"
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/signtx_tendermint.h"
+#include "keepkey/firmware/clearsign_root.h"
 #include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/contact_book.h"
 #include "keepkey/firmware/solana.h"
@@ -773,8 +774,8 @@ void fsm_msgClearSession(ClearSession* msg) {
   (void)msg;
   fsm_abort_workflows();
   session_clear(/*clear_pin=*/true);
-  /* Several abort routines -- Tendermint, Osmosis, THORChain,
-     MAYAChain, EOS, Nano -- only clear state and touch no layout, so without
+  /* Several abort routines -- Tendermint, Osmosis, THORChain, MAYAChain,
+     EOS, Nano -- only clear state and touch no layout, so without
      this the approval screen of the transaction just cancelled stays on the
      OLED, describing an operation that no longer exists.
 
@@ -805,9 +806,9 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_tron.h"
 #include "fsm_msg_ton.h"
 #include "fsm_msg_solana.h"
-#include "fsm_msg_hive.h"
 /* After fsm_msg_solana.h: reuses its base58 helper and the KKSOLSC1 parser. */
 #include "fsm_msg_clearsign_attestor.h"
+#include "fsm_msg_hive.h"
 #else
 // Bitcoin-only: the coin engines above are compiled out, but the always-on
 // Initialize/ClearSession/Cancel handlers still call their *_abort() hooks.

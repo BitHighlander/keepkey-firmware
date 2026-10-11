@@ -56,7 +56,7 @@ std::vector<uint8_t> validCert() { return unhex(kValidCertHex); }
 
 }  // namespace
 
-TEST(ClearsignRoot, TheCeremonysCertificateVerifies) {
+TEST(ClearsignRoot, TheCeremonyCertificateVerifies) {
   // If this fails, the ceremony and the firmware disagree about the preimage,
   // and a real signing session would produce certificates no device accepts.
   auto c = validCert();
@@ -68,12 +68,12 @@ TEST(ClearsignRoot, DelegateExtractionRequiresTheSignedScopeAndCapability) {
   auto c = validCert();
   uint8_t delegate[CLEARSIGN_PUBKEY_LEN] = {0};
   char alias[CLEARSIGN_ALIAS_LEN + 1] = {0};
-  ASSERT_TRUE(clearsign_root_cert_delegate(c.data(), c.size(), 1, delegate,
-                                          alias));
+  ASSERT_TRUE(
+      clearsign_root_cert_delegate(c.data(), c.size(), 1, delegate, alias));
   EXPECT_STREQ(alias, "KeepKey");
   EXPECT_TRUE(delegate[0] == 0x02 || delegate[0] == 0x03);
-  EXPECT_FALSE(clearsign_root_cert_delegate(c.data(), c.size(), 501, delegate,
-                                           alias));
+  EXPECT_FALSE(
+      clearsign_root_cert_delegate(c.data(), c.size(), 501, delegate, alias));
 }
 
 TEST(ClearsignRoot, SevenSixteenAlwaysShipsTheRoot) {

@@ -6,6 +6,12 @@ extern "C" {
 
 #include <cstring>
 
+static bool cbor_validate(const uint8_t* buffer, size_t length) {
+  CborDecoder decoder;
+  cbor_decoder_init(&decoder, buffer, length);
+  return cbor_skip_value(&decoder) && decoder.offset == length;
+}
+
 TEST(CTAP2CBOR, CanonicalRoundTrip) {
   uint8_t buffer[64];
   CborEncoder encoder;
@@ -18,13 +24,13 @@ TEST(CTAP2CBOR, CanonicalRoundTrip) {
       cbor_encode_bytes(&encoder, reinterpret_cast<const uint8_t*>("abc"), 3));
 
   CborValue value;
-  ASSERT_TRUE(
-      cbor_map_find_int(buffer, cbor_encoder_size(&encoder), 1, &value));
+  ASSERT_TRUE(cbor_map_find(buffer, cbor_encoder_size(&encoder), NULL, 1,
+                            &value, NULL, NULL));
   ASSERT_EQ(value.type, CBOR_TYPE_TEXT);
   ASSERT_EQ(value.length, 2u);
   ASSERT_EQ(0, memcmp(value.data, "ok", 2));
-  ASSERT_TRUE(
-      cbor_map_find_int(buffer, cbor_encoder_size(&encoder), 2, &value));
+  ASSERT_TRUE(cbor_map_find(buffer, cbor_encoder_size(&encoder), NULL, 2,
+                            &value, NULL, NULL));
   ASSERT_EQ(value.type, CBOR_TYPE_BYTES);
   ASSERT_EQ(value.length, 3u);
 }
@@ -57,4 +63,31 @@ TEST(CTAP2CBOR, EncoderReportsOverflow) {
   cbor_encoder_init(&encoder, buffer, sizeof(buffer));
   ASSERT_FALSE(cbor_encode_text(&encoder, "passkey", 7));
   ASSERT_EQ(cbor_encoder_size(&encoder), 0u);
+}
+
+TEST(CTAP2CBOR, NestedMapsMustBeCanonicallyOrdered) {
+  const uint8_t ordered[] = {0xa1, 0x01, 0xa2, 0x01, 0x00, 0x02, 0x00};
+  const uint8_t duplicate[] = {0xa1, 0x01, 0xa2, 0x01, 0x00, 0x01, 0x00};
+  const uint8_t reversed[] = {0xa1, 0x01, 0xa2, 0x61, 'b',
+                              0x00, 0x61, 'a',  0x00};
+  const uint8_t shorter_first[] = {0xa1, 0x01, 0xa2, 0x61, 'z',
+                                   0x00, 0x62, 'a',  'a',  0x00};
+  EXPECT_TRUE(cbor_validate(ordered, sizeof(ordered)));
+  EXPECT_TRUE(cbor_validate(shorter_first, sizeof(shorter_first)));
+  EXPECT_FALSE(cbor_validate(duplicate, sizeof(duplicate)));
+  EXPECT_FALSE(cbor_validate(reversed, sizeof(reversed)));
+  // Major type first: unsigned 24 (2 bytes) sorts before negative -1.
+  const uint8_t mixed[] = {0xa2, 0x18, 0x18, 0x00, 0x20, 0x00};
+  const uint8_t mixed_reversed[] = {0xa2, 0x20, 0x00, 0x18, 0x18, 0x00};
+  EXPECT_TRUE(cbor_validate(mixed, sizeof(mixed)));
+  EXPECT_FALSE(cbor_validate(mixed_reversed, sizeof(mixed_reversed)));
+}
+
+TEST(CTAP2CBOR, CountsUtf8Codepoints) {
+  const uint8_t ascii[] = {'1', '2', '3', '4'};
+  const uint8_t two_e_acute[] = {0xc3, 0xa9, 0xc3, 0xa9};
+  const uint8_t invalid[] = {'1', '2', '3', 0xff};
+  EXPECT_EQ(cbor_utf8_codepoints(ascii, sizeof(ascii)), 4u);
+  EXPECT_EQ(cbor_utf8_codepoints(two_e_acute, sizeof(two_e_acute)), 2u);
+  EXPECT_EQ(cbor_utf8_codepoints(invalid, sizeof(invalid)), SIZE_MAX);
 }

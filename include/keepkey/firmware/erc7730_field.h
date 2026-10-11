@@ -37,6 +37,10 @@ bool erc7730_format_nft(const uint8_t token_id[32],
                         const uint8_t collection[20], char* output,
                         size_t output_size);
 
+/* Proleptic Gregorian date of a day count since 1970-01-01. */
+void erc7730_civil_from_days(uint64_t days, unsigned* year, unsigned* month,
+                             unsigned* day);
+
 /* date: "YYYY-MM-DD HH:MM:SS UTC" and the raw seconds for a timestamp, or
  * "Block N" for a block height. A value outside the years 1970-9999 is shown
  * as its raw integer, marked "not a date"; it is never refused. */

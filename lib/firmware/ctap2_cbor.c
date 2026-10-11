@@ -190,6 +190,13 @@ bool cbor_decode_value(CborDecoder* decoder, CborValue* value) {
   return true;
 }
 
+size_t cbor_utf8_codepoints(const uint8_t* text, size_t length) {
+  if (!valid_utf8(text, length)) return SIZE_MAX;
+  size_t count = 0;
+  for (size_t i = 0; i < length; ++i) count += (text[i] & 0xc0) != 0x80;
+  return count;
+}
+
 static bool skip_value(CborDecoder* decoder, unsigned depth);
 
 static bool skip_children(CborDecoder* decoder, uint64_t count,
@@ -209,72 +216,70 @@ static bool skip_value(CborDecoder* decoder, unsigned depth) {
   if (value.type == CBOR_TYPE_ARRAY)
     return skip_children(decoder, value.value, depth + 1);
   if (value.type == CBOR_TYPE_MAP) {
-    if (value.value > UINT64_MAX / 2) return false;
-    return skip_children(decoder, value.value * 2, depth + 1);
+    /* Canonical CTAP2 CBOR: keys strictly increase by major type, then
+     * encoded length, then bytes, so no map at any depth can carry a
+     * duplicate or ambiguous key. */
+    if (value.value > (uint64_t)(decoder->length - decoder->offset))
+      return false;
+    const uint8_t* previous = NULL;
+    size_t previous_length = 0;
+    for (uint64_t i = 0; i < value.value; ++i) {
+      const size_t start = decoder->offset;
+      if (!skip_value(decoder, depth + 1)) return false;
+      const uint8_t* key = decoder->buffer + start;
+      const size_t key_length = decoder->offset - start;
+      if (previous) {
+        const int type = key[0] >> 5, previous_type = previous[0] >> 5;
+        if (type < previous_type ||
+            (type == previous_type &&
+             (key_length < previous_length ||
+              (key_length == previous_length &&
+               memcmp(previous, key, key_length) >= 0))))
+          return false;
+      }
+      previous = key;
+      previous_length = key_length;
+      if (!skip_value(decoder, depth + 1)) return false;
+    }
+    return true;
   }
   return true;
 }
 
 bool cbor_skip_value(CborDecoder* decoder) { return skip_value(decoder, 0); }
 
-bool cbor_validate(const uint8_t* buffer, size_t length) {
-  CborDecoder decoder;
-  cbor_decoder_init(&decoder, buffer, length);
-  return cbor_skip_value(&decoder) && decoder.offset == decoder.length;
-}
-
-bool cbor_map_find_int(const uint8_t* buffer, size_t length, uint64_t key,
-                       CborValue* value) {
-  CborDecoder decoder;
-  CborValue map;
-  cbor_decoder_init(&decoder, buffer, length);
-  if (!cbor_decode_value(&decoder, &map) || map.type != CBOR_TYPE_MAP) {
-    return false;
-  }
-
-  uint64_t previous = 0;
-  bool have_previous = false;
-  for (uint64_t i = 0; i < map.value; ++i) {
-    CborValue item_key;
-    if (!cbor_decode_value(&decoder, &item_key) ||
-        item_key.type != CBOR_TYPE_UINT)
-      return false;
-    if (have_previous && item_key.value <= previous) return false;
-    previous = item_key.value;
-    have_previous = true;
-
-    size_t value_offset = decoder.offset;
-    if (!cbor_decode_value(&decoder, value)) return false;
-    if (item_key.value == key) return true;
-    decoder.offset = value_offset;
-    if (!cbor_skip_value(&decoder)) return false;
-  }
-  return false;
-}
-
-bool cbor_map_find_int_slice(const uint8_t* buffer, size_t length, uint64_t key,
-                             const uint8_t** value, size_t* value_length) {
+bool cbor_map_find(const uint8_t* buffer, size_t length, const char* text,
+                   int64_t wanted, CborValue* value, const uint8_t** slice,
+                   size_t* slice_length) {
   CborDecoder decoder;
   CborValue map;
   cbor_decoder_init(&decoder, buffer, length);
   if (!cbor_decode_value(&decoder, &map) || map.type != CBOR_TYPE_MAP)
     return false;
-
-  uint64_t previous = 0;
-  bool have_previous = false;
   for (uint64_t i = 0; i < map.value; ++i) {
-    CborValue item_key;
-    if (!cbor_decode_value(&decoder, &item_key) ||
-        item_key.type != CBOR_TYPE_UINT ||
-        (have_previous && item_key.value <= previous))
+    CborValue key;
+    if (!cbor_decode_value(&decoder, &key)) return false;
+    bool match;
+    if (text != NULL && key.type == CBOR_TYPE_TEXT)
+      match =
+          key.length == strlen(text) && memcmp(key.data, text, key.length) == 0;
+    else if (text == NULL && key.type == CBOR_TYPE_UINT &&
+             key.value <= INT64_MAX)
+      match = (int64_t)key.value == wanted;
+    else if (text == NULL && key.type == CBOR_TYPE_NEGINT &&
+             key.value <= INT64_MAX)
+      match = -1 - (int64_t)key.value == wanted;
+    else
       return false;
-    previous = item_key.value;
-    have_previous = true;
+
     const size_t start = decoder.offset;
     if (!cbor_skip_value(&decoder)) return false;
-    if (item_key.value == key) {
-      *value = buffer + start;
-      *value_length = decoder.offset - start;
+    if (match) {
+      CborDecoder item;
+      cbor_decoder_init(&item, buffer + start, decoder.offset - start);
+      if (!cbor_decode_value(&item, value)) return false;
+      if (slice != NULL) *slice = buffer + start;
+      if (slice_length != NULL) *slice_length = decoder.offset - start;
       return true;
     }
   }

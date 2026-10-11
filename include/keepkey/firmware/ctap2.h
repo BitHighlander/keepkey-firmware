@@ -23,7 +23,6 @@
 #define CTAP2_ERR_UNSUPPORTED_ALGORITHM 0x26
 #define CTAP2_ERR_OPERATION_DENIED 0x27
 #define CTAP2_ERR_KEY_STORE_FULL 0x28
-#define CTAP2_ERR_UNSUPPORTED_OPTION 0x2b
 #define CTAP2_ERR_INVALID_OPTION 0x2c
 #define CTAP2_ERR_KEEPALIVE_CANCEL 0x2d
 #define CTAP2_ERR_NO_CREDENTIALS 0x2e
@@ -40,6 +39,8 @@
 
 /* Includes the one-byte CTAP status in response_length. */
 void ctap2_init(void);
+/* Drop PIN tokens, key agreement and assertion state (wallet wipe/reset). */
+void ctap2_clear_session(void);
 void ctap2_set_transport_channel(uint32_t channel);
 void ctap2_handle(const uint8_t* request, size_t request_length,
                   uint8_t* response, size_t response_capacity,

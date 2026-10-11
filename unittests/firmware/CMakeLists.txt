@@ -54,6 +54,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       nano.cpp
       osmosis.cpp
       ripple.cpp
+      clearsign_root.cpp
       signed_metadata.cpp
       uniswap_ur.cpp
       uniswap_ur_oracle.c

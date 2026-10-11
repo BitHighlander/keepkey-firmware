@@ -2,8 +2,8 @@
 extern "C" {
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/policy.h"
-#include "keepkey/board/keepkey_board.h"
 #include "keepkey/rand/rng_health.h"
+#include "keepkey/board/keepkey_board.h"
 #include "trezor/crypto/memzero.h"
 #include "trezor/crypto/aes/aes.h"
 #include "trezor/crypto/bip39.h"
@@ -837,14 +837,22 @@ TEST(Storage, BitcoinOnlyBandMigrates) {
   SessionState session;
   ConfigFlash shadow;
 
-  // Older in-band version (underlying < STORAGE_VERSION): migrate, not refuse.
+  // The shipped in-band version (10017) migrates to V20, never refused.
   memset(flash, 0, sizeof(flash));
   memcpy(flash, "stor", 4);
-  uint32_t older = STORAGE_VERSION_BTC_ONLY_BASE + (STORAGE_VERSION - 1);
+  uint32_t older = STORAGE_VERSION_BTC_ONLY_BASE + STORAGE_VERSION_LAST_SHIPPED;
   memcpy(flash + 44, &older,
          4);  // test host is little-endian, matches read_u32_le
   memset(&session, 0, sizeof(session));
-  EXPECT_NE(storage_fromFlash(&session, &shadow, flash), SUS_BitcoinOnlyLocked);
+  EXPECT_EQ(storage_fromFlash(&session, &shadow, flash), SUS_Updated);
+
+  // The burned alpha numbers stay invalid inside the band too.
+  for (uint32_t burned = 18; burned <= 19; ++burned) {
+    uint32_t stamped = STORAGE_VERSION_BTC_ONLY_BASE + burned;
+    memcpy(flash + 44, &stamped, 4);
+    memset(&session, 0, sizeof(session));
+    EXPECT_EQ(storage_fromFlash(&session, &shadow, flash), SUS_Invalid);
+  }
 
   // Our own current in-band version: loads (not refused).
   uint32_t current = STORAGE_VERSION_BTC_ONLY;
@@ -1999,8 +2007,74 @@ TEST(Storage, NewerStorageVersionRefusedNotWiped) {
   EXPECT_NE(storage_fromFlash(&session, &shadow, flash), SUS_TooNew);
 }
 
-/* The audited 7.15 assembly pinned STORAGE_VERSION at 17 (a bridge release that
- * must not migrate the format). This tree is the 7.16 track: it writes V20 and
- * migrates every V17 record on first boot (see StorageV17MigrationRoundTrip
- * and PinUnlocksAfterRebootUnderV17). What is kept from the bridge contract is
- * the refuse-not-wipe boundary above, expressed against STORAGE_VERSION. */
+/* 7.16 writes V20. 18 and 19 are burned alpha formats: refused (wiped), never
+ * parsed as passkey state, in both the normal and the bitcoin-only band. */
+TEST(Storage, WritesV20AndRefusesBurnedVersions) {
+  EXPECT_EQ(STORAGE_VERSION, 20);
+  EXPECT_EQ(STORAGE_VERSION_LAST_SHIPPED, 17);
+  static char flash[STORAGE_SECTOR_LEN];
+  memset(flash, 0, sizeof(flash));
+  memcpy(flash, "stor", 4);
+  SessionState session = {};
+  ConfigFlash shadow = {};
+  for (uint32_t burned : {18u, 19u}) {
+    flash[44] = static_cast<char>(burned);
+    EXPECT_EQ(storage_fromFlash(&session, &shadow, flash), SUS_Invalid)
+        << burned;
+#if BITCOIN_ONLY
+    const uint32_t banded = STORAGE_VERSION_BTC_ONLY_BASE + burned;
+    memcpy(flash + 44, &banded, sizeof(banded));
+    EXPECT_EQ(storage_fromFlash(&session, &shadow, flash), SUS_Invalid)
+        << banded;
+    memset(flash + 44, 0, 4);
+#endif
+  }
+}
+
+/* R-4.2: a V17 record migrates to V20 with every wallet field intact (the
+ * encrypted secret block, PIN state, label, U2F counter) and default passkey
+ * state; the V20 rewrite then reloads as valid with the passkey data kept. */
+TEST(Storage, V17UpgradesToV20WithSecretsPreserved) {
+  ConfigFlash v17;
+  memset(&v17, 0, sizeof(v17));
+  memcpy(v17.meta.magic, "stor", 4);
+  v17.storage.version = 17;
+  v17.storage.has_sec = false;
+  v17.storage.encrypted_sec_version = 17;
+  v17.storage.pub.has_pin = true;
+  v17.storage.pub.has_label = true;
+  strcpy(v17.storage.pub.label, "upgrade me");
+  v17.storage.pub.u2f_counter = 1234;
+  for (size_t i = 0; i < sizeof(v17.storage.encrypted_sec); i++)
+    v17.storage.encrypted_sec[i] = (uint8_t)(i * 7 + 1);
+  for (size_t i = 0; i < sizeof(v17.storage.pub.random_salt); i++)
+    v17.storage.pub.random_salt[i] = (uint8_t)(0xA0 + i);
+
+  static char flash[STORAGE_SECTOR_LEN];
+  memset(flash, 0, sizeof(flash));
+  storage_writeV17(flash, sizeof(flash), &v17);
+
+  SessionState session = {};
+  ConfigFlash loaded;
+  ASSERT_EQ(storage_fromFlash(&session, &loaded, flash), SUS_Updated);
+  EXPECT_EQ(loaded.storage.version, (uint32_t)STORAGE_VERSION);
+  EXPECT_TRUE(loaded.storage.pub.has_pin);
+  EXPECT_STREQ(loaded.storage.pub.label, "upgrade me");
+  EXPECT_EQ(loaded.storage.pub.u2f_counter, 1234u);
+  EXPECT_EQ(0, memcmp(loaded.storage.encrypted_sec, v17.storage.encrypted_sec,
+                      sizeof(v17.storage.encrypted_sec)));
+  EXPECT_EQ(0,
+            memcmp(loaded.storage.pub.random_salt, v17.storage.pub.random_salt,
+                   sizeof(v17.storage.pub.random_salt)));
+  EXPECT_EQ(loaded.storage.pub.passkeys.version, 1);
+  EXPECT_EQ(loaded.storage.pub.passkeys.pin_retries, PASSKEY_PIN_RETRIES);
+
+  loaded.storage.pub.passkeys.pin_set = 1;
+  memset(flash, 0, sizeof(flash));
+  storage_writeV20(flash, sizeof(flash), &loaded);
+  ConfigFlash reloaded;
+  ASSERT_EQ(storage_fromFlash(&session, &reloaded, flash), SUS_Valid);
+  EXPECT_EQ(reloaded.storage.pub.passkeys.pin_set, 1);
+  EXPECT_EQ(0, memcmp(reloaded.storage.encrypted_sec, v17.storage.encrypted_sec,
+                      sizeof(v17.storage.encrypted_sec)));
+}
