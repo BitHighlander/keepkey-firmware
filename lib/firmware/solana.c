@@ -1514,9 +1514,27 @@ const char* solana_displaySymbol(const SolanaTokenInfo* ti,
   if (!solana_token_info_trusted(ti) || ti->decimals != signed_decimals) {
     return NULL;
   }
-  /* Printable ASCII only, so a signed label cannot push the mint off-view. */
-  for (const char* p = ti->symbol; *p; p++) {
-    if ((uint8_t)*p < 0x20 || (uint8_t)*p > 0x7e) return NULL;
+  /* Letters and digits, with . _ - inside: a signed label is drawn beside the
+   * amount, so it may not hold a space or anything that reads as part of it. */
+  size_t len = 0;
+  for (const char* p = ti->symbol; *p; p++, len++) {
+    const char c = *p;
+    const bool alnum = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                       (c >= '0' && c <= '9');
+    if (!alnum && (len == 0 || (c != '.' && c != '_' && c != '-'))) return NULL;
+  }
+  if (len == 0) return NULL;
+  /* Nor a symbol this firmware owns: on another mint it would draw the very
+   * amount screen the real token gets. */
+  for (size_t i = 0; i < sizeof(SOL_KNOWN_TOKENS) / sizeof(SOL_KNOWN_TOKENS[0]);
+       i++) {
+    const char* owned = SOL_KNOWN_TOKENS[i].symbol;
+    size_t j = 0;
+    while (owned[j] && ti->symbol[j] &&
+           (owned[j] | 0x20) == (ti->symbol[j] | 0x20)) {
+      j++;
+    }
+    if (!owned[j] && !ti->symbol[j]) return NULL;
   }
   return ti->symbol;
 }

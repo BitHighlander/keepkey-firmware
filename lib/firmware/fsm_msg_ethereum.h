@@ -2396,7 +2396,7 @@ static void eip712_pump(void) {
         if (!ok) {
           fsm_sendFailure(FailureType_Failure_ActionCancelled,
                           _("Signing cancelled by user"));
-          layout_home();
+          layoutHome();
           return;
         }
       }

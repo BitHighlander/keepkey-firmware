@@ -1240,6 +1240,54 @@ TEST_F(AutoLockProgress, HostDrivenLayoutChangesDoNotRenewTheDeadline) {
   EXPECT_EQ(SCREENSAVER, home_get_state());
 }
 
+#if !BITCOIN_ONLY
+// Solana's handlers sign with the key at the path the host names. Outside
+// m/44'/501' that is another coin's key: a raw Ed25519 signature over 32
+// printable bytes on the TON path authorizes a TON transfer, and the screen
+// for a printable message says "It cannot authorize a transaction."
+TEST(Fsm, SolanaHandlersRefuseAnotherCoinsPath) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  storage_setMnemonic("all all all all all all all all all all all all");
+  ASSERT_TRUE(storage_isInitialized());
+  const char* refusal = "Invalid Solana path (expected m/44'/501'/...)";
+  const uint32_t ton[3] = {0x80000000 | 44, 0x80000000 | 607, 0x80000000};
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+
+  SolanaSignMessage message = {};
+  message.address_n_count = 3;
+  std::memcpy(message.address_n, ton, sizeof(ton));
+  message.has_message = true;
+  message.message.size = 32;
+  std::memset(message.message.bytes, 'A', 32);
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_SolanaSignMessage,
+                 SolanaSignMessage_fields, &message);
+  EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+  EXPECT_STREQ(refusal, fsm_test_lastFailureMessage());
+
+  // AdvancedMode does not open it either: the raw-bytes branch would sign
+  // the same thing.
+  storage_setPolicy("AdvancedMode", true);
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_SolanaSignMessage,
+                 SolanaSignMessage_fields, &message);
+  EXPECT_STREQ(refusal, fsm_test_lastFailureMessage());
+
+  SolanaGetAddress get = {};
+  get.address_n_count = 3;
+  std::memcpy(get.address_n, ton, sizeof(ton));
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_SolanaGetAddress,
+                 SolanaGetAddress_fields, &get);
+  EXPECT_STREQ(refusal, fsm_test_lastFailureMessage());
+
+  EXPECT_EQ(0, kkconfirm_drain());
+  storage_setPolicy("AdvancedMode", false);
+  layoutHomeForced();
+}
+#endif
 TEST_F(AutoLockProgress, InvalidBitcoinAckEndsTheStream) {
   advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
   TxAck invalid = {};
