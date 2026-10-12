@@ -38,25 +38,35 @@ static int process_ethereum_xfer(const CoinType* coin, EthereumSignTx* msg) {
           node_str))
     return TXOUT_CANCEL;
 
+  /* `node` is the shared fsm_derived_node scratch, scrubbed only by the NEXT
+   * derivation or by fsm_abort_workflows(). Neither runs on the error paths
+   * below: fsm_msgEthereumSignTx answers a compile error with
+   * ethereum_signing_abort(), which scrubs ethereum.c's own privkey and
+   * nothing else. So every exit past this point has to scrub the node itself,
+   * exactly as fsm_msgEthereumSignTypedHash does. */
   const HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->to_address_n,
                                           msg->to_address_n_count, NULL);
   if (!node) return TXOUT_COMPILE_ERROR;
 
   uint8_t to_bytes[20];
-  if (!hdnode_get_ethereum_pubkeyhash(node, to_bytes))
+  if (!hdnode_get_ethereum_pubkeyhash(node, to_bytes)) {
+    fsm_clearDerivedNode();
     return TXOUT_COMPILE_ERROR;
+  }
 
   if (ethereum_isStandardERC20Transfer(msg)) {
     if (memcmp(msg->data_initial_chunk.bytes + 4 + (32 - 20), to_bytes, 20) !=
-        0)
+        0) {
+      fsm_clearDerivedNode();
       return TXOUT_COMPILE_ERROR;
+    }
   } else {
     msg->has_to = true;
     msg->to.size = 20;
     memcpy(msg->to.bytes, to_bytes, sizeof(to_bytes));
   }
 
-  memzero((void*)node, sizeof(HDNode));
+  fsm_clearDerivedNode();
   return TXOUT_OK;
 }
 
@@ -200,6 +210,7 @@ void fsm_msgEthereumGetAddress(EthereumGetAddress* msg) {
   layoutHome();
 }
 
+// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
 void fsm_msgEthereumSignMessage(EthereumSignMessage* msg) {
   RESP_INIT(EthereumMessageSignature);
 
@@ -222,7 +233,7 @@ void fsm_msgEthereumSignMessage(EthereumSignMessage* msg) {
   /* Merge note (#432 vs this branch): release/7.14.2 gated Ethereum message
    * signing behind AdvancedMode, which blocks every Sign-In-With-Ethereum flow
    * on a default device until the user explicitly enables blind signing.
-   * AdvancedMode persists across power cycles until explicitly disabled.
+   * (AdvancedMode itself is session state: a lock or a power cycle ends it.)
    * confirm_bytes() paginates and displays EVERY signed byte, which is what
    * that gate was standing in for. Full disclosure is both the stronger
    * security property and the one that does not break default-configuration
