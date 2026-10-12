@@ -1611,6 +1611,10 @@ TEST_F(SignedMetadataTest, LongMethodNameNeverWrapsTheTitle) {
   EXPECT_EQ(0, kkconfirm_drain());
   const std::vector<std::string> titles = kkconfirm_captured_titles();
   ASSERT_EQ(8u, titles.size());
+  // The identity screen quotes the signer's own alias and disclaims it.
+  EXPECT_EQ('\'', bodies[0][0]) << bodies[0];
+  EXPECT_NE(std::string::npos, bodies[0].find("NOT verified by KeepKey"))
+      << bodies[0];
   // The Call screen still discloses the whole name.
   EXPECT_NE(std::string::npos, (bodies[1] + bodies[2]).find(s.method));
   for (std::string title : titles) {
