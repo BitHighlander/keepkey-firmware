@@ -1117,6 +1117,8 @@ TEST(Ethereum, NativePseudoAddressIsStrictlyChainScoped) {
   if (tokenByTicker(1, "USDC", &usdc) && usdc != UnknownToken) {
     EXPECT_TRUE(zx_tokenLabelsThisChain(1, usdc));
   }
+}
+
 // A deposit with no memo draws a fixed text on the memo screen. It holds a
 // space, which no memo byte is drawn as, so a memo cannot spell that screen.
 TEST(Ethereum, ThorDepositWithNoMemoCannotBeSpelledByAMemo) {
