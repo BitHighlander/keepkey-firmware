@@ -78,6 +78,74 @@ TEST(ContactBook, RejectsLabelsWithEdgeSpaces) {
                                          entries, nullptr));
 }
 
+struct Contact {
+  const char* network;
+  uint8_t address_byte;
+  const char* label;
+};
+
+/* A KKABREQ1 request for `contacts`, each address 20 copies of one byte. */
+std::vector<uint8_t> requestFor(const std::vector<Contact>& contacts,
+                                uint32_t revision = 1) {
+  std::vector<uint8_t> out = {'K', 'K', 'A', 'B', 'R', 'E', 'Q', '1', 1};
+  for (int shift = 24; shift >= 0; shift -= 8)
+    out.push_back(static_cast<uint8_t>(revision >> shift));
+  out.push_back(static_cast<uint8_t>(contacts.size()));
+  for (const auto& c : contacts) {
+    out.push_back(static_cast<uint8_t>(strlen(c.network)));
+    out.insert(out.end(), c.network, c.network + strlen(c.network));
+    out.push_back(CONTACT_BOOK_DEST_EVM_ADDRESS);
+    out.push_back(20);
+    out.insert(out.end(), 20, c.address_byte);
+    out.push_back(static_cast<uint8_t>(strlen(c.label)));
+    out.insert(out.end(), c.label, c.label + strlen(c.label));
+  }
+  return out;
+}
+
+bool parses(const std::vector<uint8_t>& request) {
+  ContactBookManifest manifest{};
+  ContactBookEntry entries[CONTACT_BOOK_MAX_ENTRIES]{};
+  return contact_book_parse_request(request.data(), request.size(), &manifest,
+                                    entries, nullptr);
+}
+
+TEST(ContactBook, OneNamePerAddressAndOneAddressPerNameOnANetwork) {
+  EXPECT_TRUE(parses(requestFor({{"eip155:1", 0x11, "Alice"},
+                                 {"eip155:1", 0x22, "Bob"}})));
+  /* The same contact on two networks is two entries. */
+  EXPECT_TRUE(parses(requestFor({{"eip155:1", 0x11, "Alice"},
+                                 {"eip155:8453", 0x11, "Alice"}})));
+  EXPECT_FALSE(parses(requestFor({{"eip155:1", 0x11, "Alice"},
+                                  {"eip155:1", 0x11, "Mallory"}})))
+      << "one address, two names";
+  EXPECT_FALSE(parses(requestFor({{"eip155:1", 0x11, "Alice"},
+                                  {"eip155:1", 0x22, "Alice"}})))
+      << "one name, two addresses";
+  EXPECT_FALSE(parses(requestFor({{"eip155:1", 0x11, "Alice"},
+                                  {"eip155:1", 0x22, "Bob"},
+                                  {"eip155:1", 0x11, "Carol"}})));
+}
+
+TEST(ContactBook, RejectsRunsOfSpacesAndPercentInALabel) {
+  EXPECT_TRUE(parses(requestFor({{"eip155:1", 0x11, "Bob at the bank"}})));
+  EXPECT_FALSE(parses(requestFor({{"eip155:1", 0x11, "Bob  eip155:1"}})));
+  EXPECT_FALSE(parses(requestFor({{"eip155:1", 0x11, "100%"}})));
+  EXPECT_FALSE(parses(requestFor({{"eip155:1", 0x11, "Bob\x7f"}})));
+  EXPECT_FALSE(
+      parses(requestFor({{"eip155:1", 0x11, "A label of 25 characters."}})));
+  EXPECT_TRUE(
+      parses(requestFor({{"eip155:1", 0x11, "A label of 24 characters"}})));
+}
+
+TEST(ContactBook, RejectsAnEmptyBookRevisionZeroAndABadNetwork) {
+  EXPECT_FALSE(parses(requestFor({})));
+  EXPECT_FALSE(parses(requestFor({{"eip155:1", 0x11, "Alice"}}, 0)));
+  EXPECT_FALSE(parses(requestFor({{"eip155", 0x11, "Alice"}})));
+  EXPECT_FALSE(parses(requestFor({{"eip155:1 ", 0x11, "Alice"}})));
+  EXPECT_FALSE(parses(requestFor({{"eip155:1/x", 0x11, "Alice"}})));
+}
+
 /* Byte offsets inside a KKABPRF1 proof (see contact_book_process_proof). */
 constexpr size_t kCountOffset = 13;
 constexpr size_t kRootOffset = 14;

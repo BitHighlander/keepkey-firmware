@@ -35,6 +35,8 @@ static bool label_valid(const uint8_t* label, size_t len) {
     /* Alpha format is deliberately ASCII-only: no controls, bidi overrides,
      * invisible Unicode, or display-confusable normalization. */
     if (label[i] < 0x20 || label[i] > 0x7e || label[i] == '%') return false;
+    /* Padding could push text onto another line of the review. */
+    if (i && label[i] == ' ' && label[i - 1] == ' ') return false;
   }
   return true;
 }
@@ -139,6 +141,17 @@ bool contact_book_parse_request(
     memcpy(entries[i].label, data + off, len);
     entries[i].label[len] = '\0';
     off += len;
+    /* One name per address and one address per name on a network: otherwise
+     * the host chooses which of two certified answers the device shows. */
+    for (uint8_t j = 0; j < i; j++) {
+      if (strcmp(entries[j].network, entries[i].network) != 0) continue;
+      if (strcmp(entries[j].label, entries[i].label) == 0 ||
+          (entries[j].destination_type == entries[i].destination_type &&
+           entries[j].destination_len == entries[i].destination_len &&
+           memcmp(entries[j].destination, entries[i].destination,
+                  entries[i].destination_len) == 0))
+        return false;
+    }
   }
   if (off != data_len) return false;
   merkle_root(entries, manifest->count, manifest->root);

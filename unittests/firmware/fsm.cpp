@@ -3307,6 +3307,80 @@ TEST_F(ContactBookSigning, NeverLabelsAContractCall) {
   EXPECT_EQ(std::string("Send 1 ETH to ") + kAliceChecksum, screens[0]);
 }
 
+/* An approval names a spender, and an unknown token has no trusted symbol or
+ * decimals: neither is a plain recipient. */
+TEST_F(ContactBookSigning, NeverLabelsAnApprovalOrAnUnknownToken) {
+  static const uint8_t usdc[20] = {0xa0, 0xb8, 0x69, 0x91, 0xc6, 0x21, 0x8b,
+                                   0x36, 0xc1, 0xd1, 0x9d, 0x4a, 0x2e, 0x9e,
+                                   0xb0, 0xce, 0x36, 0x06, 0xeb, 0x48};
+  EthereumSignTx approve = contactTx(usdc);
+  approve.value.size = 0;
+  approve.has_data_length = approve.has_data_initial_chunk = true;
+  approve.data_length = approve.data_initial_chunk.size = 68;
+  std::memcpy(approve.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
+  std::memcpy(approve.data_initial_chunk.bytes + 16, alice.data(), 20);
+  approve.data_initial_chunk.bytes[67] = 1;
+
+  sendContactProof(PROOF3_0);
+  auto screens = contactReview(approve, 0);
+  ASSERT_EQ(1u, screens.size());
+  EXPECT_EQ(std::string::npos, screens[0].find("Alice")) << screens[0];
+  /* The body pages; the spender's address starts on this one. */
+  EXPECT_NE(std::string::npos, screens[0].find("by 0xd8dA6BF26964aF9D7eEd"))
+      << screens[0];
+
+  const uint8_t unknown_token[20] = {0x77, 0x77, 0x77, 0x77, 0x77, 0x77, 0x77,
+                                     0x77, 0x77, 0x77, 0x77, 0x77, 0x77, 0x77,
+                                     0x77, 0x77, 0x77, 0x77, 0x77, 0x77};
+  EthereumSignTx transfer = contactTx(unknown_token);
+  transfer.value.size = 0;
+  transfer.has_data_length = transfer.has_data_initial_chunk = true;
+  transfer.data_length = transfer.data_initial_chunk.size = 68;
+  std::memcpy(transfer.data_initial_chunk.bytes, "\xa9\x05\x9c\xbb", 4);
+  std::memcpy(transfer.data_initial_chunk.bytes + 16, alice.data(), 20);
+  transfer.data_initial_chunk.bytes[67] = 1;
+
+  sendContactProof(PROOF3_0);
+  screens = contactReview(transfer, 0);
+  ASSERT_FALSE(screens.empty());
+  for (const auto& screen : screens)
+    EXPECT_EQ(std::string::npos, screen.find("Alice")) << screen;
+}
+
+/* Only a send is labelled: a typed-data request does not carry the proof to
+ * the send after it. */
+TEST_F(ContactBookSigning, ATypedDataRequestDropsTheProof) {
+  sendContactProof(PROOF3_0);
+  ASSERT_STREQ("Alice", contact_book_label());
+  EthereumSignTypedData typed = {};
+  kkconfirm_drain();
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+  receiveMessage(MessageType_MessageType_EthereumSignTypedData,
+                 EthereumSignTypedData_fields, &typed);
+  kkconfirm_drain();
+  EXPECT_EQ(nullptr, contact_book_label());
+}
+
+/* Certification is for EVM addresses on an eip155 network only. */
+TEST_F(ContactBookSigning, CertificationRefusesOtherDestinations) {
+  auto request = contactHex(REQ3);
+  ClearsignAttestorSign sign = {};
+  sign.has_payload = true;
+  /* First entry: 1-byte network length, "eip155:1", then the type byte. */
+  const size_t type_offset = 14 + 1 + 8;
+  ASSERT_EQ(CONTACT_BOOK_DEST_EVM_ADDRESS, request[type_offset]);
+  request[type_offset] = CONTACT_BOOK_DEST_UTXO_SCRIPT;
+  sign.payload.size = request.size();
+  std::memcpy(sign.payload.bytes, request.data(), request.size());
+  fsm_test_clearLastFailure();
+  kkconfirm_drain();
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  receiveMessage(MessageType_MessageType_ClearsignAttestorSign,
+                 ClearsignAttestorSign_fields, &sign);
+  EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+  EXPECT_EQ(0, kkconfirm_drain()) << "refused before any screen";
+}
+
 /* One metadata message per transaction, the last one wins, so a contact
  * label never coexists with a contract description, certified or not. */
 TEST_F(ContactBookSigning, ContactAndContractMetadataReplaceEachOther) {
@@ -3766,6 +3840,7 @@ TEST(Fsm, FeaturesReportExactlyTheStagedCapabilities) {
       Features_Capability_CAPABILITY_EVM_CERTIFIED_INTENT,
       Features_Capability_CAPABILITY_PERMIT2_REVIEW,
       Features_Capability_CAPABILITY_SOLANA_CERTIFIED_REVIEW,
+      Features_Capability_CAPABILITY_CERTIFIED_CONTACTS,
 #endif
   };
   EXPECT_EQ(expected, std::vector<Features_Capability>(
