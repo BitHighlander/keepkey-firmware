@@ -63,8 +63,12 @@ typedef struct {
   uint8_t argument_count;
   uint8_t next_argument;
   uint8_t pending_role;
-  uint8_t value[32];   /* the role-1 word, for every kind but raw/addressName */
-  uint8_t address[20]; /* tokenAmount token, nftName collection */
+  /* The role-1 word, for every kind but raw/addressName. For an embedded
+   * call (kind 13) the role-17 native value: its role-1 argument is the
+   * located inner calldata, kept in inner_*. */
+  uint8_t value[32];
+  /* tokenAmount token, nftName collection, embedded-call callee (role 15). */
+  uint8_t address[20];
   union {
     uint16_t aliases[ERC7730_CAP_ALIAS_SET_MAX];    /* tokenAmount */
     uint16_t enum_entries[ERC7730_CAP_ENUM_MAX][2]; /* enum: key, label */

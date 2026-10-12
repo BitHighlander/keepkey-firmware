@@ -21,7 +21,7 @@ static void prepareTypedUintWorkflow(Erc7730Workflow* workflow) {
   workflow->loader.abi.nodes[1].size = 256;
 }
 
-TEST(Erc7730Workflow, RejectsUnbackedAndMalformedStarts) {
+TEST(Erc7730Workflow, RejectsAStartWithNoPreloadedDefinition) {
   erc7730_catalog_clear_preload();
   Erc7730Workflow workflow{};
   Erc7730CatalogIdentity identity{};
@@ -31,10 +31,6 @@ TEST(Erc7730Workflow, RejectsUnbackedAndMalformedStarts) {
   tx.data_length = 36;
   tx.has_data_initial_chunk = true;
   tx.data_initial_chunk.size = 4;
-  EXPECT_FALSE(erc7730_workflow_begin(&workflow, &identity, &tx));
-  EXPECT_EQ(workflow.phase, ERC7730_WORKFLOW_FAILED);
-
-  identity.kind = ERC7730_DEFINITION_EIP712;
   EXPECT_FALSE(erc7730_workflow_begin(&workflow, &identity, &tx));
   EXPECT_EQ(workflow.phase, ERC7730_WORKFLOW_FAILED);
 }

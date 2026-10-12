@@ -1714,7 +1714,10 @@ static bool signed_metadata_confirm_screens(void) {
       return false;
     }
     memset(body, 0, sizeof(body));
-    snprintf(body, sizeof(body), "%s (%s)\ndescribes this tx.", alias,
+    /* Quoted and disclaimed like the consent screen: the alias is the
+     * signer's own choice of words and may read as a claim. */
+    snprintf(body, sizeof(body),
+             "'%s' (%s) describes this tx. NOT verified by KeepKey.", alias,
              fingerprint);
     if (!confirm_with_icon(ButtonRequestType_ButtonRequest_ConfirmOutput,
                            screen_icon, "Identity", "%s", body)) {
