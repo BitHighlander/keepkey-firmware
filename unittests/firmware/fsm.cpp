@@ -809,6 +809,65 @@ TEST(Fsm, CorrectPinAfterAutoLockRenewsTheDeadline) {
   layoutHomeForced();
 }
 
+// A new PIN is typed on the host and presses no button either. A device that
+// sat idle past the lock delay must still finish the reset it has just armed:
+// without a deferral the EntropyAck that continues it locked the device and
+// was answered "Not in Reset mode", every time, until a button was pressed.
+TEST(Fsm, ResetWithANewPinSurvivesAnIdleDevice) {
+  ScopedFlash flash;
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  storage_reset();
+  ASSERT_FALSE(storage_isInitialized());
+  layoutHomeForced();
+  advance_clock(storage_getAutoLockDelayMs());
+  toggle_screensaver();
+  ASSERT_EQ(SCREENSAVER, home_get_state());
+
+  // The host relays the new PIN twice, each time on a fresh matrix.
+  std::thread host([] {
+    std::string seen = "XXXXXXXXX";
+    for (int prompt = 0; prompt < 2; prompt++) {
+      for (int tries = 0; tries < 5000; tries++, usleep(1000)) {
+        const std::string first = get_pin_matrix();
+        if (first == "XXXXXXXXX" || first == seen) continue;
+        usleep(50000);  // let the prompt finish shuffling
+        const std::string matrix = get_pin_matrix();
+        std::string positions;
+        for (const char* d = "1234"; *d; d++)
+          positions += (char)('1' + matrix.find(*d));
+        uint8_t ack[2 + 9] = {0x0a, (uint8_t)positions.size()};
+        std::memcpy(&ack[2], positions.data(), positions.size());
+        kkconfirm_sendTiny(MessageType_MessageType_PinMatrixAck, ack,
+                           (uint8_t)(2 + positions.size()));
+        seen = matrix;
+        break;
+      }
+    }
+  });
+  ResetDevice reset = {};
+  reset.has_pin_protection = reset.pin_protection = true;
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_ResetDevice, ResetDevice_fields,
+                 &reset);
+  host.join();
+  ASSERT_EQ((FailureType)0, fsm_test_lastFailureCode());
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RESET));
+
+  // The first backup screen is declined, so the ceremony ends there: what
+  // matters is that it ran, and was not locked out before it started.
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+  EntropyAck ack = {};
+  ack.has_entropy = true;
+  ack.entropy.size = 32;
+  receiveMessage(MessageType_MessageType_EntropyAck, EntropyAck_fields, &ack);
+  kkconfirm_drain();
+  EXPECT_NE(FailureType_Failure_UnexpectedMessage, fsm_test_lastFailureCode());
+  EXPECT_NE(SCREENSAVER, home_get_state());
+  fsm_abort_workflows();
+  layoutHomeForced();
+}
+
 // Time spent nested in a long wait never reaches the main loop: a U2F frame
 // stretched to its timeout, a prompt the host leaves open. Each main-loop pass
 // must charge the real time since the last one, not a single tick, or a host
