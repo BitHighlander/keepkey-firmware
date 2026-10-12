@@ -720,10 +720,9 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_ton.h"
 #include "fsm_msg_solana.h"
 #else
-// The coin engines above are compiled out, but the always-on
-// Initialize/Cancel handlers still call each engine's abort hook. With no
-// engine state to roll back, no-ops are the correct definitions -- and
-// defining them here keeps those handlers free of build-variant branches.
+// The coin engines above are compiled out, and every call to these abort
+// hooks is compiled out with them. The no-ops keep the symbols defined in
+// this variant, so a caller shared by both variants links in either.
 void ethereum_signing_abort(void) {}
 void tendermint_signAbort(void) {}
 void eos_signingAbort(void) {}
