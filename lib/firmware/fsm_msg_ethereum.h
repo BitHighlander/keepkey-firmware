@@ -1180,9 +1180,11 @@ void fsm_msgEthereumSignTx(EthereumSignTx* msg) {
       layoutHome();
       return;
     }
-    /* approve() needs the full 68-byte prefix for the allowance guard, which
-     * this path does not have. */
-    if (memcmp(msg->data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4) == 0) {
+    /* approve() and increaseAllowance() need the full 68-byte prefix for the
+     * allowance guard, which this path does not have. Refuse both here, before
+     * a review the signing pass could only end in a refusal. */
+    if (memcmp(msg->data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4) == 0 ||
+        memcmp(msg->data_initial_chunk.bytes, "\x39\x50\x93\x51", 4) == 0) {
       memzero(&definition, sizeof(definition));
       erc7730_catalog_clear_preload();
       fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -2192,7 +2194,7 @@ static void eip712_pump(void) {
         erc7730_catalog_clear_preload();
         fsm_sendFailure(FailureType_Failure_SyntaxError,
                         _("ERC-7730 definition does not match typed data"));
-        layout_home();
+        layoutHome();
         return;
       }
       memzero(&facts, sizeof(facts));
@@ -2228,7 +2230,7 @@ static void eip712_pump(void) {
           eip712_stream_abort();
           fsm_sendFailure(FailureType_Failure_SyntaxError,
                           _("Certified EIP-712 value was not found"));
-          layout_home();
+          layoutHome();
           return;
         }
         const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
@@ -2240,7 +2242,7 @@ static void eip712_pump(void) {
                                        : FailureType_Failure_ActionCancelled,
               ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
                                        : _("Signing cancelled by user"));
-          layout_home();
+          layoutHome();
           return;
         }
         deliver_erc7730_capture(workflow);
@@ -2375,7 +2377,7 @@ void fsm_msgEthereumSignTypedData(const EthereumSignTypedData* msg) {
     erc7730_catalog_clear_preload();
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("AdvancedMode required for ERC-7730"));
-    layout_home();
+    layoutHome();
     return;
   }
   memzero(&definition, sizeof(definition));
@@ -2419,7 +2421,7 @@ void fsm_msgEthereumTypedDataValueAck(const EthereumTypedDataValueAck* msg) {
     erc7730_workflow_abort(workflow);
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("EIP-712 value does not match certified definition"));
-    layout_home();
+    layoutHome();
     return;
   }
   memzero(member_path, sizeof(member_path));
