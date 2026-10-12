@@ -790,11 +790,9 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_ton.h"
 #include "fsm_msg_solana.h"
 #else
-// Bitcoin-only: the coin engines above are compiled out, but the always-on
-// Initialize/ClearSession/Cancel handlers still call their *_abort() hooks.
-// With no state to reset, no-ops are correct. Every call to
-// signed_metadata_clear_signers() (EVM clearsign) is compiled out with the
-// engines, so nothing reaches its stub in this build.
+// The coin engines above are compiled out, and every call to these hooks is
+// compiled out with them. The no-ops keep the symbols defined in this
+// variant, so a caller shared by both variants links in either.
 void ethereum_signing_abort(void) {}
 void tendermint_signAbort(void) {}
 void eos_signingAbort(void) {}
