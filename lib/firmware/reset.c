@@ -355,6 +355,10 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
   /* Arm last, and only here: from this statement on an EntropyAck is in
    * sequence, and nothing else is. */
   setup_arm(SETUP_RESET);
+  /* Nothing above need have pressed the button: a new PIN is typed on the
+   * host. Without this, on a device idle past the lock delay the EntropyAck
+   * that continues the ceremony locks the device and ends it. */
+  note_workflow_progress();
   msg_write(MessageType_MessageType_EntropyRequest, &resp);
 }
 
