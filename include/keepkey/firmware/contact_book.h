@@ -40,7 +40,9 @@ void contact_book_manifest_bytes(const ContactBookManifest* manifest,
                                  uint8_t out[46]);
 
 /* Verify a compact inclusion proof signed by this seed's attestor key and
- * retain its contact label for exactly one subsequent signing request. */
+ * retain its contact label for the next EthereumSignTx. Status requests keep
+ * it; any other request drops it, and so does the send that shows it. A send
+ * refused before its review leaves it for the retry. */
 bool contact_book_process_proof(const uint8_t* data, size_t data_len,
                                 const uint8_t expected_pubkey[33]);
 bool contact_book_match(const char* network, uint8_t destination_type,

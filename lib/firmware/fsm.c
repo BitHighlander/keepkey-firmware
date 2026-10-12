@@ -647,8 +647,10 @@ static bool fsm_dispatchGate(MessageType msg_id) {
       switch (msg_id) {
 #if !BITCOIN_ONLY
         case MessageType_MessageType_EthereumClearSignDefinition:
-        case MessageType_MessageType_EthereumSignTx:
         case MessageType_MessageType_EthereumSignTypedData:
+          contact_book_clear(); /* only a send is labelled */
+          /* fallthrough */
+        case MessageType_MessageType_EthereumSignTx:
           /* The preload's own chunks and its consumers keep it. */
           abort_signing_engines();
           break;

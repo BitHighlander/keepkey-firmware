@@ -178,6 +178,7 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
       Features_Capability_CAPABILITY_EVM_CERTIFIED_INTENT,
       Features_Capability_CAPABILITY_PERMIT2_REVIEW,
       Features_Capability_CAPABILITY_SOLANA_CERTIFIED_REVIEW,
+      Features_Capability_CAPABILITY_CERTIFIED_CONTACTS,
 #endif
   };
   _Static_assert(sizeof(capabilities) <= sizeof(resp->capabilities),
