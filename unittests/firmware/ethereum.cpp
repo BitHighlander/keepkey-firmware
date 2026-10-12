@@ -1117,6 +1117,55 @@ TEST(Ethereum, NativePseudoAddressIsStrictlyChainScoped) {
   if (tokenByTicker(1, "USDC", &usdc) && usdc != UnknownToken) {
     EXPECT_TRUE(zx_tokenLabelsThisChain(1, usdc));
   }
+// A deposit with no memo draws a fixed text on the memo screen. It holds a
+// space, which no memo byte is drawn as, so a memo cannot spell that screen.
+TEST(Ethereum, ThorDepositWithNoMemoCannotBeSpelledByAMemo) {
+  EthereumSignTx msg;
+  MakeThorDeposit(&msg, THOR_ROUTER, 1);
+  msg.data_initial_chunk.bytes[4 + 3 * 32 + 31] = 0xa0;
+  ASSERT_TRUE(kkconfirm_preload(8, 0));
+  kkconfirm_capture_start();
+  (void)thor_confirmThorTx(msg.data_initial_chunk.size, &msg);
+  const auto screens = kkconfirm_capture_finish();
+  kkconfirm_drain();
+  ASSERT_TRUE(HasScreen(screens, "(no data)"))
+      << ::testing::PrintToString(screens);
+
+  const uint8_t spelled[] = "(no data)";
+  char escaped[64];
+  ASSERT_TRUE(confirm_bytes_escape(spelled, sizeof(spelled) - 1, escaped,
+                                   sizeof(escaped)));
+  EXPECT_STRNE("(no data)", escaped);
+}
+
+// The fee screen shows the value again. A value the Send screen showed and
+// the user approved must not be refused there for being long: 10^27 wei on a
+// chain with no ticker is 32 characters.
+TEST(Ethereum, LongNativeValueReachesTheFeeScreen) {
+  EthereumSignTx msg{};
+  msg.has_chain_id = true;
+  msg.chain_id = 369;
+  msg.has_nonce = msg.has_gas_price = msg.has_gas_limit = true;
+  msg.nonce.size = msg.gas_price.size = msg.gas_limit.size = 1;
+  msg.gas_price.bytes[0] = msg.gas_limit.bytes[0] = 1;
+  msg.has_to = true;
+  msg.to.size = 20;
+  std::memset(msg.to.bytes, 0x11, 20);
+  static const uint8_t ten_to_27[12] = {0x03, 0x3b, 0x2e, 0x3c, 0x9f, 0xd0,
+                                        0x80, 0x3c, 0xe8, 0x00, 0x00, 0x00};
+  msg.has_value = true;
+  msg.value.size = sizeof(ten_to_27);
+  std::memcpy(msg.value.bytes, ten_to_27, sizeof(ten_to_27));
+  HDNode node{};
+  const uint8_t seed[32] = {1};
+  ASSERT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+
+  ASSERT_TRUE(kkconfirm_preload(1, 1));  // approve Send, decline the fee
+  fsm_test_clearLastFailure();
+  ethereum_signing_init(&msg, &node, /*needs_confirm=*/true);
+  EXPECT_EQ(0, kkconfirm_drain()) << "the fee screen was never shown";
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_FALSE(ethereum_signing_isInProgress());
 }
 
 TEST(Ethereum, TypedHashSigningRequiresAdvancedMode) {
