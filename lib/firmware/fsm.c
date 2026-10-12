@@ -63,6 +63,7 @@
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/signtx_tendermint.h"
 #include "keepkey/firmware/signed_metadata.h"
+#include "keepkey/firmware/contact_book.h"
 #include "keepkey/firmware/solana.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/tendermint.h"
@@ -648,8 +649,10 @@ static bool fsm_dispatchGate(MessageType msg_id) {
       switch (msg_id) {
 #if !BITCOIN_ONLY
         case MessageType_MessageType_EthereumClearSignDefinition:
-        case MessageType_MessageType_EthereumSignTx:
         case MessageType_MessageType_EthereumSignTypedData:
+          contact_book_clear(); /* only a send is labelled */
+          /* fallthrough */
+        case MessageType_MessageType_EthereumSignTx:
           /* The preload's own chunks and its consumers keep it. */
           abort_signing_engines();
           break;
@@ -768,6 +771,7 @@ void fsm_abort_signing_workflows(void) {
   abort_signing_engines();
 #if !BITCOIN_ONLY
   erc7730_catalog_clear_preload();
+  contact_book_clear(); /* as the preload: next signing request only */
 #endif
 }
 
@@ -796,6 +800,7 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_debug.h"
 #if !BITCOIN_ONLY
 #include "fsm_msg_ethereum.h"
+#include "fsm_msg_clearsign_attestor.h"
 #include "fsm_msg_nano.h"
 #include "fsm_msg_eos.h"
 #include "fsm_msg_cosmos.h"

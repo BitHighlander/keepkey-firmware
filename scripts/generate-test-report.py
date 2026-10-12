@@ -403,7 +403,7 @@ def firmware_version_tuple():
 # Every Features.Capability the firmware can report (device-protocol), as the
 # names capability-gated python-keepkey tests skip with.
 KNOWN_CAPABILITIES = frozenset((
-    "eip712-chunked-values", "entropy-audit-budget", "erc20-unlimited-approve-review",
+    "certified-contacts", "eip712-chunked-values", "entropy-audit-budget", "erc20-unlimited-approve-review",
     "erc20-unlimited-permit-review", "erc7730-runtime-review",
     "evm-certified-intent", "evm-max-amount-review", "evm-tx-metadata",
     "evm-unknown-token-review", "hive-release-review",
@@ -459,7 +459,7 @@ RELEASE_CAPABILITIES = {
             "ripple-memo-policy", "hive-release-review",
             "solana-runtime-review", "maya-single-message",
             "tendermint-progress", "tron-trc20-review",
-            "solana-lut-attestation",
+            "solana-lut-attestation", "certified-contacts",
         )),
     },
 }
