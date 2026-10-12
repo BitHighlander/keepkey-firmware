@@ -1143,6 +1143,70 @@ TEST(Solana, VersionedProgramIndexMustBeStatic) {
             solana_inspectTx(raw.data(), raw.size(), &tx));
 }
 
+// The KKSOLSW1 annotation is offered only when the message's lookup tables
+// load accounts, so the parser reports how many they load.
+TEST(Solana, ParserCountsLookupLoadedAccounts) {
+  uint8_t raw[256];
+  size_t pos = 0;
+  raw[pos++] = 0x80; /* v0 prefix */
+  raw[pos++] = 1;
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  raw[pos++] = 2; /* static accounts */
+  memset(raw + pos, 0x11, 32);
+  pos += 32;
+  memset(raw + pos, 0x00, 32); /* system program */
+  pos += 32;
+  memset(raw + pos, 0xBB, 32); /* blockhash */
+  pos += 32;
+  raw[pos++] = 1; /* instructions */
+  raw[pos++] = 1; /* program = system */
+  raw[pos++] = 2;
+  raw[pos++] = 0;
+  const size_t recipient_at = pos;
+  raw[pos++] = 2; /* first loaded address */
+  raw[pos++] = 12;
+  const uint8_t transfer[12] = {2, 0, 0, 0, 0x00, 0xCA, 0x9A, 0x3B};
+  memcpy(raw + pos, transfer, sizeof(transfer));
+  pos += sizeof(transfer);
+  const size_t lut_count_at = pos;
+  raw[pos++] = 1; /* one table: two writable, one readonly */
+  memset(raw + pos, 0x55, 32);
+  pos += 32;
+  raw[pos++] = 2;
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  raw[pos++] = 1;
+  raw[pos++] = 2;
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(3u, tx.num_loaded_accounts);
+
+  /* The same transfer to a static account, with no lookup table, is a valid
+   * v0 message that loads nothing. */
+  raw[recipient_at] = 1;
+  raw[lut_count_at] = 0;
+  ASSERT_EQ(solana_inspectTx(raw, lut_count_at + 1, &tx),
+            SOL_TX_REVIEW_VERIFIED);
+  EXPECT_EQ(0u, tx.num_loaded_accounts);
+}
+
+// A lookup-account attestation is shown only when it attests as many accounts
+// as the message loads: a partial or padded list would mislead. Only the count
+// is checked here; the account keys are bound by the attestation signature
+// check, solana_lut_accounts_trusted().
+TEST(Solana, LookupAttestationMustCoverEveryLoadedAccount) {
+  SolanaParsedTx tx;
+  memset(&tx, 0, sizeof(tx));
+  tx.num_loaded_accounts = 3;
+  EXPECT_TRUE(solana_lut_attestation_complete(&tx, 3));
+  EXPECT_FALSE(solana_lut_attestation_complete(&tx, 1));
+  EXPECT_FALSE(solana_lut_attestation_complete(&tx, 4));
+  EXPECT_FALSE(solana_lut_attestation_complete(&tx, 0));
+  tx.num_loaded_accounts = 0;
+  EXPECT_FALSE(solana_lut_attestation_complete(&tx, 0));
+}
+
 TEST(Solana, MemoBodyCaptured) {
   /* Legacy tx: system transfer + memo instruction (THORChain-style swap
    * memo). The parser must expose the memo bytes for display. */
