@@ -831,8 +831,10 @@ static void formatEthereumFeeEIP1559(bignum256* fee,
 static bool layoutEthereumFee(const EthereumSignTx* msg, bool is_token,
                               char* out_str, size_t out_str_len) {
   bignum256 val, gas;
-  char gas_value[32];
-  char tx_value[32];
+  /* Sized like the Send screen's amount: a value that screen showed and the
+   * user approved must not be refused here for being long. */
+  char gas_value[96];
+  char tx_value[96];
   uint8_t pad_val[32];
 
   memzero(gas_value, sizeof(gas_value));

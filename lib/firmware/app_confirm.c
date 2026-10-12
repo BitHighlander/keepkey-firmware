@@ -570,7 +570,9 @@ size_t confirm_bytes_format_page(const uint8_t* data, size_t size, char* out,
 bool confirm_bytes(ButtonRequestType button_request, const char* title,
                    const uint8_t* data, size_t size) {
   if (!title || (!data && size != 0)) return false;
-  if (size == 0) return confirm(button_request, title, "(empty)");
+  /* Holds a space, which no byte is drawn as (confirm_byte_token), so no
+   * value can draw the screen that means "no value". */
+  if (size == 0) return confirm(button_request, title, "(no data)");
 
   static char page_body[BODY_CHAR_MAX];
   static char page_title[TITLE_CHAR_MAX];
