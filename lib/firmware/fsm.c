@@ -43,6 +43,7 @@
 #include "keepkey/firmware/crypto.h"
 #include "keepkey/firmware/eos.h"
 #include "keepkey/firmware/eos-contracts.h"
+#include "keepkey/firmware/eip712_stream.h"
 #include "keepkey/firmware/ethereum.h"
 #include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/fsm.h"
@@ -58,6 +59,7 @@
 #include "keepkey/firmware/ripple.h"
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/signtx_tendermint.h"
+#include "keepkey/firmware/signed_metadata.h"
 #include "keepkey/firmware/solana.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/tendermint.h"
@@ -429,6 +431,7 @@ bool fsm_workflowInProgress(void) {
   if (setup_isArmed() || signing_is_active()) return true;
 #if !BITCOIN_ONLY
   if (ethereum_signing_isInProgress() ||
+      eip712_stream_waiting() != EIP712_IDLE ||
       tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS) ||
       tendermint_signingIsInited(TENDERMINT_SIGNING_GENERIC) ||
       osmosis_signingIsInited() || binance_signingIsInited() ||
@@ -489,9 +492,36 @@ static bool fsm_dispatchGate(MessageType msg_id) {
         return reject_stale_continuation("Not in Recovery mode");
       return true;
 #if !BITCOIN_ONLY
+    case MessageType_MessageType_EthereumTxMetadata:
+      /* Metadata must arrive before signing starts: signed_metadata_process()
+       * clears the tx<->metadata binding, so accepting it mid-signing would
+       * let a host approve one decode and then sign different calldata
+       * without the enforce check. The default path below would end the
+       * signer and then accept the metadata, so refuse it here instead. A
+       * typed-data stream waiting for its next ack counts as signing too. */
+      if (fsm_workflowInProgress())
+        return reject_stale_continuation("Metadata not allowed during signing");
+      fsm_abort_signing_workflows();
+      return true;
+    case MessageType_MessageType_LoadClearsignSigner:
+      /* Storing a signer clears the same binding (signed_metadata_clear()),
+       * so it is refused mid-signing for the same reason. */
+      if (fsm_workflowInProgress())
+        return reject_stale_continuation(
+            "Signer load not allowed during signing");
+      fsm_abort_signing_workflows();
+      return true;
     case MessageType_MessageType_EthereumTxAck:
       if (!ethereum_signing_isInProgress())
         return reject_stale_continuation("Signing not in progress");
+      return true;
+    case MessageType_MessageType_EthereumTypedDataStructAck:
+      if (eip712_stream_waiting() != EIP712_WANT_STRUCT)
+        return reject_stale_continuation("No EIP-712 schema requested");
+      return true;
+    case MessageType_MessageType_EthereumTypedDataValueAck:
+      if (eip712_stream_waiting() != EIP712_WANT_VALUE)
+        return reject_stale_continuation("No EIP-712 value requested");
       return true;
     case MessageType_MessageType_CosmosMsgAck:
       if (!tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS))
@@ -539,6 +569,7 @@ static bool fsm_dispatchGate(MessageType msg_id) {
         case MessageType_MessageType_EthereumSignTx:
         case MessageType_MessageType_EthereumSignMessage:
         case MessageType_MessageType_EthereumSignTypedHash:
+        case MessageType_MessageType_EthereumSignTypedData:
         case MessageType_MessageType_NanoSignTx:
         case MessageType_MessageType_CosmosSignTx:
         case MessageType_MessageType_OsmosisSignTx:
@@ -669,6 +700,7 @@ void fsm_abort_signing_workflows(void) {
   signing_abort();
 #if !BITCOIN_ONLY
   ethereum_signing_abort();
+  eip712_stream_abort();
   nano_signingAbort();
   binance_signAbort();
   tendermint_signAbort();
@@ -720,11 +752,12 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_ton.h"
 #include "fsm_msg_solana.h"
 #else
-// The coin engines above are compiled out, and every call to these abort
-// hooks is compiled out with them. The no-ops keep the symbols defined in
-// this variant, so a caller shared by both variants links in either.
+// The coin engines above are compiled out, and every call to these hooks is
+// compiled out with them. The no-ops keep the symbols defined in this
+// variant, so a caller shared by both variants links in either.
 void ethereum_signing_abort(void) {}
 void tendermint_signAbort(void) {}
 void eos_signingAbort(void) {}
+void signed_metadata_clear_signers(void) {}
 #endif  // !BITCOIN_ONLY
 #include "fsm_msg_bip85.h"
