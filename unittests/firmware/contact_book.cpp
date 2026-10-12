@@ -56,6 +56,28 @@ TEST(ContactBook, RejectsControlCharactersAndTrailingData) {
                                           &manifest, entries, nullptr));
 }
 
+TEST(ContactBook, RejectsLabelsWithEdgeSpaces) {
+  const auto good =
+      hex("4b4b414252455131010000000101"
+          "086569703135353a310114111111111111111111111111111111111111111103426f62");
+  ContactBookManifest manifest{};
+  ContactBookEntry entries[CONTACT_BOOK_MAX_ENTRIES]{};
+  ASSERT_TRUE(contact_book_parse_request(good.data(), good.size(), &manifest,
+                                         entries, nullptr));
+  /* "B b" stays valid; " ob", "Bo " and "   " do not. */
+  for (const char* label : {" ob", "Bo ", "   "}) {
+    auto request = good;
+    std::memcpy(request.data() + request.size() - 3, label, 3);
+    EXPECT_FALSE(contact_book_parse_request(request.data(), request.size(),
+                                            &manifest, entries, nullptr))
+        << "'" << label << "'";
+  }
+  auto inner = good;
+  std::memcpy(inner.data() + inner.size() - 3, "B b", 3);
+  EXPECT_TRUE(contact_book_parse_request(inner.data(), inner.size(), &manifest,
+                                         entries, nullptr));
+}
+
 /* Byte offsets inside a KKABPRF1 proof (see contact_book_process_proof). */
 constexpr size_t kCountOffset = 13;
 constexpr size_t kRootOffset = 14;

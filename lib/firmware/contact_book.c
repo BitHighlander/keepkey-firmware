@@ -29,6 +29,8 @@ static void write_be32(uint8_t* p, uint32_t v) {
 
 static bool label_valid(const uint8_t* label, size_t len) {
   if (len == 0 || len > CONTACT_BOOK_LABEL_MAX) return false;
+  /* "Alice" and "Alice " must not be two contacts, nor a label be blank. */
+  if (label[0] == ' ' || label[len - 1] == ' ') return false;
   for (size_t i = 0; i < len; i++) {
     /* Alpha format is deliberately ASCII-only: no controls, bidi overrides,
      * invisible Unicode, or display-confusable normalization. */

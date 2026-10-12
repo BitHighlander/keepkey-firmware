@@ -3261,6 +3261,19 @@ TEST_F(ContactBookSigning, LabelsAPlainSendThenShowsTheAddress) {
   EXPECT_EQ(std::string("Send 1 ETH to ") + kAliceChecksum, screens[0]);
 }
 
+TEST_F(ContactBookSigning, NeverLabelsAWanchainTypeRequest) {
+  for (uint32_t type : {1u, 6u}) {
+    sendContactProof(PROOF3_0);
+    ASSERT_STREQ("Alice", contact_book_label());
+    EthereumSignTx tx = contactTx(alice.data());
+    tx.has_tx_type = true;
+    tx.tx_type = type;
+    const auto screens = contactReview(tx, 0);
+    ASSERT_EQ(1u, screens.size()) << type;
+    EXPECT_EQ(std::string("Send 1 WAN to ") + kAliceChecksum, screens[0]);
+  }
+}
+
 TEST_F(ContactBookSigning, LabelsAKnownTokenTransferRecipient) {
   static const uint8_t usdc[20] = {0xa0, 0xb8, 0x69, 0x91, 0xc6, 0x21, 0x8b,
                                    0x36, 0xc1, 0xd1, 0x9d, 0x4a, 0x2e, 0x9e,

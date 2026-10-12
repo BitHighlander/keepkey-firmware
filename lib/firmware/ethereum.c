@@ -1217,7 +1217,10 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   /* A certified contact labels only a plain recipient (a native send with no
    * calldata, or a known-token transfer) and never sits beside a contract
    * description: none may be loaded, signed metadata or ERC-7730. */
-  bool contact = !is_approve && !signed_metadata_available() &&
+  /* Nor on a Wanchain-type request: its chain id is not an EIP-155 network
+   * the contact was certified for. */
+  bool contact = !is_approve && wanchain_tx_type == 0 &&
+                 !signed_metadata_available() &&
                  erc7730_workflow_state()->phase == ERC7730_WORKFLOW_IDLE &&
                  (token == NULL ? data_total == 0 : token != UnknownToken);
   const uint8_t* recipient = NULL;
