@@ -836,6 +836,65 @@ TEST(Fsm, CorrectPinAfterAutoLockRenewsTheDeadline) {
   layoutHomeForced();
 }
 
+// A new PIN is typed on the host and presses no button either. A device that
+// sat idle past the lock delay must still finish the reset it has just armed:
+// without a deferral the EntropyAck that continues it locked the device and
+// was answered "Not in Reset mode", every time, until a button was pressed.
+TEST(Fsm, ResetWithANewPinSurvivesAnIdleDevice) {
+  ScopedFlash flash;
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  storage_reset();
+  ASSERT_FALSE(storage_isInitialized());
+  layoutHomeForced();
+  advance_clock(storage_getAutoLockDelayMs());
+  toggle_screensaver();
+  ASSERT_EQ(SCREENSAVER, home_get_state());
+
+  // The host relays the new PIN twice, each time on a fresh matrix.
+  std::thread host([] {
+    std::string seen = "XXXXXXXXX";
+    for (int prompt = 0; prompt < 2; prompt++) {
+      for (int tries = 0; tries < 5000; tries++, usleep(1000)) {
+        const std::string first = get_pin_matrix();
+        if (first == "XXXXXXXXX" || first == seen) continue;
+        usleep(50000);  // let the prompt finish shuffling
+        const std::string matrix = get_pin_matrix();
+        std::string positions;
+        for (const char* d = "1234"; *d; d++)
+          positions += (char)('1' + matrix.find(*d));
+        uint8_t ack[2 + 9] = {0x0a, (uint8_t)positions.size()};
+        std::memcpy(&ack[2], positions.data(), positions.size());
+        kkconfirm_sendTiny(MessageType_MessageType_PinMatrixAck, ack,
+                           (uint8_t)(2 + positions.size()));
+        seen = matrix;
+        break;
+      }
+    }
+  });
+  ResetDevice reset = {};
+  reset.has_pin_protection = reset.pin_protection = true;
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_ResetDevice, ResetDevice_fields,
+                 &reset);
+  host.join();
+  ASSERT_EQ((FailureType)0, fsm_test_lastFailureCode());
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RESET));
+
+  // The first backup screen is declined, so the ceremony ends there: what
+  // matters is that it ran, and was not locked out before it started.
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+  EntropyAck ack = {};
+  ack.has_entropy = true;
+  ack.entropy.size = 32;
+  receiveMessage(MessageType_MessageType_EntropyAck, EntropyAck_fields, &ack);
+  kkconfirm_drain();
+  EXPECT_NE(FailureType_Failure_UnexpectedMessage, fsm_test_lastFailureCode());
+  EXPECT_NE(SCREENSAVER, home_get_state());
+  fsm_abort_workflows();
+  layoutHomeForced();
+}
+
 // Time spent nested in a long wait never reaches the main loop: a U2F frame
 // stretched to its timeout, a prompt the host leaves open. Each main-loop pass
 // must charge the real time since the last one, not a single tick, or a host
@@ -1194,6 +1253,53 @@ TEST(Fsm, SolanaCertificateIsRejectedAtTheProductionHandler) {
 
   EXPECT_EQ(FailureType_Failure_UnexpectedMessage, fsm_test_lastFailureCode())
       << "a decoded certificate must not fall through to ordinary signing";
+  layoutHomeForced();
+}
+
+// Solana's handlers sign with the key at the path the host names. Outside
+// m/44'/501' that is another coin's key: a raw Ed25519 signature over 32
+// printable bytes on the TON path authorizes a TON transfer, and the screen
+// for a printable message says "It cannot authorize a transaction."
+TEST(Fsm, SolanaHandlersRefuseAnotherCoinsPath) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  storage_setMnemonic("all all all all all all all all all all all all");
+  ASSERT_TRUE(storage_isInitialized());
+  const char* refusal = "Invalid Solana path (expected m/44'/501'/...)";
+  const uint32_t ton[3] = {0x80000000 | 44, 0x80000000 | 607, 0x80000000};
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+
+  SolanaSignMessage message = {};
+  message.address_n_count = 3;
+  std::memcpy(message.address_n, ton, sizeof(ton));
+  message.has_message = true;
+  message.message.size = 32;
+  std::memset(message.message.bytes, 'A', 32);
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_SolanaSignMessage,
+                 SolanaSignMessage_fields, &message);
+  EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+  EXPECT_STREQ(refusal, fsm_test_lastFailureMessage());
+
+  // AdvancedMode does not open it either: the raw-bytes branch would sign
+  // the same thing.
+  storage_setPolicy("AdvancedMode", true);
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_SolanaSignMessage,
+                 SolanaSignMessage_fields, &message);
+  EXPECT_STREQ(refusal, fsm_test_lastFailureMessage());
+
+  SolanaGetAddress get = {};
+  get.address_n_count = 3;
+  std::memcpy(get.address_n, ton, sizeof(ton));
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_SolanaGetAddress,
+                 SolanaGetAddress_fields, &get);
+  EXPECT_STREQ(refusal, fsm_test_lastFailureMessage());
+
+  EXPECT_EQ(0, kkconfirm_drain());
+  storage_setPolicy("AdvancedMode", false);
   layoutHomeForced();
 }
 #endif
