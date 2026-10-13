@@ -12,6 +12,9 @@ extern "C" {
 #include "keepkey/firmware/thorchain.h"
 #include "keepkey/firmware/bip85.h"
 #include "keepkey/firmware/signed_metadata.h"
+#include "trezor/crypto/ecdsa.h"
+#include "trezor/crypto/secp256k1.h"
+#include "trezor/crypto/sha2.h"
 #include "storage.h"
 }
 #include "gtest/gtest.h"
@@ -26,6 +29,7 @@ extern "C" {
 }
 
 bool kkconfirm_preload(int, int);
+bool kkconfirm_readResponse(uint16_t, const pb_field_t*, void*);
 void kkconfirm_capture_start(void);
 std::vector<std::string> kkconfirm_capture_finish(void);
 int kkconfirm_drain(void);
@@ -485,5 +489,120 @@ TEST_F(ReviewHandlers, MayaDepositGrammarRejectedBeforeConsent) {
   EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
   EXPECT_FALSE(mayachain_signingIsInited());
   EXPECT_EQ(2, kkconfirm_drain());
+}
+
+// Construct the expected amino document independently of Maya's serializer.
+// A deposit memo and an outer MsgSend memo are separate signed paths.
+static bool maya_memo_session(bool deposit, const char* memo,
+                              MayachainMsgAck* ack, uint8_t digest[32]) {
+  HDNode node = {};
+  if (!storage_getRootNode("secp256k1", true, &node)) return false;
+  hdnode_fill_public_key(&node);
+  char signer[46];
+  if (!tendermint_getAddress(&node, "maya", signer)) return false;
+  MayachainSignTx tx = {};
+  tx.has_chain_id = tx.has_msg_count = true;
+  strcpy(tx.chain_id, "mayachain");
+  tx.msg_count = 1;
+  tx.fee_amount = 3000;
+  tx.gas = 200000;
+  tx.account_number = 92;
+  tx.sequence = 3;
+  tx.has_memo = !deposit;
+  if (!deposit) strcpy(tx.memo, memo);
+  *ack = {};
+  char message[768];
+  if (deposit) {
+    ack->has_deposit = true;
+    auto& d = ack->deposit;
+    d.has_asset = d.has_amount = d.has_memo = d.has_signer = true;
+    strcpy(d.asset, "MAYA.CACAO");
+    d.amount = 10000;
+    strcpy(d.memo, memo);
+    strcpy(d.signer, signer);
+    snprintf(message, sizeof(message),
+             "{\"type\":\"mayachain/MsgDeposit\",\"value\":{\"coins\":[{"
+             "\"amount\":\"10000\",\"asset\":\"MAYA.CACAO\"}],\"memo\":\"%s\","
+             "\"signer\":\"%s\"}}", memo, signer);
+  } else {
+    ack->has_send = true;
+    auto& s = ack->send;
+    s.has_to_address = s.has_amount = true;
+    s.amount = 10000;
+    strcpy(s.to_address, signer);
+    snprintf(message, sizeof(message),
+             "{\"type\":\"mayachain/MsgSend\",\"value\":{\"amount\":[{"
+             "\"amount\":\"10000\",\"denom\":\"cacao\"}],\"from_address\":\"%s\","
+             "\"to_address\":\"%s\"}}", signer, signer);
+  }
+  char doc[1280];
+  const int n = snprintf(doc, sizeof(doc),
+      "{\"account_number\":\"92\",\"chain_id\":\"mayachain\",\"fee\":{"
+      "\"amount\":[{\"amount\":\"3000\",\"denom\":\"cacao\"}],\"gas\":\"200000\"},"
+      "\"memo\":\"%s\",\"msgs\":[%s],\"sequence\":\"3\"}",
+      deposit ? "" : memo, message);
+  if (n <= 0 || static_cast<size_t>(n) >= sizeof(doc)) return false;
+  sha256_Raw(reinterpret_cast<const uint8_t*>(doc), n, digest);
+  return mayachain_signTxInit(&node, &tx);
+}
+
+TEST_F(ReviewHandlers, MayaSwapOmissionsAndLiteralsHaveDistinctSignedReviews) {
+  for (bool deposit : {false, true}) {
+    std::vector<std::vector<std::string>> reviews;
+    std::vector<std::vector<uint8_t>> digests;
+    // Literal "none" is rejected by the chain, but the firmware can sign it:
+    // it still must not impersonate an omitted field on the device.
+    for (const char* memo : {"=:ETH.ETH", "=:ETH.ETH:self",
+                             "=:ETH.ETH:self:none",
+                             "=:ETH.ETH:0xe6a30f4f3bad978910e2cbb4d97581f5b5a0ade0:10000000"}) {
+      MayachainMsgAck ack;
+      uint8_t digest[32];
+      ASSERT_TRUE(maya_memo_session(deposit, memo, &ack, digest));
+      ASSERT_TRUE(kkconfirm_preload(deposit ? 5 : 6, 0));
+      fsm_test_clearLastFailure();
+      kkconfirm_capture_start();
+      fsm_msgMayachainMsgAck(&ack);
+      reviews.push_back(kkconfirm_capture_finish());
+      EXPECT_EQ(0, fsm_test_lastFailureCode());
+      EXPECT_FALSE(mayachain_signingIsInited());
+      MayachainSignedTx response = {};
+      ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_MayachainSignedTx,
+                                        MayachainSignedTx_fields, &response));
+      ASSERT_TRUE(response.has_signature && response.has_public_key);
+      ASSERT_EQ(64u, response.signature.size);
+      EXPECT_EQ(0, ecdsa_verify_digest(&secp256k1, response.public_key.bytes,
+                                      response.signature.bytes, digest));
+      digests.emplace_back(digest, digest + sizeof(digest));
+      EXPECT_EQ(0, kkconfirm_drain());
+    }
+    EXPECT_NE(reviews[0], reviews[1]);
+    EXPECT_NE(reviews[1], reviews[2]);
+    EXPECT_NE(digests[0], digests[1]);
+    EXPECT_NE(digests[1], digests[2]);
+  }
+}
+
+TEST_F(ReviewHandlers, MayaSwapCancellationAtEveryMemoPageSignsNothing) {
+  for (bool deposit : {false, true}) {
+    for (const char* memo : {"=:ETH.ETH", "=:ETH.ETH:self:none"}) {
+      for (int page = 0; page < 3; ++page) {
+        MayachainMsgAck ack;
+        uint8_t digest[32];
+        ASSERT_TRUE(maya_memo_session(deposit, memo, &ack, digest));
+        ASSERT_TRUE(kkconfirm_preload((deposit ? 1 : 2) + page, 1));
+        fsm_test_clearLastFailure();
+        kkconfirm_capture_start();
+        fsm_msgMayachainMsgAck(&ack);
+        const auto screens = kkconfirm_capture_finish();
+        EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+        EXPECT_FALSE(mayachain_signingIsInited());
+        EXPECT_EQ(static_cast<size_t>((deposit ? 1 : 2) + page + 1), screens.size());
+        MayachainSignedTx response = {};
+        EXPECT_FALSE(kkconfirm_readResponse(MessageType_MessageType_MayachainSignedTx,
+                                           MayachainSignedTx_fields, &response));
+        EXPECT_EQ(0, kkconfirm_drain());
+      }
+    }
+  }
 }
 #endif
