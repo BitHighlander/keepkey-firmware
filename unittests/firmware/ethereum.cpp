@@ -526,6 +526,94 @@ TEST(Ethereum, ThorNewRoutersClearSignNativeAndTokenDeposits) {
   }
 }
 
+// Exact Base mainnet depositWithExpiry calls observed on 2026-10-12.
+// USDT tx d567902e...1d808 has a 100-byte memo (324-byte calldata);
+// TRX tx 3492f35c...0e856 has a 64-byte memo (260-byte calldata).
+// These regression vectors disclose every memo byte, including the affiliate.
+TEST(Ethereum, BaseThorchainRealDepositsReviewCompleteMemo) {
+  const struct {
+    const char* data;
+    const char* value;
+    const char* memo;
+    const char* amount_screen;
+    const char* expiry_screen;
+  } cases[] = {
+      {"44bc937b0000000000000000000000004d39d5c55cfeb48f44d680fcac204936"
+       "35dafdee00000000000000000000000000000000000000000000000000000000"
+       "000000000000000000000000000000000000000000000000000000000092a4aa"
+       "c79b600000000000000000000000000000000000000000000000000000000000"
+       "000000a000000000000000000000000000000000000000000000000000000000"
+       "6acd804100000000000000000000000000000000000000000000000000000000"
+       "000000643d3a54524f4e2e555344542d5452374e48514a454b51584754434938"
+       "51385a5934504c384f54535a474a4c4a36543a544d6f554a3245715645536763"
+       "614435654a647670686b6b6e384b337563586454703a39333231303034333739"
+       "3a6b6565703a3330000000000000000000000000000000000000000000000000"
+       "00000000",
+       "92a4aac79b6000",
+       "=:TRON.USDT-TR7NHQJEKQXGTCI8Q8ZY4PL8OTSZGJLJ6T:"
+       "TMoUJ2EqVESgcaD5eJdvphkkn8K3ucXdTp:9321004379:keep:30",
+       "Confirm sending 0.0412764 ETH", "Expiry epoch 1791852609"},
+      {"44bc937b0000000000000000000000004d39d5c55cfeb48f44d680fcac204936"
+       "35dafdee00000000000000000000000000000000000000000000000000000000"
+       "00000000000000000000000000000000000000000000000000000000001d5415"
+       "7d6dc00000000000000000000000000000000000000000000000000000000000"
+       "000000a000000000000000000000000000000000000000000000000000000000"
+       "6acd810400000000000000000000000000000000000000000000000000000000"
+       "000000403d3a54524f4e2e5452583a544d6f554a324571564553676361443565"
+       "4a647670686b6b6e384b337563586454703a353734303833303833333a6b6565"
+       "703a3330",
+       "1d54157d6dc000",
+       "=:TRON.TRX:TMoUJ2EqVESgcaD5eJdvphkkn8K3ucXdTp:5740830833:keep:30",
+       "Confirm sending 0.0082552256 ETH", "Expiry epoch 1791852804"},
+  };
+  for (const auto& c : cases) {
+    EthereumSignTx msg;
+    MakeThorDeposit(&msg, THOR_ROUTER_BASE, 8453);
+    msg.data_initial_chunk.size = std::strlen(c.data) / 2;
+    for (size_t i = 0; i < msg.data_initial_chunk.size; i++) {
+      msg.data_initial_chunk.bytes[i] = (bin_from_ascii(c.data[2 * i]) << 4) |
+                                        bin_from_ascii(c.data[2 * i + 1]);
+    }
+    msg.has_data_length = true;
+    msg.data_length = msg.data_initial_chunk.size;
+    msg.has_value = true;
+    msg.value.size = std::strlen(c.value) / 2;
+    for (size_t i = 0; i < msg.value.size; i++) {
+      msg.value.bytes[i] = (bin_from_ascii(c.value[2 * i]) << 4) |
+                           bin_from_ascii(c.value[2 * i + 1]);
+    }
+    ASSERT_TRUE(thor_isThorchainTx(&msg));
+    ASSERT_EQ(nullptr, thor_depositRefusal(&msg));
+    ASSERT_TRUE(kkconfirm_preload(20, 0));
+    kkconfirm_capture_start();
+    const bool confirmed = thor_confirmThorTx(msg.data_length, &msg);
+    const auto screens = kkconfirm_capture_finish();
+    kkconfirm_drain();
+    EXPECT_TRUE(confirmed);
+    EXPECT_TRUE(HasScreen(screens, "Routing through Thorchain router"));
+    EXPECT_TRUE(HasScreen(
+        screens,
+        "Pays UNVERIFIED vault 4d39d5c55cfeb48f44d680fcac20493635dafdee"));
+    EXPECT_TRUE(HasScreen(screens, c.amount_screen));
+    EXPECT_TRUE(HasScreen(screens, c.expiry_screen));
+    std::string shown;
+    for (const auto& page : screens) shown += page;
+    EXPECT_NE(std::string::npos, shown.find(c.memo)) << shown;
+
+    // The identical calldata cannot borrow the pin on an unrelated address
+    // or chain. Avalanche is intentionally excluded: it shares this pin.
+    msg.to.bytes[0] ^= 1;
+    EXPECT_FALSE(thor_isThorchainTx(&msg));
+    msg.to.bytes[0] ^= 1;
+    for (uint32_t chain : {1u, 56u, 42161u}) {
+      msg.chain_id = chain;
+      EXPECT_FALSE(thor_isThorchainTx(&msg)) << chain;
+    }
+    msg.has_chain_id = false;
+    EXPECT_FALSE(thor_isThorchainTx(&msg));
+  }
+}
+
 // A complete, clear-signable depositWithExpiry() to the mainnet router: native
 // asset (zero address), zero amount, a real expiry, and a 15-byte memo whose
 // 32-byte ABI slot therefore has 17 bytes of tail padding to play with.
