@@ -32,6 +32,7 @@
 #include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/eip712.h"
 #include "keepkey/firmware/ethereum_contracts.h"
+#include "keepkey/firmware/ethereum_contracts/thortx.h"
 #include "keepkey/firmware/erc7730_workflow.h"
 #include "keepkey/firmware/ethereum_contracts/makerdao.h"
 #include "keepkey/firmware/signed_metadata.h"
@@ -1006,6 +1007,15 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       ethereum_signing_abort();
       return;
     }
+  }
+
+  /* A deposit its pinned THORChain/Maya router can only revert is refused
+   * with the reason, before any screen, rather than signed. */
+  const char* thor_refusal = thor_depositRefusal(msg);
+  if (thor_refusal) {
+    fsm_sendFailure(FailureType_Failure_Other, thor_refusal);
+    ethereum_signing_abort();
+    return;
   }
 
   bool data_needs_confirm = true;
