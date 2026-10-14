@@ -22,6 +22,24 @@ void kkconfirm_capture_start(void);
 std::vector<std::string> kkconfirm_captured_titles(void);
 std::vector<std::string> kkconfirm_capture_finish(void);
 
+TEST(Mayachain, OmittedSwapFieldsCannotImpersonateLiteralMemoFields) {
+  std::vector<std::vector<std::string>> reviews;
+  for (const char* memo : {"=:ETH.ETH", "=:ETH.ETH:self",
+                           "=:ETH.ETH:self:none"}) {
+    ASSERT_TRUE(kkconfirm_preload(3, 0));
+    kkconfirm_capture_start();
+    EXPECT_EQ(MAYACHAIN_MEMO_CONFIRMED,
+              mayachain_parseConfirmMemo(memo, strlen(memo)));
+    reviews.push_back(kkconfirm_capture_finish());
+    EXPECT_EQ(0, kkconfirm_drain());
+    ASSERT_EQ(3u, reviews.back().size());
+  }
+  EXPECT_NE(reviews[0][1], reviews[1][1]);
+  EXPECT_NE(reviews[1][2], reviews[2][2]);
+  EXPECT_EQ("Confirm to self", reviews[1][1]);
+  EXPECT_EQ("Confirm limit none", reviews[2][2]);
+}
+
 /* Every MAYAChain screen scales by the denom's own exponent, and they all ask
  * the same function, so a send screen and a deposit screen cannot disagree
  * about the same coin. */

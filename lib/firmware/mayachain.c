@@ -492,24 +492,25 @@ MayachainMemoResult mayachain_parseConfirmMemo(const char* swapStr,
   // Check for swap
   if (strcmp(fields[0], "SWAP") == 0 || strcmp(fields[0], "s") == 0 ||
       strcmp(fields[0], "=") == 0) {
-    // This is a swap, set up destination and limit
-    // A memo that stops before the dest means swap to self. A blank dest or
-    // limit cannot get here: memos with an empty field were refused above.
-    const char* dest =
-        (nfields > 2 && fields[2][0] != '\0') ? fields[2] : "self";
-    const char* limit =
-        (nfields > 3 && fields[3][0] != '\0') ? fields[3] : "none";
+    /* Describe omitted trailing fields separately from literal memo text.
+     * "self" can be a MAYAName, not the sender, and "none" is not a numeric
+     * limit. Giving either omission that literal spelling made distinct signed
+     * memos look identical. Empty positional fields still take raw review. */
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                  "Mayachain swap", "Confirm swap asset %s\n on chain %s", asset,
                  chain)) {
       return MAYACHAIN_MEMO_CANCELLED;
     }
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "Mayachain swap", "Confirm to %s", dest)) {
+                 "Mayachain swap", "%s%s",
+                 nfields > 2 ? "Confirm to " : "Destination field omitted",
+                 nfields > 2 ? fields[2] : "")) {
       return MAYACHAIN_MEMO_CANCELLED;
     }
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "Mayachain swap", "Confirm limit %s", limit)) {
+                 "Mayachain swap", "%s%s",
+                 nfields > 3 ? "Confirm limit " : "Limit field omitted",
+                 nfields > 3 ? fields[3] : "")) {
       return MAYACHAIN_MEMO_CANCELLED;
     }
     /* Everything after the limit - affiliate, affiliate fee in basis points,
