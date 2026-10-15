@@ -295,6 +295,9 @@ static bool confirm_screen(const char* request_title_param,
           dld = (DebugLinkDecision*)msg_tiny_buf;
           ret_stat = dld->yes_no;
           debug_decided = true;
+          /* A DebugLink decision stands in for a button press, which renews
+           * the auto-lock deadline. */
+          keepkey_user_activity();
           break;
 
         case MessageType_MessageType_DebugLinkGetState:
