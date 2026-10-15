@@ -41,6 +41,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       eos_authorization.cpp
       eos_authorization_probe.c
       ethereum.cpp
+      hive_transfer.cpp
       eip712_stream.cpp
       mayachain.cpp
       nano.cpp
@@ -56,7 +57,8 @@ if(NOT ${KK_BITCOIN_ONLY})
       erc7730_tx.cpp
       erc7730_workflow.cpp
       solana.cpp
-      thorchain.cpp)
+      thorchain.cpp
+      tron.cpp)
 
   # Native and Python tests share the corpus in the pinned Python dependency.
   # Generate into the build tree, with an explicit dependency for parallel builds.

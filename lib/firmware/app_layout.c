@@ -600,6 +600,30 @@ void layout_nano_address_notification(const char* desc, const char* address,
 }
 
 /*
+ * layout_qr_notification() - Display a title and a QR code of data, with no
+ * text body: for values too long for an address layout's text area, whose
+ * full text the caller has already shown on paged screens.
+ */
+void layout_qr_notification(const char* desc, const char* data,
+                            NotificationType type) {
+  DrawableParams sp;
+  Canvas* canvas = layout_get_canvas();
+
+  call_leaving_handler();
+  layout_clear();
+
+  const Font* title_font = get_title_font();
+  sp.y = TOP_MARGIN_FOR_TWO_LINES;
+  sp.x = LEFT_MARGIN + 65;
+  sp.color = BODY_COLOR;
+  draw_string(canvas, title_font, desc, &sp, TRANSACTION_WIDTH - 2,
+              font_height(title_font) + BODY_FONT_LINE_PADDING);
+
+  layout_address(data, QR_LARGE);
+  layout_notification_icon(type, &sp);
+}
+
+/*
  * layout_address_notification() - Display address notification
  *
  * INPUT
@@ -636,30 +660,6 @@ bool layout_address_description_fits(const char* desc, const char* address) {
       TOP_MARGIN_FOR_ONE_LINE + font_height(font) + ADDRESS_TOP_MARGIN;
   return draw_string_fits(&available, font, desc, &sp, TRANSACTION_WIDTH - 2,
                           font_height(font) + BODY_FONT_LINE_PADDING);
-}
-
-/*
- * layout_qr_notification() - Display a title and a QR code of data, with no
- * text body: for values too long for an address layout's text area, whose
- * full text the caller has already shown on paged screens.
- */
-void layout_qr_notification(const char* desc, const char* data,
-                            NotificationType type) {
-  DrawableParams sp;
-  Canvas* canvas = layout_get_canvas();
-
-  call_leaving_handler();
-  layout_clear();
-
-  const Font* title_font = get_title_font();
-  sp.y = TOP_MARGIN_FOR_TWO_LINES;
-  sp.x = LEFT_MARGIN + 65;
-  sp.color = BODY_COLOR;
-  draw_string(canvas, title_font, desc, &sp, TRANSACTION_WIDTH - 2,
-              font_height(title_font) + BODY_FONT_LINE_PADDING);
-
-  layout_address(data, QR_LARGE);
-  layout_notification_icon(type, &sp);
 }
 
 void layout_address_notification(const char* desc, const char* address,
