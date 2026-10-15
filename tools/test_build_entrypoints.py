@@ -41,10 +41,11 @@ class BuildEntrypoints(unittest.TestCase):
                     ("cc", "c", "c99"), ("c++", "c++", "c++11")
                 ]:
                     with self.subTest(libc=libc, language=language):
-                        subprocess.run([compiler, "-x", language, "-std=" + standard,
+                        result = subprocess.run([compiler, "-x", language, "-std=" + standard,
                                         "-Werror", "-fsyntax-only", *include,
                                         "-include", str(header), "-"], input=source,
-                                       text=True, check=True, capture_output=True)
+                                       text=True, capture_output=True)
+                        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_release_script_preserves_cmake_arguments(self):
         with tempfile.TemporaryDirectory(prefix="keepkey-build-") as tmp:
@@ -84,8 +85,9 @@ class BuildEntrypoints(unittest.TestCase):
                        KEEPKEY_ARGV_RECORD=str(record), KEEPKEY_TEST_LITERAL="not-expanded")
             extra = ["-DCMAKE_C_FLAGS=-DFOO=1 -DBAR=1",
                      "-DVALUE=literal;$KEEPKEY_TEST_LITERAL", "-DEMPTY="]
-            subprocess.run(["bash", str(script), *extra], env=env, check=True,
+            result = subprocess.run(["bash", str(script), *extra], env=env,
                            capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(extra, json.loads(record.read_text())[-len(extra):])
 
 
