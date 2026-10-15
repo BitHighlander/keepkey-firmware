@@ -3217,13 +3217,14 @@ static void fill_certified_soltoshi_join(SolanaSignTx* msg) {
  * and verifies sha256(payload) with the scope-501 certificate's delegate. A
  * flipped byte in the signature or the schema, or another scope, fails. */
 TEST(Solana, CertifiedSoltoshiJoinSchemaSignatureVerifies) {
+  AlphaTestRoot alpha;
   const std::vector<uint8_t> cert = solana_unhex(kCert501Hex);
   std::vector<uint8_t> schema = solana_unhex(kSoltoshiJoinSchemaHex);
   std::vector<uint8_t> sig = solana_unhex(kSoltoshiJoinSchemaSigHex);
   ASSERT_EQ(cert.size(), (size_t)CLEARSIGN_CERT_LEN);
   ASSERT_EQ(sig.size(), 64U);
-  /* The certificate needs the alpha root every 7.16 build embeds
-   * (ClearsignRoot.TheEmbeddedRootIsTheAlphaRoot). */
+  /* The certificate was signed by the alpha root, installed above as the
+   * test root (7.16 compiles in the production root). */
   ASSERT_TRUE(clearsign_root_verify_cert(cert.data(), cert.size()));
   const auto verifies = [&](uint32_t scope) {
     return clearsign_root_verify_delegate_attestation(
@@ -3255,6 +3256,7 @@ TEST(Solana, CertifiedSoltoshiJoinSchemaSignatureVerifies) {
  * the certificate, or after a one-byte change to its signature, symbol,
  * decimals or mint. */
 TEST(Solana, CertifiedSdiceTokenDefinitionTrustedOnlyAsSigned) {
+  AlphaTestRoot alpha; /* kCert501Hex is signed by the alpha root */
   static SolanaSignTx msg;
   ASSERT_NO_FATAL_FAILURE(fill_certified_soltoshi_join(&msg));
   SolanaTokenInfo* ti = &msg.token_info[0];
@@ -3313,6 +3315,7 @@ TEST(Solana, CertifiedSdiceTokenDefinitionTrustedOnlyAsSigned) {
  * SDICE definition and still shows the mint. The same request on the runtime
  * tier renders the raw base units. */
 TEST(Solana, CertifiedSoltoshiJoinRendersSdiceAmounts) {
+  AlphaTestRoot alpha; /* kCert501Hex is signed by the alpha root */
   const std::vector<uint8_t> raw = solana_unhex(kSoltoshiJoinMessageHex);
   SolanaParsedTx tx;
   ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
@@ -3819,6 +3822,7 @@ bool collect(void* ctx, const char* title, const char* body,
 }  // namespace
 
 TEST(Solana, IntentReviewOfRealPumpSellMatchesTheSpec) {
+  AlphaTestRoot alpha; /* kCert501Hex is signed by the alpha root */
   const std::vector<uint8_t> raw = solana_unhex(kPumpSellMessageHex);
   SolanaParsedTx tx;
   ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
@@ -3952,6 +3956,7 @@ TEST(Solana, IntentTemplateRejectsBadRolesCoverageAndPlaceholders) {
 }
 
 TEST(Solana, IntentReviewCapRoleAndUnstatedValuesOnRealJoin) {
+  AlphaTestRoot alpha; /* kCert501Hex is signed by the alpha root */
   const std::vector<uint8_t> raw = solana_unhex(kSoltoshiJoinMessageHex);
   SolanaParsedTx tx;
   ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
@@ -4009,6 +4014,7 @@ TEST(Solana, IntentReviewCapRoleAndUnstatedValuesOnRealJoin) {
 
 /* Exact-text contract for the remaining review branches, on the real sell. */
 TEST(Solana, IntentReviewAccountPlaceholderReceiveExactAndLegacyFallback) {
+  AlphaTestRoot alpha; /* kCert501Hex is signed by the alpha root */
   const std::vector<uint8_t> raw = solana_unhex(kPumpSellMessageHex);
   SolanaParsedTx tx;
   ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),

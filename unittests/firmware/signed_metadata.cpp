@@ -3233,15 +3233,15 @@ TEST_F(CertifiedMetadataTest, UniswapV4HookIsShown) {
 }
 
 /* The 2026-10-03 root ceremony (Base, Arbitrum): the device's own verifier,
- * under the compiled-in alpha root, accepts each certificate for its chain
- * only. Certificates are public; the root's private key never left the root
- * KeepKey. */
+ * under the alpha root (installed as the test root; 7.16 compiles in the
+ * production root), accepts each certificate for its chain only. Certificates
+ * are public; the root's private key never left the root KeepKey. */
 TEST(ClearsignRootCeremony20261003, RealCertificatesVerifyOnTheirChainOnly) {
   const char* certs[2] = {
       "0101000021056b359b004b6565704b657920416c706861203731360000000000000000000000000000000342f5f9704494b3f9bd72295eecaf29d783d23ea02b2dc9f48abcd2e46d4850cfd3f4638bcd78bd822b88d56dc66bb34c167e3509597a8d3e86a37f14c5b89a504b04f2868e5fcb3ff93f317e2cae7b1cfca149559a272a3ea713125d37757a98",
       "01010000a4b16b359b004b6565704b657920416c706861203731360000000000000000000000000000000342f5f9704494b3f9bd72295eecaf29d783d23ea02b2dc9f48abcd2e46d4850cf2fe56b2ec1cd8540b8c5eff6ad5c30b5aea85edd7499c3340074e0df12cba0d31a973fb36ab9cc9e3ca759fba08dd96908e3f5541b891f00fc6ff941e9365a6c"};
   const uint32_t scopes[2] = {8453, 42161};
-  clearsign_root_set_test_root(NULL);  // the real compiled-in root
+  AlphaTestRoot alpha;
   ASSERT_TRUE(clearsign_root_is_present());
   for (int i = 0; i < 2; i++) {
     std::vector<uint8_t> c = ur_unhex(certs[i]);

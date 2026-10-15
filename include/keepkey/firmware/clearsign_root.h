@@ -115,6 +115,15 @@ bool clearsign_root_is_present(void);
 /* Unit tests only: verify certificates against `pubkey` (33 bytes, caller
  * keeps it alive) instead of the compiled-in root; NULL restores it. */
 void clearsign_root_set_test_root(const uint8_t* pubkey);
+
+/* Unit tests only: the compiled-in root, ignoring any test root. */
+const uint8_t* clearsign_root_compiled_pubkey(void);
+
+/* Emulator startup: if KK_CLEARSIGN_TEST_ROOT holds a 33-byte compressed
+ * secp256k1 key as 66 hex chars, verify against it instead of the compiled-in
+ * root. An invalid value is ignored with a warning on stderr. The key comes
+ * only from the environment, so no binary carries a test root. */
+bool clearsign_root_load_test_root_from_env(void);
 #endif
 
 #endif

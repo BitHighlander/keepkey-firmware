@@ -4,6 +4,9 @@ extern "C" {
 
 #include "gtest/gtest.h"
 
+#include "clearsign_test_cert.h"
+
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -54,9 +57,31 @@ std::vector<uint8_t> unhex(const std::string &h) {
 
 std::vector<uint8_t> validCert() { return unhex(kValidCertHex); }
 
+// The production root, KKclearSignROOT (device 310BBE4832ED489FD9DF3900).
+const uint8_t kProductionRootPubkey[CLEARSIGN_PUBKEY_LEN] = {
+    0x02, 0x7c, 0x1f, 0xde, 0x75, 0xdb, 0x6c, 0x36, 0x39, 0x3e, 0x09,
+    0x5e, 0x0d, 0xc5, 0xab, 0x9a, 0x5b, 0xcf, 0x1a, 0xe9, 0xeb, 0x92,
+    0xb5, 0xd3, 0x6e, 0x21, 0x2a, 0x2b, 0xf7, 0xf8, 0xa6, 0xe3, 0x21,
+};
+
 }  // namespace
 
-TEST(ClearsignRoot, TheCeremonyCertificateVerifies) {
+// The fixtures above were signed by the alpha root, which 7.16 no longer
+// compiles in. Every test here verifies them against the alpha root installed
+// as the test root, and SetUp proves the untouched certificate verifies, so
+// each rejection below is caused by its mutation and not by the root.
+class ClearsignRoot : public ::testing::Test {
+ protected:
+  AlphaTestRoot alpha_;
+  void SetUp() override {
+    auto c = validCert();
+    ASSERT_TRUE(clearsign_root_verify_cert(c.data(), c.size()))
+        << "positive baseline: the ceremony certificate must verify under "
+           "the alpha test root";
+  }
+};
+
+TEST_F(ClearsignRoot, TheCeremonyCertificateVerifies) {
   // If this fails, the ceremony and the firmware disagree about the preimage,
   // and a real signing session would produce certificates no device accepts.
   auto c = validCert();
@@ -64,7 +89,7 @@ TEST(ClearsignRoot, TheCeremonyCertificateVerifies) {
   EXPECT_TRUE(clearsign_root_verify_cert(c.data(), c.size()));
 }
 
-TEST(ClearsignRoot, DelegateExtractionRequiresTheSignedScopeAndCapability) {
+TEST_F(ClearsignRoot, DelegateExtractionRequiresTheSignedScopeAndCapability) {
   auto c = validCert();
   uint8_t delegate[CLEARSIGN_PUBKEY_LEN] = {0};
   char alias[CLEARSIGN_ALIAS_LEN + 1] = {0};
@@ -76,7 +101,7 @@ TEST(ClearsignRoot, DelegateExtractionRequiresTheSignedScopeAndCapability) {
       clearsign_root_cert_delegate(c.data(), c.size(), 501, delegate, alias));
 }
 
-TEST(ClearsignRoot, SevenSixteenAlwaysShipsTheRoot) {
+TEST_F(ClearsignRoot, SevenSixteenAlwaysShipsTheRoot) {
   // Vault turns certified ClearSign on from the firmware version alone
   // (>= 7.16.0). A 7.16+ build without the root would refuse every
   // certificate Vault sends, so the version and the root move together.
@@ -87,20 +112,11 @@ TEST(ClearsignRoot, SevenSixteenAlwaysShipsTheRoot) {
       << " ships without a ClearSign root";
 }
 
-TEST(ClearsignRoot, TheEmbeddedRootIsTheAlphaRoot) {
-  // Pins the embedded root to exactly the alpha root,
-  // 02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7
-  // (the marked root KeepKey, device 393137350D4736341B003900), without a
-  // second reader of the key: clearsign_root_verify_cert stays the only
-  // function that reads it.
-  //
-  // One certificate is not enough. An ECDSA signature verifies under two
-  // public keys, one for each point R with x(R) = r, so kValidCertHex alone
-  // also verifies under 0389126d...0c94e9. kCert501Hex's other key is
-  // 02d6c172...c720bd. The alpha root is the only key both verify under.
-  //
-  // A production root replaces these bytes, and both fixtures are re-minted
-  // by it, in one change (docs/ClearsignRootCeremony.md 4.4).
+TEST_F(ClearsignRoot, TheAlphaFixturesVerifyOnlyUnderTheAlphaRoot) {
+  // An ECDSA signature verifies under two public keys, one for each point R
+  // with x(R) = r, so kValidCertHex alone also verifies under 0389126d...0c94e9
+  // and kCert501Hex under 02d6c172...c720bd. The alpha root is the only key
+  // both verify under, so this pins the test root these suites install.
   auto a = validCert();
   auto b = unhex(kCert501Hex);
   ASSERT_EQ(b.size(), (size_t)CLEARSIGN_CERT_LEN);
@@ -108,7 +124,55 @@ TEST(ClearsignRoot, TheEmbeddedRootIsTheAlphaRoot) {
   EXPECT_TRUE(clearsign_root_verify_cert(b.data(), b.size()));
 }
 
-TEST(ClearsignRoot, RejectsAnyMutatedByte) {
+TEST_F(ClearsignRoot, TheEmbeddedRootIsTheProductionRoot) {
+  // The compiled-in root is exactly the production key, and with no test root
+  // installed the alpha certificates no longer verify.
+  clearsign_root_set_test_root(nullptr);
+  EXPECT_EQ(0, memcmp(clearsign_root_compiled_pubkey(), kProductionRootPubkey,
+                      CLEARSIGN_PUBKEY_LEN));
+  EXPECT_NE(0, memcmp(clearsign_root_compiled_pubkey(), kAlphaRootPubkey,
+                      CLEARSIGN_PUBKEY_LEN));
+  EXPECT_TRUE(clearsign_root_is_present());
+  auto a = validCert();
+  auto b = unhex(kCert501Hex);
+  EXPECT_FALSE(clearsign_root_verify_cert(a.data(), a.size()));
+  EXPECT_FALSE(clearsign_root_verify_cert(b.data(), b.size()));
+}
+
+TEST_F(ClearsignRoot, TheEmulatorReadsItsTestRootOnlyFromAValidEnvValue) {
+  // kkemu and libkkemu call this at startup; CI sets the alpha key.
+  auto c = validCert();
+  const char *bad[] = {
+      "",
+      "02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae",
+      "02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7"
+      "00",
+      "02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606daeg",
+      "04de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7",
+      // x = 5 is not on secp256k1.
+      "020000000000000000000000000000000000000000000000000000000000000005",
+  };
+  for (const char *v : bad) {
+    clearsign_root_set_test_root(nullptr);
+    ASSERT_EQ(0, setenv("KK_CLEARSIGN_TEST_ROOT", v, 1));
+    EXPECT_FALSE(clearsign_root_load_test_root_from_env()) << v;
+    EXPECT_FALSE(clearsign_root_verify_cert(c.data(), c.size())) << v;
+  }
+  clearsign_root_set_test_root(nullptr);
+  ASSERT_EQ(0, unsetenv("KK_CLEARSIGN_TEST_ROOT"));
+  EXPECT_FALSE(clearsign_root_load_test_root_from_env());
+  EXPECT_FALSE(clearsign_root_verify_cert(c.data(), c.size()));
+
+  ASSERT_EQ(0, setenv("KK_CLEARSIGN_TEST_ROOT",
+                      "02DE9231B2094433235532FB1932E324A2C7304195E12E610C675CC"
+                      "CBBD606DAE7",
+                      1));
+  EXPECT_TRUE(clearsign_root_load_test_root_from_env());
+  EXPECT_TRUE(clearsign_root_verify_cert(c.data(), c.size()));
+  ASSERT_EQ(0, unsetenv("KK_CLEARSIGN_TEST_ROOT"));
+}
+
+TEST_F(ClearsignRoot, RejectsAnyMutatedByte) {
   // Every byte of the signed region is covered by the signature. Flipping any
   // one of them must break verification -- not merely the interesting fields.
   auto good = validCert();
@@ -122,26 +186,26 @@ TEST(ClearsignRoot, RejectsAnyMutatedByte) {
   }
 }
 
-TEST(ClearsignRoot, RejectsAMutatedSignature) {
+TEST_F(ClearsignRoot, RejectsAMutatedSignature) {
   auto c = validCert();
   c[CLEARSIGN_CERT_OFF_SIG] ^= 0x01;
   EXPECT_FALSE(clearsign_root_verify_cert(c.data(), c.size()));
 }
 
-TEST(ClearsignRoot, RejectsWrongLength) {
+TEST_F(ClearsignRoot, RejectsWrongLength) {
   auto c = validCert();
   EXPECT_FALSE(clearsign_root_verify_cert(c.data(), c.size() - 1));
   EXPECT_FALSE(clearsign_root_verify_cert(c.data(), c.size() + 1));
   EXPECT_FALSE(clearsign_root_verify_cert(nullptr, CLEARSIGN_CERT_LEN));
 }
 
-TEST(ClearsignRoot, RejectsUnknownVersion) {
+TEST_F(ClearsignRoot, RejectsUnknownVersion) {
   auto c = validCert();
   c[CLEARSIGN_CERT_OFF_VERSION] = 0x02;
   EXPECT_FALSE(clearsign_root_verify_cert(c.data(), c.size()));
 }
 
-TEST(ClearsignRoot, RejectsReservedFlagBits) {
+TEST_F(ClearsignRoot, RejectsReservedFlagBits) {
   // A flag we do not understand is a capability we never agreed to. Accepting
   // it silently is how a later format grants itself permissions this firmware
   // never reviewed.
@@ -152,7 +216,7 @@ TEST(ClearsignRoot, RejectsReservedFlagBits) {
   EXPECT_FALSE(clearsign_root_verify_cert(c.data(), c.size()));
 }
 
-TEST(ClearsignRoot, RejectsZeroChainId) {
+TEST_F(ClearsignRoot, RejectsZeroChainId) {
   // Chain 0 is not a chain. Requiring nonzero means a certificate can never
   // become a wildcard by omission.
   auto c = validCert();
@@ -160,7 +224,7 @@ TEST(ClearsignRoot, RejectsZeroChainId) {
   EXPECT_FALSE(clearsign_root_verify_cert(c.data(), c.size()));
 }
 
-TEST(ClearsignRoot, RejectsExpiryAtOrBelowTheFloor) {
+TEST_F(ClearsignRoot, RejectsExpiryAtOrBelowTheFloor) {
   // The device has no clock, so this is not "is it expired now" but "was it
   // issued for a window this firmware still honours". Bumping the floor in a
   // signed release is the only revocation lever 7.16 has.
@@ -173,7 +237,7 @@ TEST(ClearsignRoot, RejectsExpiryAtOrBelowTheFloor) {
   EXPECT_FALSE(clearsign_root_verify_cert(c.data(), c.size()));
 }
 
-TEST(ClearsignRoot, RejectsUncompressedOrMalformedDelegateKey) {
+TEST_F(ClearsignRoot, RejectsUncompressedOrMalformedDelegateKey) {
   auto c = validCert();
   c[CLEARSIGN_CERT_OFF_PUBKEY] = 0x04;  // uncompressed prefix
   EXPECT_FALSE(clearsign_root_verify_cert(c.data(), c.size()));
