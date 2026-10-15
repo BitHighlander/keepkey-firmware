@@ -407,15 +407,11 @@ TEST(Fsm, AutoLockKeepsTheScreensaverAfterAbortingSigning) {
 }
 
 namespace {
-void receiveMessage(MessageType type, const pb_field_t* fields,
-                    const void* msg) {
-  uint8_t encoded[4096] = {};
-  pb_ostream_t stream = pb_ostream_from_buffer(encoded, sizeof(encoded));
-  ASSERT_TRUE(pb_encode(&stream, fields, msg));
+void receiveEncodedMessage(MessageType type, const uint8_t* encoded,
+                           size_t size) {
   uint8_t frame[64] = {'?', '#', '#'};
   frame[3] = type >> 8;
   frame[4] = type & 0xff;
-  const size_t size = stream.bytes_written;
   frame[5] = size >> 24;
   frame[6] = size >> 16;
   frame[7] = size >> 8;
@@ -430,6 +426,14 @@ void receiveMessage(MessageType type, const pb_field_t* fields,
     usb_test_receive(frame, sizeof(frame));
     sent += chunk;
   }
+}
+
+void receiveMessage(MessageType type, const pb_field_t* fields,
+                    const void* msg) {
+  uint8_t encoded[4096] = {};
+  pb_ostream_t stream = pb_ostream_from_buffer(encoded, sizeof(encoded));
+  ASSERT_TRUE(pb_encode(&stream, fields, msg));
+  receiveEncodedMessage(type, encoded, stream.bytes_written);
 }
 
 // firmware-unit never maps emulated flash; tests whose handlers commit storage
@@ -3549,6 +3553,66 @@ TEST_F(ContactBookSigning, CertificationReviewsEveryContact) {
                  ClearsignAttestorSign_fields, &sign);
   EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
   EXPECT_EQ(0, kkconfirm_drain());
+}
+
+TEST_F(ContactBookSigning, MaximumContactBookReachesEveryReviewOverUsb) {
+  // Encode the wire field independently of the generated nanopb struct: the
+  // old 1024-byte decoder limit must fail this test before reaching a prompt.
+  const auto send_request = [](const std::vector<uint8_t>& request) {
+    std::vector<uint8_t> encoded = {0x0a};  // payload, field 1, bytes
+    size_t length = request.size();
+    while (length >= 128) {
+      encoded.push_back((length & 0x7f) | 0x80);
+      length >>= 7;
+    }
+    encoded.push_back(length);
+    encoded.insert(encoded.end(), request.begin(), request.end());
+    receiveEncodedMessage(MessageType_MessageType_ClearsignAttestorSign,
+                          encoded.data(), encoded.size());
+  };
+
+  for (const auto& network : {std::string("eip155:1313161554"),
+                             std::string("eip155:") + std::string(56, '1')}) {
+    SCOPED_TRACE(network);
+    std::vector<uint8_t> request = {'K', 'K', 'A', 'B', 'R', 'E', 'Q', '1',
+                                    1, 0, 0, 0, 1, 16};
+    std::vector<std::string> labels;
+    for (uint8_t i = 0; i < 16; i++) {
+      const std::string label = std::string(22, 'L') +
+                                char('0' + i / 10) + char('0' + i % 10);
+      labels.push_back(label);
+      request.push_back(network.size());
+      request.insert(request.end(), network.begin(), network.end());
+      request.push_back(CONTACT_BOOK_DEST_EVM_ADDRESS);
+      request.push_back(20);
+      request.insert(request.end(), 20, i + 1);
+      request.push_back(label.size());
+      request.insert(request.end(), label.begin(), label.end());
+    }
+    ASSERT_EQ(network.size() == 17 ? 1054u : 1790u, request.size());
+    fsm_test_clearLastFailure();
+    kkconfirm_drain();
+    ASSERT_TRUE(kkconfirm_preload(32, 1));  // Decline the final address screen.
+    kkconfirm_capture_start();
+    send_request(request);
+    const auto screens = kkconfirm_capture_finish();
+    EXPECT_EQ(0, kkconfirm_drain());
+    EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+    ASSERT_EQ(33u, screens.size());
+    EXPECT_EQ("Approve 16 contacts?\nRevision 1", screens[0]);
+    for (size_t i = 0; i < labels.size(); i++)
+      EXPECT_EQ(labels[i] + "\n" + network, screens[1 + 2 * i]);
+
+    if (request.size() == 1790) {
+      request.push_back(0);  // One byte beyond the supported envelope.
+      fsm_test_clearLastFailure();
+      kkconfirm_capture_start();
+      send_request(request);
+      EXPECT_TRUE(kkconfirm_capture_finish().empty());
+      EXPECT_EQ(FailureType_Failure_UnexpectedMessage,
+                fsm_test_lastFailureCode());
+    }
+  }
 }
 
 /* Verified against this session's attestor key: a lock or a passphrase change

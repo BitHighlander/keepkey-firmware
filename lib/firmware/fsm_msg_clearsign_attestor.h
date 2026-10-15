@@ -86,6 +86,11 @@ static void attestor_signAndReply(const uint8_t* bytes, size_t len) {
 /* Every entry is reviewed before the root is signed: a label nobody saw is a
  * label nobody checked. */
 static void attestor_certifyContacts(const ClearsignAttestorSign* msg) {
+  _Static_assert(
+      sizeof(msg->payload.bytes) >=
+          14 + CONTACT_BOOK_MAX_ENTRIES *
+                   (4 + CONTACT_BOOK_NETWORK_MAX + 20 + CONTACT_BOOK_LABEL_MAX),
+      "Contact certification exceeds the wire payload bound");
   ContactBookEntry entries[CONTACT_BOOK_MAX_ENTRIES];
   ContactBookManifest manifest;
   bool ok = contact_book_parse_request(msg->payload.bytes, msg->payload.size,
