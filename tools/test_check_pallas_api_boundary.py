@@ -252,6 +252,14 @@ class MacroAliases(unittest.TestCase):
                               "#define OTHER 1 /* pallas_mod_q */\n"
                               "#define NAME \"pallas_mod_q\"\n"})
 
+    def test_spaced_member_access_in_macro_is_refused(self):
+        forbid("", "->ask", "address derivation")
+        for access in ("->ask", "-> ask", "->\task", "->/* hidden */ask"):
+            with self.subTest(access=access):
+                with self.assertRaisesRegex(AssertionError, "to forbidden"):
+                    check_aliases({"x.h": "#define GET_ASK(k) ((k)" + access + ")\n"})
+        check_aliases({"x.h": "#define OTHER(k) ((k)-> ask_count)\n"})
+
     def test_forbidden_call_through_a_macro_in_the_real_source(self):
         # The body still makes every constant-time call, so the body check
         # passes; only the macro scan sees the variable-time one.
@@ -347,6 +355,13 @@ class AddressDerivation(unittest.TestCase):
     def test_shipped_derivation_passes(self):
         check_address_derivation(self.ZCASH)
         check_address_derivation(self.with_statement("(void)keys->ak;"))
+
+    def test_spaced_member_access_is_refused(self):
+        for access in ("->ask", "-> ask", "->\task", "->\nask", "->/* hidden */ask"):
+            with self.subTest(access=access):
+                with self.assertRaisesRegex(AssertionError, "must not call"):
+                    check_address_derivation(self.with_statement("(void)keys" + access + ";"))
+        check_address_derivation(self.with_statement("(void)keys->ask_count;"))
 
     def test_reading_or_multiplying_by_ask_is_refused(self):
         for statement in (

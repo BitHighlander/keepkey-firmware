@@ -159,6 +159,7 @@ def token_pattern(token):
     'pallas_ct_add_mod_q' is not satisfied by 'pallas_ct_add_mod_q_result',
     and '(' may follow any whitespace. A trailing '_' marks a prefix."""
     pattern = re.escape(token).replace(r"\(", r"\s*\(")
+    pattern = pattern.replace(re.escape("->"), re.escape("->") + r"\s*")
     if re.match(r"\w", token):
         pattern = r"\b" + pattern
     # A token ending in '_' (e.g. 'pallas_ct_') is a deliberate prefix.
@@ -183,7 +184,7 @@ def forbid(body, token, where):
         # A call: any whitespace may sit between the name and its "(".
         found = re.search(r"\b" + re.escape(token[:-1]) + r"\s*\(", body)
     else:
-        found = token in body
+        found = token_pattern(token).search(body)
     if found:
         raise AssertionError("{} must not call {}".format(where, token))
 
@@ -292,7 +293,7 @@ def check_aliases(texts):
                     found = re.search(r"\b" + re.escape(token[:-1]) + r"\b",
                                       replacement)
                 else:
-                    found = token in replacement
+                    found = token_pattern(token).search(replacement)
                 if found:
                     raise AssertionError(
                         "{} #defines {} to forbidden {}".format(
