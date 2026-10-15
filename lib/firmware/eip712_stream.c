@@ -625,10 +625,21 @@ static struct {
   uint8_t queued;
   char queue[5][EIP712_QUEUE_BODY];
   Eip712Permit2 p2;
+
+  /* EIP-2612 / DAI Permit with the canonical type hash (ERC20_PERMIT_*). An
+   * unlimited one on a domain naming its token is signed after a warning
+   * naming spender, token and deadline, on top of its UNLIMITED leaf. */
+  uint8_t erc20_permit;
+  bool erc20_unlimited;
+  uint8_t erc20_spender[20];
+  uint8_t erc20_deadline[32];
   uint8_t requested;    /* types index of the outstanding StructRequest */
   Eip712Closure closure;
   uint8_t closure_index;
 } e712;
+
+#define ERC20_PERMIT_EIP2612 1
+#define ERC20_PERMIT_DAI 2
 
 _Static_assert(EIP712_MAX_STRUCTS + 1 <= 8, "schema_known is one byte");
 _Static_assert(EIP712_MAX_STRUCTS + 1 < EIP712_NO_TYPE, "type index range");
@@ -890,6 +901,24 @@ static const char* unlimited_permit_text(const Eip712FieldType* field,
          strcmp(member, "amount") == 0)))
     return NULL;
   return eip712_amount_unlimited(value, len) ? "UNLIMITED" : NULL;
+}
+
+/* Only a canonical EIP-2612 or DAI Permit on a domain naming its token
+ * (verifyingContract) and chain can say whose allowance it is; any other
+ * unlimited permit gets only its UNLIMITED leaf screen. */
+static bool erc20_permit_reviewable(void) {
+  return e712.erc20_permit != 0 && e712.depth == 1 &&
+         e712.domain_facts.has_verifying_contract &&
+         e712.domain_facts.has_chain_id;
+}
+
+/* The canonical type hash fixes every member and width. */
+static void erc20_permit_capture(const uint8_t* v, uint16_t len) {
+  const char* m = e712.pending_name;
+  if (e712.depth != 1) return;
+  if (strcmp(m, "spender") == 0 && len == 20) memcpy(e712.erc20_spender, v, 20);
+  if ((strcmp(m, "deadline") == 0 || strcmp(m, "expiry") == 0) && len == 32)
+    memcpy(e712.erc20_deadline, v, 32);
 }
 
 /* Fixed and short: a wrapped title draws over the body, and a primary type
@@ -1241,26 +1270,6 @@ static bool safe_delegate_approved(const Eip712FieldType* field,
     *facts |= SAFE_DELEGATE;
   }
   return safe_delegate_decide(facts, false, to);
-}
-
-/* The one-line text of a bool, address or integer leaf. */
-static bool leaf_text(const Eip712FieldType* field, const uint8_t* value,
-                      uint16_t len, char* text, size_t size) {
-  switch (field->data_type) {
-    case EthereumTypedDataStructAck_EthereumDataType_BOOL:
-      strlcpy(text, value[0] ? "true" : "false", size);
-      return true;
-    case EthereumTypedDataStructAck_EthereumDataType_ADDRESS:
-      text[0] = '0';
-      text[1] = 'x';
-      ethereum_address_checksum(value, text + 2, false, 0);
-      return true;
-    case EthereumTypedDataStructAck_EthereumDataType_UINT:
-    case EthereumTypedDataStructAck_EthereumDataType_INT:
-      return eip712_render_integer(field, value, len, text, size);
-    default:
-      return false;
-  }
 }
 
 static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
@@ -1619,6 +1628,40 @@ bool eip712_permit2_review(const Eip712Permit2* p,
   return true;
 }
 
+/* EIP-2612 / DAI: an unlimited allowance is signed only after this warning
+ * (D-010, as approve()). Neither permit's allowance expires; its deadline
+ * only bounds when the signature can be used (DAI: expiry 0 = never). */
+static bool erc20_permit_warning(void) {
+  char spender[44], token[44], deadline[96], body[BODY_CHAR_MAX];
+  PermitToken tok;
+  const PermitToken* t =
+      permit_token(e712.domain_facts.chain_id,
+                   e712.domain_facts.verifying_contract, NULL, &tok)
+          ? &tok
+          : NULL;
+  address_text(e712.erc20_spender, false, spender, sizeof(spender));
+  address_text(e712.domain_facts.verifying_contract, false, token,
+               sizeof(token));
+  bool zero = true;
+  for (int i = 0; i < 32; i++)
+    if (e712.erc20_deadline[i]) zero = false;
+  if (e712.erc20_permit == ERC20_PERMIT_DAI && zero) {
+    strlcpy(deadline, "no deadline", sizeof(deadline));
+  } else if (!deadline_text(e712.erc20_deadline, deadline, sizeof(deadline))) {
+    return false;
+  }
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+               "UNLIMITED allowance",
+               "Allow %s to spend an UNLIMITED amount of %s. It does not "
+               "expire.",
+               spender, t ? t->symbol : "this token"))
+    return false;
+  snprintf(body, sizeof(body), "%s\n%s\nSignature valid until\n%s",
+           t ? t->symbol : "Unknown token", token, deadline);
+  return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                 "UNLIMITED allowance", "%s", body);
+}
+
 /* Scan the next bytes of a multiSend leaf, before any screen of them; `last`
  * when they end the value. True to go on; otherwise the walk has ended. */
 static bool multisend_reviewed(const uint8_t* bytes, size_t len, bool last) {
@@ -1837,6 +1880,11 @@ static void complete_frame(void) {
     /* The domain is hashed. Now the message, under the same session. */
     e712.root = 1;
     begin_root(e712.primary_type);
+    return;
+  }
+
+  if (e712.erc20_unlimited && !erc20_permit_warning()) {
+    review_approved(EIP712_LEAF_CANCELLED);
     return;
   }
 
@@ -2137,6 +2185,15 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
       if (e712.root == 1 && e712.depth == 1) {
         memcpy(e712.domain_facts.primary_type_hash, tf->u.s.type_hash, 32);
         e712.domain_facts.has_primary_type_hash = true;
+        if (hash_is(tf->u.s.type_hash,
+                    "Permit(address owner,address spender,uint256 value,"
+                    "uint256 nonce,uint256 deadline)")) {
+          e712.erc20_permit = ERC20_PERMIT_EIP2612;
+        } else if (hash_is(tf->u.s.type_hash,
+                           "Permit(address holder,address spender,"
+                           "uint256 nonce,uint256 expiry,bool allowed)")) {
+          e712.erc20_permit = ERC20_PERMIT_DAI;
+        }
         if (e712.permit2 == 1) {
           if (permit2_type_ok()) {
             /* The review replaces the queued screens; it names the Permit2
@@ -2623,6 +2680,10 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
     if (e712.permit2 == 1 && !permit2_flush()) return false;
     /* Display and absorb from the SAME buffer: no second read can differ. */
     if (!review_approved(eip712_confirm_leaf(field, bytes, len))) return false;
+    if (e712.root == 1 && erc20_permit_reviewable()) {
+      erc20_permit_capture(bytes, len);
+      if (unlimited_permit_text(field, bytes, len)) e712.erc20_unlimited = true;
+    }
   }
 
   const Eip712Frame* f = &e712.stack[e712.depth - 1];

@@ -807,7 +807,6 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_debug.h"
 #if !BITCOIN_ONLY
 #include "fsm_msg_ethereum.h"
-#include "fsm_msg_clearsign_attestor.h"
 #include "fsm_msg_nano.h"
 #include "fsm_msg_eos.h"
 #include "fsm_msg_cosmos.h"

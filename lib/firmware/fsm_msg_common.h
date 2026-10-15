@@ -174,6 +174,10 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
       Features_Capability_CAPABILITY_TRON_TRC20_REVIEW,
       Features_Capability_CAPABILITY_SOLANA_LUT_ATTESTATION,
       Features_Capability_CAPABILITY_CERTIFIED_CONTACTS,
+      /* 7.16 */
+      Features_Capability_CAPABILITY_EVM_CERTIFIED_INTENT,
+      Features_Capability_CAPABILITY_PERMIT2_REVIEW,
+      Features_Capability_CAPABILITY_SOLANA_CERTIFIED_REVIEW,
 #endif
   };
   _Static_assert(sizeof(capabilities) <= sizeof(resp->capabilities),
