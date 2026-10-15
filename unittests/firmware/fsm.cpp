@@ -2972,7 +2972,10 @@ TEST(Fsm, Erc7730PreloadEndsAtEverySessionBoundary) {
 }
 
 // A definition refused for AdvancedMode discards the partial preload too, so
-// a later chunk cannot continue it.
+// a later chunk cannot continue it. D-007 (ledger D8): a definition's tier is
+// known only once it is complete, so a well-formed partial chunk is accepted
+// without AdvancedMode; an uncertified definition is refused at completion
+// (Erc7730Certified tests).
 TEST(Fsm, Erc7730DefinitionRefusedWithoutAdvancedModeClearsPreload) {
   kk_test_board_init();
   fsm_init();
@@ -2996,14 +2999,24 @@ TEST(Fsm, Erc7730DefinitionRefusedWithoutAdvancedModeClearsPreload) {
   std::memcpy(definition.definition_id.bytes, id, sizeof(id));
   definition.offset = sizeof(head);
   definition.total_length = 300;
-  definition.data.size = sizeof(length);
-  std::memcpy(definition.data.bytes, length, sizeof(length));
+  // Empty: refused by the handler before the catalog sees it, so the clear
+  // checked below is the handler's own.
+  definition.data.size = 0;
   fsm_test_clearLastFailure();
   fsm_msgEthereumClearSignDefinition(&definition);
   EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
   EXPECT_EQ(erc7730_catalog_preload_chunk(id, sizeof(head), 300, length,
                                           sizeof(length), &next, &complete),
             ERC7730_CATALOG_BAD_SEQUENCE);
+
+  ASSERT_EQ(erc7730_catalog_preload_chunk(id, 0, 300, head, sizeof(head), &next,
+                                          &complete),
+            ERC7730_CATALOG_MORE);
+  definition.data.size = sizeof(length);
+  std::memcpy(definition.data.bytes, length, sizeof(length));
+  fsm_test_clearLastFailure();
+  fsm_msgEthereumClearSignDefinition(&definition);
+  EXPECT_EQ((FailureType)0, fsm_test_lastFailureCode());
   erc7730_catalog_clear_preload();
 }
 
@@ -4093,6 +4106,10 @@ TEST(Fsm, FeaturesReportExactlyTheStagedCapabilities) {
       Features_Capability_CAPABILITY_TRON_TRC20_REVIEW,
       Features_Capability_CAPABILITY_SOLANA_LUT_ATTESTATION,
       Features_Capability_CAPABILITY_CERTIFIED_CONTACTS,
+      /* 7.16 */
+      Features_Capability_CAPABILITY_EVM_CERTIFIED_INTENT,
+      Features_Capability_CAPABILITY_PERMIT2_REVIEW,
+      Features_Capability_CAPABILITY_SOLANA_CERTIFIED_REVIEW,
 #endif
   };
   EXPECT_EQ(expected, std::vector<Features_Capability>(

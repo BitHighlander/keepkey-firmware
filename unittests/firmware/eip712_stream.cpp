@@ -1808,18 +1808,23 @@ Bytes corpusValue(const std::vector<uint32_t>& path) {
 
 TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
   EXPECT_GE(kCorpus.size(), 61u);
-  // Max approvals sign, with the warning on the value's own screen.
-  const std::map<std::string, std::string> unlimited = {
-      {"permit2-PermitSingle-unlimited", "details.amount\nuint160: UNLIMITED"},
-      {"eip2612-Permit-unlimited", "value\nuint256: UNLIMITED"},
-      {"dai-Permit-allowed", "allowed\nbool: UNLIMITED (allowed)"},
+  // Max approvals sign, with the warning on the value's own screen. A
+  // canonical Permit2 states it in its review in words (SRS-7.16 §3.7),
+  // naming the spender and the token.
+  const std::map<std::string, std::vector<std::string>> unlimited = {
+      {"permit2-PermitSingle-unlimited",
+       {"Allow 0x66a9...A8Af to spend UNLIMITED USDC from this wallet until "
+        "2026-05-10 06:19 UTC",
+        "Spender may take\nUNLIMITED USDC"}},
+      {"eip2612-Permit-unlimited", {"value\nuint256: UNLIMITED"}},
+      {"dai-Permit-allowed", {"allowed\nbool: UNLIMITED (allowed)"}},
       {"safe-SafeTx-approve-unlimited",
-       "Allow 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45 to spend ALL your "
-       "USDC"},
+       {"Allow 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45 to spend ALL your "
+        "USDC"}},
       // A real MultiSend: approve(max) inside, then a CoW swap order.
       {"safe-SafeTx-multisend-approve-unlimited",
-       "Allow 0xC92E8bdf79f0507f65a392b0ab4667716BFE0110 to spend ALL your "
-       "WETH"},
+       {"Allow 0xC92E8bdf79f0507f65a392b0ab4667716BFE0110 to spend ALL your "
+        "WETH"}},
   };
   const std::set<std::string> unbindable = {"evmos-MsgSend",
                                             "injective-MsgSend-v2"};
@@ -1847,6 +1852,25 @@ TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
     std::vector<std::string> warned;
     for (size_t i = 0; i < titles.size(); i++)
       if (titles[i] == "UNLIMITED approval") warned.push_back(bodies[i]);
+    // A canonical Permit2 PermitSingle has no screen in the walk; the FSM
+    // shows this review, every value in words, before the signing screen.
+    const Eip712Next* next = eip712_stream_next();
+    EXPECT_EQ(next->permit2.valid, strcmp(doc.primary, "PermitSingle") == 0);
+    std::vector<std::pair<std::string, std::string>> review;
+    if (next->kind == EIP712_REQ_DONE && next->permit2.valid) {
+      EXPECT_TRUE(eip712_permit2_review(
+          &next->permit2, NULL, NULL, NULL, NULL,
+          [](void* ctx, const char* title, const char* body, const uint8_t*,
+             uint16_t) {
+            static_cast<std::vector<std::pair<std::string, std::string>>*>(ctx)
+                ->emplace_back(title, body);
+            return true;
+          },
+          &review));
+      for (const auto& screen : review)
+        if (screen.second.find("UNLIMITED") != std::string::npos)
+          warned.push_back(screen.second);
+    }
     // Real Safe batches (operation 1 to MultiSend, inner calls 0) read clean.
     EXPECT_EQ(std::count(titles.begin(), titles.end(), "Delegatecall"), 0);
     EXPECT_EQ(std::count(titles.begin(), titles.end(), "Delegatecall in batch"),
@@ -1857,9 +1881,8 @@ TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
       EXPECT_TRUE(warned.empty());
     } else {
       warned_docs++;
-      EXPECT_EQ(warned, std::vector<std::string>{expect->second});
+      EXPECT_EQ(warned, expect->second);
     }
-    const Eip712Next* next = eip712_stream_next();
     EXPECT_FALSE(g_missing_value);
     // Ethermint domains (string verifyingContract and salt) sign, unbound.
     EXPECT_EQ(g_bindable, unbindable.count(doc.id) ? 0 : 1);
@@ -1871,7 +1894,13 @@ TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
       eip712_stream_abort();
       continue;
     }
-    EXPECT_GE(used, doc.leaves);
+    if (next->permit2.valid) {
+      // Its eight review screens state all nine leaves.
+      EXPECT_EQ(used, 0);
+      EXPECT_EQ(review.size(), 8u);
+    } else {
+      EXPECT_GE(used, doc.leaves);
+    }
     // Values over one ValueAck (Safe MultiSend data, a Snapshot body) were
     // sent in chunks.
     size_t widest = 0;

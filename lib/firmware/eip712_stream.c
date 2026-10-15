@@ -2323,7 +2323,11 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
           fail("EIP-712 member path too long for this device");
           return false;
         }
-        if (!review_approved(eip712_confirm_struct(&m->type))) return false;
+        /* Canonical Permit2 is described in words (SRS-7.16 §3.7); its type
+         * hash fixes this member's struct type, so it has no screen here. */
+        if (e712.permit2 != 2 &&
+            !review_approved(eip712_confirm_struct(&m->type)))
+          return false;
         child->slot_base = f->slot_base + f->member_count;
         e712.depth++;
         begin_type_hash();
