@@ -64,6 +64,9 @@ std::vector<std::string> kkconfirm_capture_finish(void);
 std::vector<std::string> kkconfirm_captured_titles(void);
 bool kkconfirm_openDebugPeer(void);
 bool kkconfirm_readDebugFrame(uint8_t frame[64]);
+void kkconfirm_capture_start(void);
+std::vector<std::string> kkconfirm_capture_finish(void);
+std::vector<std::string> kkconfirm_capture_titles(void);
 extern "C" void keepkey_user_activity(void);  // lib/firmware/home_sm.c
 
 // Auto-lock reads home_clock_ms(). The real 1 ms tick would make the deadline
@@ -3478,6 +3481,49 @@ TEST(DiceCeremonyPrivacy, AbortClearsConfirmTextBeforeDiagnosticsResume) {
   EXPECT_FALSE(reset_debug_is_private());
   EXPECT_STREQ("", confirm_debug_title());
   EXPECT_STREQ("", confirm_debug_body());
+}
+
+TEST(Fsm, DebugLinkConfirmationTextTracksEveryPage) {
+  struct Cleanup {
+    ~Cleanup() {
+      kk_test_set_poll_hook({});
+      kkconfirm_capture_finish();
+      kkconfirm_drain();
+      confirm_debug_clear();
+    }
+  } cleanup;
+  const std::string body =
+      "first alpha beta gamma delta epsilon zeta eta theta iota kappa lambda "
+      "middle mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega "
+      "last alpha beta gamma delta epsilon zeta eta theta iota kappa lambda";
+  for (bool constant_power : {false, true}) {
+    SCOPED_TRACE(constant_power);
+    ASSERT_TRUE(kkconfirm_preload(20, 0));
+    confirm_debug_clear();
+    std::vector<std::string> reported_bodies, reported_titles;
+    kk_test_set_poll_hook([&] {
+      const std::string shown = confirm_debug_body();
+      if (reported_bodies.empty() || reported_bodies.back() != shown) {
+        reported_bodies.push_back(shown);
+        reported_titles.emplace_back(confirm_debug_title());
+      }
+    });
+    kkconfirm_capture_start();
+    const bool ok = constant_power
+        ? confirm_constant_power_paged(ButtonRequestType_ButtonRequest_Other,
+                                       "Page", "1. abandon\n2. ability\n3. able\n4. about\n"
+                                       "5. above\n6. absent\n7. absorb\n8. abstract")
+        : confirm(ButtonRequestType_ButtonRequest_Other, "Page", "%s",
+                  body.c_str());
+    kk_test_set_poll_hook({});
+    const auto displayed = kkconfirm_capture_finish();
+    ASSERT_TRUE(ok);
+    ASSERT_GT(displayed.size(), 1u);
+    EXPECT_EQ(displayed, reported_bodies);
+    EXPECT_EQ(kkconfirm_capture_titles(), reported_titles);
+    if (!constant_power) EXPECT_NE(std::string::npos, reported_titles[0].find("1/"));
+    kkconfirm_drain();
+  }
 }
 
 TEST(Fsm, Bip85CompletionAndCancelClearConfirmText) {
