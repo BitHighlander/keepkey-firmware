@@ -63,6 +63,7 @@
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/signtx_tendermint.h"
 #include "keepkey/firmware/signed_metadata.h"
+#include "keepkey/firmware/contact_book.h"
 #include "keepkey/firmware/solana.h"
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/tendermint.h"
@@ -657,8 +658,10 @@ static bool fsm_dispatchGate(MessageType msg_id) {
       switch (msg_id) {
 #if !BITCOIN_ONLY
         case MessageType_MessageType_EthereumClearSignDefinition:
-        case MessageType_MessageType_EthereumSignTx:
         case MessageType_MessageType_EthereumSignTypedData:
+          contact_book_clear(); /* only a send is labelled */
+          /* fallthrough */
+        case MessageType_MessageType_EthereumSignTx:
           /* The preload's own chunks and its consumers keep it. */
           abort_signing_engines();
           break;
@@ -773,13 +776,16 @@ static void abort_signing_engines(void) {
  * PIN entry clears the session while checking the entered digits against the
  * wipe code.
  *
- * A preloaded ERC-7730 definition is consumed only by the signing request that
- * follows it. Every other abort -- Initialize, Cancel, ClearSession, autolock,
- * a rejected frame or any unrelated request -- discards it too. */
+ * A preloaded ERC-7730 definition is for the next signing request only, and
+ * any message that reaches this abort discards it. Messages that return
+ * earlier in keepkey_before_message_dispatch() keep it: the status requests
+ * answered there (GetFeatures, GetCoinTable, unprotected Ping), an active
+ * workflow's own acks, and the preload's own chunks and consumers. */
 void fsm_abort_signing_workflows(void) {
   abort_signing_engines();
 #if !BITCOIN_ONLY
   erc7730_catalog_clear_preload();
+  contact_book_clear(); /* as the preload: next signing request only */
 #endif
 }
 
@@ -808,6 +814,7 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_debug.h"
 #if !BITCOIN_ONLY
 #include "fsm_msg_ethereum.h"
+#include "fsm_msg_clearsign_attestor.h"
 #include "fsm_msg_nano.h"
 #include "fsm_msg_eos.h"
 #include "fsm_msg_cosmos.h"

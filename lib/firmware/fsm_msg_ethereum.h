@@ -2,6 +2,10 @@
 #include "keepkey/firmware/erc7730_capabilities.h"
 #include "keepkey/firmware/erc7730_field.h"
 #include "keepkey/firmware/erc7730_workflow.h"
+#include "keepkey/firmware/contact_book.h"
+
+/* Defined in fsm_msg_clearsign_attestor.h, included later into fsm.c. */
+static HDNode* attestor_getNode(void);
 
 /*
  * This file is part of the Keepkey project
@@ -1729,7 +1733,15 @@ void fsm_msgEthereumClearSignDefinitionChunk(
 
 void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
   CHECK_INITIALIZED
-  if (!storage_isPolicyEnabled("AdvancedMode")) {
+
+  /* An address-book proof (KKABPRF1) is signed by this wallet's own attestor
+   * key and only labels a plain recipient; it never enables blind signing, so
+   * it needs no AdvancedMode. */
+  const bool contact_proof =
+      msg->has_signed_payload && msg->signed_payload.size >= 8 &&
+      memcmp(msg->signed_payload.bytes, "KKABPRF1", 8) == 0;
+
+  if (!contact_proof && !storage_isPolicyEnabled("AdvancedMode")) {
     ethereum_signing_abort();
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     _("AdvancedMode required for clearsign metadata"));
@@ -1749,6 +1761,25 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
               _("clearsign metadata key_id out of range"));
 
   RESP_INIT(EthereumMetadataAck);
+
+  /* One metadata message per transaction, the last one wins: a contact proof
+   * replaces any contract description and vice versa, so a label can never
+   * ride along with (or stand in for) a certified description. */
+  contact_book_clear();
+  if (contact_proof) {
+    signed_metadata_clear();
+    HDNode* node = attestor_getNode();
+    if (!node) return;
+    const bool ok = contact_book_process_proof(
+        msg->signed_payload.bytes, msg->signed_payload.size, node->public_key);
+    memzero(node, sizeof(*node));
+    resp->classification = ok ? METADATA_VERIFIED : METADATA_MALFORMED;
+    resp->has_display_summary = true;
+    strlcpy(resp->display_summary, ok ? "Contact verified" : "Invalid contact",
+            sizeof(resp->display_summary));
+    msg_write(MessageType_MessageType_EthereumMetadataAck, resp);
+    return;
+  }
 
   MetadataClassification result = signed_metadata_process(
       msg->signed_payload.bytes, msg->signed_payload.size,

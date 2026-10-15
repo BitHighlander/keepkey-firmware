@@ -134,6 +134,7 @@ void fsm_msgEthereumClearSignDefinition(const EthereumClearSignDefinition* msg);
 void fsm_msgEthereumClearSignDefinitionChunk(
     const EthereumClearSignDefinitionChunk* msg);
 void fsm_msgLoadClearsignSigner(const LoadClearsignSigner* msg);
+void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg);
 
 void fsm_msgNanoGetAddress(NanoGetAddress* msg);
 void fsm_msgNanoSignTx(NanoSignTx* msg);

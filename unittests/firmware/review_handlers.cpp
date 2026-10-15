@@ -2472,7 +2472,6 @@ TEST_F(ReviewHandlers, MayaDepositGrammarRejectedBeforeConsent) {
   EXPECT_FALSE(mayachain_signingIsInited());
   EXPECT_EQ(2, kkconfirm_drain());
 }
-
 // Construct the expected amino document independently of Maya's serializer.
 // A deposit memo and an outer MsgSend memo are separate signed paths.
 static bool maya_memo_session(bool deposit, const char* memo,
