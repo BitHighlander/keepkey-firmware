@@ -6,6 +6,12 @@ extern "C" {
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/reset.h"
 #include "keepkey/firmware/bip85.h"
+#include "keepkey/firmware/signed_metadata.h"
+#include "keepkey/firmware/eip712_stream.h"
+#include "keepkey/board/canvas.h"
+#include "trezor/crypto/ecdsa.h"
+#include "trezor/crypto/secp256k1.h"
+#include "trezor/crypto/sha3.h"
 #include "storage.h"
 }
 #include "gtest/gtest.h"
@@ -20,6 +26,8 @@ extern "C" {
 }
 
 bool kkconfirm_preload(int, int);
+bool kkconfirm_readResponse(uint16_t, const pb_field_t*, void*);
+extern "C" bool keepkey_before_message_dispatch(MessageType);
 void kkconfirm_capture_start(void);
 std::vector<std::string> kkconfirm_capture_finish(void);
 int kkconfirm_drain(void);
@@ -43,6 +51,9 @@ class ReviewHandlers : public ::testing::Test {
   void TearDown() override {
     fsm_abort_workflows();
     kkconfirm_drain();
+#if !BITCOIN_ONLY
+    signed_metadata_clear_signers();
+#endif
     storage_wipe();
     storage_reset();
     emulator_flash_base = previous;
@@ -138,6 +149,191 @@ TEST_F(ReviewHandlers, ResetBackupCommitsAllStrengthsAndClearsScratch) {
 }
 
 #if !BITCOIN_ONLY
+static const uint32_t ping_signing_path[] = {0x8000002c, 0x8000003c, 0x80000000,
+                                             0, 0};
+
+static void answer_eip712_ping_structs() {
+  for (int i = 0; i < 32 && eip712_stream_next()->kind == EIP712_REQ_STRUCT;
+       ++i) {
+    EthereumTypedDataStructAck definition = {};
+    if (strcmp(eip712_stream_next()->struct_name, "Note") == 0) {
+      definition.members_count = 2;
+      for (int member = 0; member < 2; ++member) {
+        strcpy(definition.members[member].name, member ? "second" : "first");
+        definition.members[member].type.data_type =
+            EthereumTypedDataStructAck_EthereumDataType_STRING;
+      }
+    } else {
+      ASSERT_STREQ("EIP712Domain", eip712_stream_next()->struct_name);
+    }
+    fsm_msgEthereumTypedDataStructAck(&definition);
+  }
+  ASSERT_EQ(EIP712_WANT_VALUE, eip712_stream_waiting());
+}
+
+static void start_eip712_ping_stream() {
+  EthereumSignTypedData start = {};
+  start.address_n_count = 5;
+  memcpy(start.address_n, ping_signing_path, sizeof(ping_signing_path));
+  strcpy(start.primary_type, "Note");
+  fsm_msgEthereumSignTypedData(&start);
+  answer_eip712_ping_structs();
+  ASSERT_FALSE(::testing::Test::HasFatalFailure());
+  EthereumTypedDataValueAck first = {};
+  first.value.size = 5;
+  memcpy(first.value.bytes, "first", 5);
+  fsm_msgEthereumTypedDataValueAck(&first);
+  answer_eip712_ping_structs();
+}
+
+TEST_F(ReviewHandlers,
+       Eip712UnprotectedPingPreservesReviewAndSignsExpectedDigest) {
+  // Two value screens, followed by the paged action/account confirmation.
+  ASSERT_TRUE(kkconfirm_preload(4, 0));
+  start_eip712_ping_stream();
+  ASSERT_EQ(0, fsm_test_lastFailureCode());
+  ASSERT_EQ(EIP712_WANT_VALUE, eip712_stream_waiting());
+  EXPECT_TRUE(fsm_workflowInProgress());
+  const Eip712Next waiting = *eip712_stream_next();
+  const Canvas* canvas = layout_get_canvas();
+  ASSERT_NE(nullptr, canvas);
+  const size_t bytes = canvas->width * canvas->height;
+  const std::vector<uint8_t> signing(canvas->buffer, canvas->buffer + bytes);
+
+  ASSERT_TRUE(keepkey_before_message_dispatch(MessageType_MessageType_Ping));
+  Ping ping = {};
+  ping.has_message = true;
+  strcpy(ping.message, "between values");
+  fsm_msgPing(&ping);
+  EXPECT_EQ(EIP712_WANT_VALUE, eip712_stream_waiting());
+  EXPECT_TRUE(fsm_workflowInProgress());
+  EXPECT_EQ(signing,
+            std::vector<uint8_t>(canvas->buffer, canvas->buffer + bytes));
+  EXPECT_EQ(waiting.kind, eip712_stream_next()->kind);
+  EXPECT_EQ(waiting.member_path_len, eip712_stream_next()->member_path_len);
+  EXPECT_EQ(0, memcmp(waiting.member_path, eip712_stream_next()->member_path,
+                      waiting.member_path_len * sizeof(uint32_t)));
+  Success pong = {};
+  ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_Success,
+                                     Success_fields, &pong));
+  EXPECT_STREQ("between values", pong.message);
+
+  EthereumTypedDataValueAck second = {};
+  second.value.size = 6;
+  memcpy(second.value.bytes, "second", 6);
+  fsm_msgEthereumTypedDataValueAck(&second);
+  ASSERT_EQ(0, fsm_test_lastFailureCode()) << fsm_test_lastFailureMessage();
+  EXPECT_EQ(EIP712_IDLE, eip712_stream_waiting());
+  EthereumTypedDataSignature response = {};
+  ASSERT_TRUE(
+      kkconfirm_readResponse(MessageType_MessageType_EthereumTypedDataSignature,
+                             EthereumTypedDataSignature_fields, &response));
+  ASSERT_EQ(65u, response.signature.size);
+
+  // Independent EIP-712 encoding for Note(string first,string second).
+  uint8_t type_hash[32], domain[32], message[32], encoded[96], preimage[66],
+      digest[32];
+  const char* domain_type = "EIP712Domain()";
+  keccak_256(reinterpret_cast<const uint8_t*>(domain_type), strlen(domain_type),
+             type_hash);
+  keccak_256(type_hash, sizeof(type_hash), domain);
+  const char* note_type = "Note(string first,string second)";
+  keccak_256(reinterpret_cast<const uint8_t*>(note_type), strlen(note_type),
+             encoded);
+  keccak_256(reinterpret_cast<const uint8_t*>("first"), 5, encoded + 32);
+  keccak_256(reinterpret_cast<const uint8_t*>("second"), 6, encoded + 64);
+  keccak_256(encoded, sizeof(encoded), message);
+  preimage[0] = 0x19;
+  preimage[1] = 0x01;
+  memcpy(preimage + 2, domain, 32);
+  memcpy(preimage + 34, message, 32);
+  keccak_256(preimage, sizeof(preimage), digest);
+  EXPECT_EQ(0, memcmp(domain, response.domain_separator_hash.bytes, 32));
+  EXPECT_EQ(0, memcmp(message, response.message_hash.bytes, 32));
+  HDNode expected = {};
+  ASSERT_TRUE(storage_getRootNode("secp256k1", true, &expected));
+  for (uint32_t index : ping_signing_path)
+    ASSERT_TRUE(hdnode_private_ckd(&expected, index));
+  hdnode_fill_public_key(&expected);
+  EXPECT_EQ(0, ecdsa_verify_digest(&secp256k1, expected.public_key,
+                                   response.signature.bytes, digest));
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
+TEST_F(ReviewHandlers, Eip712ProtectedPingAbortsTheOlderStream) {
+  for (int protection = 0; protection < 4; ++protection) {
+    // Button protection is exercised with both approval and cancellation.
+    ASSERT_TRUE(
+        kkconfirm_preload(protection == 0 ? 2 : 1, protection == 1 ? 1 : 0));
+    fsm_test_clearLastFailure();
+    start_eip712_ping_stream();
+    ASSERT_EQ(EIP712_WANT_VALUE, eip712_stream_waiting());
+    ASSERT_TRUE(keepkey_before_message_dispatch(MessageType_MessageType_Ping));
+    Ping ping = {};
+    ping.has_button_protection = protection < 2;
+    ping.button_protection = protection < 2;
+    ping.has_pin_protection = ping.pin_protection = protection == 2;
+    ping.has_passphrase_protection = ping.passphrase_protection =
+        protection == 3;
+    fsm_msgPing(&ping);
+    EXPECT_EQ(EIP712_IDLE, eip712_stream_waiting());
+    EXPECT_EQ(protection == 1 ? FailureType_Failure_ActionCancelled : 0,
+              fsm_test_lastFailureCode());
+    EthereumTypedDataSignature response = {};
+    EXPECT_FALSE(kkconfirm_readResponse(
+        MessageType_MessageType_EthereumTypedDataSignature,
+        EthereumTypedDataSignature_fields, &response));
+    EXPECT_EQ(0, kkconfirm_drain());
+  }
+}
+
+static const uint8_t review_pubkey[33] = {
+    0x02, 0xe3, 0xb3, 0x01, 0x5c, 0x47, 0xdd, 0xca, 0xab, 0xe4, 0xf8,
+    0xe8, 0x72, 0xf1, 0xed, 0x8f, 0x09, 0xca, 0x14, 0x5a, 0x8d, 0x81,
+    0x77, 0x0d, 0x92, 0x21, 0x3d, 0x56, 0xda, 0x31, 0xab, 0x51, 0x07};
+
+TEST_F(ReviewHandlers, SessionEndClearsRuntimeSignerAndAlias) {
+  ASSERT_TRUE(signed_metadata_store_signer(3, review_pubkey, "Session signer",
+                                           nullptr, 0, 0, 0, false));
+  ASSERT_TRUE(signed_metadata_signer_is_runtime(3));
+  ASSERT_NE(nullptr, signed_metadata_signer_alias(3));
+  ClearSession clear = {};
+  fsm_msgClearSession(&clear);
+  EXPECT_FALSE(signed_metadata_signer_is_runtime(3));
+  EXPECT_EQ(nullptr, signed_metadata_signer_alias(3));
+
+  ASSERT_TRUE(signed_metadata_store_signer(3, review_pubkey, "Next session",
+                                           nullptr, 0, 0, 0, false));
+  Initialize initialize = {};
+  fsm_msgInitialize(&initialize);
+  EXPECT_FALSE(signed_metadata_signer_is_runtime(3));
+  EXPECT_EQ(nullptr, signed_metadata_signer_alias(3));
+}
+
+TEST_F(ReviewHandlers, ReopeningFlashClearsRuntimeSigner) {
+  ASSERT_TRUE(signed_metadata_store_signer(3, review_pubkey, "Old wallet",
+                                           nullptr, 0, 0, 0, false));
+  ASSERT_TRUE(signed_metadata_signer_is_runtime(3));
+  storage_init();
+  EXPECT_FALSE(signed_metadata_signer_is_runtime(3));
+  EXPECT_EQ(nullptr, signed_metadata_signer_alias(3));
+}
+
+TEST_F(ReviewHandlers, MetadataKeyIdRefusesNarrowingBeforeAck) {
+  // The handler's AdvancedMode gate (added after 00b's version of this test)
+  // answers ActionCancelled first; enable it so the key_id check is reached.
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+  for (uint32_t key_id :
+       {static_cast<uint32_t>(METADATA_MAX_KEYS), 256u, 0xffffffffu}) {
+    EthereumTxMetadata msg = {};
+    msg.has_key_id = true;
+    msg.key_id = key_id;
+    fsm_test_clearLastFailure();
+    fsm_msgEthereumTxMetadata(&msg);
+    EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+  }
+}
+
 TEST_F(ReviewHandlers, Bip85DerivationMatchesIndependentBip32Oracle) {
   char child[241] = {};
   ASSERT_TRUE(bip85_derive_mnemonic(12, 0, child, sizeof(child)));
@@ -166,6 +362,44 @@ TEST_F(ReviewHandlers, Bip85DerivationMatchesIndependentBip32Oracle) {
     for (char byte : page) EXPECT_EQ(0, byte);
   for (char byte : mnemonic_scratch_display) EXPECT_EQ(0, byte);
   for (char byte : mnemonic_scratch_word) EXPECT_EQ(0, byte);
+}
+
+// The consent screen for a runtime clear-sign signer must render the identity
+// the way every later per-transaction identity screen will. A ZCASH_PRIVACY
+// build stores no session icons, so it must not draw the host icon at
+// consent either. Observable through the body width: an alias that fits one
+// screen at BODY_WIDTH but not beside an icon pages only when the icon is
+// drawn.
+TEST_F(ReviewHandlers, ClearsignSignerConsentDrawsTheIconOnlyWhereItIsKept) {
+  static const uint8_t kIcon[] = {0x04, 0xFF};  // 2x2, one run of four
+  const char fingerprint[] = "0123456789abcdef";
+  std::string alias;
+  for (size_t n = 1; n <= METADATA_ALIAS_MAX_LEN; ++n) {
+    const std::string candidate(n, 'W');
+    char body[160];
+    snprintf(body, sizeof(body),
+             "Trust '%s' (%s) for this session to describe transactions? NOT "
+             "verified by KeepKey.",
+             candidate.c_str(), fingerprint);
+    if (confirm_body_fits(body, BODY_WIDTH) &&
+        !confirm_body_fits(body, BODY_WIDTH_WITH_ICON)) {
+      alias = candidate;
+      break;
+    }
+  }
+  ASSERT_FALSE(alias.empty()) << "no alias separates the two body widths";
+
+  ASSERT_TRUE(kkconfirm_preload(4, 0));
+  kkconfirm_capture_start();
+  EXPECT_TRUE(signed_metadata_confirm_load(alias.c_str(), fingerprint, kIcon, 2,
+                                           2, sizeof(kIcon)));
+  const auto screens = kkconfirm_capture_finish();
+  (void)kkconfirm_drain();
+#if ZCASH_PRIVACY
+  EXPECT_EQ(1u, screens.size()) << "icon drawn at consent but never again";
+#else
+  EXPECT_GT(screens.size(), 1u) << "icon kept for the session but not shown";
+#endif
 }
 
 // Handler-level regression for the BIP-85 pager. Index 84 of this seed is a

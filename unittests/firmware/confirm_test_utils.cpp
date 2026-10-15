@@ -66,6 +66,10 @@ void kkconfirm_capture_start(void) {
   captured_titles.clear();
   capture_screens = true;
 }
+// Titles of the last capture, in screen order.
+std::vector<std::string> kkconfirm_captured_titles(void) {
+  return captured_titles;
+}
 std::vector<std::string> kkconfirm_capture_finish(void) {
   capture_screens = false;
   return std::move(captured_screens);
@@ -264,8 +268,8 @@ bool kkconfirm_openDebugPeer(void) {
   addr.sin_port = htons(11045);  // emulator debug "usb" port
   addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   static const char ping[] = {'P', 'I', 'N', 'G', 'P', 'I', 'N', 'G'};
-  if (sendto(kkconfirm_debug_fd, ping, sizeof(ping), 0,
-             (struct sockaddr*)&addr, sizeof(addr)) != (ssize_t)sizeof(ping))
+  if (sendto(kkconfirm_debug_fd, ping, sizeof(ping), 0, (struct sockaddr*)&addr,
+             sizeof(addr)) != (ssize_t)sizeof(ping))
     return false;
   if (kkconfirm_drain() != 0) return false;  // polls the ports
   uint8_t pong[64] = {};
@@ -292,8 +296,9 @@ std::thread kkconfirm_answerPinMatrix(const std::string& pin) {
     PinMatrixRequest request = {};
     bool requested = false;
     for (int i = 0; i < 25 && !requested; ++i) {
-      requested = kkconfirm_readResponse(MessageType_MessageType_PinMatrixRequest,
-                                         PinMatrixRequest_fields, &request);
+      requested =
+          kkconfirm_readResponse(MessageType_MessageType_PinMatrixRequest,
+                                 PinMatrixRequest_fields, &request);
     }
     const std::string matrix = get_pin_matrix();
     std::string positions;
