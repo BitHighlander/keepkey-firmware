@@ -633,7 +633,7 @@ static struct {
   bool erc20_unlimited;
   uint8_t erc20_spender[20];
   uint8_t erc20_deadline[32];
-  uint8_t requested;    /* types index of the outstanding StructRequest */
+  uint8_t requested; /* types index of the outstanding StructRequest */
   Eip712Closure closure;
   uint8_t closure_index;
 } e712;
@@ -1444,7 +1444,8 @@ static bool permit2_domain_ok(const uint8_t domain_type_hash[32]) {
   const Eip712DomainFacts* f = &e712.domain_facts;
   return f->has_chain_id && f->has_verifying_contract &&
          memcmp(f->verifying_contract, EIP712_PERMIT2_ADDRESS, 20) == 0 &&
-         f->domain_present == (0x01 | 0x08 | 0x10) && hash_is(f->domain_hashes[0], "Permit2") &&
+         f->domain_present == (0x01 | 0x08 | 0x10) &&
+         hash_is(f->domain_hashes[0], "Permit2") &&
          hash_is(domain_type_hash,
                  "EIP712Domain(string name,uint256 chainId,"
                  "address verifyingContract)");

@@ -440,9 +440,8 @@ bool fsm_workflowInProgress(void) {
       erc7730_workflow_active(erc7730_workflow_state()) ||
       tendermint_signingIsInited(TENDERMINT_SIGNING_COSMOS) ||
       tendermint_signingIsInited(TENDERMINT_SIGNING_GENERIC) ||
-      osmosis_signingIsInited() ||
-      eos_signingIsInited() || thorchain_signingIsInited() ||
-      mayachain_signingIsInited()) {
+      osmosis_signingIsInited() || eos_signingIsInited() ||
+      thorchain_signingIsInited() || mayachain_signingIsInited()) {
     return true;
   }
 #endif
