@@ -1053,6 +1053,70 @@ TEST(Fsm, UserActivityRenewsTheAutoLockDeadline) {
   layoutHomeForced();
 }
 
+TEST(Fsm, DebugLinkConfirmationRenewsTheAutoLockDeadline) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  kkconfirm_drain();
+  ScopedFlash flash;
+  fsm_init();
+  loadAllWallet();
+  storage_setPin("1234");
+  layoutHomeForced();
+  reset_idle_time();
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+
+  // Exercise the wire confirmation, not the activity hook directly.
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  Ping ping = {};
+  ping.has_button_protection = ping.button_protection = true;
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+  kkconfirm_drain();
+  ASSERT_EQ((FailureType)0, fsm_test_lastFailureCode());
+
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  toggle_screensaver();
+  EXPECT_EQ(AT_HOME, home_get_state());
+  EXPECT_TRUE(session_isPinCached());
+  advance_clock(1);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+  EXPECT_FALSE(session_isPinCached());
+  layoutHomeForced();
+}
+
+TEST(Fsm, HostOnlyMessagesDoNotRenewTheAutoLockDeadline) {
+  kk_test_board_init();
+  ScopedFlash flash;
+  fsm_init();
+  for (auto id : {MessageType_MessageType_Ping,
+                  MessageType_MessageType_GetFeatures,
+                  MessageType_MessageType_Initialize}) {
+    SCOPED_TRACE((int)id);
+    loadAllWallet();
+    storage_setPin("1234");
+    layoutHomeForced();
+    reset_idle_time();
+    advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+    Ping ping = {};
+    GetFeatures features = {};
+    Initialize initialize = {};
+    fsm_test_clearLastFailure();
+    if (id == MessageType_MessageType_Ping)
+      receiveMessage(id, Ping_fields, &ping);
+    else if (id == MessageType_MessageType_GetFeatures)
+      receiveMessage(id, GetFeatures_fields, &features);
+    else
+      receiveMessage(id, Initialize_fields, &initialize);
+    ASSERT_EQ((FailureType)0, fsm_test_lastFailureCode());
+    ASSERT_TRUE(session_isPinCached());
+    advance_clock(1);
+    toggle_screensaver();
+    EXPECT_EQ(SCREENSAVER, home_get_state());
+    EXPECT_FALSE(session_isPinCached());
+    layoutHomeForced();
+  }
+}
+
 namespace {
 struct ScopedIdleClockInterrupt {
   ScopedIdleClockInterrupt() {
