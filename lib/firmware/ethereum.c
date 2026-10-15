@@ -916,6 +916,18 @@ static bool ethereum_signing_check(const EthereumSignTx* msg) {
   return true;
 }
 
+static bool ethereum_warnUnlimitedOrAbort(const EthereumSignTx* msg) {
+  if (ethereum_confirmUnlimitedApproval(msg->has_chain_id ? msg->chain_id : 0,
+                                        msg->data_initial_chunk.bytes + 16,
+                                        msg->to.bytes)) {
+    return true;
+  }
+  fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                  "Signing cancelled by user");
+  ethereum_signing_abort();
+  return false;
+}
+
 void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
                            bool needs_confirm) {
   char confirm_body_message[ETHEREUM_CONFIRM_BODY_SIZE] = {0};
@@ -1089,6 +1101,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
 
   // Match the selector alone. Pre-0.8 Solidity masks the spender word's high
   // bytes, so a dirty spender word still grants the allowance on chain.
+  bool unlimited_deferred = false;
   if (msg->has_to && msg->to.size == 20 && data_total >= 68 &&
       ethereum_isAllowanceSelector(msg->data_initial_chunk.bytes, 4)) {
     if (!ethereum_allowanceIsWellFormed(msg)) {
@@ -1098,15 +1111,14 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       return;
     }
     // Native value cannot exempt a payable token from this warning. It comes
-    // before any contract, metadata or generic screen, so none can mask it.
-    if (ethereum_allowanceIsUnlimited(msg) &&
-        !ethereum_confirmUnlimitedApproval(
-            msg->has_chain_id ? msg->chain_id : 0,
-            msg->data_initial_chunk.bytes + 16, msg->to.bytes)) {
-      fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                      "Signing cancelled by user");
-      ethereum_signing_abort();
-      return;
+    // before any contract, metadata or generic screen, so none can mask it,
+    // except a certified review (SRS-7.16 R-7.4): its summary states the
+    // amount as UNLIMITED <symbol>, so the warning waits for that review and
+    // is shown only if the review does not run.
+    if (ethereum_allowanceIsUnlimited(msg)) {
+      unlimited_deferred =
+          signed_metadata_certified_states_allowance(msg, chain_id);
+      if (!unlimited_deferred && !ethereum_warnUnlimitedOrAbort(msg)) return;
     }
   }
 
@@ -1172,6 +1184,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
         if (signed_metadata_may_suppress(chain_id)) {
           needs_confirm = signed_metadata_schema_moves_value();
           data_needs_confirm = false;
+          unlimited_deferred = false;  // the certified review stated it
         } else {
           /* Runtime signer: annotation only; the raw review stays. */
           needs_confirm = true;
@@ -1185,6 +1198,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       }
     }
   }
+  if (unlimited_deferred && !ethereum_warnUnlimitedOrAbort(msg)) return;
   // Keep metadata only when its decoded screens were approved, so their
   // attestation remains bound to the signature. Otherwise prevent stale reuse
   // when contractHandled / ERC-20 paths bypassed metadata review.

@@ -2700,6 +2700,54 @@ TEST_F(CertifiedMetadataTest, IntentSchemaWithoutValueRoleKeepsTheValueScreen) {
   EXPECT_TRUE(signed_metadata_schema_moves_value());
 }
 
+/* SRS-7.16 R-7.4: a certified approve opens with its summary, which states
+ * the allowance as UNLIMITED <symbol>, so ethereum.c's separate warning waits
+ * for it. Only the certified tier, on its chain, with the amount word decoded
+ * as a token amount, says so. */
+TEST_F(CertifiedMetadataTest, CertifiedApproveIntentStatesTheAllowance) {
+  static const uint8_t PERMIT2[20] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x22, 0xd4,
+                                      0x73, 0x03, 0x0f, 0x11, 0x6d, 0xde, 0xe9,
+                                      0xf6, 0xb4, 0x3a, 0xc7, 0x8b, 0xa3};
+  static const uint8_t SEL_APPROVE[4] = {0x09, 0x5e, 0xa7, 0xb3};
+  IntentSpec s;
+  s.v2 = v2_base_spec();
+  s.v2.selector.assign(SEL_APPROVE, SEL_APPROVE + 4);
+  s.v2.method = "approve";
+  s.v2.args.clear();
+  s.v2.args.push_back(v2_pinned("Spender", PERMIT2, 20));
+  s.v2.args.push_back(v2_token("Allowance", 6, "USDC"));
+  s.roles = {METADATA_ROLE_NONE, METADATA_ROLE_ALLOWANCE};
+  s.value_role = METADATA_ROLE_NONE;
+  s.title = "Uniswap";
+  s.intent = "Let the Uniswap approval contract spend up to {1}";
+
+  std::vector<uint8_t> data(SEL_APPROVE, SEL_APPROVE + 4);
+  put_addr_word(data, PERMIT2);
+  for (int i = 0; i < 32; i++) data.push_back(0xff);
+  EthereumSignTx msg;
+  make_v2_msg(&msg, s.v2.contract.data(), data, true, (uint32_t)data.size());
+
+  std::vector<uint8_t> body = sign_body(build_intent_body(s));
+  ASSERT_EQ(METADATA_VERIFIED,
+            signed_metadata_process(body.data(), body.size(), TEST_KEY_ID));
+  EXPECT_FALSE(signed_metadata_certified_states_allowance(&msg, 1));
+
+  ASSERT_EQ(METADATA_VERIFIED,
+            Process(envelope(mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+                                       EXPECTED_SLOT3_PUB),
+                             body)));
+  EXPECT_TRUE(signed_metadata_certified_states_allowance(&msg, 1));
+  EXPECT_FALSE(signed_metadata_certified_states_allowance(&msg, 137));
+
+  // A plain amount names no token: the warning stays.
+  s.v2.args[1] = V2Arg{"Allowance", ARG_FORMAT_AMOUNT, 0, "", {}};
+  ASSERT_EQ(METADATA_VERIFIED,
+            Process(envelope(mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+                                       EXPECTED_SLOT3_PUB),
+                             sign_body(build_intent_body(s)))));
+  EXPECT_FALSE(signed_metadata_certified_states_allowance(&msg, 1));
+}
+
 /* v0x06: a vouched address name (Permit2 spender). It names, never describes
  * a transaction, and only the KeepKey-certified tier can supply it. */
 namespace {
