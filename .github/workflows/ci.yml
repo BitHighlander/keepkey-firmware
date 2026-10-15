@@ -278,6 +278,7 @@ jobs:
       - name: Validate release report evidence gates
         run: |
           python3 -B -m unittest scripts/test_preflight_cppcheck.py
+          python3 -B -m unittest discover -s unittests/firmware -p test_eip712_corpus_gen.py -v
           # The SRAM gate must keep refusing unbounded (dynamic) stack frames.
           pip install --quiet --require-hashes -r tools/requirements-sram.txt
           PYTHONPATH=tools python3 -B -m unittest tools/test_check_sram_budget.py
