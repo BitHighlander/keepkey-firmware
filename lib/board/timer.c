@@ -29,6 +29,7 @@
 #include <windows.h>        /* Sleep() */
 #else
 #include <signal.h>
+#include <time.h>
 #include <unistd.h>
 #endif
 #endif
@@ -329,17 +330,43 @@ void delay_us(uint32_t us) {
  * OUTPUT
  *     none
  */
+#ifdef EMULATOR
+static uint64_t tick_due_ms;
+
+static uint64_t monotonic_ms(void) {
+#ifdef _WIN32
+  return GetTickCount64();
+#else
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+#endif
+}
+#endif
+
 /* A delay reached inside usbPoll() must drive its own ticks when the outer
- * poll loop is the clock source. Never add ticks to the standalone SIGALRM
- * clock, or to the hardware interrupt clock. */
+ * poll loop is the clock source. Tick once per elapsed wall-clock millisecond
+ * and catch up after an oversleep, so a delay lasts as long as it says on a
+ * slow host. Never add ticks to the standalone SIGALRM clock, or to the
+ * hardware interrupt clock. */
+static void delay_start(void) {
+#ifdef EMULATOR
+  tick_due_ms = monotonic_ms() + 1;
+#endif
+}
+
 static void delay_tick(void) {
 #ifdef EMULATOR
   if (poll_driven_timer) {
+    uint64_t now = monotonic_ms();
+    if (now < tick_due_ms) {
 #ifdef _WIN32
-    Sleep(1);
+      Sleep((DWORD)(tick_due_ms - now));
 #else
-    usleep(1000);
+      usleep((useconds_t)((tick_due_ms - now) * 1000u));
 #endif
+    }
+    tick_due_ms++;
     timerisr_usr();
   }
 #endif
@@ -347,6 +374,7 @@ static void delay_tick(void) {
 
 void delay_ms(uint32_t ms) {
   remaining_delay = ms;
+  delay_start();
 
   while (remaining_delay > 0) {
     delay_tick();
@@ -367,6 +395,7 @@ void delay_ms(uint32_t ms) {
 void delay_ms_with_callback(uint32_t ms, callback_func_t callback_func,
                             uint32_t frequency_ms) {
   remaining_delay = ms;
+  delay_start();
 
   while (remaining_delay > 0) {
     if (remaining_delay % frequency_ms == 0) {
