@@ -641,6 +641,27 @@ static bool solana_header_ok(const SolanaParsedTx* tx, uint16_t num_accounts) {
              num_accounts;
 }
 
+/* More static keys than accounts[] holds: too many to review, so opaque
+ * (AdvancedMode blind-sign; a real transaction is never refused). Signers come
+ * first in the key list, so only they are loaded: num_accounts stays nonzero
+ * and the fsm still requires the derived key to be a signer (F-715-1). More
+ * than SOL_MAX_ACCOUNTS signers cannot fit a Solana packet: MALFORMED. */
+static SolanaTxReview solana_oversizedKeyListIsOpaque(const uint8_t* raw,
+                                                      size_t raw_len,
+                                                      size_t pos,
+                                                      uint16_t num_accounts,
+                                                      SolanaParsedTx* tx) {
+  if (tx->num_required_sigs > SOL_MAX_ACCOUNTS ||
+      raw_len - pos < ((size_t)num_accounts + 1) * SOL_PUBKEY_SIZE) {
+    return SOL_TX_REVIEW_MALFORMED; /* keys + blockhash must be present */
+  }
+  memcpy(tx->accounts, raw + pos,
+         (size_t)tx->num_required_sigs * SOL_PUBKEY_SIZE);
+  tx->num_accounts = tx->num_required_sigs;
+  tx->num_static_accounts = tx->num_required_sigs;
+  return SOL_TX_REVIEW_OPAQUE;
+}
+
 static SolanaTxReview solana_parseLegacyTx(const uint8_t* raw, size_t raw_len,
                                            SolanaParsedTx* tx) {
   memset(tx, 0, sizeof(*tx));
@@ -661,10 +682,11 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t* raw, size_t raw_len,
   pos += n;
   if (!solana_header_ok(tx, num_accounts)) return SOL_TX_REVIEW_MALFORMED;
 
-  /* MALFORMED, never OPAQUE: a truncated (uint8_t) count would let
+  /* Never stored as a truncated (uint8_t) count: that would let
      solana_signerInTx() read past accounts[] or wrap to 0 and skip the signer
-     check. MALFORMED refuses unconditionally; no blind-sign fallback. */
-  if (num_accounts > SOL_MAX_ACCOUNTS) return SOL_TX_REVIEW_MALFORMED;
+     check (#550). */
+  if (num_accounts > SOL_MAX_ACCOUNTS)
+    return solana_oversizedKeyListIsOpaque(raw, raw_len, pos, num_accounts, tx);
   tx->num_accounts = (uint8_t)num_accounts;
   tx->num_static_accounts = (uint8_t)num_accounts;
 
@@ -720,9 +742,11 @@ static SolanaTxReview solana_parseVersionedTx(
   pos += n;
   if (!solana_header_ok(tx, num_accounts)) return SOL_TX_REVIEW_MALFORMED;
 
-  /* Fail closed on an oversized account list: see solana_parseLegacyTx. */
-  if (num_accounts > SOL_MAX_ACCOUNTS ||
-      trusted_lut_count > SOL_MAX_LUT_ACCOUNTS ||
+  /* Oversized static list: see solana_parseLegacyTx. An oversized trusted
+   * lookup set is host-supplied certified material: refused. */
+  if (num_accounts > SOL_MAX_ACCOUNTS)
+    return solana_oversizedKeyListIsOpaque(raw, raw_len, pos, num_accounts, tx);
+  if (trusted_lut_count > SOL_MAX_LUT_ACCOUNTS ||
       num_accounts + trusted_lut_count > SOL_MAX_ACCOUNTS) {
     return SOL_TX_REVIEW_MALFORMED;
   }

@@ -603,11 +603,11 @@ TEST(Solana, ParseTxTooShort) {
 /* #550 boundary regressions, requested by independent review before PR #557
  * merged (and only added afterward, in round 4's remediation, per #583).
  * tx->accounts[] has exactly SOL_MAX_ACCOUNTS(32) entries; num_accounts must
- * be rejected -- MALFORMED, fully closed -- before it's ever stored or used
- * as a loop bound, whether it's a small overage (33..255, which would read
- * past accounts[31] as a uint16_t loop bound) or a value that silently wraps
- * to a small/zero uint8_t (256, 512, ...), which would have reintroduced the
- * original signer-check bypass this fix closed. */
+ * never be stored or used as a loop bound, whether it's a small overage
+ * (33..255, which would read past accounts[31] as a uint16_t loop bound) or a
+ * value that silently wraps to a small/zero uint8_t (256, 512, ...), which
+ * would have reintroduced the original signer-check bypass this fix closed.
+ * A key list that is not all there is MALFORMED. */
 TEST(Solana, RejectsAccountCountsAboveTheLimitOrWrapping) {
   /* Header (1 signer, 0 readonly signed, 1 readonly unsigned), then the
    * compact-u16 account count: 33, 256 (0x80 0x02) and 512 (0x80 0x04). */
@@ -621,6 +621,52 @@ TEST(Solana, RejectsAccountCountsAboveTheLimitOrWrapping) {
               SOL_TX_REVIEW_MALFORMED)
         << (int)count.back();
   }
+}
+
+/* F-715-1: a complete oversized key list blind-signs (OPAQUE) with only the
+ * signers loaded, so the fsm still requires the derived key to be a signer.
+ * Legacy and v0, including counts that would wrap a uint8_t. */
+TEST(Solana, OversizedAccountListsAreOpaqueWithTheSignersLoaded) {
+  const std::vector<std::vector<uint8_t>> counts = {
+      {33}, {0x80, 0x02}, {0x80, 0x04}};
+  const size_t num_keys[] = {33, 256, 512};
+  for (bool v0 : {false, true}) {
+    for (size_t c = 0; c < counts.size(); c++) {
+      SCOPED_TRACE(testing::Message() << "v0=" << v0 << " keys=" << num_keys[c]);
+      std::vector<uint8_t> raw;
+      if (v0) raw.push_back(0x80);
+      raw.insert(raw.end(), {2, 0, 1}); /* two signers */
+      raw.insert(raw.end(), counts[c].begin(), counts[c].end());
+      for (size_t k = 0; k < num_keys[c]; k++) {
+        raw.insert(raw.end(), 32, k < 3 ? (uint8_t)(0x11 * (k + 1)) : 0x77);
+      }
+      raw.insert(raw.end(), 32, 0xBB); /* blockhash */
+
+      SolanaParsedTx tx;
+      ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+                SOL_TX_REVIEW_OPAQUE);
+      EXPECT_EQ(tx.num_accounts, 2);
+      EXPECT_EQ(tx.num_static_accounts, 2);
+      uint8_t key[32];
+      memset(key, 0x11, sizeof(key));
+      EXPECT_TRUE(solana_signerInTx(key, &tx));
+      memset(key, 0x22, sizeof(key));
+      EXPECT_TRUE(solana_signerInTx(key, &tx));
+      memset(key, 0x33, sizeof(key)); /* third key: not a signer */
+      EXPECT_FALSE(solana_signerInTx(key, &tx));
+
+      raw.pop_back(); /* blockhash one byte short */
+      EXPECT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+                SOL_TX_REVIEW_MALFORMED);
+    }
+  }
+
+  /* More signers than accounts[] holds cannot fit a Solana packet. */
+  std::vector<uint8_t> raw = {SOL_MAX_ACCOUNTS + 1, 0, 0, 40};
+  raw.insert(raw.end(), 41 * 32, 0x11);
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_MALFORMED);
 }
 
 TEST(Solana, RejectsTrailingBytes) {
@@ -886,8 +932,8 @@ TEST(Solana, LegacyMessageWithInvalidHeaderIsMalformed) {
       {1, 1, 1, 3, SOL_TX_REVIEW_MALFORMED}, /* no writable signer */
       {4, 0, 0, 3, SOL_TX_REVIEW_MALFORMED}, /* more signers than keys */
       {1, 0, 3, 3, SOL_TX_REVIEW_MALFORMED}, /* ranges overlap */
-      /* #550: an oversized list is refused, never blind-signed. */
-      {1, 0, 1, SOL_MAX_ACCOUNTS + 1, SOL_TX_REVIEW_MALFORMED},
+      /* F-715-1: an oversized list blind-signs, signers still checked. */
+      {1, 0, 1, SOL_MAX_ACCOUNTS + 1, SOL_TX_REVIEW_OPAQUE},
       {1, 1, 1, SOL_MAX_ACCOUNTS + 1, SOL_TX_REVIEW_MALFORMED},
   };
   for (const Header& h : headers) {
