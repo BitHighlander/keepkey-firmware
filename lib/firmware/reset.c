@@ -316,6 +316,16 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
     return;
   }
 
+  /* Validate the PIN before the expensive dice ceremony. It stays staged,
+   * so cancelling dice still clears it through setup_abort(). */
+  if (!setup_stagePin(pin_protection)) {
+    setup_abort();
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    _("PINs do not match"));
+    layoutHome();
+    return;
+  }
+
   /* Dice ceremony; the device names the host-selected mode for consent.
    * Verifiable offline: host EntropyAck bytes never enter the derivation.
    *
@@ -418,15 +428,6 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
       dice_derive_mixed(int_entropy, dice_rolls, rolls_needed, int_entropy);
     }
     memzero(dice_rolls, sizeof(dice_rolls));
-  }
-
-  if (!setup_stagePin(pin_protection)) {
-    /* Clears the roll digest along with the staged settings and entropy. */
-    setup_abort();
-    fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                    _("PINs do not match"));
-    layoutHome();
-    return;
   }
 
   EntropyRequest resp;

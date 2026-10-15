@@ -638,6 +638,7 @@ void fsm_msgFirmwareUpload(FirmwareUpload* msg) {
 void fsm_msgGetEntropy(GetEntropy* msg) {
   /* Reset/recovery may hold a secret in RAM: preserve that ceremony. */
   if (setup_isArmed()) {
+    entropy_audit_approved_remaining = 0;
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
                     "Entropy unavailable during setup");
     return;
@@ -645,19 +646,37 @@ void fsm_msgGetEntropy(GetEntropy* msg) {
 
   uint32_t len = msg->size;
   if (len > ENTROPY_BUF) len = ENTROPY_BUF;
-  const bool press_free =
-      !storage_isInitialized() && !storage_isBitcoinOnlyLocked() &&
-      !storage_isFirmwareTooOld() && len <= entropy_audit_remaining;
+  const bool audit_eligible = !storage_isInitialized() &&
+                              !storage_isBitcoinOnlyLocked() &&
+                              !storage_isFirmwareTooOld();
+  if (!audit_eligible) entropy_audit_approved_remaining = 0;
+  // Preserve the advertised initial press-free budget on this release line.
+  const bool press_free = audit_eligible && len <= entropy_audit_remaining;
+  if (press_free) entropy_audit_remaining -= len;
+
   if (!press_free &&
-      !confirm(ButtonRequestType_ButtonRequest_GetEntropy, "Generate Entropy",
-               "Do you want to generate and return entropy using the hardware "
-               "RNG?")) {
-    fsm_sendFailure(FailureType_Failure_ActionCancelled, "Entropy cancelled");
-    layoutHome();
-    return;
+      (!audit_eligible || len > entropy_audit_approved_remaining ||
+       entropy_audit_approved_remaining == 0)) {
+    entropy_audit_approved_remaining = 0;
+    if (!confirm(
+            ButtonRequestType_ButtonRequest_GetEntropy, "Generate Entropy",
+            audit_eligible
+                ? "Allow up to 8 MiB of hardware RNG samples for this audit?"
+                : "Do you want to generate and return entropy using the "
+                  "hardware RNG?")) {
+      fsm_sendFailure(FailureType_Failure_ActionCancelled, "Entropy cancelled");
+      layoutHome();
+      return;
+    }
+    if (audit_eligible && len != 0) {
+      entropy_audit_approved_remaining = ENTROPY_AUDIT_APPROVED_BYTES;
+    }
   }
 
-  if (press_free) entropy_audit_remaining -= len;
+  if (!press_free && audit_eligible &&
+      len <= entropy_audit_approved_remaining) {
+    entropy_audit_approved_remaining -= len;
+  }
   RESP_INIT(Entropy);
   resp->entropy.size = len;
   random_buffer(resp->entropy.bytes, len);
