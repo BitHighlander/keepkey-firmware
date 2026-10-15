@@ -295,9 +295,12 @@ static bool confirm_screen(const char* request_title_param,
           dld = (DebugLinkDecision*)msg_tiny_buf;
           ret_stat = dld->yes_no;
           debug_decided = true;
-          /* A DebugLink decision stands in for a button press, which renews
-           * the auto-lock deadline. */
-          keepkey_user_activity();
+          /* A "yes" stands in for the button press that renews the auto-lock
+           * deadline. A "no" is never a press: the device has no reject
+           * button, so only the host declines. */
+          if (dld->yes_no) {
+            keepkey_user_activity();
+          }
           break;
 
         case MessageType_MessageType_DebugLinkGetState:
