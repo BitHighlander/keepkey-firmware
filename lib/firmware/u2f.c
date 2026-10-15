@@ -301,6 +301,14 @@ static MessageType host_end_id = MSG_TINY_TYPE_ERROR;
 
 static bool hostEndRequested(void) {
   const MessageType id = msg_take_tiny_id();
+#if DEBUG_LINK
+  /* Inspect the active prompt without dispatching a nested workflow. Keep
+   * any already-pending host cancellation for the session's own exit path. */
+  if (id == MessageType_MessageType_DebugLinkGetState) {
+    DebugLinkGetState request = {0};
+    call_msg_debug_link_get_state_handler(&request);
+  }
+#endif
   if (id == MessageType_MessageType_Initialize ||
       id == MessageType_MessageType_Cancel) {
     host_end_id = id;
