@@ -3577,7 +3577,7 @@ struct PermitDoc {
   Bytes amount;
   Bytes deadline;
 };
-const PermitDoc* g_doc;
+const PermitDoc* g_permit_doc;
 
 std::map<std::string, Struct> permit_types(const PermitDoc& d) {
   std::map<std::string, Struct> t;
@@ -3613,14 +3613,14 @@ Bytes permit_value(const std::vector<uint32_t>& path) {
   }
   if (i == 0) return Bytes(20, 0x11);  // owner / holder
   if (i == 1) return Bytes(20, 0x22);  // spender
-  if (g_doc->dai) {
+  if (g_permit_doc->dai) {
     if (i == 2) return word(0);  // nonce
-    if (i == 3) return g_doc->deadline;
-    return g_doc->amount;
+    if (i == 3) return g_permit_doc->deadline;
+    return g_permit_doc->amount;
   }
-  if (i == 2) return g_doc->amount;
+  if (i == 2) return g_permit_doc->amount;
   if (i == 3) return word(0);
-  return g_doc->deadline;
+  return g_permit_doc->deadline;
 }
 
 Bytes deadline_2026() {
@@ -3642,7 +3642,7 @@ std::string join(const std::vector<std::string>& v) {
 // Walks `d`; returns the joined screens, or "" if more were shown than the
 // `screens` accepted.
 std::string walk_permit(const PermitDoc& d, int screens, int* used) {
-  g_doc = &d;
+  g_permit_doc = &d;
   kkconfirm_capture_start();
   *used = walk("Permit", permit_types(d), permit_value, screens);
   return join(kkconfirm_capture_finish());
