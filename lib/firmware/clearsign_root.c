@@ -21,6 +21,11 @@
 
 #include <string.h>
 
+#if DEBUG_LINK && defined(EMULATOR)
+#include <stdio.h>
+#include <stdlib.h>
+#endif
+
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/memzero.h"
 #include "trezor/crypto/secp256k1.h"
@@ -47,6 +52,47 @@ static const uint8_t* test_root_pubkey;
 
 void clearsign_root_set_test_root(const uint8_t* pubkey) {
   test_root_pubkey = pubkey;
+}
+
+const uint8_t* clearsign_root_compiled_pubkey(void) {
+  return kk_clearsign_root_pubkey;
+}
+
+static int hex_nibble(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+bool clearsign_root_load_test_root_from_env(void) {
+  static uint8_t env_root[CLEARSIGN_PUBKEY_LEN];
+  const char* hex = getenv("KK_CLEARSIGN_TEST_ROOT");
+  if (!hex || !*hex) return false;
+
+  uint8_t key[CLEARSIGN_PUBKEY_LEN];
+  bool ok = strlen(hex) == 2 * CLEARSIGN_PUBKEY_LEN;
+  for (size_t i = 0; ok && i < CLEARSIGN_PUBKEY_LEN; i++) {
+    const int hi = hex_nibble(hex[2 * i]), lo = hex_nibble(hex[2 * i + 1]);
+    ok = hi >= 0 && lo >= 0;
+    key[i] = (uint8_t)((hi << 4) | (lo & 0x0f));
+  }
+  curve_point point;
+  ok = ok && (key[0] == 0x02 || key[0] == 0x03) &&
+       ecdsa_read_pubkey(&secp256k1, key, &point) == 1;
+  if (!ok) {
+    fprintf(stderr,
+            "WARNING: ignoring KK_CLEARSIGN_TEST_ROOT: not a 66-hex-char "
+            "compressed secp256k1 key; using the compiled-in root\n");
+    return false;
+  }
+  memcpy(env_root, key, sizeof(env_root));
+  clearsign_root_set_test_root(env_root);
+  fprintf(stderr,
+          "WARNING: ClearSign certificates verify against the TEST root "
+          "KK_CLEARSIGN_TEST_ROOT=%s, not the compiled-in root\n",
+          hex);
+  return true;
 }
 #endif
 
