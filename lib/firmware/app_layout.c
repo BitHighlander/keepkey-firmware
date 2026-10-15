@@ -635,6 +635,27 @@ void layout_zcash_address_notification(const char* desc, const char* address,
   layout_notification_icon(type, &sp);
 }
 
+/* Measure the compact description using its actual font, margins and wrap
+ * width. Its entire text must fit above the address and beside the small QR.
+ * Friendly account descriptions legitimately contain newlines. */
+bool layout_address_description_fits(const char* desc, const char* address) {
+  const Font* font = get_title_font();
+  if (calc_str_width(font, address) > TRANSACTION_WIDTH) font = get_body_font();
+  DrawableParams sp = {0};
+  sp.x = MULTISIG_LEFT_MARGIN;
+  sp.y = TOP_MARGIN;
+  const uint32_t lines = calc_str_line(font, desc, BODY_WIDTH);
+  if (lines == ONE_LINE)
+    sp.y = TOP_MARGIN_FOR_ONE_LINE;
+  else if (lines == TWO_LINES)
+    sp.y = TOP_MARGIN_FOR_TWO_LINES;
+  Canvas available = *layout_get_canvas();
+  available.height =
+      TOP_MARGIN_FOR_ONE_LINE + font_height(font) + ADDRESS_TOP_MARGIN;
+  return draw_string_fits(&available, font, desc, &sp, TRANSACTION_WIDTH - 2,
+                          font_height(font) + BODY_FONT_LINE_PADDING);
+}
+
 /*
  * layout_zcash_address_text_notification() - Display full zcash unified
  * address text with title; the first confirm step in the view-on-device flow.
