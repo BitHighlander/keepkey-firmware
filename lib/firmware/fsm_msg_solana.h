@@ -829,12 +829,16 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     }
   }
 
-  /* Signer verification: derived key must be a required signer.
-   * For verified txs this is mandatory. For opaque txs we still check
-   * when we were able to parse the header (num_accounts > 0). */
+  /* Signer verification: derived key must be a required signer. An opaque
+   * later message version is not parsed (num_accounts == 0), but Solana only
+   * checks signatures against keys the message carries, so the key must at
+   * least appear in it. */
   if (tx_review == SOL_TX_REVIEW_VERIFIED ||
-      (tx_review == SOL_TX_REVIEW_OPAQUE && parsed.num_accounts > 0)) {
-    if (!solana_signerInTx(node->public_key + 1, &parsed)) {
+      tx_review == SOL_TX_REVIEW_OPAQUE) {
+    if (parsed.num_accounts > 0
+            ? !solana_signerInTx(node->public_key + 1, &parsed)
+            : !solana_messageCarriesKey(msg->raw_tx.bytes, msg->raw_tx.size,
+                                        node->public_key + 1)) {
       memzero(node, sizeof(*node));
       fsm_sendFailure(FailureType_Failure_Other,
                       _("Derived key is not a signer for this tx"));

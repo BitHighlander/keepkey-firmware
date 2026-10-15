@@ -374,6 +374,10 @@ bool solana_parseTx(const uint8_t* raw, size_t raw_len, SolanaParsedTx* tx);
 /* pubkey is one of the tx's required signers. */
 bool solana_signerInTx(const uint8_t* pubkey, const SolanaParsedTx* tx);
 
+/* True when the 32-byte key appears anywhere in msg. */
+bool solana_messageCarriesKey(const uint8_t* msg, size_t len,
+                              const uint8_t pubkey[SOL_PUBKEY_SIZE]);
+
 /* Format SOL amount */
 void solana_formatAmount(char* buf, size_t len, uint64_t lamports);
 

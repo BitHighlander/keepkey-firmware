@@ -729,6 +729,10 @@ static SolanaTxReview solana_parseVersionedTx(
   if (raw_len < 1) return SOL_TX_REVIEW_MALFORMED;
   uint8_t version_prefix = raw[pos++];
   if ((version_prefix & SOL_VERSION_FLAG) == 0) return SOL_TX_REVIEW_MALFORMED;
+  /* 0xFF starts an off-chain message envelope, never a transaction. */
+  if (version_prefix == 0xFF) return SOL_TX_REVIEW_MALFORMED;
+  /* A later version is not parsed (num_accounts stays 0): the fsm then
+   * requires the derived key to appear in the message. */
   if ((version_prefix & SOL_VERSION_MASK) != 0) return SOL_TX_REVIEW_OPAQUE;
 
   if (raw_len - pos < 3) return SOL_TX_REVIEW_MALFORMED;
@@ -742,14 +746,15 @@ static SolanaTxReview solana_parseVersionedTx(
   pos += n;
   if (!solana_header_ok(tx, num_accounts)) return SOL_TX_REVIEW_MALFORMED;
 
-  /* Oversized static list: see solana_parseLegacyTx. An oversized trusted
-   * lookup set is host-supplied certified material: refused. */
-  if (num_accounts > SOL_MAX_ACCOUNTS)
-    return solana_oversizedKeyListIsOpaque(raw, raw_len, pos, num_accounts, tx);
+  /* Host-supplied certified lookup material that does not fit: refused. An
+   * oversized static list alone is opaque, see solana_parseLegacyTx. */
   if (trusted_lut_count > SOL_MAX_LUT_ACCOUNTS ||
-      num_accounts + trusted_lut_count > SOL_MAX_ACCOUNTS) {
+      (trusted_lut_count > 0 &&
+       num_accounts + trusted_lut_count > SOL_MAX_ACCOUNTS)) {
     return SOL_TX_REVIEW_MALFORMED;
   }
+  if (num_accounts > SOL_MAX_ACCOUNTS)
+    return solana_oversizedKeyListIsOpaque(raw, raw_len, pos, num_accounts, tx);
   const bool has_trusted_lut = trusted_lut_accounts && trusted_lut_count > 0;
   tx->num_accounts = (uint8_t)(num_accounts + trusted_lut_count);
   tx->num_static_accounts = (uint8_t)num_accounts;
@@ -1268,6 +1273,14 @@ bool solana_schemaAppliesCertified(const SolanaInstrSchema* schema,
   return schema_applies(schema, tx, true, out_index);
 }
 
+bool solana_messageCarriesKey(const uint8_t* msg, size_t len,
+                              const uint8_t pubkey[SOL_PUBKEY_SIZE]) {
+  for (size_t i = 0; i + SOL_PUBKEY_SIZE <= len; i++) {
+    if (memcmp(msg + i, pubkey, SOL_PUBKEY_SIZE) == 0) return true;
+  }
+  return false;
+}
+
 bool solana_rawMessageIsPlainText(const uint8_t* msg, size_t len,
                                   const uint8_t pubkey[SOL_PUBKEY_SIZE]) {
   if (!msg || !pubkey || len == 0) return false;
@@ -1275,10 +1288,7 @@ bool solana_rawMessageIsPlainText(const uint8_t* msg, size_t len,
   for (size_t i = 0; i < len; i++) {
     if ((msg[i] < 0x20 || msg[i] > 0x7e) && msg[i] != '\n') return false;
   }
-  for (size_t i = 0; i + SOL_PUBKEY_SIZE <= len; i++) {
-    if (memcmp(msg + i, pubkey, SOL_PUBKEY_SIZE) == 0) return false;
-  }
-  return true;
+  return !solana_messageCarriesKey(msg, len, pubkey);
 }
 
 bool solana_parseTx(const uint8_t* raw, size_t raw_len, SolanaParsedTx* tx) {

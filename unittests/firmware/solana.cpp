@@ -669,6 +669,54 @@ TEST(Solana, OversizedAccountListsAreOpaqueWithTheSignersLoaded) {
             SOL_TX_REVIEW_MALFORMED);
 }
 
+/* The 0xFF off-chain message envelope is never a transaction, with or
+ * without the 0x00 signature-count prefix. A later version stays opaque with
+ * no keys loaded: the fsm then needs the derived key inside the message. */
+TEST(Solana, OffchainEnvelopeIsMalformedLaterVersionsOpaque) {
+  const std::string envelope =
+      std::string("\xff" "solana offchain", 16) + std::string("\0\0\x05\0hello", 9);
+  std::vector<uint8_t> raw(envelope.begin(), envelope.end());
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_MALFORMED);
+  raw.insert(raw.begin(), 0x00);
+  EXPECT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_MALFORMED);
+
+  for (uint8_t version : {0x81, 0xFE}) {
+    std::vector<uint8_t> later = {version, 1, 0, 0};
+    later.insert(later.end(), 64, 0x22);
+    EXPECT_EQ(solana_inspectTx(later.data(), later.size(), &tx),
+              SOL_TX_REVIEW_OPAQUE);
+    EXPECT_EQ(tx.num_accounts, 0);
+  }
+
+  uint8_t key[32];
+  memset(key, 0x22, sizeof(key));
+  std::vector<uint8_t> msg(40, 0x00);
+  EXPECT_FALSE(solana_messageCarriesKey(msg.data(), msg.size(), key));
+  memset(msg.data() + 8, 0x22, 32); /* the last possible offset */
+  EXPECT_TRUE(solana_messageCarriesKey(msg.data(), msg.size(), key));
+  EXPECT_FALSE(solana_messageCarriesKey(msg.data(), 39, key));
+}
+
+/* Certified lookup material that cannot fit stays refused when the static
+ * list alone is oversized (SRS R-1.4: honoured fully or refused). */
+TEST(Solana, OversizedStaticListWithTrustedLutIsMalformed) {
+  std::vector<uint8_t> raw = {0x80, 1, 0, 1, 33};
+  raw.insert(raw.end(), 33 * 32, 0x11);
+  raw.insert(raw.end(), 32, 0xBB); /* blockhash */
+  raw.insert(raw.end(), {0, 1});   /* 0 instructions, 1 lookup table */
+  raw.insert(raw.end(), 32, 0x55);
+  raw.insert(raw.end(), {1, 0, 0}); /* one writable index */
+  const uint8_t lut[1][SOL_PUBKEY_SIZE] = {{0x44}};
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTxWithTrustedLut(raw.data(), raw.size(), lut, 1, &tx),
+            SOL_TX_REVIEW_MALFORMED);
+  EXPECT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+}
+
 TEST(Solana, RejectsTrailingBytes) {
   /* Build a valid 1-instruction system transfer, then append extra bytes */
   uint8_t raw[256];
