@@ -12,20 +12,40 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class BuildEntrypoints(unittest.TestCase):
-    def test_string_prototypes_match_native_nothrow_declarations(self):
+    def test_string_prototypes_match_supported_libcs(self):
         header = ROOT / "include/keepkey/board/bsd_compat.h"
-        for compiler, language, standard, declaration in [
-            ("cc", "c", "c99", "size_t strlcpy(char*, const char*, size_t);\n"
-             "size_t strlcat(char*, const char*, size_t);\n"),
-            ("c++", "c++", "c++11",
-             'extern "C" size_t strlcpy(char*, const char*, size_t) noexcept;\n'
-             'extern "C" size_t strlcat(char*, const char*, size_t) noexcept;\n'),
-        ]:
-            with self.subTest(language=language):
-                subprocess.run([compiler, "-x", language, "-std=" + standard,
-                                "-Werror", "-fsyntax-only", "-include", str(header),
-                                "-"], input=declaration, text=True, check=True,
-                               capture_output=True)
+        source = ("#include <string.h>\n"
+                  "size_t probe(char* d, const char* s, size_t n) {\n"
+                  "  return strlcpy(d, s, n) + strlcat(d, s, n);\n}\n")
+        # Model both native signatures and both missing-prototype cases, then
+        # compile against the runner's actual headers as well. This catches
+        # conflicts in either include order, without needing four machines.
+        for libc in ["glibc-new", "glibc-old", "musl", "mingw", "native"]:
+            with tempfile.TemporaryDirectory() as tmp:
+                include = []
+                if libc != "native":
+                    contents = "#pragma once\n#undef __GLIBC__\n"
+                    if libc.startswith("glibc"):
+                        contents += "#define __GLIBC__ 2\n"
+                    if libc in ["glibc-new", "musl"]:
+                        exception = "noexcept" if libc == "glibc-new" else ""
+                        contents += ('#ifdef __cplusplus\nextern "C" {\n'
+                                     '#define TEST_EXCEPT ' + exception + '\n'
+                                     '#else\n#define TEST_EXCEPT\n#endif\n'
+                                     'size_t strlcpy(char*, const char*, size_t) TEST_EXCEPT;\n'
+                                     'size_t strlcat(char*, const char*, size_t) TEST_EXCEPT;\n'
+                                     '#ifdef __cplusplus\n}\n#endif\n')
+                    (Path(tmp) / "string.h").write_text(contents)
+                    include = ["-I", tmp]
+                for compiler, language, standard in [
+                    ("cc", "c", "c99"), ("c++", "c++", "c++11")
+                ]:
+                    with self.subTest(libc=libc, language=language):
+                        result = subprocess.run([compiler, "-x", language, "-std=" + standard,
+                                        "-Werror", "-fsyntax-only", *include,
+                                        "-include", str(header), "-"], input=source,
+                                       text=True, capture_output=True)
+                        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_release_script_preserves_cmake_arguments(self):
         with tempfile.TemporaryDirectory(prefix="keepkey-build-") as tmp:
@@ -65,8 +85,9 @@ class BuildEntrypoints(unittest.TestCase):
                        KEEPKEY_ARGV_RECORD=str(record), KEEPKEY_TEST_LITERAL="not-expanded")
             extra = ["-DCMAKE_C_FLAGS=-DFOO=1 -DBAR=1",
                      "-DVALUE=literal;$KEEPKEY_TEST_LITERAL", "-DEMPTY="]
-            subprocess.run(["bash", str(script), *extra], env=env, check=True,
+            result = subprocess.run(["bash", str(script), *extra], env=env,
                            capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(extra, json.loads(record.read_text())[-len(extra):])
 
 

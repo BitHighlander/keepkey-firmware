@@ -1246,9 +1246,11 @@ static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
                        (const uint8_t*)text, strlen(text));
 }
 
-/* An empty array has no element screen, so it would otherwise sign unseen.
- * `arr` is staged but not pushed, so leaf_path() still ends at the array. */
-static Eip712LeafResult eip712_confirm_empty_array(const Eip712Frame* arr) {
+/* Leaf types omit array dimensions and enclosing struct names. Show each
+ * declared container type before its values so schema substitutions cannot
+ * produce identical approvals. `arr` is staged, so leaf_path ends at it. */
+static Eip712LeafResult eip712_confirm_array(const Eip712Frame* arr,
+                                             uint16_t count) {
   Eip712FieldType type;
   char type_name[EIP712_MAX_TYPE_NAME];
   char path[EIP712_MAX_PATH];
@@ -1268,9 +1270,21 @@ static Eip712LeafResult eip712_confirm_empty_array(const Eip712Frame* arr) {
   if (!eip712_type_name(&type, type_name, sizeof(type_name)) ||
       !leaf_path(path, sizeof(path)))
     return EIP712_LEAF_INVALID;
-  static const char empty[] = "0 items";
+  char count_text[20];
+  snprintf(count_text, sizeof(count_text), "%u items", (unsigned)count);
   return confirm_parts(leaf_title(), path, type_name, EIP712_RENDER_TEXT,
-                       (const uint8_t*)empty, sizeof(empty) - 1);
+                       (const uint8_t*)count_text, strlen(count_text));
+}
+
+static Eip712LeafResult eip712_confirm_struct(const Eip712FieldType* field) {
+  char type_name[EIP712_MAX_TYPE_NAME];
+  char path[EIP712_MAX_PATH];
+  if (!eip712_type_name(field, type_name, sizeof(type_name)) ||
+      !leaf_path(path, sizeof(path)))
+    return EIP712_LEAF_INVALID;
+  static const char structure[] = "struct";
+  return confirm_parts("EIP-712 type", path, type_name, EIP712_RENDER_TEXT,
+                       (const uint8_t*)structure, sizeof(structure) - 1);
 }
 
 /* The walk: each function emits one request and returns, or finishes; the
@@ -1936,6 +1950,7 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
           fail("EIP-712 member path too long for this device");
           return false;
         }
+        if (!review_approved(eip712_confirm_struct(&m->type))) return false;
         child->slot_base = f->slot_base + f->member_count;
         e712.depth++;
         begin_type_hash();
@@ -2231,7 +2246,10 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
       fail("EIP-712 array is too long for this device");
       return false;
     }
-    if (len == 0 && !review_approved(eip712_confirm_empty_array(arr)))
+    /* The outer array screen includes every declared dimension. Empty inner
+     * arrays still need their own screen because they have no leaf values. */
+    if ((len == 0 || arr->u.a.level_index == 0) &&
+        !review_approved(eip712_confirm_array(arr, len)))
       return false;
 
     arr->u.a.array_len = len;

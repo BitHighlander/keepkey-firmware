@@ -1071,13 +1071,15 @@ TEST(Eip712Stream, UnlimitedPermitsSignWithAWarningOnTheirValue) {
           5);
       const std::vector<std::string> bodies = kkconfirm_capture_finish();
       const std::vector<std::string> titles = kkconfirm_captured_titles();
-      EXPECT_EQ(used, 2);  // the token screen, then the value screen
+      const size_t containers = strcmp(c.primary, c.container) != 0 ? 1 : 0;
+      EXPECT_EQ(used, 2 + containers);  // optional type, token, then value
       EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
-      ASSERT_EQ(bodies.size(), 2u);
-      EXPECT_EQ(titles[0], "EIP-712 Message");
-      EXPECT_EQ(titles[1], u ? "UNLIMITED approval" : "EIP-712 Message");
-      EXPECT_EQ(bodies[1], u ? c.unlimited_body : c.finite_body);
-      std::string title = titles[1];
+      ASSERT_EQ(bodies.size(), 2u + containers);
+      if (containers) EXPECT_EQ(bodies[0], std::string("details\n") + c.container + ": struct");
+      EXPECT_EQ(titles[containers], "EIP-712 Message");
+      EXPECT_EQ(titles[containers + 1], u ? "UNLIMITED approval" : "EIP-712 Message");
+      EXPECT_EQ(bodies[containers + 1], u ? c.unlimited_body : c.finite_body);
+      std::string title = titles[containers + 1];
       for (char& ch : title) ch = (char)toupper((unsigned char)ch);
       EXPECT_EQ(1u,
                 calc_str_line(get_title_font(), title.c_str(), TITLE_WIDTH));
@@ -1213,7 +1215,7 @@ TEST(Eip712Stream, ArrayAndStructDomainMembersMakeTheDomainUnbindable) {
           return word(1);
         },
         2, true);
-    EXPECT_EQ(used, 1);
+    EXPECT_EQ(used, 2);  // declared container type and its leaf
     ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DEFINITION);
     Eip712DomainFacts facts;
     EXPECT_FALSE(eip712_stream_domain_facts(&facts));
@@ -1257,7 +1259,7 @@ TEST(Eip712Stream, SeaportShapedDocumentFitsThePool) {
         },
         10 + items * 6 + 2);
     EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
-    EXPECT_EQ(used, 10 + items * 6);
+    EXPECT_EQ(used, 11 + items * 6);  // includes the array type
     eip712_stream_abort();
   }
 }
@@ -1276,12 +1278,12 @@ TEST(Eip712Stream, NestsSixFramesDeepButNotSeven) {
               mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
     const int used = walk(
         "L1", types,
-        [](const std::vector<uint32_t>&) -> Bytes { return word(9); }, 2);
+        [](const std::vector<uint32_t>&) -> Bytes { return word(9); }, 8);
     if (frames == 6) {
-      EXPECT_EQ(used, 1);
+      EXPECT_EQ(used, 6);  // five container types, then the leaf
       EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
     } else {
-      EXPECT_EQ(used, 0);
+      EXPECT_EQ(used, 5);  // sixth child is refused before its screen
       ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
       EXPECT_STREQ(eip712_stream_next()->error,
                    "EIP-712 document nests too deeply for this device");
@@ -1305,8 +1307,8 @@ TEST(Eip712Stream, ArrayOfStructsPastTheDepthLimitEndsTheWalk) {
             mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
   const int used = walk(
       "L1", types,
-      [](const std::vector<uint32_t>&) -> Bytes { return Bytes{0, 1}; }, 1);
-  EXPECT_EQ(used, 0);
+      [](const std::vector<uint32_t>&) -> Bytes { return Bytes{0, 1}; }, 8);
+  EXPECT_EQ(used, 5);  // four enclosing structs and the array type
   ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
   EXPECT_STREQ(eip712_stream_next()->error,
                "EIP-712 document nests too deeply for this device");
@@ -1340,10 +1342,13 @@ TEST(Eip712Stream, MemberNamesFitEveryPathTheReviewCanShow) {
     ASSERT_EQ(path.size(), (size_t)EIP712_MAX_PATH - 1);
     kkconfirm_capture_start();
     walk("P0", types,
-         [](const std::vector<uint32_t>&) -> Bytes { return Bytes{0, 0}; }, 4);
-    // One screen, which the pager may show as several pages.
+         [](const std::vector<uint32_t>&) -> Bytes { return Bytes{0, 0}; }, 20);
+    // Container types have their own title; collect every leaf page.
     std::string shown;
-    for (const std::string& page : kkconfirm_capture_finish()) shown += page;
+    const auto bodies = kkconfirm_capture_finish();
+    const auto titles = kkconfirm_captured_titles();
+    for (size_t i = 0; i < bodies.size(); ++i)
+      if (titles[i].find("EIP-712 type") != 0) shown += bodies[i];
     EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
     EXPECT_EQ(shown, path + "\nuint256[]: 0 items");
     eip712_stream_abort();
@@ -1368,14 +1373,18 @@ TEST(Eip712Stream, MemberNamesFitEveryPathTheReviewCanShow) {
     kkconfirm_capture_start();
     const int used = walk(
         "L1", types,
-        [](const std::vector<uint32_t>&) -> Bytes { return word(9); }, 4);
+        [](const std::vector<uint32_t>&) -> Bytes { return word(9); }, 20);
     std::string shown;
-    for (const std::string& page : kkconfirm_capture_finish()) shown += page;
+    const auto bodies = kkconfirm_capture_finish();
+    const auto titles = kkconfirm_captured_titles();
+    for (size_t i = 0; i < bodies.size(); ++i)
+      if (titles[i].find("EIP-712 type") != 0) shown += bodies[i];
     if (path.size() < EIP712_MAX_PATH) {
       EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
       EXPECT_EQ(shown, path + "\nuint256: 9");
     } else {
-      EXPECT_EQ(used, 0);
+      EXPECT_GT(used, 0);  // enclosing types were reviewed
+      EXPECT_TRUE(shown.empty());
       ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
       EXPECT_STREQ(eip712_stream_next()->error,
                    "EIP-712 value cannot be displayed");
@@ -1515,7 +1524,8 @@ TEST(Eip712Stream, EmptyArraysAreReviewedWithPathAndType) {
       {"inner",
        grid,
        {2, 0, 0},
-       {"recipients[0]\nuint256[]: 0 items",
+       {"recipients\nuint256[][]: 2 items",
+        "recipients[0]\nuint256[]: 0 items",
         "recipients[1]\nuint256[]: 0 items"}},
       {"structs", items, {0}, {"recipients\nItem[]: 0 items"}},
   };
@@ -1656,7 +1666,7 @@ TEST(Eip712Stream, BulkOrderTreesAreRefusedByShape) {
       EXPECT_STREQ(eip712_stream_next()->error,
                    "Bulk order: sign listings individually");
     } else {
-      EXPECT_EQ(used, 2);
+      EXPECT_EQ(used, 3);  // array type plus the two leaf values
       EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
     }
     eip712_stream_abort();
@@ -2222,16 +2232,17 @@ TEST(Eip712Stream, StreamedArraysPastTwoHundredFiftyFiveElementsComplete) {
       302);
   const std::vector<std::string> bodies = kkconfirm_capture_finish();
   ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
-  EXPECT_EQ(used, 301);
+  EXPECT_EQ(used, 302);
   EXPECT_EQ(hexOf(eip712_stream_next()->domain_separator, 32),
             "2d9145f2f941cb14d4c738374c6ebde69c75a737e93da5905ee040bab57e46a8");
   EXPECT_EQ(hexOf(eip712_stream_next()->message_hash, 32),
             "89f049ac78541e85b598bdf522d566bcf14f5d3441fb671742f5403aae9b5609");
   eip712_stream_abort();
-  ASSERT_EQ(bodies.size(), 301u);
-  EXPECT_EQ(bodies[1 + 255], "v[255]\nuint256: 255");
-  EXPECT_EQ(bodies[1 + 256], "v[256]\nuint256: 256");
-  EXPECT_EQ(bodies[1 + 299], "v[299]\nuint256: 299");
+  ASSERT_EQ(bodies.size(), 302u);
+  EXPECT_EQ(bodies[1], "v\nuint256[]: 300 items");
+  EXPECT_EQ(bodies[2 + 255], "v[255]\nuint256: 255");
+  EXPECT_EQ(bodies[2 + 256], "v[256]\nuint256: 256");
+  EXPECT_EQ(bodies[2 + 299], "v[299]\nuint256: 299");
 }
 
 // ── Values longer than one ValueAck ─────────────────────────────────
@@ -3291,5 +3302,74 @@ TEST(Eip712Stream, DecliningADelegatecallWarningSignsNothing) {
     EXPECT_EQ(r.titles.size(), (size_t)before + 1);
     EXPECT_EQ(r.titles.back(), title);
     EXPECT_EQ(eip712_stream_waiting(), EIP712_IDLE);
+  }
+}
+
+// Identical leaf values do not imply identical EIP-712 schemas. Review must
+// distinguish array dimensions and nested struct names that affect typeHash.
+TEST(Eip712Stream, ContainerSchemaSubstitutionsChangeVisibleReview) {
+  for (int shape : {0, 1, 2}) {
+    SCOPED_TRACE(shape);
+    std::vector<std::vector<std::string>> shown;
+    std::vector<std::string> hashes;
+    for (int variant : {0, 1}) {
+      std::map<std::string, Struct> types;
+      Field field = shape == 0
+          ? mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32)
+          : structField(variant ? "Recipient" : "Sender");
+      if (shape != 1) {
+        field.array_levels_count = 1;
+        field.array_levels[0] = shape == 0 && variant == 0 ? 1 : 0;
+      }
+      addMember(types["Message"], "entry", field);
+      if (shape != 0)
+        addMember(types[variant ? "Recipient" : "Sender"], "amount",
+                  mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+      static int current_shape;
+      current_shape = shape;
+      kkconfirm_capture_start();
+      EXPECT_GT(walk("Message", types,
+                     [](const std::vector<uint32_t>& path) -> Bytes {
+                       if (current_shape != 1 && path.size() == 2)
+                         return Bytes{0, 1};
+                       return word(1);
+                     }, 10), 0);
+      const auto bodies = kkconfirm_capture_finish();
+      ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+      hashes.push_back(hexOf(eip712_stream_next()->message_hash, 32));
+      shown.push_back(pixels(kkconfirm_captured_titles(), bodies));
+      const std::string declared = shape == 0
+          ? (variant ? "uint256[]" : "uint256[1]")
+          : std::string(variant ? "Recipient" : "Sender") + (shape == 2 ? "[]" : "");
+      bool disclosed = false;
+      for (const auto& body : bodies)
+        disclosed |= body.find(declared + ": ") != std::string::npos;
+      EXPECT_TRUE(disclosed) << declared;
+      eip712_stream_abort();
+    }
+    EXPECT_NE(hashes[0], hashes[1]);
+    EXPECT_TRUE(shown[0] != shown[1]);
+  }
+}
+
+TEST(Eip712Stream, RejectingContainerTypesCancelsBeforeLeafValues) {
+  for (bool array : {false, true}) {
+    std::map<std::string, Struct> types;
+    Field entry = structField("Entry");
+    if (array) entry.array_levels_count = 1;
+    addMember(types["Message"], "entry", entry);
+    addMember(types["Entry"], "amount",
+              mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+    static int value_requests;
+    value_requests = 0;
+    walk("Message", types,
+         [](const std::vector<uint32_t>&) -> Bytes {
+           ++value_requests;
+           return Bytes{0, 1};
+         }, 0);
+    EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_CANCELLED);
+    EXPECT_EQ(value_requests, array ? 1 : 0);  // array length only
+    EXPECT_EQ(eip712_stream_waiting(), EIP712_IDLE);
+    eip712_stream_abort();
   }
 }
