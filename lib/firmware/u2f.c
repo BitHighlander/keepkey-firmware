@@ -165,6 +165,10 @@ static uint32_t ctap_cid;
 static bool ctap_cancelled;
 
 void u2fhid_read(char tiny, const U2FHID_FRAME* f) {
+  /* U2F bypasses the protobuf dispatch gate. A new top-level operation,
+   * including INIT, must end a previously approved RNG audit too. */
+  if (!tiny) fsm_revoke_entropy_audit();
+
   if (ctap_active) {
     if (f->init.cmd == U2FHID_INIT) {
       if (MSG_LEN(*f) != 8) { /* INIT carries exactly an 8-byte nonce */
