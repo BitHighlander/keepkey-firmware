@@ -3541,6 +3541,24 @@ TEST(Eip712Stream, Permit2ReviewStatesWhoWhatUntilWhen) {
   EXPECT_EQ(g_review[4].second.rfind("Unknown token\n0x", 0), 0u);
 }
 
+// Permit2 stores expiration 0 as block.timestamp: the allowance is live in
+// the block that uses the permit. It must never read as a 1970 expiry.
+TEST(Eip712Stream, Permit2ReviewZeroExpirationIsLiveNotExpired) {
+  Eip712Permit2 p = uniswap_usdc(true);
+  p.expiration = 0;
+  g_review.clear();
+  ASSERT_TRUE(
+      eip712_permit2_review(&p, NULL, NULL, NULL, NULL, collect_review, NULL));
+  ASSERT_GE(g_review.size(), 3u);
+  EXPECT_EQ(g_review[0].second,
+            "Allow 0x66a9...A8Af to spend UNLIMITED USDC from this wallet "
+            "until the end of the block that uses this permit");
+  EXPECT_EQ(g_review[2].second,
+            "Allowance expires\nthe end of the block that uses this permit");
+  for (const auto& s : g_review)
+    EXPECT_EQ(s.second.find("1970"), std::string::npos) << s.second;
+}
+
 void kkconfirm_capture_start(void);
 std::vector<std::string> kkconfirm_capture_finish(void);
 

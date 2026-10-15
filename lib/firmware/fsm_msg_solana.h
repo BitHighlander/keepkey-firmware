@@ -814,7 +814,8 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
                 msg->clearsign_certificate.size, CLEARSIGN_SCOPE_SOLANA,
                 msg->schema_payload.bytes, msg->schema_payload.size,
                 msg->schema_signature.bytes, msg->schema_signature.size) ||
-            !solana_schemaAppliesCertified(&schema, &parsed, &schema_ix)) {
+            !solana_schemaAppliesCertified(&schema, &parsed,
+                                           node->public_key + 1, &schema_ix)) {
           err = _("Certified Solana schema does not match transaction");
         }
       }

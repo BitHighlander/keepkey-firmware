@@ -1557,8 +1557,9 @@ static void address_text(const uint8_t a[20], bool shorten, char* out,
   }
 }
 
-/* A signed uint256 deadline as a UTC date, or its full number when it is
- * past what a date can show: two distinct signed values never read alike. */
+/* A signed uint256 deadline as a UTC date to the minute (seconds are not
+ * shown), or its full number when it is past what a date can show, so a
+ * huge value never reads as a near date. */
 static bool deadline_text(const uint8_t v[32], char* out, size_t len) {
   bool huge = false;
   for (int i = 0; i < 24; i++)
@@ -1587,7 +1588,14 @@ bool eip712_permit2_review(const Eip712Permit2* p,
   const PermitToken* t =
       permit_token(p->chain_id, p->token, identity, &tok) ? &tok : NULL;
   if (!permit2_amount(p, t, amount, sizeof(amount))) return false;
-  eip712_format_utc(p->expiration, expires, sizeof(expires));
+  /* Permit2 stores expiration 0 as block.timestamp: the allowance is live,
+   * but only in the block that uses this permit. Never a 1970 date. */
+  const char* until = expires;
+  if (p->expiration) {
+    eip712_format_utc(p->expiration, expires, sizeof(expires));
+  } else {
+    until = "the end of the block that uses this permit";
+  }
   if (!deadline_text(p->sig_deadline, deadline, sizeof(deadline))) return false;
   if (spender_name) {
     strlcpy(spender, spender_name, sizeof(spender));
@@ -1596,12 +1604,12 @@ bool eip712_permit2_review(const Eip712Permit2* p,
   }
   /* Summary: who may take what, until when. */
   snprintf(body, sizeof(body), "Allow %s to spend %s from this wallet until %s",
-           spender, amount, expires);
+           spender, amount, until);
   if (!emit(ctx, "Permit2", body, NULL, 0)) return false;
   /* Limits: firmware wording, exact values. */
   snprintf(body, sizeof(body), "Spender may take\n%s", amount);
   if (!emit(ctx, "Limits", body, NULL, 0)) return false;
-  snprintf(body, sizeof(body), "Allowance expires\n%s", expires);
+  snprintf(body, sizeof(body), "Allowance expires\n%s", until);
   if (!emit(ctx, "Limits", body, NULL, 0)) return false;
   snprintf(body, sizeof(body), "Signature valid until\n%s", deadline);
   if (!emit(ctx, "Limits", body, NULL, 0)) return false;

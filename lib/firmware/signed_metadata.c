@@ -1012,8 +1012,6 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
   }
 
   if (stored_metadata.version == METADATA_VERSION_DECODER) {
-    /* Certified only, and the whole call in the first chunk: the decoder
-     * reads every byte that will be signed (structural binding, as v2). */
     /* Certified only. The decoder reads every byte that will be signed: a
      * call past the first chunk stays pending until its last byte. */
     const uint32_t initsz = msg->data_initial_chunk.size;

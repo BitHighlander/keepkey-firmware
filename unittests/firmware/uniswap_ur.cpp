@@ -393,6 +393,47 @@ TEST(UniswapUr, ExtraStepDoesNotSummarize) {
   EXPECT_FALSE(ur_summarize(&plan, router.data(), value.data(), &s));
 }
 
+/* SWEEP moves only what the router holds when it runs: a swap's output left
+ * in the router after the last SWEEP of it (or with none) is anyone's, and
+ * its minimum is not "You receive at least". */
+TEST(UniswapUr, OutputLeftInTheRouterAfterItsSweepIsRefused) {
+  uint8_t router[20], value[32] = {0};
+  memset(router, 0xab, 20);
+  UrStep swap = {}, sweep = {};
+  swap.kind = UR_V3_SWAP_EXACT_IN;  // 200 USDC for at least 195 DAI
+  memset(swap.token_in, 0x11, 20);
+  memset(swap.token_out, 0x22, 20);
+  swap.recipient[19] = UR_RECIPIENT_ADDRESS_THIS;
+  swap.amount[31] = 200;
+  swap.limit[31] = 195;
+  swap.payer_is_user = true;
+  sweep.kind = UR_SWEEP;  // all the DAI the router holds, minimum 0
+  memset(sweep.token_in, 0x22, 20);
+  sweep.recipient[19] = UR_RECIPIENT_MSG_SENDER;
+  UrPlan p = {};
+  UrSummary s;
+  p.n = 2;
+  p.steps[0] = swap;  // control: the app's order
+  p.steps[1] = sweep;
+  ASSERT_TRUE(ur_summarize(&p, router, value, &s));
+  EXPECT_EQ(s.amount_out[31], 195);
+  p.steps[0] = sweep;  // the sweep runs first and moves nothing
+  p.steps[1] = swap;
+  EXPECT_FALSE(ur_summarize(&p, router, value, &s));
+  UrStep direct = swap;  // no sweep: 1 DAI to the user, 195 stay behind
+  direct.recipient[19] = UR_RECIPIENT_MSG_SENDER;
+  direct.amount[31] = 1;
+  direct.limit[31] = 1;
+  swap.amount[31] = 199;
+  p.steps[0] = direct;
+  p.steps[1] = swap;
+  EXPECT_FALSE(ur_summarize(&p, router, value, &s));
+  p.n = 3;  // control: swept after, it is the user's
+  p.steps[2] = sweep;
+  ASSERT_TRUE(ur_summarize(&p, router, value, &s));
+  EXPECT_EQ(s.amount_out[31], 196);
+}
+
 /* size_t is 32-bit on the device: an offset above 2^32 must be refused, not
  * wrapped to a small one the router never reads. */
 TEST(UniswapUr, OffsetsWiderThan32BitsAreNotDecoded) {

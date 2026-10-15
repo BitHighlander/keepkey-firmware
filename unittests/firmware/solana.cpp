@@ -2994,7 +2994,7 @@ TEST(Solana, SchemaV2RealSoltoshiDiceJoinAppliesOnlyWhenCertified) {
   ASSERT_EQ(memcmp(s.program_id, join->program_id, 32), 0);
 
   uint8_t idx = 0xFF;
-  ASSERT_TRUE(solana_schemaAppliesCertified(&s, &tx, &idx));
+  ASSERT_TRUE(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx));
   EXPECT_EQ(idx, 2);
   /* Runtime (AdvancedMode) schemas keep the inert-only companion rule. */
   idx = 0xFF;
@@ -3020,7 +3020,7 @@ TEST(Solana, SchemaV2UnknownCompanionRejectedEvenWhenCertified) {
   SolanaInstrSchema s;
   ASSERT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
   uint8_t idx = 0xFF;
-  EXPECT_FALSE(solana_schemaAppliesCertified(&s, &tx, &idx));
+  EXPECT_FALSE(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx));
   EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx));
 }
 
@@ -3039,7 +3039,8 @@ TEST(Solana, SchemaV2TokenMintOutOfRangeDoesNotApply) {
     SolanaInstrSchema s;
     ASSERT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
     uint8_t idx = 0xFF;
-    EXPECT_EQ(solana_schemaAppliesCertified(&s, &tx, &idx), mint == 8)
+    EXPECT_EQ(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx),
+              mint == 8)
         << (unsigned)mint;
   }
 }
@@ -3227,7 +3228,7 @@ TEST(Solana, SchemaV2SoltoshiDiceJoinRendersEachArg) {
   SolanaInstrSchema s;
   ASSERT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
   uint8_t idx = 0xFF;
-  ASSERT_TRUE(solana_schemaAppliesCertified(&s, &tx, &idx));
+  ASSERT_TRUE(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx));
   const SolanaParsedInstruction* ix = &tx.instructions[idx];
   ASSERT_EQ(ix->acct_indices[3], 8);
   ASSERT_NE(memcmp(tx.accounts[3], kSdiceMint, 32), 0);
@@ -3420,7 +3421,7 @@ TEST(Solana, CertifiedSoltoshiJoinRendersSdiceAmounts) {
   ASSERT_TRUE(solana_parseInstrSchema(msg.schema_payload.bytes,
                                       msg.schema_payload.size, &s));
   uint8_t idx = 0xFF;
-  ASSERT_TRUE(solana_schemaAppliesCertified(&s, &tx, &idx));
+  ASSERT_TRUE(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx));
   const SolanaParsedInstruction* ix = &tx.instructions[idx];
 
   const char* sdice =
@@ -3528,7 +3529,7 @@ TEST(Solana, SchemaV1CertifiedAdmitsStaticTransferCompanion) {
   SolanaInstrSchema s;
   ASSERT_TRUE(solana_parseInstrSchema(blob, len, &s));
   uint8_t idx = 0xFF;
-  ASSERT_TRUE(solana_schemaAppliesCertified(&s, &tx, &idx));
+  ASSERT_TRUE(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx));
   EXPECT_EQ(idx, 0);
   idx = 0xFF;
   EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx));
@@ -3562,7 +3563,8 @@ TEST(Solana, SchemaCertifiedTransferCompanionNeedsExactlyTwoAccounts) {
     ASSERT_EQ(tx.num_static_accounts, tx.num_accounts);
 
     uint8_t idx = 0xFF;
-    EXPECT_EQ(solana_schemaAppliesCertified(&s, &tx, &idx), accts == 2)
+    EXPECT_EQ(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx),
+              accts == 2)
         << (unsigned)accts;
     EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx)) << (unsigned)accts;
   }
@@ -3646,7 +3648,8 @@ TEST(Solana, SchemaCertifiedRefusesTransferToLookupTableKey) {
         0);
 
     uint8_t idx = 0xFF;
-    EXPECT_EQ(solana_schemaAppliesCertified(&s, &tx, &idx), to_index == 3)
+    EXPECT_EQ(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx),
+              to_index == 3)
         << (unsigned)to_index;
     EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx)) << (unsigned)to_index;
   }
@@ -3779,7 +3782,7 @@ static bool pump_certified(const std::vector<uint8_t>& raw,
   const std::vector<uint8_t> blob = solana_unhex(schema_hex);
   SolanaInstrSchema s;
   if (!solana_parseInstrSchema(blob.data(), blob.size(), &s)) return false;
-  return solana_schemaAppliesCertified(&s, &tx, idx);
+  return solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], idx);
 }
 
 /* Point account slot `slot` of instruction `ix` at the pool (instruction
@@ -3822,6 +3825,33 @@ TEST(Solana, CertifiedRealPumpSellAdmitsSignerWrapAndUnwrap) {
   std::vector<uint8_t> gifted = raw;
   pump_redirect(&gifted, 3, 2, 4);
   EXPECT_FALSE(pump_certified(gifted, kPumpAmmSellSchemaHex, &idx));
+}
+
+/* A host that adds its own key as a second signer is not the user. Closing
+ * the wSOL account to that key hands it the whole wrapped balance (the screen
+ * would say "rent"), and the device must not create an account it owns. A
+ * co-signer funding the user's own account is still admitted. */
+TEST(Solana, CertifiedPumpSellRefusesCoSignerCloseAndCreate) {
+  std::vector<uint8_t> raw = solana_unhex(kPumpSellMessageHex);
+  ASSERT_EQ(raw[1], 1);
+  raw[1] = 2; /* message key 1 signs too: the host's co-signer */
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  ASSERT_TRUE(solana_signerInTx(tx.accounts[1], &tx));
+  ASSERT_EQ(tx.instructions[3].type, SOL_INSTR_ATA_CREATE);
+  ASSERT_EQ(tx.instructions[5].type, SOL_INSTR_TOKEN_CLOSE_ACCOUNT);
+  ASSERT_NE(tx.instructions[5].acct_indices[0], 1);
+  uint8_t idx = 0xFF;
+  ASSERT_TRUE(pump_certified(raw, kPumpAmmSellSchemaHex, &idx));
+  auto to_cosigner = [&](uint8_t ix, uint8_t slot) {
+    std::vector<uint8_t> r = raw;
+    r[tx.instructions[ix].acct_indices + slot - raw.data()] = 1;
+    return r;
+  };
+  EXPECT_FALSE(pump_certified(to_cosigner(5, 1), kPumpAmmSellSchemaHex, &idx));
+  EXPECT_FALSE(pump_certified(to_cosigner(3, 2), kPumpAmmSellSchemaHex, &idx));
+  EXPECT_TRUE(pump_certified(to_cosigner(3, 0), kPumpAmmSellSchemaHex, &idx));
 }
 
 TEST(Solana, CertifiedRealPumpBuysAdmitWrapAndUnwrap) {
@@ -3927,7 +3957,7 @@ TEST(Solana, IntentReviewOfRealPumpSellMatchesTheSpec) {
   EXPECT_EQ(s.version, 3);
   EXPECT_STREQ(s.intent, "Sell {0} for at least {1}");
   uint8_t idx = 0xFF;
-  ASSERT_TRUE(solana_schemaAppliesCertified(&s, &tx, &idx));
+  ASSERT_TRUE(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx));
   ASSERT_EQ(idx, 4);
 
   static SolanaSignTx msg;  // certificate + signed SDICE identity
@@ -4075,7 +4105,7 @@ TEST(Solana, IntentReviewCapRoleAndUnstatedValuesOnRealJoin) {
   SolanaInstrSchema s;
   ASSERT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
   uint8_t idx = 0xFF;
-  ASSERT_TRUE(solana_schemaAppliesCertified(&s, &tx, &idx));
+  ASSERT_TRUE(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx));
   std::vector<Screen> got;
   ASSERT_TRUE(solana_buildIntentReview(&msg, &tx, &s, idx, tx.accounts[0],
                                        "KeepKey Vault", "a9531b9d", true,
@@ -4120,7 +4150,7 @@ TEST(Solana, IntentReviewAccountPlaceholderReceiveExactAndLegacyFallback) {
     std::vector<Screen> got;
     uint8_t idx = 0xFF;
     EXPECT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
-    EXPECT_TRUE(solana_schemaAppliesCertified(&s, &tx, &idx));
+    EXPECT_TRUE(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx));
     EXPECT_TRUE(solana_buildIntentReview(&msg, &tx, &s, idx, tx.accounts[0],
                                          "KeepKey Vault", "a9531b9d", true,
                                          collect, &got));

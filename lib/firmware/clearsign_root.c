@@ -219,7 +219,10 @@ bool clearsign_root_verify_erc7730_catalog(
     const uint8_t catalog_root[32], const uint8_t* sig, size_t sig_len,
     char out_alias[CLEARSIGN_ALIAS_LEN + 1]) {
   static const uint8_t purpose[] = "KEEPKEY:ERC7730:CATALOG\0";
-  if (!catalog_root || !sig || sig_len != 64 || !out_alias) return false;
+  /* An EVM catalog: a Solana-scope cert never authorizes EVM chain 501. */
+  if (!catalog_root || !sig || sig_len != 64 || !out_alias ||
+      expected_scope == CLEARSIGN_SCOPE_SOLANA)
+    return false;
 
   SHA256_CTX ctx;
   uint8_t digest[SHA256_DIGEST_LENGTH];

@@ -313,9 +313,11 @@ bool solana_schemaApplies(const SolanaInstrSchema* schema,
                           const SolanaParsedTx* tx, uint8_t* out_index);
 
 /* Same, for a root-certified schema; also admits SystemProgram Transfers whose
- * accounts are all static keys (shown in full, never a LUT-resolved dest). */
+ * accounts are all static keys (shown in full, never a LUT-resolved dest), and
+ * the wSOL wrap/unwrap of `signer`'s (the device key's) own accounts. */
 bool solana_schemaAppliesCertified(const SolanaInstrSchema* schema,
                                    const SolanaParsedTx* tx,
+                                   const uint8_t signer[SOL_PUBKEY_SIZE],
                                    uint8_t* out_index);
 
 /* Exact units: "N d", "N h", "N min" or "N s". */

@@ -273,11 +273,11 @@ jobs:
                           str(release / 'presign-evidence-manifest.json'))
           PY
 
-      # The ALPHA ClearSign root (02de9231...dae7) is compiled into every 7.16
-      # alpha/staging build and must never ship. Production gets its own root
-      # from a new ceremony after the 7.15 re-release, replacing these bytes
-      # before any 7.16 production release; until then every 7.16 tag fails
-      # here, as intended. Both variants: bitcoin-only must not carry it either.
+      # The ALPHA ClearSign root (02de9231...dae7) must never ship. 7.16
+      # compiles in the production root (027c1fde...e321); tests use the alpha
+      # key only as the emulator-only test root (KK_CLEARSIGN_TEST_ROOT), so
+      # this step catches it leaking into a release artifact. Both variants:
+      # bitcoin-only must not carry it either.
       - name: Refuse the alpha ClearSign root (${{ matrix.variant }})
         run: |
           python3 - <<'EOF'

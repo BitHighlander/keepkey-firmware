@@ -221,7 +221,6 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
              schema.disc[i]);
   }
 
-  /* Separate screens: combined, the discriminator could be clipped. */
   bool confirmed =
       (confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
                "%s\n%s", schema.program_name, schema.instruction_name) &&
@@ -230,8 +229,8 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
        confirm(ButtonRequestType_ButtonRequest_SignTx, "Discriminator", "%s",
                disc_hex));
 
-  /* One label per screen (confirm() does not paginate): a valid schema can
-   * still mislabel an offset, so every label must be seen. */
+  /* One label per screen: a valid schema can still mislabel an offset, so
+   * every label must be seen. */
   for (uint8_t i = 0; confirmed && i < schema.num_args; i++) {
     confirmed = confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
                         "Arg %u: %s\n%s", (unsigned)(i + 1),

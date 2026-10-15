@@ -44,8 +44,8 @@
  *   [42..74]   delegate pubkey. It must equal a runtime signer the user
  *              loaded, and the envelope signature must verify under it.
  * and bytes 1, 6..9 and 75..138 are ignored.
- * Both tiers require AdvancedMode; the tier selects only the provenance
- * screen, never the raw-data review. */
+ * D-007: KEEPKEY needs no AdvancedMode and its review replaces the raw-data
+ * review; RUNTIME requires AdvancedMode and keeps the raw-data review. */
 
 static inline uint16_t read_be16(const uint8_t* p) {
   return (uint16_t)(((uint16_t)p[0] << 8) | p[1]);

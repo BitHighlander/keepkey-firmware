@@ -798,6 +798,32 @@ TEST(Erc7730Catalog, ChainIdAboveUint32IsRefusedNotTruncated) {
   ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
 }
 
+TEST(Erc7730Catalog, SolanaScopeCertificateNeverCertifiesEvmChain501) {
+  CertifiedFixture fixture;
+  makeCertifiedFixture(&fixture);
+  TestRoot root(fixture.root_pubkey);
+  // EVM chain id 501 (header and deployment) under a root-signed scope-501
+  // certificate, which the root issued for Solana.
+  auto program = minimalProgram();
+  const size_t deployment = sectionOffset(program, 8) + 5 + 5;
+  program[16] = program[deployment + 6] = 0x01;
+  program[17] = program[deployment + 7] = 0xf5;
+  auto e = certifiedEnvelope(
+      fixture, program,
+      rootCert(fixture.root_key, fixture.delegate.pubkey,
+               CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, CLEARSIGN_SCOPE_SOLANA));
+  EXPECT_EQ(feedAll(e, 64), ERC7730_CATALOG_UNTRUSTED);
+  // The same envelope is well formed: a runtime signer the user loaded
+  // verifies it, on the AdvancedMode-gated runtime tier only.
+  ASSERT_TRUE(signed_metadata_store_signer(
+      3, fixture.delegate.pubkey, "Approved signer", nullptr, 0, 0, 0, false));
+  Erc7730CatalogIdentity identity{};
+  ASSERT_EQ(feedIdentity(e, &identity), ERC7730_CATALOG_COMPLETE);
+  EXPECT_EQ(identity.tier, (uint8_t)METADATA_TIER_RUNTIME);
+  signed_metadata_clear_signers();
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+}
+
 TEST(Erc7730Catalog, AuthenticatesMerkleProofPathsUpToDepthLimit) {
   SignedFixture fixture;
   loadRuntimeSigner(&fixture, "Approved signer");
