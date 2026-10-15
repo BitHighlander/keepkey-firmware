@@ -5,17 +5,22 @@
  * (see CMakeLists.txt). Not used by the ARM build. */
 
 #include <stddef.h>
+#include <string.h>
 
-#ifdef __cplusplus
+#if defined(__cplusplus) && defined(__GLIBC__)
 #define KEEPKEY_BSD_NOTHROW noexcept
-extern "C" {
 #else
 #define KEEPKEY_BSD_NOTHROW
 #endif
 
-/* Match the native glibc declarations when present (glibc 2.38+). */
-size_t strlcpy(char *dst, const char *src, size_t siz) KEEPKEY_BSD_NOTHROW;
-size_t strlcat(char *dst, const char *src, size_t siz) KEEPKEY_BSD_NOTHROW;
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* glibc uses noexcept; musl and MinGW use plain C declarations. Include
+ * string.h first so the libc identity and any native declarations are known. */
+size_t(strlcpy)(char *dst, const char *src, size_t siz) KEEPKEY_BSD_NOTHROW;
+size_t(strlcat)(char *dst, const char *src, size_t siz) KEEPKEY_BSD_NOTHROW;
 
 #ifdef __cplusplus
 }
