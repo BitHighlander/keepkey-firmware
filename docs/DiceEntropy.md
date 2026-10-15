@@ -201,3 +201,17 @@ completion the debug build resumes privileged stored-wallet diagnostics. This
 is not a security boundary for a committed wallet on a debug build. Native
 known-draw fixtures verify the derivation and device-side logical pages; strict
 host tests verify wire privacy and completion without reading the device draw.
+
+## PIN entry and bulk sampling
+
+New PIN confirmation happens before dice collection. A mismatch therefore
+requires only PIN entry again; cancelling dice clears the staged PIN and
+entropy. The existing dice derivation modes remain unchanged.
+
+After the initial 64 KiB press-free RNG audit allowance is exhausted, one
+physical approval permits up to 8 MiB of returned entropy on an uninitialized
+device without a storage compatibility lock. Feature polls may interleave.
+Other top-level messages, workflow abort, idle lock, or reboot revoke this
+approved grant. Initialized and compatibility-locked wallets retain per-request
+confirmation, and armed setup refuses sampling. A zero-byte request cannot
+open a grant. This is a sampling convenience, not proof of RNG unpredictability.
