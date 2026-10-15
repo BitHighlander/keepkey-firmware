@@ -1,217 +1,125 @@
-# Dice Entropy
+# Dice entropy: release-specific behavior
 
-On-device dice rolls as seed entropy, in two modes a user can verify offline.
-Available from firmware v7.14.3 (bitcoin-only line) and v7.15.0
-(`ResetDevice.dice_entropy`, `ResetDevice.dice_only`); a host must check
-`Features.supports_dice_modes` before offering either, because older firmware
-skips unknown fields silently rather than refusing them.
+The 7.15 dice derivation retained in alpha differs from 7.14.3. In particular,
+**the full dice digest is secret in 7.15: in dice-only mode it is the wallet's
+BIP-39 entropy before truncation to the selected strength.** Do not publish the
+roll sheet, digest, device entropy words, or final mnemonic.
 
-## What happens
+## Setup and retry order
 
-`reset.c:reset_init()`, when `dice_entropy` is set:
+With PIN protection requested, both new-PIN entries must match before the dice
+ceremony begins. The PIN stays staged until setup completes. A mismatch aborts
+before dice; cancelling the ceremony clears staged settings, PIN, entropy,
+digest and secret display state. Retrying starts a new ceremony.
 
-1. A consent screen names the mode the host selected — "Dice + Device" or
-   "Dice Only" — with the roll count. Holding proceeds; the only "no" is the
-   host's Cancel, which aborts the reset. `no_backup` is refused with dice.
-2. MIXED only: the device shows its own 32-byte RNG draw as 24 BIP-39 words,
-   titled "Entropy N/M", and the consent screen has just said these are NOT a
-   backup. The user copies them down. This happens before any roll is entered,
-   so the draw is committed before the device has seen the rolls.
-3. `dice_input_collect()` gathers rolls on the device's own button — short press
-   selects 1-6, long press commits. 50 rolls for a 12-word seed, 75 for 18, 99
-   for 24 (`dice_rolls_for_strength`). Rolls are stored as ASCII `'1'`-`'6'`,
-   one byte each.
-4. Rolls on which any face lands more than 30% of the time are refused with a
-   `SyntaxError` before the digest or backup flow is shown
-   (`dice_rolls_look_biased`).
-5. `dice_digest = SHA256(rolls)`. All 32 bytes are shown on the OLED as 64 hex
-   characters, with the roll count, on a paged confirm screen.
-6. The seed is derived per mode (`dice_derive_only` / `dice_derive_mixed`, in
-   `dice_input.c`):
-   - ONLY: `seed = SHA256(rolls)`
-   - MIXED: `user = SHA256(TAG_USER || rolls)`;
-     `seed = SHA256(SHA256(TAG_MIX || draw || user))`, where
-     `TAG_USER` is the 4 bytes `4B 4B 01 44` and `TAG_MIX` the 5 bytes
-     `4B 4B 01 53 4D`
-7. The device sends `EntropyRequest` and consumes the host's `EntropyAck`, so
-   the wire flow is unchanged, but the bytes are dropped: nothing enters the
-   derivation that the user does not hold.
-8. The backup words are shown and the seed is committed as usual.
+Hosts must check `Features.supports_dice_modes` before offering these modes;
+older firmware may silently ignore unknown fields.
 
-Cancelling at any point aborts the reset and zeroes the buffers. Nothing is
-stored.
+The host selects `ResetDevice.dice_entropy`; `dice_only` additionally selects
+rolls alone and requires `dice_entropy`. The device explicitly identifies the
+selected mode for consent. Dice setup rejects `no_backup`.
 
-## What the digest proves
+## 7.15 derivation
 
-The digest is over the rolls, and nothing else. A user who wrote their rolls
-down can recompute it:
+Rolls are entered on the device button, using short presses to select a value
+and a hold to commit it. There are 50 rolls for 12 words, 75 for 18, and 99 for
+24. The hash input is the ASCII sequence of digits `1` through `6`, with no
+spaces or newline. The firmware rejects unsupported counts or invalid digits,
+and rejects any face occurring at least 25/50, 32/75 or 39/99 times. This check
+catches gross repetition; it does not establish that the rolls are random.
 
-```
-printf '536142...' | shasum -a 256    # all 64 hex chars == displayed digest
+For **Dice Only**:
+
+```text
+derived_entropy = SHA256(rolls)
 ```
 
-A match proves the device recorded exactly that sequence, in that order, with
-none dropped or substituted. That is the whole purpose of the digest, and it is
-worth doing — it catches a device that quietly ignores button presses.
+For **Dice + Device**:
 
-## What the digest does not prove
-
-On its own it does not prove the rolls reached the seed: a digest of the input
-says nothing about what was done with it, and firmware that showed a correct
-digest and then ignored the rolls would look identical from outside. That is
-why the dice ceremony no longer offers an unverifiable derivation. Both modes
-it offers (below) are built so the user can recompute the seed, and the digest
-is the commitment that recomputation checks against.
-
-Before this unit the dice derivation was
-`SHA256(SHA256(int_entropy || rolls) || ext_entropy)` — three inputs, of which
-the user held one, so no such recomputation existed.
-
-An earlier revision displayed `int_entropy` and described it as a verifiable
-commitment. That was strictly worse, and not for the reason the old text here
-gave: the screen was drawn *before* `EntropyRequest`, so it disclosed the exact
-32 bytes whose complement the host itself chooses. Anyone who read the OLED and
-knew `ext_entropy` computed the seed pre-image directly. (The old claim that the
-displayed value was "post-mix" was wrong on every reachable path — dice and
-`display_random` were mutually exclusive, so the value shown was the raw RNG
-draw.) Trezor, whose `ResetDevice` this inherits, removed the identical feature
-for the identical reason in PR #4119.
-
-The roll digest is safe by contrast because it hashes the user's own input, not
-seed material.
-
-## How ColdCard does it, and what we owe them
-
-ColdCard reaches a stronger position, and the difference is not the display —
-it is *what the complement is*.
-
-- ColdCard's USB protocol has **no seed-creation or entropy command at all**.
-  The host cannot contribute entropy, so the complement of anything shown is
-  dice the user holds and never transmits.
-- Since 5.6.1 / 1.5.1Q user entropy is **mandatory** on every new seed: 50 d6
-  rolls, 128 coin flips, or 65 timed key presses.
-- The device shows the **full 32-byte** SHA-256 digest live while rolling, not a
-  truncation.
-- **Dice-Rolls-Only** mode derives `seed = SHA256(rolls)` and nothing else, so a
-  user recomputes the whole wallet offline with a few lines of Python.
-- Coinkite publishes a public-domain offline verifier for the mixed mode too,
-  which works because they disclose the device's pre-mix TRNG value as 24
-  BIP-39 words (`View TRNG Words`, 5.6.2 / 1.5.2Q).
-
-That last point is the one to be careful with: ColdCard *does* display device
-entropy. It is safe there precisely because no host holds the other half. Our
-display was unsafe for the mirror-image reason. The rule is about the
-complement, not about the act of showing.
-
-Against that, our gap is specific and worth stating plainly: **a KeepKey user
-cannot today prove their dice reached the seed.** They can prove the rolls were
-captured, which is worth something and catches a device that drops presses. They
-cannot prove the rolls were used.
-
-## The two opt-in modes
-
-Verifiability requires that the derivation contain nothing the user does not
-hold. The host selects the mode in `ResetDevice` before the ceremony starts,
-so the wallet can explain what is coming, and the device shows a consent
-screen naming the mode it was asked for — holding proceeds, and the only "no"
-is cancelling the reset, which is the right answer to a mode the user did not
-choose. Two modes, both verifiable:
-
-**MIXED** (`dice_entropy` alone). The device first shows its own 32-byte RNG draw
-as 24 BIP-39 words, which the user copies down, and only then collects the
-rolls. Because the draw is committed before the device has seen a roll, it
-cannot be chosen to steer the result. Then
-
-```
-TAG_USER = 4B 4B 01 44          (the bytes 'K' 'K' 0x01 'D')
-TAG_MIX  = 4B 4B 01 53 4D       (the bytes 'K' 'K' 0x01 'S' 'M')
-
-user = SHA256(TAG_USER || rolls)
-seed = SHA256(SHA256(TAG_MIX || device_draw || user))
+```text
+user_entropy    = SHA256(bytes(4b 4b 01 44) || rolls)
+derived_entropy = SHA256(SHA256(bytes(4b 4b 01 53 4d) || device_draw || user_entropy))
 ```
 
-The tags are written as bytes on purpose. As a C string literal,
-`"KK\x01D"` is NOT those four bytes: C's `\x` escape is greedy and eats
-`01D` as one hex number, giving `K K 0x1D` -- three bytes, a different
-seed, and a verification that fails against an honest device. The firmware
-spells them out as arrays (`dice_input.c`) for the same reason.
+`device_draw` is exactly 32 bytes. The mixed ceremony shows it as 24 BIP-39
+entropy words before dice collection. Those words encode the device input;
+they are **not the final wallet backup**. The two tags above are literal bytes
+(`KK`, byte `01`, then `D` or `SM`), with no trailing NUL.
 
-Showing the draw is safe here for the mirror-image reason it was unsafe under
-`display_random`: the other half is dice the host never sees.
+Both modes show the complete `SHA256(rolls)` digest after collection and before
+committing setup. BIP-39 encoding uses the first 16, 24 or 32 bytes of
+`derived_entropy` for 12, 18 or 24 words respectively, with the normal BIP-39
+checksum. This is mnemonic entropy, not the later BIP-39 passphrase-derived
+512-bit seed.
 
-**DICE ONLY** (`dice_entropy` with `dice_only`). `seed = SHA256(rolls)`,
-ColdCard's Dice-Rolls-Only byte for byte. The device draw is discarded, so the wallet rests entirely on the
-quality and privacy of the rolls. A biased die, a short sequence, or a
-photographed roll sheet is the whole seed. That is why it is an explicit
-choice, never a default, and why the device refuses rolls where any face
-exceeds 30% of the total before a digest is ever shown.
+The device still sends `EntropyRequest` and waits for `EntropyAck` to continue
+the reset protocol, but **host entropy bytes are ignored in both dice modes**.
+There is no additional host mixing or rehash at that step. Without dice,
+normal setup retains `SHA256(device_draw || host_entropy)`.
 
-In both modes the host's `EntropyAck` is still consumed, so the wire flow and
-every existing host are unchanged, but its bytes are dropped. The digest is
-shown in full. `tools/verify_dice_seed.py` recomputes the wallet offline from
-the roll string, plus the 24 device words for MIXED, with no secret from the
-device and no network — compare its output with the backup words the device
-showed, and the derivation has been checked by code the device did not write.
+Implementation: [reset.c](../lib/firmware/reset.c) (`reset_init`,
+`reset_entropy`) and [dice_input.c](../lib/firmware/dice_input.c)
+(`dice_derive_only`, `dice_derive_mixed`, `dice_rolls_look_biased`).
 
-## Why the default, no-dice mode has no verifier
+## What an offline check establishes
 
-Without dice the seed is `SHA256(device_draw || ext_entropy)`. There is no
-host-side verifier for that, and adding one would be a security regression
-rather than a feature.
+A digest match checks the recorded ASCII roll sequence. For dice-only, that
+same digest also provides all mnemonic entropy. For mixed mode, the roll
+sequence plus the decoded device entropy words provide every derivation input.
+An independent offline computation can therefore compare the resulting
+mnemonic with the final device backup. A digest match alone does not check the
+mixed derivation.
 
-Any such tool would need the device to disclose seed-derived material for the
-host to check against — the exact disclosure removed above. A verifier that
-instead reports "the device says it mixed" proves nothing: it relays a claim
-from the component whose honesty is in question, and manufactures false
-assurance. A user who trusts a green checkmark is worse off than one who knows
-the mix is unverified.
+Alpha includes [tools/verify_dice_seed.py](../tools/verify_dice_seed.py) for
+offline recomputation. Its inputs are secret; use a disposable ceremony on an
+offline machine you trust with a seed. The staged B1 branch does not yet
+include this tool.
+Native derivation vectors are in [dice.cpp](../unittests/firmware/dice.cpp).
+Keep real ceremony inputs offline; a host or website given all inputs can
+reconstruct the wallet. Neither a digest match nor a health-test pass proves
+that firmware is trustworthy or that either entropy source is unpredictable.
 
-Note the scope of that argument. It says a derivation with a host-held input
-cannot be verified without an unsafe disclosure. It does not say verification
-is impossible — that is what the dice modes above are for: DICE ONLY has no
-device- or host-held input at all, and MIXED discloses the device half only
-where the other half is dice the host never sees. Host entropy stays in the
-default mode because it is the one backstop against a device RNG that is
-broken but honest, and it is removed exactly where it blocked verification.
+Dice-only relies entirely on the quality and secrecy of the rolls. Mixed mode
+adds the device draw, but independent checking still requires the private
+inputs and an independently trusted computation.
 
-For the default mode the assurance chain is not a tool. It is:
+## 7.14.3 distinction
 
-1. **The digest** proves your rolls were captured.
-2. **The published source** proves what the firmware does with them.
-3. **The firmware hash** proves the binary you are running is that source.
+7.14.3 supports mixed dice input with this derivation:
 
-Step 2 is the one that carries the weight, and it is not delegable — the user
-verifies the code, or nobody does. Step 3 is what `Features.firmware_hash` and
-the vault's `firmwareVerified` field exist for; unreleased RC builds report
-`false` because their hashes are not in the shipped table.
+```text
+derived_entropy = SHA256(SHA256(device_draw || rolls) || host_entropy)
+```
 
-## Scope
+It displays only the first eight bytes of `SHA256(rolls)` and does not disclose
+the device draw. That receipt checks roll capture; it does not give the user
+all inputs needed to recompute the final mnemonic. The 7.15 formulas, full
+digest and dice-only option above must not be attributed to 7.14.3.
 
-Dice cannot make the seed worse: the mix is a hash over both sources, so the
-result is at least as unpredictable as the RNG alone. They are worth the effort
-only if the RNG is what you distrust — and you are trusting the same firmware
-either way.
+## Hardware RNG sampling before setup
 
-### Debug diagnostics during dice setup
+On an uninitialized device without a storage compatibility lock, an approval
+permits up to 8 MiB of consecutive `GetEntropy` output. The returned byte count
+is charged. `GetFeatures` may interleave; other top-level operations, including
+U2F PING/INIT, Initialize, Cancel, ClearSession and ResetDevice, revoke the
+approved grant. Workflow abort, idle lock and reboot also revoke it. A zero-byte
+request cannot open a grant. Initialized or compatibility-locked devices retain
+per-request confirmation; an armed reset or recovery refuses sampling.
 
-The device draw, roll digest and mnemonic pages are device-only during the
-ceremony. DebugLinkState returns no fields and debug memory reads are refused
-until commit or abort; cleanup also clears the previous private canvas. After
-completion the debug build resumes privileged stored-wallet diagnostics. This
-is not a security boundary for a committed wallet on a debug build. Native
-known-draw fixtures verify the derivation and device-side logical pages; strict
-host tests verify wire privacy and completion without reading the device draw.
+7.15 additionally has an initial 64 KiB allowance without approval, charged by
+returned bytes. Initialize and session changes do not replenish it; a confirmed
+factory wipe resets it, and a reboot starts a new in-memory allowance. The
+8 MiB approval applies once that allowance is exhausted. 7.14.3 does not have
+this initial allowance.
 
-## PIN entry and bulk sampling
+A host must handle short chunks, cancellation and incomplete audits. Sampling
+can detect some broken RNG output; it does not measure secret entropy or prove
+unpredictability. Dice entry is a separate physical operation after sampling.
 
-New PIN confirmation happens before dice collection. A mismatch therefore
-requires only PIN entry again; cancelling dice clears the staged PIN and
-entropy. The existing dice derivation modes remain unchanged.
+## Debug diagnostics
 
-After the initial 64 KiB press-free RNG audit allowance is exhausted, one
-physical approval permits up to 8 MiB of returned entropy on an uninitialized
-device without a storage compatibility lock. Feature polls may interleave.
-Other top-level messages, workflow abort, idle lock, or reboot revoke this
-approved grant. Initialized and compatibility-locked wallets retain per-request
-confirmation, and armed setup refuses sampling. A zero-byte request cannot
-open a grant. This is a sampling convenience, not proof of RNG unpredictability.
+During dice setup, debug state and memory reads must not reveal the device
+draw, roll digest or mnemonic pages. Commit or abort clears private ceremony
+state and its canvas. Debug builds resume privileged stored-wallet diagnostics
+afterward; this is not a security boundary for a committed wallet on a debug
+build.
