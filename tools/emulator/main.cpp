@@ -25,6 +25,7 @@ extern "C" {
 #include "keepkey/board/keepkey_flash.h"
 #include "keepkey/board/layout.h"
 #include "keepkey/board/usb.h"
+#include "keepkey/board/timer.h"
 #include "keepkey/board/resources.h"
 #include "keepkey/board/keepkey_usart.h"
 #include "keepkey/emulator/setup.h"
@@ -69,6 +70,7 @@ int main(void) {
   setup();
   flash_collectHWEntropy(false);
   kk_board_init();
+  timer_start_emulator_signals();
   drbg_init();
 
   led_func(SET_RED_LED);
