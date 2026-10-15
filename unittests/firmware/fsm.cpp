@@ -791,9 +791,18 @@ struct PinResponder {
   int answers = 0;
   int polls = 0;
   bool watchdog = false;
-  explicit PinResponder(const char* value) : pin(value) {
+  bool approve_confirmation;
+  int confirmations = 0;
+  explicit PinResponder(const char* value, bool approve = false)
+      : pin(value), approve_confirmation(approve) {
     kk_test_set_message_hook([this](MessageType id, const void*) {
       if (id == MessageType_MessageType_PinMatrixRequest) pending = true;
+      if (id == MessageType_MessageType_ButtonRequest && approve_confirmation) {
+        ++confirmations;
+        static const uint8_t yes[] = {0x08, 0x01};
+        EXPECT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_ButtonAck, nullptr, 0));
+        EXPECT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_DebugLinkDecision, yes, 2));
+      }
     });
     kk_test_set_poll_hook([this] {
       if (++polls > 10000) {
@@ -827,6 +836,7 @@ struct PinResponder {
     kk_test_set_poll_hook({});
     kk_test_set_message_hook({});
     EXPECT_EQ(expected, answers);
+    EXPECT_EQ(approve_confirmation ? 1 : 0, confirmations);
     EXPECT_FALSE(watchdog);
   }
   ~PinResponder() {
@@ -1651,15 +1661,10 @@ TEST_F(AutoLockProgress, DryRunRecoveryPastTheDeadlineServesNoPinGatedRead) {
   ASSERT_TRUE(session_isPinCached());
   // A dry run asks for the PIN, then for confirmation.
   ASSERT_TRUE(kkconfirm_preload_no_sentinel(0, 0));
-  std::thread host([] {
-    answerPinPrompt("1234").join();
-    static const uint8_t yes[] = {0x08, 0x01};
-    kkconfirm_sendTiny(MessageType_MessageType_ButtonAck, nullptr, 0);
-    kkconfirm_sendTiny(MessageType_MessageType_DebugLinkDecision, yes, 2);
-  });
+  PinResponder host("1234", /*approve=*/true);
   recovery_cipher_init(12, false, false, "english", "dry run", false,
                        STORAGE_MIN_SCREENSAVER_TIMEOUT, 0, /*dry_run=*/true);
-  host.join();
+  host.finish(1);
   ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
   keepkey_user_activity();  // the press that confirmed the dry run
   for (int i = 0; i < 4; ++i) {
