@@ -2118,7 +2118,7 @@ TEST_F(SolanaSchemaSignTest,
     if (mutation == 1) msg.raw_tx.bytes[69] ^= 1;
     if (mutation == 2) msg.lut_account[0].bytes[0] ^= 1;
     if (mutation == 3) msg.lut_signature.bytes[0] ^= 1;
-    if (mutation == 4) msg.lut_signer_key_id = 256; /* must not narrow */
+    if (mutation == 4) msg.lut_signer_key_id = 256 + TEST_KEY_ID; /* aliases the loaded slot */
     kkconfirm_capture_start();
     fsm_test_clearLastFailure();
     fsm_msgSolanaSignTx(&msg);
