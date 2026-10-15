@@ -70,7 +70,10 @@ int main(void) {
   setup();
   flash_collectHWEntropy(false);
   kk_board_init();
-  timer_start_emulator_signals();
+  /* Only delays (PIN backoff) advance the clock, by wall time. A free-running
+   * clock would fire idle auto-lock, which the host test suites never expect
+   * from the standalone emulator. */
+  timer_set_poll_driven(true);
   drbg_init();
 
   led_func(SET_RED_LED);
