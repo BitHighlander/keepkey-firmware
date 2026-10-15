@@ -48,6 +48,9 @@
 #include "trezor/crypto/sha3.h"
 
 #define EIP712_QUEUE_BODY 96
+/* Permit2's domain has exactly three members (name, chainId,
+ * verifyingContract); a fourth proves it is not Permit2 and flushes. */
+#define EIP712_QUEUE_SLOTS 3
 
 /* Uniswap Permit2: one immutable deployment, the same address on every EVM
  * chain that uses the canonical CREATE2 factory. */
@@ -623,16 +626,16 @@ static struct {
    * moment that proof fails, so nothing is ever hidden. */
   uint8_t permit2;
   uint8_t queued;
-  char queue[5][EIP712_QUEUE_BODY];
+  char queue[EIP712_QUEUE_SLOTS][EIP712_QUEUE_BODY];
   Eip712Permit2 p2;
 
   /* EIP-2612 / DAI Permit with the canonical type hash (ERC20_PERMIT_*). An
    * unlimited one on a domain naming its token is signed after a warning
-   * naming spender, token and deadline, on top of its UNLIMITED leaf. */
+   * naming spender, token and deadline, on top of its UNLIMITED leaf. Its
+   * spender and deadline are kept in p2.spender / p2.sig_deadline: a request
+   * is a Permit or a PermitSingle, never both. */
   uint8_t erc20_permit;
   bool erc20_unlimited;
-  uint8_t erc20_spender[20];
-  uint8_t erc20_deadline[32];
   uint8_t requested; /* types index of the outstanding StructRequest */
   Eip712Closure closure;
   uint8_t closure_index;
@@ -916,9 +919,9 @@ static bool erc20_permit_reviewable(void) {
 static void erc20_permit_capture(const uint8_t* v, uint16_t len) {
   const char* m = e712.pending_name;
   if (e712.depth != 1) return;
-  if (strcmp(m, "spender") == 0 && len == 20) memcpy(e712.erc20_spender, v, 20);
+  if (strcmp(m, "spender") == 0 && len == 20) memcpy(e712.p2.spender, v, 20);
   if ((strcmp(m, "deadline") == 0 || strcmp(m, "expiry") == 0) && len == 32)
-    memcpy(e712.erc20_deadline, v, 32);
+    memcpy(e712.p2.sig_deadline, v, 32);
 }
 
 /* Fixed and short: a wrapped title draws over the body, and a primary type
@@ -1417,7 +1420,7 @@ static bool permit2_queue_leaf(const Eip712FieldType* field,
   char type_name[EIP712_MAX_TYPE_NAME];
   char path[EIP712_MAX_PATH];
   char text[EIP712_QUEUE_BODY];
-  if (e712.queued >= 5 ||
+  if (e712.queued >= EIP712_QUEUE_SLOTS ||
       !eip712_type_name(field, type_name, sizeof(type_name)) ||
       !leaf_path(path, sizeof(path)))
     return false;
@@ -1640,15 +1643,15 @@ static bool erc20_permit_warning(void) {
                    e712.domain_facts.verifying_contract, NULL, &tok)
           ? &tok
           : NULL;
-  address_text(e712.erc20_spender, false, spender, sizeof(spender));
+  address_text(e712.p2.spender, false, spender, sizeof(spender));
   address_text(e712.domain_facts.verifying_contract, false, token,
                sizeof(token));
   bool zero = true;
   for (int i = 0; i < 32; i++)
-    if (e712.erc20_deadline[i]) zero = false;
+    if (e712.p2.sig_deadline[i]) zero = false;
   if (e712.erc20_permit == ERC20_PERMIT_DAI && zero) {
     strlcpy(deadline, "no deadline", sizeof(deadline));
-  } else if (!deadline_text(e712.erc20_deadline, deadline, sizeof(deadline))) {
+  } else if (!deadline_text(e712.p2.sig_deadline, deadline, sizeof(deadline))) {
     return false;
   }
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,

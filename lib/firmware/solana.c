@@ -173,7 +173,10 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
   for (uint16_t i = 0; i < num_instructions; i++) {
     if (pos >= raw_len) return -1;
     uint8_t program_idx = raw[pos++];
-    if (program_idx >= num_accounts) return -1;
+    /* Solana invokes only static program ids, never a lookup-table key, a
+     * certified one included. */
+    if (program_idx >= num_accounts || program_idx >= tx->num_static_accounts)
+      return -1;
     bool external = false;
 
     uint16_t num_acct_indices;

@@ -3576,6 +3576,28 @@ TEST_F(ContactBookSigning, ContactAndContractMetadataReplaceEachOther) {
   EXPECT_STREQ("Alice", contact_book_label());
 }
 
+/* 7.16: a certified envelope drops the label, and a later proof drops the
+ * certified claim, so the two never describe one transaction together. */
+TEST_F(ContactBookSigning, ContactAndCertifiedMetadataReplaceEachOther) {
+  sendContactProof(PROOF3_0);
+  ASSERT_STREQ("Alice", contact_book_label());
+
+  EthereumTxMetadata envelope = {};
+  envelope.has_signed_payload = envelope.has_key_id = true;
+  envelope.key_id = METADATA_KEYID_DELEGATE;
+  envelope.signed_payload.size = 1 + 139 + 80;
+  envelope.signed_payload.bytes[0] = METADATA_VERSION_CERTIFIED;
+  receiveMessage(MessageType_MessageType_EthereumTxMetadata,
+                 EthereumTxMetadata_fields, &envelope);
+  EXPECT_EQ(nullptr, contact_book_label());
+  ASSERT_TRUE(signed_metadata_certified_claimed());
+
+  sendContactProof(PROOF3_0);
+  EXPECT_STREQ("Alice", contact_book_label());
+  EXPECT_FALSE(signed_metadata_certified_claimed());
+  EXPECT_FALSE(signed_metadata_available());
+}
+
 TEST_F(ContactBookSigning, AnotherWalletsCertificationIsRefused) {
   sendContactProof(PROOF3_0_OTHER_KEY);
   EXPECT_EQ(nullptr, contact_book_label());

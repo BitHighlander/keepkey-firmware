@@ -886,7 +886,8 @@ TEST(Solana, LegacyMessageWithInvalidHeaderIsMalformed) {
       {1, 1, 1, 3, SOL_TX_REVIEW_MALFORMED}, /* no writable signer */
       {4, 0, 0, 3, SOL_TX_REVIEW_MALFORMED}, /* more signers than keys */
       {1, 0, 3, 3, SOL_TX_REVIEW_MALFORMED}, /* ranges overlap */
-      {1, 0, 1, SOL_MAX_ACCOUNTS + 1, SOL_TX_REVIEW_OPAQUE}, /* control */
+      /* #550: an oversized list is refused, never blind-signed. */
+      {1, 0, 1, SOL_MAX_ACCOUNTS + 1, SOL_TX_REVIEW_MALFORMED},
       {1, 1, 1, SOL_MAX_ACCOUNTS + 1, SOL_TX_REVIEW_MALFORMED},
   };
   for (const Header& h : headers) {
@@ -2189,36 +2190,36 @@ TEST(Solana, SchemaAppliesToCertifiedLookupResolvedProgramAndAccount) {
   raw[pos++] = 0x80; /* v0 */
   raw[pos++] = 1;    /* required signatures */
   raw[pos++] = 0;
-  raw[pos++] = 0;
-  raw[pos++] = 1; /* one static account: signer */
+  raw[pos++] = 1; /* one readonly unsigned: the program */
+  raw[pos++] = 2; /* static accounts: signer, program */
   memset(raw + pos, 0x11, 32);
+  pos += 32;
+  memcpy(raw + pos, program, 32);
   pos += 32;
   memset(raw + pos, 0xBB, 32); /* blockhash */
   pos += 32;
   raw[pos++] = 1; /* one instruction */
-  raw[pos++] = 1; /* program is resolved account 0 */
+  raw[pos++] = 1; /* program is static account 1 (never a lookup key) */
   raw[pos++] = 1; /* one instruction account */
-  raw[pos++] = 2; /* resolved account 1 */
+  raw[pos++] = 2; /* resolved account 0 */
   raw[pos++] = sizeof(data);
   memcpy(raw + pos, data, sizeof(data));
   pos += sizeof(data);
   raw[pos++] = 1; /* one lookup table */
   memset(raw + pos, 0x55, 32);
   pos += 32;
-  raw[pos++] = 2; /* two writable lookup indices */
+  raw[pos++] = 1; /* one writable lookup index */
   raw[pos++] = 0;
-  raw[pos++] = 1;
   raw[pos++] = 0; /* no readonly indices */
 
   SolanaParsedTx tx;
   ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
   EXPECT_TRUE(tx.has_address_lookups);
 
-  uint8_t resolved[2][SOL_PUBKEY_SIZE];
-  memcpy(resolved[0], program, 32);
-  memset(resolved[1], 0x77, 32);
+  uint8_t resolved[1][SOL_PUBKEY_SIZE];
+  memset(resolved[0], 0x77, 32);
   ASSERT_EQ(
-      solana_inspectTxWithTrustedLut(raw, pos, resolved, 2, &tx),
+      solana_inspectTxWithTrustedLut(raw, pos, resolved, 1, &tx),
       SOL_TX_REVIEW_OPAQUE); /* unknown Relay instruction, now resolvable */
   EXPECT_TRUE(tx.has_address_lookups);
   ASSERT_FALSE(tx.instructions[0].external);
@@ -2232,8 +2233,39 @@ TEST(Solana, SchemaAppliesToCertifiedLookupResolvedProgramAndAccount) {
   ASSERT_TRUE(solana_schemaApplies(&schema, &tx, &ix));
   EXPECT_EQ(ix, 0);
   EXPECT_EQ(
-      memcmp(tx.accounts[tx.instructions[ix].acct_indices[0]], resolved[1], 32),
+      memcmp(tx.accounts[tx.instructions[ix].acct_indices[0]], resolved[0], 32),
       0);
+}
+
+/* A certified lookup list never supplies the program id. */
+TEST(Solana, CertifiedLookupNeverSuppliesTheProgramId) {
+  uint8_t raw[256];
+  size_t pos = 0;
+  raw[pos++] = 0x80;
+  raw[pos++] = 1;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 1; /* one static account: signer */
+  memset(raw + pos, 0x11, 32);
+  pos += 32;
+  memset(raw + pos, 0xBB, 32);
+  pos += 32;
+  raw[pos++] = 1;
+  raw[pos++] = 1; /* program = resolved account 0 */
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  raw[pos++] = 1;
+  memset(raw + pos, 0x55, 32);
+  pos += 32;
+  raw[pos++] = 1;
+  raw[pos++] = 0;
+  raw[pos++] = 0;
+  uint8_t resolved[1][SOL_PUBKEY_SIZE];
+  memset(resolved[0], 0x42, 32);
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_MALFORMED);
+  EXPECT_EQ(solana_inspectTxWithTrustedLut(raw, pos, resolved, 1, &tx),
+            SOL_TX_REVIEW_MALFORMED);
 }
 
 TEST(Solana, SchemaNeverOverridesNativeDecoder) {

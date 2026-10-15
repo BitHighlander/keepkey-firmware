@@ -173,10 +173,10 @@ TEST(Ethereum, UnknownErc20CannotBePresentedAsAReviewedTransfer) {
   EXPECT_TRUE(ethereumFormatUnknownTokenReview(&msg, largest_review,
                                                sizeof(largest_review)));
   EXPECT_NE(std::string::npos,
-            std::string(largest_review).find("115792089237316195"));
+            std::string(largest_review).find("578960446186580977"));
 
   /* Unlimited reads UNLIMITED, after its own warning screen. */
-  msg.data_initial_chunk.bytes[67] = 0xff;
+  msg.data_initial_chunk.bytes[36] = 0xff;
   char unlimited_review[ETHEREUM_CONFIRM_BODY_SIZE] = {};
   ASSERT_TRUE(ethereumFormatUnknownTokenReview(&msg, unlimited_review,
                                                sizeof(unlimited_review)));
@@ -203,7 +203,7 @@ TEST(Ethereum, UnknownTokenApproveIsUnlimitedFromTwoToThe255) {
   msg.data_initial_chunk.bytes[36] = 0x80;  // 2^255
   ASSERT_TRUE(ethereumFormatUnknownTokenReview(&msg, rendered, sizeof(rendered)));
   EXPECT_NE(std::string::npos,
-            std::string(rendered).find("withdraw up to an UNLIMITED amount?"));
+            std::string(rendered).find("withdraw up to UNLIMITED?"));
 
   memset(msg.data_initial_chunk.bytes + 36, 0xff, 32);
   msg.data_initial_chunk.bytes[36] = 0x7f;  // 2^255 - 1
