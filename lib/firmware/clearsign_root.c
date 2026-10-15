@@ -27,16 +27,18 @@
 #include "trezor/crypto/sha2.h"
 #include "trezor/crypto/sha3.h"
 
-/* THE ALPHA ROOT, compiled into every 7.16 build (no flag; hosts gate on the
- * version, enforced by ClearsignRoot.SevenSixteenAlwaysShipsTheRoot).
- * ALPHA-ONLY: device 393137350D4736341B003900, m/44'/60'/0'/0/0. It must
- * NEVER ship in a production release; a production ceremony root replaces it
- * (docs/ClearsignRootCeremony.md 4.4), and release.yml fails any release
- * containing these bytes. */
+/* Production root public-key provisioning candidate, captured 2026-10-15.
+ * KKclearSignROOT, device 310BBE4832ED489FD9DF3900, official firmware 7.14.1.
+ * secp256k1 m/44'/60'/0'/0/0, standard wallet with empty passphrase.
+ * Two readings matched across a physical power cycle; see public-root.json
+ * in the clearsign-root-provisioning-20261015 ceremony evidence.
+ * Pending integration: hardened issuer upgrade, matching certificate fixtures,
+ * and complete 7.16 qualification. No certificates were issued at capture.
+ */
 static const uint8_t kk_clearsign_root_pubkey[CLEARSIGN_PUBKEY_LEN] = {
-    0x02, 0xde, 0x92, 0x31, 0xb2, 0x09, 0x44, 0x33, 0x23, 0x55, 0x32,
-    0xfb, 0x19, 0x32, 0xe3, 0x24, 0xa2, 0xc7, 0x30, 0x41, 0x95, 0xe1,
-    0x2e, 0x61, 0x0c, 0x67, 0x5c, 0xcc, 0xbb, 0xd6, 0x06, 0xda, 0xe7,
+    0x02, 0x7c, 0x1f, 0xde, 0x75, 0xdb, 0x6c, 0x36, 0x39, 0x3e, 0x09,
+    0x5e, 0x0d, 0xc5, 0xab, 0x9a, 0x5b, 0xcf, 0x1a, 0xe9, 0xeb, 0x92,
+    0xb5, 0xd3, 0x6e, 0x21, 0x2a, 0x2b, 0xf7, 0xf8, 0xa6, 0xe3, 0x21,
 };
 
 #if DEBUG_LINK && defined(EMULATOR)
