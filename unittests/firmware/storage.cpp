@@ -3,6 +3,7 @@ extern "C" {
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/policy.h"
 #include "keepkey/board/keepkey_board.h"
+#include "keepkey/board/memory.h"
 #include "trezor/crypto/memzero.h"
 #include "trezor/crypto/aes/aes.h"
 #include "trezor/crypto/bip39.h"
@@ -1130,6 +1131,33 @@ TEST(Storage, LockClearsCryptoSeedCache) {
 
   mnemonic_to_seed(mnemonic, "cached", seed, progress);
   EXPECT_GT(progress_calls, 0) << "the cached seed outlived the lock";
+}
+
+// The wipe code reaches storage_clearKeys(), which clears the session without
+// clear_pin. The cached seed must not outlive the erased keys.
+void kk_test_board_init(void);  // test_board.cpp (C++ linkage)
+
+TEST(Storage, WipeCodeClearsCryptoSeedCache) {
+  static int progress_calls;
+  const auto progress = +[](uint32_t, uint32_t) { progress_calls++; };
+  const char *mnemonic = "all all all all all all all all all all all all";
+  uint8_t seed[64];
+  mnemonic_to_seed(mnemonic, "wiped", seed, progress);
+  progress_calls = 0;
+  mnemonic_to_seed(mnemonic, "wiped", seed, progress);
+  ASSERT_EQ(0, progress_calls) << "the seed was not served from the cache";
+
+  std::vector<uint8_t> flash(FLASH_TOTAL_SIZE, 0xff);
+  uint8_t *previous_flash = emulator_flash_base;
+  emulator_flash_base = flash.data();
+  kk_test_board_init();
+  storage_wipe();
+  storage_init();
+  storage_clearKeys();
+  emulator_flash_base = previous_flash;
+
+  mnemonic_to_seed(mnemonic, "wiped", seed, progress);
+  EXPECT_GT(progress_calls, 0) << "the cached seed outlived the wipe code";
 }
 
 extern "C" {
