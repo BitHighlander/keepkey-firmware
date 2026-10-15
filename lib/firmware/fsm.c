@@ -452,6 +452,8 @@ bool fsm_workflowInProgress(void) {
 #define ENTROPY_AUDIT_APPROVED_BYTES (8u * 1024u * 1024u)
 static uint32_t entropy_audit_approved_remaining;
 
+void fsm_revoke_entropy_audit(void) { entropy_audit_approved_remaining = 0; }
+
 void fsm_init(void) {
   entropy_audit_approved_remaining = 0;
   msg_map_init(MessagesMap, sizeof(MessagesMap) / sizeof(MessagesMap_t));
