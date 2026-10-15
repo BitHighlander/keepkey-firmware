@@ -179,14 +179,9 @@ static bool ethereum_allowanceIsWellFormed(const EthereumSignTx* msg) {
   return true;
 }
 
+/* ERC-7730's threshold: an allowance of 2^255 or more is UNLIMITED. */
 static bool ethereum_allowanceIsUnlimited(const EthereumSignTx* msg) {
-  for (size_t i = 36; i < 68; ++i)
-    if (msg->data_initial_chunk.bytes[i] != 0xff) return false;
-  return true;
-}
-
-static bool ethereum_isUnlimitedApproval(const EthereumSignTx* msg) {
-  return ethereum_isERC20ApproveCall(msg) && ethereum_allowanceIsUnlimited(msg);
+  return (msg->data_initial_chunk.bytes[36] & 0x80) != 0;
 }
 
 /* An unlimited approve signs only after this warning, with the full spender
@@ -299,10 +294,12 @@ bool ethereumFormatUnknownTokenReview(const EthereumSignTx* msg, char* buf,
   const bool approve = ethereum_isStandardERC20Approve(msg);
   bignum256 raw_value;
   bn_from_bytes(msg->data_initial_chunk.bytes + 36, 32, &raw_value);
-  char amount[96] = "UNLIMITED";
-  if (!(approve && ethereum_isUnlimitedApproval(msg)) &&
-      bn_format(&raw_value, NULL, " base units", 0, 0, false, amount,
-                sizeof(amount)) == 0) {
+  const bool unlimited = approve && ethereum_allowanceIsUnlimited(msg);
+  char amount[96];
+  if (unlimited) {
+    strlcpy(amount, "UNLIMITED", sizeof(amount));
+  } else if (bn_format(&raw_value, NULL, " base units", 0, 0, false, amount,
+                       sizeof(amount)) == 0) {
     return false;
   }
 
@@ -1134,16 +1131,52 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     data_needs_confirm = false;
   }
 
+  /* D-007: a KeepKey-certified ERC-7730 review of this calldata replaces the
+   * raw-data review. This pass re-hashes every byte against the reviewed
+   * digest and send_signature() refuses unless it matched; the amount and
+   * fee screens stay. */
+  const Erc7730Workflow* certified = erc7730_workflow_state();
+  if (data_needs_confirm && certified->signing_pass && !certified->typed_data &&
+      certified->phase == ERC7730_WORKFLOW_CALLDATA &&
+      erc7730_workflow_certified(certified)) {
+    data_needs_confirm = false;
+  }
+
+  /* SRS R-1.4: a certified claim is honoured completely or refused, never
+   * downgraded. Checked before any screen, so a failed claim never shows
+   * "Verified by KeepKey". */
+  if (data_needs_confirm && data_total > 0 &&
+      signed_metadata_certified_claimed() &&
+      !(signed_metadata_available() && signed_metadata_matches_tx(msg) &&
+        signed_metadata_may_suppress(chain_id))) {
+    /* A certified Uniswap swap past the first chunk: nothing is shown from
+     * a prefix. Its review follows the fee screen, once every byte is in.
+     * Pending implies a KeepKey-certified entry for this chain. */
+    if (!signed_metadata_ur_pending()) {
+      fsm_sendFailure(FailureType_Failure_Other,
+                      _("Certified description invalid or not for this tx"));
+      ethereum_signing_abort();  // clears metadata
+      return;
+    }
+    needs_confirm = false;
+    data_needs_confirm = false;
+  }
+
   // Signed metadata clear signing (backwards compatible).
   // Only fires if host sent EthereumTxMetadata before this EthereumSignTx.
   if (data_needs_confirm && data_total > 0 && signed_metadata_available()) {
     if (signed_metadata_matches_tx(msg)) {
       if (signed_metadata_confirm()) {
-        /* 7.15 has no firmware-trusted signer. Runtime metadata is always an
-         * additive annotation: the ordinary amount and raw-calldata review
-         * remains mandatory after the decoded screens. */
-        needs_confirm = true;
-        data_needs_confirm = true;
+        /* Suppression is the POSITIVE arm. A v2 schema cannot bind
+         * msg->value, so payable calls still show amount/recipient. */
+        if (signed_metadata_may_suppress(chain_id)) {
+          needs_confirm = signed_metadata_schema_moves_value();
+          data_needs_confirm = false;
+        } else {
+          /* Runtime signer: annotation only; the raw review stays. */
+          needs_confirm = true;
+          data_needs_confirm = true;
+        }
       } else {
         fsm_sendFailure(FailureType_Failure_ActionCancelled,
                         "Signing cancelled by user");
@@ -1155,7 +1188,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   // Keep metadata only when its decoded screens were approved, so their
   // attestation remains bound to the signature. Otherwise prevent stale reuse
   // when contractHandled / ERC-20 paths bypassed metadata review.
-  if (!signed_metadata_relied()) {
+  if (!signed_metadata_ur_pending() && !signed_metadata_relied()) {
     signed_metadata_clear();
   }
 
@@ -1461,6 +1494,23 @@ void ethereum_signing_txack(EthereumTxAck* tx) {
   hash_data(tx->data_chunk.bytes, tx->data_chunk.size);
 
   data_left -= tx->data_chunk.size;
+
+  /* A certified Uniswap call held since init: decoded at its last byte and
+   * reviewed then. Refused, never downgraded (SRS R-1.4), as at init. */
+  if (signed_metadata_ur_pending()) {
+    if (!signed_metadata_ur_feed(tx->data_chunk.bytes, tx->data_chunk.size)) {
+      fsm_sendFailure(FailureType_Failure_Other,
+                      _("Certified description invalid or not for this tx"));
+      ethereum_signing_abort();
+      return;
+    }
+    if (data_left == 0 && !signed_metadata_confirm()) {
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      "Signing cancelled by user");
+      ethereum_signing_abort();
+      return;
+    }
+  }
 
   if (erc7730->phase == ERC7730_WORKFLOW_CALLDATA && data_left == 0 &&
       erc7730_workflow_calldata_finish(erc7730) != ERC7730_ABI_OK) {

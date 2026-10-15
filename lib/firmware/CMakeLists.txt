@@ -1,4 +1,6 @@
 set(sources
+    ctap2.c
+    ctap2_cbor.c
     app_confirm.c
     app_layout.c
     authenticator.c
@@ -23,7 +25,6 @@ set(sources
 # Non-Bitcoin coin families -- excluded from the bitcoin-only image.
 if(NOT ${KK_BITCOIN_ONLY})
   list(APPEND sources
-      binance.c
       eip712.c
       eip712_stream.c
       eos.c
@@ -48,8 +49,10 @@ if(NOT ${KK_BITCOIN_ONLY})
       ethereum_contracts/zxtransERC20.c
       ethereum_contracts/zxswap.c
       ethereum_tokens.c
+      clearsign_root.c
       signed_metadata.c
       contact_book.c
+      uniswap_ur.c
       mayachain.c
       nano.c
       osmosis.c

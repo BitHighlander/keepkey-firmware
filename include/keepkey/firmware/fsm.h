@@ -126,6 +126,9 @@ void fsm_msgEthereumSignMessage(EthereumSignMessage* msg);
 void fsm_msgEthereumVerifyMessage(const EthereumVerifyMessage* msg);
 void fsm_msgEthereumSignTypedHash(const EthereumSignTypedHash* msg);
 void fsm_msgEthereum712TypesValues(Ethereum712TypesValues* msg);
+void fsm_msgClearsignAttestorGetPublicKey(
+    const ClearsignAttestorGetPublicKey* msg);
+void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg);
 void fsm_msgEthereumSignTypedData(const EthereumSignTypedData* msg);
 void fsm_msgEthereumTypedDataStructAck(const EthereumTypedDataStructAck* msg);
 void fsm_msgEthereumTypedDataValueAck(const EthereumTypedDataValueAck* msg);
@@ -147,10 +150,6 @@ void fsm_msgRippleGetAddress(const RippleGetAddress* msg);
 void fsm_msgEosGetPublicKey(const EosGetPublicKey* msg);
 void fsm_msgEosSignTx(const EosSignTx* msg);
 void fsm_msgEosTxActionAck(const EosTxActionAck* msg);
-
-void fsm_msgBinanceGetAddress(const BinanceGetAddress* msg);
-void fsm_msgBinanceSignTx(const BinanceSignTx* msg);
-void fsm_msgBinanceTransferMsg(const BinanceTransferMsg* msg);
 
 void fsm_msgCosmosGetAddress(const CosmosGetAddress* msg);
 void fsm_msgCosmosSignTx(const CosmosSignTx* msg);
