@@ -407,6 +407,32 @@ static uint8_t verify_pin_uv(const uint8_t* request, size_t request_length,
   return CTAP2_OK;
 }
 
+/* CTAP 2.0 makeCredential/getAssertion step 1: an empty pinAuth asks the user
+ * to pick this authenticator. Chrome sends it before asking for a PIN; refusing
+ * it at once left the browser waiting forever. Wait for a press, then say
+ * whether a passkey PIN exists. Returns false when the request is not one. */
+static bool answer_touch_probe(const uint8_t* request, size_t request_length,
+                               int auth_key, uint8_t* response,
+                               size_t* response_length) {
+  CborValue auth;
+  if (!cbor_map_find(request, request_length, NULL, auth_key, &auth, NULL,
+                     NULL) ||
+      auth.type != CBOR_TYPE_BYTES || auth.length != 0)
+    return false;
+  if (!ctap2_request_user_presence(NULL, true)) {
+    write_error(ctap2_user_presence_was_cancelled()
+                    ? CTAP2_ERR_KEEPALIVE_CANCEL
+                    : CTAP2_ERR_USER_ACTION_TIMEOUT,
+                response, response_length);
+    return true;
+  }
+  PasskeyStorage storage;
+  storage_getPasskeyData(&storage);
+  write_error(storage.pin_set ? CTAP2_ERR_PIN_INVALID : CTAP2_ERR_PIN_NOT_SET,
+              response, response_length);
+  return true;
+}
+
 static bool credential_list_contains(const uint8_t* buffer, size_t length,
                                      const uint8_t rp_id_hash[32],
                                      uint8_t credential_id[64]) {
@@ -630,6 +656,8 @@ static void make_credential(const uint8_t* request, size_t request_length,
     write_error(CTAP2_ERR_MISSING_PARAMETER, response, response_length);
     return;
   }
+  if (answer_touch_probe(request, request_length, 8, response, response_length))
+    return;
   if (!request_has_es256(algorithm_slice, algorithm_length)) {
     write_error(CTAP2_ERR_UNSUPPORTED_ALGORITHM, response, response_length);
     return;
@@ -781,6 +809,8 @@ static void get_assertion(const uint8_t* request, size_t request_length,
     write_error(CTAP2_ERR_MISSING_PARAMETER, response, response_length);
     return;
   }
+  if (answer_touch_probe(request, request_length, 6, response, response_length))
+    return;
   bool ignored_rk, uv_requested = false, up_requested = true;
   const uint8_t* options_slice;
   size_t options_length;
