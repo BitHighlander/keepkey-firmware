@@ -47,6 +47,7 @@ void setup(void);
 #include <cstdint>
 #include <cstring>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -3869,9 +3870,82 @@ TEST_F(CertifiedMetadataTest, UniswapV4HookIsShown) {
  * device reviews what ur_summarize says, and a certificate for another
  * chain does not make the entry apply. */
 TEST_F(CertifiedMetadataTest, UniswapV4OnEveryListedRouterIsReviewedOnItsChain) {
-  std::map<std::string, bool> done;
+  /* Every screen of the first such call per router, title and full body.
+   * TOKA / TOKB are the test's identities (6 and 18 decimals), not the
+   * tokens' own. */
+  const std::map<std::string, std::vector<std::pair<std::string, std::string>>>
+      screens = {
+          {"23617e59a5925b2a4bf75d73ff6711cd0b29de85",  // Ethereum UR 2.1.2
+           {{"Uniswap",
+             "Swap 0.001 ETH for at least 2579.065420826155348709 TOKB"},
+            {"Limits", "You spend\n0.001 ETH"},
+            {"Limits", "You receive at least\n2579.065420826155348709 TOKB"},
+            {"Recipient",
+             "Output goes to\n0x5f46E5fF883eA67ea5Cc92E77ED32a90dae27170"},
+            {"Contract", "execute\n0x23617e59A5925b2A4Bf75d73ff6711cD0b29De85"},
+            {"KeepKey ClearSign",
+             "Described by Test Delegate A9531B9D\ncertified by KeepKey"}}},
+          {"4c82d1fbfe28c977cbb58d8c7ff8fcf9f70a2cca",  // Ethereum UR 2.1.1
+           {{"Uniswap",
+             "Swap 0.151916760629316603 ETH for at least "
+             "0.000000000305960247 TOKB"},
+            {"Limits", "You spend\n0.151916760629316603 ETH"},
+            {"Limits", "You receive at least\n0.000000000305960247 TOKB"},
+            {"Recipient",
+             "Output goes to\n0x909Ef6B32DfDc12CA86aA710b54c991af3C5F82E"},
+            {"Contract", "execute\n0x4C82D1fBFe28C977cBB58D8C7FF8FCF9F70a2cCA"},
+            {"KeepKey ClearSign",
+             "Described by Test Delegate A9531B9D\ncertified by KeepKey"}}},
+          {"66a9893cc07d91d95644aedd05d03f95e1dba8af",  // Ethereum UR 2.0
+           {{"Uniswap", "Swap 1.3 ETH for at least 0.000000003293705049 TOKB"},
+            {"Limits", "You spend\n1.3 ETH"},
+            {"Limits", "You receive at least\n0.000000003293705049 TOKB"},
+            {"Recipient",
+             "Output goes to\n0x141D9959cAe3853b035000490C03991eB70Fc4aC"},
+            {"Fee",
+             "0.25% of the output to\n"
+             "0x000000fee13a103A10D593b9AE06b3e05F2E7E1c"},
+            {"Contract", "execute\n0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af"},
+            {"KeepKey ClearSign",
+             "Described by Test Delegate A9531B9D\ncertified by KeepKey"}}},
+          {"6ff5693b99212da76ad316178a184ab56d299b43",  // Base UR 2.0
+           {{"Uniswap",
+             "Swap 10000000000 TOKA for at least 0.000000000008292364 TOKB"},
+            {"Limits", "You spend\n10000000000 TOKA"},
+            {"Limits", "You receive at least\n0.000000000008292364 TOKB"},
+            {"Recipient",
+             "Output goes to\n0x141D9959cAe3853b035000490C03991eB70Fc4aC"},
+            {"Allowance",
+             "This router may spend up to UNLIMITED TOKA until "
+             "2026-05-02 UTC"},
+            {"Contract", "execute\n0x6fF5693b99212Da76ad316178A184AB56D299b43"},
+            {"KeepKey ClearSign",
+             "Described by Test Delegate A9531B9D\ncertified by KeepKey"}}},
+          {"2d01411773c8c24805306e89a41f7855c3c4fe65",  // Arbitrum UR 2.1.2
+           {{"Uniswap",
+             "Swap 0.00102 ETH for at least 0.000000000002399249 TOKB"},
+            {"Limits", "You spend\n0.00102 ETH"},
+            {"Limits", "You receive at least\n0.000000000002399249 TOKB"},
+            {"Recipient",
+             "Output goes to\n0x3Df0742385a6F0688fB6B12a7C25dC7A9E6aAEbe"},
+            {"Contract", "execute\n0x2d01411773c8C24805306E89A41F7855C3c4Fe65"},
+            {"KeepKey ClearSign",
+             "Described by Test Delegate A9531B9D\ncertified by KeepKey"}}},
+          {"a51afafe0263b40edaef0df8781ea9aa03e381a3",  // Arbitrum UR 2.0
+           {{"Uniswap",
+             "Swap 19.3023 TOKA for at least 2.691975216520974078 TOKB"},
+            {"Limits", "You spend\n19.3023 TOKA"},
+            {"Limits", "You receive at least\n2.691975216520974078 TOKB"},
+            {"Recipient",
+             "Output goes to\n0x041e9e88288C0C62B8549C50A759a74a1a65b6b7"},
+            {"Contract", "execute\n0xA51afAFe0263b40EdaEf0Df8781eA9aa03E381a3"},
+            {"KeepKey ClearSign",
+             "Described by Test Delegate A9531B9D\ncertified by KeepKey"}}},
+      };
+  std::set<std::string> done;
   for (const auto& x : urx::calls()) {
-    if (done[x.router] || x.calldata.compare(0, 8, "3593564c") != 0) continue;
+    if (done.count(x.router) || x.calldata.compare(0, 8, "3593564c") != 0)
+      continue;
     const std::vector<uint8_t> router = ur_unhex(x.router);
     const std::vector<uint8_t> data = ur_unhex(x.calldata);
     const std::vector<uint8_t> value = ur_unhex(x.value);
@@ -3928,16 +4002,22 @@ TEST_F(CertifiedMetadataTest, UniswapV4OnEveryListedRouterIsReviewedOnItsChain) 
       ASSERT_TRUE(signed_metadata_build_ur_review(md, "Test Delegate",
                                                   "A9531B9D", collect_shown,
                                                   &got));
-      ASSERT_FALSE(got.empty());
-      EXPECT_EQ(got[0].title, "Uniswap") << x.tx;
-      printf("chain %u router %s %s:\n", x.chain, x.router.c_str(),
-             x.tx.c_str());
-      for (const auto& g : got)
-        printf("  [%s] %s\n", g.title.c_str(), g.body.c_str());
+      const auto want_screens = screens.find(x.router);
+      ASSERT_NE(want_screens, screens.end()) << x.router;
+      ASSERT_EQ(got.size(), want_screens->second.size()) << x.tx;
+      for (size_t i = 0; i < got.size(); i++) {
+        EXPECT_EQ(got[i].title, want_screens->second[i].first)
+            << x.tx << " " << i;
+        EXPECT_EQ(got[i].body, want_screens->second[i].second)
+            << x.tx << " " << i;
+      }
     }
-    done[x.router] = true;
+    done.insert(x.router);
   }
-  EXPECT_GE(done.size(), 5u);
+  /* Each listed router other than Base UR 2.1.2 (covered above), by name. */
+  std::set<std::string> want;
+  for (const auto& r : screens) want.insert(r.first);
+  EXPECT_EQ(done, want);
 }
 
 /* The 2026-10-03 root ceremony (Base, Arbitrum): the device's own verifier,
