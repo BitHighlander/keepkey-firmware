@@ -13,6 +13,26 @@ extern "C" {
 #include <cstring>
 #include <vector>
 
+// The alpha root, 02de9231...dae7 (the marked root KeepKey, device
+// 393137350D4736341B003900). The historical certificate fixtures were signed
+// by it. 7.16 compiles in the production root instead, so tests that use those
+// fixtures install this key as the emulator test root. It lives only in test
+// sources; release.yml refuses any release artifact that contains it.
+static const uint8_t kAlphaRootPubkey[CLEARSIGN_PUBKEY_LEN] = {
+    0x02, 0xde, 0x92, 0x31, 0xb2, 0x09, 0x44, 0x33, 0x23, 0x55, 0x32,
+    0xfb, 0x19, 0x32, 0xe3, 0x24, 0xa2, 0xc7, 0x30, 0x41, 0x95, 0xe1,
+    0x2e, 0x61, 0x0c, 0x67, 0x5c, 0xcc, 0xbb, 0xd6, 0x06, 0xda, 0xe7,
+};
+
+// Verifies certificates against the alpha root for its lifetime, then
+// restores the compiled-in root.
+struct AlphaTestRoot {
+  AlphaTestRoot() { clearsign_root_set_test_root(kAlphaRootPubkey); }
+  ~AlphaTestRoot() { clearsign_root_set_test_root(nullptr); }
+  AlphaTestRoot(const AlphaTestRoot&) = delete;
+  AlphaTestRoot& operator=(const AlphaTestRoot&) = delete;
+};
+
 // A delegate certificate in the layout of clearsign_root.h, signed by
 // `root_key` over keccak(0x19 || 0x01 || DOMAIN_SEP || keccak(cert[0..74])),
 // the digest EthereumSignTypedHash produces on the root KeepKey.

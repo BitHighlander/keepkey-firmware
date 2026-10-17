@@ -173,7 +173,8 @@ typedef struct {
  * says, honestly, one thing: the user pays with one asset (msg.value, or one
  * token the swaps marked payerIsUser pull, after an optional Permit2 permit
  * naming this router), and one asset reaches one recipient (directly from
- * swaps, or by SWEEP / UNWRAP_WETH of what the router holds; leftover ETH
+ * swaps, or by SWEEP / UNWRAP_WETH of what the router holds; a SWEEP of
+ * the token comes after every swap that leaves it there; leftover ETH
  * may go back to the same recipient). Swaps paid by the router (splits,
  * multi-hop through V2/V3/V4 pools) are free to the user. amount_in is the
  * sum the user pays (msg.value with ETH), amount_out the sum of the

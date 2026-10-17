@@ -74,12 +74,46 @@ std::vector<std::string> kkconfirm_capture_finish(void);
 std::vector<std::string> kkconfirm_captured_titles(void);
 bool kkconfirm_openDebugPeer(void);
 bool kkconfirm_readDebugFrame(uint8_t frame[64]);
+void kkconfirm_capture_start(void);
+std::vector<std::string> kkconfirm_capture_finish(void);
+std::vector<std::string> kkconfirm_capture_titles(void);
 extern "C" void keepkey_user_activity(void);  // lib/firmware/home_sm.c
 
 // Auto-lock reads home_clock_ms(). The real 1 ms tick would make the deadline
 // checks below racy, so this binary's clock moves only when a test says so.
 static uint32_t fake_clock_ms = 0;
-extern "C" uint32_t home_clock_ms(void) { return fake_clock_ms; }
+static bool inject_button_during_clock_read = false;
+static bool pending_button_interrupt = false;
+static unsigned idle_clock_critical_depth = 0;
+static unsigned delivered_button_interrupts = 0;
+
+extern "C" uint32_t home_clock_ms(void) {
+  if (inject_button_during_clock_read) {
+    inject_button_during_clock_read = false;
+    if (idle_clock_critical_depth != 0) {
+      pending_button_interrupt = true;
+    } else {
+      ++delivered_button_interrupts;
+      keepkey_user_activity();
+    }
+  }
+  return fake_clock_ms;
+}
+
+// Model the device's interrupt mask: a physical edge remains pending until
+// the complete idle-clock update finishes, rather than reentering its RMWs.
+extern "C" void home_idle_clock_enter(void) { ++idle_clock_critical_depth; }
+extern "C" void home_idle_clock_leave(void) {
+  EXPECT_GT(idle_clock_critical_depth, 0u);
+  if (idle_clock_critical_depth == 0) return;
+  --idle_clock_critical_depth;
+  if (idle_clock_critical_depth == 0 && pending_button_interrupt) {
+    pending_button_interrupt = false;
+    ++delivered_button_interrupts;
+    keepkey_user_activity();
+  }
+}
+
 static void advance_clock(uint32_t ms) { fake_clock_ms += ms; }
 
 TEST(Fsm, CoinTableRetainsPredecessorPageCapacity) {
@@ -371,15 +405,11 @@ TEST(Fsm, AutoLockKeepsTheScreensaverAfterAbortingSigning) {
 }
 
 namespace {
-void receiveMessage(MessageType type, const pb_field_t* fields,
-                    const void* msg) {
-  uint8_t encoded[4096] = {};
-  pb_ostream_t stream = pb_ostream_from_buffer(encoded, sizeof(encoded));
-  ASSERT_TRUE(pb_encode(&stream, fields, msg));
+void receiveEncodedMessage(MessageType type, const uint8_t* encoded,
+                           size_t size) {
   uint8_t frame[64] = {'?', '#', '#'};
   frame[3] = type >> 8;
   frame[4] = type & 0xff;
-  const size_t size = stream.bytes_written;
   frame[5] = size >> 24;
   frame[6] = size >> 16;
   frame[7] = size >> 8;
@@ -396,6 +426,14 @@ void receiveMessage(MessageType type, const pb_field_t* fields,
   }
 }
 
+void receiveMessage(MessageType type, const pb_field_t* fields,
+                    const void* msg) {
+  uint8_t encoded[4096] = {};
+  pb_ostream_t stream = pb_ostream_from_buffer(encoded, sizeof(encoded));
+  ASSERT_TRUE(pb_encode(&stream, fields, msg));
+  receiveEncodedMessage(type, encoded, stream.bytes_written);
+}
+
 // firmware-unit never maps emulated flash; tests whose handlers commit storage
 // borrow a zeroed image for their duration.
 struct ScopedFlash {
@@ -410,6 +448,93 @@ struct ScopedFlash {
     emulator_flash_base = previous;
   }
 };
+
+// GetPublicKey accepts the same InputScriptType enum as GetAddress. BIP-86
+// uses an ordinary xpub/tpub containing the untweaked account public node.
+TEST(Fsm, TaprootPublicKeyExportsTheStandardAccountNode) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic,
+              "abandon abandon abandon abandon abandon abandon abandon "
+              "abandon abandon abandon abandon about");
+  storage_loadDevice(&load);
+  storage_commit();
+
+  for (const char* coin : {"Bitcoin", "Testnet"}) {
+    GetPublicKey get = {};
+    get.has_coin_name = true;
+    std::strcpy(get.coin_name, coin);
+    get.address_n_count = 3;
+    get.address_n[0] = 0x80000000u | 86;
+    get.address_n[1] = 0x80000000u | (std::strcmp(coin, "Testnet") == 0);
+    get.address_n[2] = 0x80000000u;
+    get.has_script_type = true;
+    get.script_type = InputScriptType_SPENDADDRESS;
+    fsm_test_clearLastFailure();
+    receiveMessage(MessageType_MessageType_GetPublicKey, GetPublicKey_fields,
+                   &get);
+    ASSERT_EQ((FailureType)0, fsm_test_lastFailureCode());
+    size_t arena_size = 0;
+    const PublicKey control = *reinterpret_cast<const PublicKey*>(
+        fsm_test_responseArena(&arena_size));
+    ASSERT_TRUE(control.has_xpub);
+    ASSERT_FALSE(control.node.has_private_key);
+    ASSERT_EQ(33u, control.node.public_key.size);
+    if (std::strcmp(coin, "Bitcoin") == 0) {
+      // Published BIP-86 account-0 xpub for the mnemonic above.
+      EXPECT_STREQ(
+          "xpub6BgBgsespWvERF3LHQu6CnqdvfEvtMcQjYrcRzx53QJjSxarj2afYWcLteoG"
+          "Vky7D3UKDP9QyrLprQ3VCECoY49yfdDEHGCtMMj92pReUsQ",
+          control.xpub);
+    } else {
+      ASSERT_EQ(0, std::strncmp(control.xpub, "tpub", 4));
+    }
+
+    get.script_type = InputScriptType_SPENDTAPROOT;
+    fsm_test_clearLastFailure();
+    receiveMessage(MessageType_MessageType_GetPublicKey, GetPublicKey_fields,
+                   &get);
+    ASSERT_EQ((FailureType)0, fsm_test_lastFailureCode());
+    const PublicKey* result =
+        reinterpret_cast<const PublicKey*>(fsm_test_responseArena(&arena_size));
+    ASSERT_TRUE(result->has_xpub);
+    EXPECT_STREQ(control.xpub, result->xpub);
+    EXPECT_FALSE(result->node.has_private_key);
+    EXPECT_EQ(0,
+              std::memcmp(&control.node, &result->node, sizeof(control.node)));
+    EXPECT_TRUE(fsm_test_derivedNodeIsZero());
+  }
+}
+
+#if !BITCOIN_ONLY
+TEST(Fsm, TaprootPublicKeyRefusesCoinsWithoutTaproot) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  storage_commit();
+  GetPublicKey get = {};
+  get.has_coin_name = true;
+  std::strcpy(get.coin_name, "Litecoin");
+  get.address_n_count = 3;
+  get.address_n[0] = 0x80000000u | 86;
+  get.address_n[1] = 0x80000000u | 2;
+  get.address_n[2] = 0x80000000u;
+  get.has_script_type = true;
+  get.script_type = InputScriptType_SPENDTAPROOT;
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_GetPublicKey, GetPublicKey_fields,
+                 &get);
+  EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+  EXPECT_TRUE(fsm_test_derivedNodeIsZero());
+}
+#endif
 
 LoadDevice allLoad() {
   LoadDevice load = {};
@@ -964,6 +1089,151 @@ TEST(Fsm, UserActivityRenewsTheAutoLockDeadline) {
   toggle_screensaver();
   EXPECT_EQ(SCREENSAVER, home_get_state());
   layoutHomeForced();
+}
+
+TEST(Fsm, DebugLinkConfirmationRenewsTheAutoLockDeadline) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  kkconfirm_drain();
+  ScopedFlash flash;
+  fsm_init();
+  loadAllWallet();
+  storage_setPin("1234");
+  layoutHomeForced();
+  reset_idle_time();
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+
+  // Exercise the wire confirmation, not the activity hook directly.
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  Ping ping = {};
+  ping.has_button_protection = ping.button_protection = true;
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+  kkconfirm_drain();
+  ASSERT_EQ((FailureType)0, fsm_test_lastFailureCode());
+
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  toggle_screensaver();
+  EXPECT_EQ(AT_HOME, home_get_state());
+  EXPECT_TRUE(session_isPinCached());
+  advance_clock(1);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+  EXPECT_FALSE(session_isPinCached());
+  layoutHomeForced();
+}
+
+TEST(Fsm, HostOnlyMessagesDoNotRenewTheAutoLockDeadline) {
+  kk_test_board_init();
+  ScopedFlash flash;
+  fsm_init();
+  for (auto id : {MessageType_MessageType_Ping,
+                  MessageType_MessageType_GetFeatures,
+                  MessageType_MessageType_Initialize}) {
+    SCOPED_TRACE((int)id);
+    loadAllWallet();
+    storage_setPin("1234");
+    layoutHomeForced();
+    reset_idle_time();
+    advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+    Ping ping = {};
+    GetFeatures features = {};
+    Initialize initialize = {};
+    fsm_test_clearLastFailure();
+    if (id == MessageType_MessageType_Ping)
+      receiveMessage(id, Ping_fields, &ping);
+    else if (id == MessageType_MessageType_GetFeatures)
+      receiveMessage(id, GetFeatures_fields, &features);
+    else
+      receiveMessage(id, Initialize_fields, &initialize);
+    ASSERT_EQ((FailureType)0, fsm_test_lastFailureCode());
+    ASSERT_TRUE(session_isPinCached());
+    advance_clock(1);
+    toggle_screensaver();
+    EXPECT_EQ(SCREENSAVER, home_get_state());
+    EXPECT_FALSE(session_isPinCached());
+    layoutHomeForced();
+  }
+}
+
+namespace {
+struct ScopedIdleClockInterrupt {
+  ScopedIdleClockInterrupt() {
+    EXPECT_EQ(idle_clock_critical_depth, 0u);
+    EXPECT_FALSE(inject_button_during_clock_read);
+    EXPECT_FALSE(pending_button_interrupt);
+    delivered_button_interrupts = 0;
+  }
+
+  ~ScopedIdleClockInterrupt() {
+    inject_button_during_clock_read = false;
+    pending_button_interrupt = false;
+    EXPECT_EQ(idle_clock_critical_depth, 0u);
+    idle_clock_critical_depth = 0;
+    delivered_button_interrupts = 0;
+    fsm_abort_workflows();
+    layoutHomeForced();
+  }
+};
+
+void checkButtonInterruptDuringIdleSample(bool wrap_clock) {
+  kk_test_board_init();
+  ScopedFlash flash;
+  ScopedIdleClockInterrupt interrupt;
+  fsm_init();
+  storage_setPin("1234");
+  storage_setAutoLockDelayMs(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  layoutHomeForced();
+  if (wrap_clock) {
+    advance_clock(0u - fake_clock_ms - STORAGE_MIN_SCREENSAVER_TIMEOUT / 2);
+  }
+  keepkey_user_activity();
+
+  SignTx start = {};
+  start.inputs_count = 1;
+  start.outputs_count = 1;
+  HDNode root = {};
+  const CoinType* coin = coinByName("Bitcoin");
+  ASSERT_NE(nullptr, coin);
+  signing_init(&start, coin, &root);
+  ASSERT_TRUE(signing_is_active());
+  ASSERT_TRUE(session_isPinCached());
+
+  // The next sample is due to lock. Inject a physical edge during its clock
+  // read, after it has already loaded the previous sample. Without masking,
+  // the nested activity reset is overwritten by the old elapsed interval.
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  if (wrap_clock) ASSERT_LT(fake_clock_ms, STORAGE_MIN_SCREENSAVER_TIMEOUT);
+  inject_button_during_clock_read = true;
+  toggle_screensaver();
+  EXPECT_EQ(1u, delivered_button_interrupts);
+  EXPECT_FALSE(inject_button_during_clock_read);
+  EXPECT_FALSE(pending_button_interrupt);
+  EXPECT_EQ(0u, idle_clock_critical_depth);
+  EXPECT_EQ(AWAY_FROM_HOME, home_get_state());
+  EXPECT_TRUE(session_isPinCached());
+  EXPECT_TRUE(signing_is_active());
+
+  // The edge renews only user activity; a stalled signing workflow cannot
+  // extend the new deadline or retain PIN authorization after it expires.
+  advance_clock(STORAGE_MIN_SCREENSAVER_TIMEOUT - 1);
+  toggle_screensaver();
+  EXPECT_EQ(AWAY_FROM_HOME, home_get_state());
+  EXPECT_TRUE(session_isPinCached());
+  EXPECT_TRUE(signing_is_active());
+  advance_clock(1);
+  toggle_screensaver();
+  EXPECT_EQ(SCREENSAVER, home_get_state());
+  EXPECT_FALSE(session_isPinCached());
+  EXPECT_FALSE(signing_is_active());
+}
+}  // namespace
+
+TEST(Fsm, ButtonInterruptDuringIdleSampleRenewsDeadline) {
+  checkButtonInterruptDuringIdleSample(false);
+}
+
+TEST(Fsm, ButtonInterruptDuringIdleSampleSurvivesClockWrap) {
+  checkButtonInterruptDuringIdleSample(true);
 }
 
 // The ms counter wraps after ~49.7 days of uptime; a deadline that straddles
@@ -2812,10 +3082,11 @@ TEST(Fsm, Erc7730PreloadEndsAtEverySessionBoundary) {
   erc7730_catalog_clear_preload();
 }
 
-// Without AdvancedMode a definition is accepted only if it verifies as
-// KeepKey-certified, which is known when the last chunk arrives. A chunk the
-// preload refuses before that reports the AdvancedMode failure and discards
-// the partial preload, so a later chunk cannot continue it.
+// A definition refused for AdvancedMode discards the partial preload too, so
+// a later chunk cannot continue it. D-007 (ledger D8): a definition's tier is
+// known only once it is complete, so a well-formed partial chunk is accepted
+// without AdvancedMode; an uncertified definition is refused at completion
+// (Erc7730Certified tests).
 TEST(Fsm, Erc7730DefinitionRefusedWithoutAdvancedModeClearsPreload) {
   kk_test_board_init();
   fsm_init();
@@ -2837,16 +3108,26 @@ TEST(Fsm, Erc7730DefinitionRefusedWithoutAdvancedModeClearsPreload) {
   EthereumClearSignDefinition definition{};
   definition.definition_id.size = sizeof(id);
   std::memcpy(definition.definition_id.bytes, id, sizeof(id));
-  definition.offset = sizeof(head) + 1;  // out of sequence: refused
+  definition.offset = sizeof(head);
   definition.total_length = 300;
-  definition.data.size = sizeof(length);
-  std::memcpy(definition.data.bytes, length, sizeof(length));
+  // Empty: refused by the handler before the catalog sees it, so the clear
+  // checked below is the handler's own.
+  definition.data.size = 0;
   fsm_test_clearLastFailure();
   fsm_msgEthereumClearSignDefinition(&definition);
   EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
   EXPECT_EQ(erc7730_catalog_preload_chunk(id, sizeof(head), 300, length,
                                           sizeof(length), &next, &complete),
             ERC7730_CATALOG_BAD_SEQUENCE);
+
+  ASSERT_EQ(erc7730_catalog_preload_chunk(id, 0, 300, head, sizeof(head), &next,
+                                          &complete),
+            ERC7730_CATALOG_MORE);
+  definition.data.size = sizeof(length);
+  std::memcpy(definition.data.bytes, length, sizeof(length));
+  fsm_test_clearLastFailure();
+  fsm_msgEthereumClearSignDefinition(&definition);
+  EXPECT_EQ((FailureType)0, fsm_test_lastFailureCode());
   erc7730_catalog_clear_preload();
 }
 
@@ -3052,7 +3333,6 @@ TEST(Fsm, ThorchainDepositOfAnUnknownTokenSignsTheLargestAmount) {
                        "640564039457584007913129639935 unformatted"))
       << pages;
 }
-
 /* SRS R-1.4 at the signing path: a certified claim that cannot be honoured
  * (here, an envelope whose certificate is garbage) is refused before any
  * screen -- not downgraded to the raw review. The no-claim control signs the
@@ -3509,8 +3789,28 @@ TEST_F(ContactBookSigning, CertificationRefusesOtherDestinations) {
 }
 
 /* One metadata message per transaction, the last one wins, so a contact
- * label never coexists with a contract description, certified or not. */
+ * label never coexists with a contract description. */
 TEST_F(ContactBookSigning, ContactAndContractMetadataReplaceEachOther) {
+  sendContactProof(PROOF3_0);
+  ASSERT_STREQ("Alice", contact_book_label());
+
+  /* Any other metadata message drops it, even one the device refuses. */
+  EthereumTxMetadata other = {};
+  other.has_signed_payload = true;
+  other.signed_payload.size = 64;
+  receiveMessage(MessageType_MessageType_EthereumTxMetadata,
+                 EthereumTxMetadata_fields, &other);
+  EXPECT_EQ(nullptr, contact_book_label());
+
+  /* The other direction, a proof replacing loaded metadata, needs a signer
+   * and a verified blob; it is not exercised here. */
+  sendContactProof(PROOF3_0);
+  EXPECT_STREQ("Alice", contact_book_label());
+}
+
+/* 7.16: a certified envelope drops the label, and a later proof drops the
+ * certified claim, so the two never describe one transaction together. */
+TEST_F(ContactBookSigning, ContactAndCertifiedMetadataReplaceEachOther) {
   sendContactProof(PROOF3_0);
   ASSERT_STREQ("Alice", contact_book_label());
 
@@ -3586,6 +3886,66 @@ TEST_F(ContactBookSigning, CertificationReviewsEveryContact) {
                  ClearsignAttestorSign_fields, &sign);
   EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
   EXPECT_EQ(0, kkconfirm_drain());
+}
+
+TEST_F(ContactBookSigning, MaximumContactBookReachesEveryReviewOverUsb) {
+  // Encode the wire field independently of the generated nanopb struct: the
+  // old 1024-byte decoder limit must fail this test before reaching a prompt.
+  const auto send_request = [](const std::vector<uint8_t>& request) {
+    std::vector<uint8_t> encoded = {0x0a};  // payload, field 1, bytes
+    size_t length = request.size();
+    while (length >= 128) {
+      encoded.push_back((length & 0x7f) | 0x80);
+      length >>= 7;
+    }
+    encoded.push_back(length);
+    encoded.insert(encoded.end(), request.begin(), request.end());
+    receiveEncodedMessage(MessageType_MessageType_ClearsignAttestorSign,
+                          encoded.data(), encoded.size());
+  };
+
+  for (const auto& network : {std::string("eip155:1313161554"),
+                             std::string("eip155:") + std::string(56, '1')}) {
+    SCOPED_TRACE(network);
+    std::vector<uint8_t> request = {'K', 'K', 'A', 'B', 'R', 'E', 'Q', '1',
+                                    1, 0, 0, 0, 1, 16};
+    std::vector<std::string> labels;
+    for (uint8_t i = 0; i < 16; i++) {
+      const std::string label = std::string(22, 'L') +
+                                char('0' + i / 10) + char('0' + i % 10);
+      labels.push_back(label);
+      request.push_back(network.size());
+      request.insert(request.end(), network.begin(), network.end());
+      request.push_back(CONTACT_BOOK_DEST_EVM_ADDRESS);
+      request.push_back(20);
+      request.insert(request.end(), 20, i + 1);
+      request.push_back(label.size());
+      request.insert(request.end(), label.begin(), label.end());
+    }
+    ASSERT_EQ(network.size() == 17 ? 1054u : 1790u, request.size());
+    fsm_test_clearLastFailure();
+    kkconfirm_drain();
+    ASSERT_TRUE(kkconfirm_preload(32, 1));  // Decline the final address screen.
+    kkconfirm_capture_start();
+    send_request(request);
+    const auto screens = kkconfirm_capture_finish();
+    EXPECT_EQ(0, kkconfirm_drain());
+    EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+    ASSERT_EQ(33u, screens.size());
+    EXPECT_EQ("Approve 16 contacts?\nRevision 1", screens[0]);
+    for (size_t i = 0; i < labels.size(); i++)
+      EXPECT_EQ(labels[i] + "\n" + network, screens[1 + 2 * i]);
+
+    if (request.size() == 1790) {
+      request.push_back(0);  // One byte beyond the supported envelope.
+      fsm_test_clearLastFailure();
+      kkconfirm_capture_start();
+      send_request(request);
+      EXPECT_TRUE(kkconfirm_capture_finish().empty());
+      EXPECT_EQ(FailureType_Failure_UnexpectedMessage,
+                fsm_test_lastFailureCode());
+    }
+  }
 }
 
 /* Verified against this session's attestor key: a lock or a passphrase change
@@ -4056,6 +4416,49 @@ TEST(DiceCeremonyPrivacy, AbortClearsConfirmTextBeforeDiagnosticsResume) {
   EXPECT_FALSE(reset_debug_is_private());
   EXPECT_STREQ("", confirm_debug_title());
   EXPECT_STREQ("", confirm_debug_body());
+}
+
+TEST(Fsm, DebugLinkConfirmationTextTracksEveryPage) {
+  struct Cleanup {
+    ~Cleanup() {
+      kk_test_set_poll_hook({});
+      kkconfirm_capture_finish();
+      kkconfirm_drain();
+      confirm_debug_clear();
+    }
+  } cleanup;
+  const std::string body =
+      "first alpha beta gamma delta epsilon zeta eta theta iota kappa lambda "
+      "middle mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega "
+      "last alpha beta gamma delta epsilon zeta eta theta iota kappa lambda";
+  for (bool constant_power : {false, true}) {
+    SCOPED_TRACE(constant_power);
+    ASSERT_TRUE(kkconfirm_preload(20, 0));
+    confirm_debug_clear();
+    std::vector<std::string> reported_bodies, reported_titles;
+    kk_test_set_poll_hook([&] {
+      const std::string shown = confirm_debug_body();
+      if (reported_bodies.empty() || reported_bodies.back() != shown) {
+        reported_bodies.push_back(shown);
+        reported_titles.emplace_back(confirm_debug_title());
+      }
+    });
+    kkconfirm_capture_start();
+    const bool ok = constant_power
+        ? confirm_constant_power_paged(ButtonRequestType_ButtonRequest_Other,
+                                       "Page", "1. abandon\n2. ability\n3. able\n4. about\n"
+                                       "5. above\n6. absent\n7. absorb\n8. abstract")
+        : confirm(ButtonRequestType_ButtonRequest_Other, "Page", "%s",
+                  body.c_str());
+    kk_test_set_poll_hook({});
+    const auto displayed = kkconfirm_capture_finish();
+    ASSERT_TRUE(ok);
+    ASSERT_GT(displayed.size(), 1u);
+    EXPECT_EQ(displayed, reported_bodies);
+    EXPECT_EQ(kkconfirm_capture_titles(), reported_titles);
+    if (!constant_power) EXPECT_NE(std::string::npos, reported_titles[0].find("1/"));
+    kkconfirm_drain();
+  }
 }
 
 TEST(Fsm, Bip85CompletionAndCancelClearConfirmText) {

@@ -11,7 +11,10 @@
 #define CTAP2_CMD_CLIENT_PIN 0x06
 #define CTAP2_CMD_RESET 0x07
 #define CTAP2_CMD_GET_NEXT_ASSERTION 0x08
-#define CTAP2_MAX_RESPONSE_SIZE 1024
+/* Status byte plus the largest response this firmware encodes
+ * (makeCredential, 355 B; see the _Static_asserts in ctap2.c). The encoder
+ * fails closed (CTAP2_ERR_OTHER) rather than overrun it. */
+#define CTAP2_MAX_RESPONSE_SIZE 512
 
 #define CTAP2_OK 0x00
 #define CTAP2_ERR_INVALID_COMMAND 0x01

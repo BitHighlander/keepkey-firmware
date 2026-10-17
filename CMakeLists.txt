@@ -97,8 +97,8 @@ endif()
 if(${KK_EMULATOR})
   add_definitions(-DEMULATOR)
   add_definitions(-DCONFIDENTIAL=)
-  # macOS/BSD declare strlcpy/strlcat in <string.h>; glibc (Linux) and MinGW
-  # (Windows) do not. Force-include the prototypes so the ~20 call sites build
+  # macOS/BSD and recent glibc declare strlcpy/strlcat in <string.h>; older
+  # glibc and MinGW do not. Force-include compatible prototypes so callers build
   # without -Werror=implicit-function-declaration (definitions come from
   # lib/board/strlcpy.c + strlcat.c). Apple already has them in <string.h>.
   if(NOT APPLE)
@@ -276,6 +276,14 @@ if(${KK_EMULATOR})
         COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/erc7730-validate/test_cli.py
                 $<TARGET_FILE:erc7730-validate>)
     add_dependencies(xunit erc7730-validator-test)
+  endif()
+
+  if(TARGET zcash-display-unit)
+    add_test(test-zcash-display ${CMAKE_BINARY_DIR}/bin/zcash-display-unit)
+    add_dependencies(xunit zcash-display-unit)
+    add_custom_command(TARGET xunit POST_BUILD
+      COMMAND ${CMAKE_BINARY_DIR}/bin/zcash-display-unit
+              --gtest_output=xml:${CMAKE_BINARY_DIR}/unittests/zcash-display.xml)
   endif()
 
   if(KK_BUILD_DYLIB AND NOT WIN32)

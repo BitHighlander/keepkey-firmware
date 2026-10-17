@@ -1995,6 +1995,10 @@ void storage_clearKeys(void) {
   signed_metadata_clear_signers();
 #endif
   session_clear_impl(&session, &shadow_config.storage, true);
+  /* The wipe code erases the keys; the seed trezor-crypto cached must go
+   * with them. */
+  bip39_cache_clear();
+  bip32_cache_clear();
   memzero(&session.storageKey, sizeof(session.storageKey));
   memzero(&shadow_config.storage.pub.wrapped_storage_key,
           sizeof(shadow_config.storage.pub.wrapped_storage_key));

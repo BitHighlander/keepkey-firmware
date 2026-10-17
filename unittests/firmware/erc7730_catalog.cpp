@@ -23,6 +23,12 @@ void setup(void);
 #include <string>
 #include <vector>
 
+bool kkconfirm_preload(int, int);
+int kkconfirm_drain(void);
+void kkconfirm_capture_start(void);
+std::vector<std::string> kkconfirm_capture_finish(void);
+bool kkconfirm_readResponse(uint16_t, const pb_field_t*, void*);
+
 namespace {
 
 void append32(std::vector<uint8_t>& out, uint32_t value) {
@@ -415,6 +421,114 @@ Erc7730CatalogResult feedIdentity(const std::vector<uint8_t>& e,
 // NOT signed: its pubkey must name a user-loaded runtime signer and verify the
 // signature, and its scope must equal the signed header's chain id, but its
 // other bytes carry no authority (see erc7730_catalog.h).
+class Erc7730SigningHandlers : public ::testing::Test {
+ protected:
+  std::vector<uint8_t> flash = std::vector<uint8_t>(FLASH_TOTAL_SIZE, 0xff);
+  uint8_t* previous;
+  void SetUp() override {
+    ASSERT_TRUE(kkconfirm_preload(0, 0));
+    ASSERT_EQ(0, kkconfirm_drain());
+    previous = emulator_flash_base;
+    emulator_flash_base = flash.data();
+    storage_init();
+    LoadDevice load = {};
+    load.has_mnemonic = true;
+    strcpy(load.mnemonic, "all all all all all all all all all all all all");
+    storage_loadDevice(&load);
+    ASSERT_TRUE(storage_isInitialized());
+    fsm_test_clearLastFailure();
+  }
+  void TearDown() override {
+    fsm_abort_workflows();
+    erc7730_catalog_clear_preload();
+    signed_metadata_clear_signers();
+    kkconfirm_drain();
+    storage_wipe();
+    storage_reset();
+    emulator_flash_base = previous;
+  }
+  void prepare(const uint8_t selector[4], EthereumSignTx* tx) {
+    SignedFixture signer;
+    loadRuntimeSigner(&signer, "Allowance regression signer");
+    auto program = minimalProgram();
+    memcpy(program.data() + 38, selector, 4);
+    const auto envelope = signedEnvelope(signer, program);
+    const auto id = digest(envelope);
+    uint32_t next = 0;
+    bool complete = false;
+    ASSERT_EQ(ERC7730_CATALOG_COMPLETE,
+              erc7730_catalog_preload_chunk(id.data(), 0, envelope.size(),
+                                            envelope.data(), envelope.size(),
+                                            &next, &complete));
+    ASSERT_TRUE(complete);
+    Erc7730CatalogIdentity identity = {};
+    ASSERT_TRUE(erc7730_catalog_preloaded(&identity));
+    *tx = {};
+    tx->has_chain_id = tx->has_to = tx->has_data_length =
+        tx->has_data_initial_chunk = true;
+    tx->chain_id = 1;
+    tx->to.size = 20;
+    tx->to.bytes[0] = 0x11;
+    tx->data_length = 68;
+    tx->data_initial_chunk.size = 4;
+    memcpy(tx->data_initial_chunk.bytes, selector, 4);
+    ASSERT_TRUE(erc7730_catalog_matches_calldata(&identity, tx->chain_id,
+                                                 tx->to.bytes, selector));
+  }
+};
+
+TEST_F(Erc7730SigningHandlers,
+       CertifiedAllowancesFailBeforeDefinitionReplayOrConsent) {
+  const uint8_t selectors[][4] = {
+      {0x09, 0x5e, 0xa7, 0xb3},   // approve
+      {0x39, 0x50, 0x93, 0x51}};  // increaseAllowance
+  for (const auto& selector : selectors) {
+    EthereumSignTx tx;
+    prepare(selector, &tx);
+    ASSERT_FALSE(HasFatalFailure());
+    ASSERT_TRUE(kkconfirm_preload(0, 0));
+    fsm_test_clearLastFailure();
+    kkconfirm_capture_start();
+    fsm_msgEthereumSignTx(&tx);
+    EXPECT_TRUE(kkconfirm_capture_finish().empty());
+    EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+    EXPECT_STREQ("ERC-7730 approval not supported",
+                 fsm_test_lastFailureMessage());
+    EXPECT_FALSE(erc7730_workflow_active(erc7730_workflow_state()));
+    Erc7730CatalogIdentity identity = {};
+    EXPECT_FALSE(erc7730_catalog_preloaded(&identity));
+    Failure refusal = {};
+    ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_Failure,
+                                       Failure_fields, &refusal));
+    EXPECT_EQ(FailureType_Failure_SyntaxError, refusal.code);
+    EXPECT_STREQ("ERC-7730 approval not supported", refusal.message);
+    EthereumTxRequest signature = {};
+    EXPECT_FALSE(
+        kkconfirm_readResponse(MessageType_MessageType_EthereumTxRequest,
+                               EthereumTxRequest_fields, &signature));
+    EXPECT_EQ(0, kkconfirm_drain());
+  }
+}
+
+TEST_F(Erc7730SigningHandlers,
+       CertifiedNonAllowanceControlStartsDefinitionReplay) {
+  const uint8_t selector[4] = {0xaa, 0xbb, 0xcc, 0xdd};
+  EthereumSignTx tx;
+  prepare(selector, &tx);
+  ASSERT_FALSE(HasFatalFailure());
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  kkconfirm_capture_start();
+  fsm_msgEthereumSignTx(&tx);
+  EXPECT_TRUE(kkconfirm_capture_finish().empty());
+  EXPECT_EQ(0, fsm_test_lastFailureCode());
+  EXPECT_EQ(ERC7730_WORKFLOW_REPLAY, erc7730_workflow_state()->phase);
+  EthereumClearSignDefinitionRequest request = {};
+  EXPECT_TRUE(kkconfirm_readResponse(
+      MessageType_MessageType_EthereumClearSignDefinitionRequest,
+      EthereumClearSignDefinitionRequest_fields, &request));
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
 TEST(Erc7730Catalog, SignatureAuthenticatesProgramUnderLoadedDelegateKey) {
   SignedFixture fixture;
   loadRuntimeSigner(&fixture, "Approved signer");
@@ -678,6 +792,32 @@ TEST(Erc7730Catalog, ChainIdAboveUint32IsRefusedNotTruncated) {
       3, fixture.delegate.pubkey, "Approved signer", nullptr, 0, 0, 0, false));
   EXPECT_EQ(feedAll(signedEnvelope(fixture.delegate, program), 64),
             ERC7730_CATALOG_BAD_PROGRAM);
+  signed_metadata_clear_signers();
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+}
+
+TEST(Erc7730Catalog, SolanaScopeCertificateNeverCertifiesEvmChain501) {
+  CertifiedFixture fixture;
+  makeCertifiedFixture(&fixture);
+  TestRoot root(fixture.root_pubkey);
+  // EVM chain id 501 (header and deployment) under a root-signed scope-501
+  // certificate, which the root issued for Solana.
+  auto program = minimalProgram();
+  const size_t deployment = sectionOffset(program, 8) + 5 + 5;
+  program[16] = program[deployment + 6] = 0x01;
+  program[17] = program[deployment + 7] = 0xf5;
+  auto e = certifiedEnvelope(
+      fixture, program,
+      rootCert(fixture.root_key, fixture.delegate.pubkey,
+               CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, CLEARSIGN_SCOPE_SOLANA));
+  EXPECT_EQ(feedAll(e, 64), ERC7730_CATALOG_UNTRUSTED);
+  // The same envelope is well formed: a runtime signer the user loaded
+  // verifies it, on the AdvancedMode-gated runtime tier only.
+  ASSERT_TRUE(signed_metadata_store_signer(
+      3, fixture.delegate.pubkey, "Approved signer", nullptr, 0, 0, 0, false));
+  Erc7730CatalogIdentity identity{};
+  ASSERT_EQ(feedIdentity(e, &identity), ERC7730_CATALOG_COMPLETE);
+  EXPECT_EQ(identity.tier, (uint8_t)METADATA_TIER_RUNTIME);
   signed_metadata_clear_signers();
   ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
 }

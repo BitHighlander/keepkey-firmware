@@ -331,27 +331,17 @@ bool confirm_qr(const char* desc, const char* data) {
 }
 
 /*
- * confirm_zcash_address() - Show zcash address confirmation
- *
- * INPUT
- *      - desc: description (title) shown on both screens
- *      - address: zcash unified address — full text on the first screen,
- *        QR on the second
- * OUTPUT
- *     true/false of confirmation
- *
+ * confirm_zcash_address() - Full address text, then its QR.
  */
 #if ZCASH_PRIVACY
 bool confirm_zcash_address(const char* desc, const char* address) {
-  if (!confirm_with_custom_layout(&layout_zcash_address_text_notification,
-                                  ButtonRequestType_ButtonRequest_Address, desc,
-                                  "%s", address)) {
+  if (!confirm(ButtonRequestType_ButtonRequest_Address, desc, "%s", address)) {
     return false;
   }
 
-  return confirm_with_custom_layout(&layout_zcash_address_notification,
-                                    ButtonRequestType_ButtonRequest_Address,
-                                    desc, "%s", address);
+  return confirm_address_with_custom_layout(
+      &layout_zcash_address_notification,
+      ButtonRequestType_ButtonRequest_Address, desc, "%s", address);
 }
 #endif
 

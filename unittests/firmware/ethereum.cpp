@@ -351,9 +351,9 @@ static const char kTUSD[] =
     "\x00\x00\x00\x00\x00\x08\x5d\x47\x80\xB7\x31\x19\xb6\x44\xAE\x5e\xcd\x22"
     "\xb3\x76";
 
-static const char kTGBP[] =
-    "\x00\x00\x00\x00\x44\x13\x78\x00\x8E\xA6\x7F\x42\x84\xA5\x79\x32\xB1\xc0"
-    "\x00\xa5";
+static const char kUSDC[] =
+    "\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06"
+    "\xeb\x48";
 
 // transformERC20(address,address,uint256,uint256,(uint32,bytes)[]) — the two
 // address words carry the token in their low 20 bytes.
@@ -673,7 +673,7 @@ static void MakeTransformErc20(EthereumSignTx* msg, const char* in_token,
 
 TEST(Ethereum, TransformErc20RequiresCompleteCalldataForClearSigning) {
   EthereumSignTx msg;
-  MakeTransformErc20(&msg, kTUSD, kTGBP);
+  MakeTransformErc20(&msg, kTUSD, kUSDC);
 
   EXPECT_TRUE(
       ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr));
@@ -693,13 +693,13 @@ TEST(Ethereum, TransformErc20RequiresBothTokensResolvable) {
   EthereumSignTx msg;
 
   // Both known -> the device can name what it is showing.
-  MakeTransformErc20(&msg, kTUSD, kTGBP);
+  MakeTransformErc20(&msg, kTUSD, kUSDC);
   EXPECT_TRUE(
       ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr));
 
   // Either side unknown -> refuse to claim it, so ethereum.c falls through to
   // the raw-calldata path (AdvancedMode-gated, bytes shown).
-  MakeTransformErc20(&msg, nullptr, kTGBP);
+  MakeTransformErc20(&msg, nullptr, kUSDC);
   EXPECT_FALSE(
       ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr))
       << "unknown INPUT token must not clear-sign";
@@ -717,7 +717,7 @@ TEST(Ethereum, TransformErc20RequiresBothTokensResolvable) {
   // must refuse even though 0x deploys the same proxy there. This is what the
   // chain allowlist was previously being asked to approximate.
   for (uint32_t cid : {8453u, 42161u, 43114u}) {
-    MakeTransformErc20(&msg, kTUSD, kTGBP);
+    MakeTransformErc20(&msg, kTUSD, kUSDC);
     msg.chain_id = cid;
     EXPECT_FALSE(
         ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr))
@@ -1177,6 +1177,69 @@ TEST(Ethereum, TransformErc20DisclosesCompleteRoute) {
   ASSERT_TRUE(kkconfirm_preload(static_cast<int>(pages), 0));
   EXPECT_TRUE(zx_confirmZxTransformRoute(route.data(), route.size()));
   EXPECT_EQ(0, kkconfirm_drain());
+}
+
+// v7.16.0's TransformErc20AlwaysRequiresAdvancedMode built two complete
+// transformERC20 calls that differ only in their transformation data and
+// proved neither was clear-signed. alpha clear-signs transformERC20 instead,
+// so the property to keep is the one that made v7.16.0 refuse it: two routes
+// that differ only in those bytes must not get the same review. Drive the
+// whole decoder, not just the route pager.
+static void MakeTransformErc20Route(EthereumSignTx* msg,
+                                    uint8_t transform_byte) {
+  MakeTransformErc20(msg, kTUSD, kUSDC);
+  uint8_t* data = msg->data_initial_chunk.bytes;
+  msg->data_initial_chunk.size = ZX_TRANSFORM_ERC20_HEAD_LEN + 6 * 32;
+  data[4 + 3 * 32 - 1] = 1;     // input amount
+  data[4 + 4 * 32 - 1] = 1;     // minimum output
+  data[4 + 6 * 32 - 1] = 1;     // transformations[] length
+  data[4 + 7 * 32 - 1] = 0x20;  // element offset
+  data[4 + 8 * 32 - 1] = 1;     // deployment nonce
+  data[4 + 9 * 32 - 1] = 0x40;  // data offset
+  data[4 + 10 * 32 - 1] = 1;    // data length
+  data[4 + 10 * 32] = transform_byte;
+}
+
+static std::vector<std::string> TransformErc20Review(const EthereumSignTx& msg) {
+  const uint8_t* route =
+      msg.data_initial_chunk.bytes + ZX_TRANSFORM_ERC20_HEAD_LEN;
+  const size_t route_len =
+      msg.data_initial_chunk.size - ZX_TRANSFORM_ERC20_HEAD_LEN;
+  int pages = 0;
+  for (size_t offset = 0; offset < route_len; ++pages) {
+    char page[BODY_CHAR_MAX];
+    const size_t take = confirm_bytes_format_page(
+        route + offset, route_len - offset, page, sizeof(page));
+    if (take == 0) return {};
+    offset += take;
+  }
+  if (!kkconfirm_preload(1 + pages, 0)) return {};
+  kkconfirm_capture_start();
+  const bool approved =
+      zx_confirmZxTransERC20(msg.data_initial_chunk.size, &msg);
+  std::vector<std::string> screens = kkconfirm_capture_finish();
+  EXPECT_TRUE(approved);
+  EXPECT_EQ(0, kkconfirm_drain());
+  return screens;
+}
+
+TEST(Ethereum, TransformErc20RoutesDifferingOnlyInTransformDataReviewApart) {
+  EthereumSignTx first, second;
+  MakeTransformErc20Route(&first, 0x41);
+  MakeTransformErc20Route(&second, 0x42);
+  ASSERT_EQ(first.data_initial_chunk.size, second.data_initial_chunk.size);
+  ASSERT_EQ(0, std::memcmp(first.data_initial_chunk.bytes,
+                           second.data_initial_chunk.bytes,
+                           first.data_initial_chunk.size - 32));
+  ASSERT_TRUE(
+      ethereum_contractHandled(first.data_initial_chunk.size, &first, nullptr));
+
+  const std::vector<std::string> a = TransformErc20Review(first);
+  const std::vector<std::string> b = TransformErc20Review(second);
+  ASSERT_GT(a.size(), 2u) << "amounts screen plus a paged route";
+  ASSERT_EQ(a.size(), b.size());
+  EXPECT_EQ(a.front(), b.front()) << "same tokens and bounds";
+  EXPECT_NE(a, b) << "the transformation bytes must reach the screen";
 }
 
 TEST(Ethereum, NativePseudoAddressIsStrictlyChainScoped) {

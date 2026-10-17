@@ -101,6 +101,11 @@ typedef enum {
  * it. */
 bool signed_metadata_may_suppress(uint32_t tx_chain_id);
 
+/* A certified intent decodes this approve()'s amount word as a token amount,
+ * so its summary and Limits state it (UNLIMITED <symbol> from 2^255). */
+bool signed_metadata_certified_states_allowance(const EthereumSignTx* msg,
+                                                uint32_t tx_chain_id);
+
 /* This message carried a v3 envelope, verified or not. A failed claim must be
  * refused, never downgraded (SRS R-1.4). */
 bool signed_metadata_certified_claimed(void);

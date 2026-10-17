@@ -55,11 +55,16 @@ class TestStack10Disclosure(Erc7730Harness, common.KeepKeyTest):
                              "24" * 20 + "?")
                 self.assertEqual(body, expected)
                 self.assertTrue(any("data" in t.lower() for t, _ in self.screens))
+        # 2^255 is UNLIMITED for the warning too: it comes first, then the
+        # approve screen states the allowance as UNLIMITED.
         self._signed(self._tx(True, 1 << 255))
-        self.assertEqual(
-            self._first_pages()[0][1],
-            "Unknown token contract 0x" + "42" * 20 + "\nAllow 0x" + "24" * 20 +
-            " to withdraw up to UNLIMITED?")
+        pages = self._first_pages()
+        self.assertTrue(pages[0][1].startswith(
+            "Allow 0x" + "24" * 20 + " to spend ALL your"), pages[0])
+        self.assertIn(
+            ("Approve",
+             "Unknown token contract 0x" + "42" * 20 + "\nAllow 0x" + "24" * 20 +
+             " to withdraw up to UNLIMITED?"), pages)
 
     def test_padded_zero_value_keeps_exact_token_review(self):
         for approve in (False, True):

@@ -505,12 +505,10 @@ MayachainMemoResult mayachain_parseConfirmMemo(const char* swapStr,
   // Check for swap
   if (strcmp(fields[0], "SWAP") == 0 || strcmp(fields[0], "s") == 0 ||
       strcmp(fields[0], "=") == 0) {
-    // This is a swap, set up destination and limit
-    // The dest may be blank which means swap to self
-    const char* dest =
-        (nfields > 2 && fields[2][0] != '\0') ? fields[2] : "self";
-    const char* limit =
-        (nfields > 3 && fields[3][0] != '\0') ? fields[3] : "none";
+    /* Describe omitted and empty trailing fields separately from literal
+     * memo text. "self" can be a MAYAName, not the sender, and "none" is not
+     * a numeric limit. Giving an omitted or empty field that literal spelling
+     * made distinct signed memos look identical. */
     const char* affiliate =
         (nfields > 4 && fields[4][0] != '\0') ? fields[4] : NULL;
     const bool has_fee = nfields > 5 && fields[5][0] != '\0';
@@ -526,11 +524,19 @@ MayachainMemoResult mayachain_parseConfirmMemo(const char* swapStr,
       return MAYACHAIN_MEMO_CANCELLED;
     }
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "Mayachain swap", "Confirm to %s", dest)) {
+                 "Mayachain swap", "%s%s",
+                 nfields <= 2           ? "Destination field omitted"
+                 : fields[2][0] == '\0' ? "Destination field empty"
+                                        : "Confirm to ",
+                 nfields > 2 ? fields[2] : "")) {
       return MAYACHAIN_MEMO_CANCELLED;
     }
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "Mayachain swap", "Confirm limit %s", limit)) {
+                 "Mayachain swap", "%s%s",
+                 nfields <= 3           ? "Limit field omitted"
+                 : fields[3][0] == '\0' ? "Limit field empty"
+                                        : "Confirm limit ",
+                 nfields > 3 ? fields[3] : "")) {
       return MAYACHAIN_MEMO_CANCELLED;
     }
     // Never hide the affiliate fee skim from the user

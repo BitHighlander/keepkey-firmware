@@ -21,22 +21,29 @@
 
 #include <string.h>
 
+#if DEBUG_LINK && defined(EMULATOR)
+#include <stdio.h>
+#include <stdlib.h>
+#endif
+
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/memzero.h"
 #include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha2.h"
 #include "trezor/crypto/sha3.h"
 
-/* THE ALPHA ROOT, compiled into every 7.16 build (no flag; hosts gate on the
- * version, enforced by ClearsignRoot.SevenSixteenAlwaysShipsTheRoot).
- * ALPHA-ONLY: device 393137350D4736341B003900, m/44'/60'/0'/0/0. It must
- * NEVER ship in a production release; a production ceremony root replaces it
- * (docs/ClearsignRootCeremony.md 4.4), and release.yml fails any release
- * containing these bytes. */
+/* Production root public-key provisioning candidate, captured 2026-10-15.
+ * KKclearSignROOT, device 310BBE4832ED489FD9DF3900, official firmware 7.14.1.
+ * secp256k1 m/44'/60'/0'/0/0, standard wallet with empty passphrase.
+ * Two readings matched across a physical power cycle; see public-root.json
+ * in the clearsign-root-provisioning-20261015 ceremony evidence.
+ * Pending integration: hardened issuer upgrade, matching certificate fixtures,
+ * and complete 7.16 qualification. No certificates were issued at capture.
+ */
 static const uint8_t kk_clearsign_root_pubkey[CLEARSIGN_PUBKEY_LEN] = {
-    0x02, 0xde, 0x92, 0x31, 0xb2, 0x09, 0x44, 0x33, 0x23, 0x55, 0x32,
-    0xfb, 0x19, 0x32, 0xe3, 0x24, 0xa2, 0xc7, 0x30, 0x41, 0x95, 0xe1,
-    0x2e, 0x61, 0x0c, 0x67, 0x5c, 0xcc, 0xbb, 0xd6, 0x06, 0xda, 0xe7,
+    0x02, 0x7c, 0x1f, 0xde, 0x75, 0xdb, 0x6c, 0x36, 0x39, 0x3e, 0x09,
+    0x5e, 0x0d, 0xc5, 0xab, 0x9a, 0x5b, 0xcf, 0x1a, 0xe9, 0xeb, 0x92,
+    0xb5, 0xd3, 0x6e, 0x21, 0x2a, 0x2b, 0xf7, 0xf8, 0xa6, 0xe3, 0x21,
 };
 
 #if DEBUG_LINK && defined(EMULATOR)
@@ -45,6 +52,47 @@ static const uint8_t* test_root_pubkey;
 
 void clearsign_root_set_test_root(const uint8_t* pubkey) {
   test_root_pubkey = pubkey;
+}
+
+const uint8_t* clearsign_root_compiled_pubkey(void) {
+  return kk_clearsign_root_pubkey;
+}
+
+static int hex_nibble(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+bool clearsign_root_load_test_root_from_env(void) {
+  static uint8_t env_root[CLEARSIGN_PUBKEY_LEN];
+  const char* hex = getenv("KK_CLEARSIGN_TEST_ROOT");
+  if (!hex || !*hex) return false;
+
+  uint8_t key[CLEARSIGN_PUBKEY_LEN];
+  bool ok = strlen(hex) == 2 * CLEARSIGN_PUBKEY_LEN;
+  for (size_t i = 0; ok && i < CLEARSIGN_PUBKEY_LEN; i++) {
+    const int hi = hex_nibble(hex[2 * i]), lo = hex_nibble(hex[2 * i + 1]);
+    ok = hi >= 0 && lo >= 0;
+    key[i] = (uint8_t)((hi << 4) | (lo & 0x0f));
+  }
+  curve_point point;
+  ok = ok && (key[0] == 0x02 || key[0] == 0x03) &&
+       ecdsa_read_pubkey(&secp256k1, key, &point) == 1;
+  if (!ok) {
+    fprintf(stderr,
+            "WARNING: ignoring KK_CLEARSIGN_TEST_ROOT: not a 66-hex-char "
+            "compressed secp256k1 key; using the compiled-in root\n");
+    return false;
+  }
+  memcpy(env_root, key, sizeof(env_root));
+  clearsign_root_set_test_root(env_root);
+  fprintf(stderr,
+          "WARNING: ClearSign certificates verify against the TEST root "
+          "KK_CLEARSIGN_TEST_ROOT=%s, not the compiled-in root\n",
+          hex);
+  return true;
 }
 #endif
 
@@ -171,7 +219,10 @@ bool clearsign_root_verify_erc7730_catalog(
     const uint8_t catalog_root[32], const uint8_t* sig, size_t sig_len,
     char out_alias[CLEARSIGN_ALIAS_LEN + 1]) {
   static const uint8_t purpose[] = "KEEPKEY:ERC7730:CATALOG\0";
-  if (!catalog_root || !sig || sig_len != 64 || !out_alias) return false;
+  /* An EVM catalog: a Solana-scope cert never authorizes EVM chain 501. */
+  if (!catalog_root || !sig || sig_len != 64 || !out_alias ||
+      expected_scope == CLEARSIGN_SCOPE_SOLANA)
+    return false;
 
   SHA256_CTX ctx;
   uint8_t digest[SHA256_DIGEST_LENGTH];
