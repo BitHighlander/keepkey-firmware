@@ -50,6 +50,15 @@ typedef enum {
   ERC7730_DISPLAY_ITERATION,    /* the array an iteration walks */
 } Erc7730DisplayStage;
 
+/* An outer approve() or increaseAllowance(): the facts the top-level allowance
+ * policy (ethereum.c) reads, taken from the arguments of the first calldata
+ * pass, which fixes the digest every later pass and the signature must match.
+ */
+#define ERC7730_ALLOWANCE_CALL 1u      /* the selector, with both words */
+#define ERC7730_ALLOWANCE_DIRTY 2u     /* the spender word has high bytes */
+#define ERC7730_ALLOWANCE_UNLIMITED 4u /* the amount is 2^255 or more */
+#define ERC7730_ALLOWANCE_CHECKED 8u   /* the policy ran, before any screen */
+
 /* Max formatter arguments (tokenAmount). */
 #define ERC7730_FIELD_MAX_ARGUMENTS 5u
 
@@ -77,7 +86,7 @@ typedef struct {
   uint8_t inner_selector[4];
   uint8_t inner_selector_length;
   uint8_t spender[20];
-  uint8_t approve_spender[20]; /* of an inner approve(spender, 2^256-1) */
+  uint8_t approve_spender[20]; /* of an inner unlimited approve() */
   bool unlimited_approve;
   bool has_inner;
   bool has_spender;
@@ -160,6 +169,8 @@ typedef struct {
   uint8_t reviewed_digest[32];
   bool reviewed_digest_set;
   bool signing_pass;
+  uint8_t allowance; /* ERC7730_ALLOWANCE_* */
+  uint8_t allowance_spender[20];
 } Erc7730Workflow;
 
 /* The single workflow shared by the FSM and ethereum.c. */
@@ -235,6 +246,10 @@ bool erc7730_workflow_calldata_waiting(const Erc7730Workflow* workflow,
                                        size_t* remaining);
 const Erc7730CatalogIdentity* erc7730_workflow_identity(
     const Erc7730Workflow* workflow);
+/* The signing pass of an approve() or increaseAllowance() whose allowance
+ * policy already ran on the reviewed arguments: ethereum_signing_init(), which
+ * receives only the selector, need not refuse it for lacking them. */
+bool erc7730_workflow_allowance_checked(const Erc7730Workflow* workflow);
 /* The tier the provenance screen shows. An inner definition is never shown
  * as more trusted than the outer definition that led to it. */
 uint8_t erc7730_workflow_tier(const Erc7730Workflow* workflow);
