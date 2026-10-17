@@ -1873,25 +1873,6 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
     return;
   }
 
-  /* One metadata message per transaction, the last one wins: a contact proof
-   * replaces any contract description and vice versa, so a label can never
-   * ride along with (or stand in for) a certified description. */
-  contact_book_clear();
-  if (contact_proof) {
-    signed_metadata_clear();
-    HDNode* node = attestor_getNode();
-    if (!node) return;
-    const bool ok = contact_book_process_proof(
-        msg->signed_payload.bytes, msg->signed_payload.size, node->public_key);
-    memzero(node, sizeof(*node));
-    resp->classification = ok ? METADATA_VERIFIED : METADATA_MALFORMED;
-    resp->has_display_summary = true;
-    strlcpy(resp->display_summary, ok ? "Contact verified" : "Invalid contact",
-            sizeof(resp->display_summary));
-    msg_write(MessageType_MessageType_EthereumMetadataAck, resp);
-    return;
-  }
-
   MetadataClassification result = signed_metadata_process(
       msg->signed_payload.bytes, msg->signed_payload.size,
       msg->has_key_id ? (uint8_t)msg->key_id : 0);
