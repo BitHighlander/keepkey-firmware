@@ -2092,8 +2092,8 @@ TEST(Eip712Stream, StringControlBytesAreShownEscaped) {
 }
 
 // approve(spender, amount) inside a `bytes` leaf (a Safe transaction's data)
-// gets the top-level policy: 2^256-1 signs only after the UNLIMITED warning,
-// and a dirty spender word is refused.
+// gets the top-level policy: 2^255 or more signs only after the UNLIMITED
+// warning, and a dirty spender word is refused.
 namespace {
 
 Bytes g_approve;
@@ -2210,6 +2210,17 @@ TEST(Eip712Stream, EmbeddedUnlimitedApproveSignsAfterTheWarning) {
   // A finite approve keeps the ordinary screen.
   EXPECT_EQ(walkSafeTx(approveCall(0, 0x01), false, 20, &titles, &bodies),
             EIP712_REQ_DONE);
+  EXPECT_EQ(std::count(titles.begin(), titles.end(), "UNLIMITED approval"), 0);
+
+  // The threshold is the top-level one: 2^255 is unlimited, 2^255 - 1 is not.
+  Bytes threshold = approveCall(0, 0x00);
+  threshold[36] = 0x80;
+  EXPECT_EQ(walkSafeTx(threshold, false, 20, &titles, &bodies),
+            EIP712_REQ_DONE);
+  EXPECT_EQ(std::count(titles.begin(), titles.end(), "UNLIMITED approval"), 1);
+  Bytes below = approveCall(0, 0xff);
+  below[36] = 0x7f;
+  EXPECT_EQ(walkSafeTx(below, false, 20, &titles, &bodies), EIP712_REQ_DONE);
   EXPECT_EQ(std::count(titles.begin(), titles.end(), "UNLIMITED approval"), 0);
 
   // Declining the warning signs nothing. Four screens are accepted (the
@@ -2972,11 +2983,21 @@ TEST(Eip712Stream, MultiSendFiniteApproveHasNoWarning) {
   Bytes packed = packedCall(kDai, approveCall(0, 0x01));
   append(&packed, packedCall(kUsdc, swapCall(1500)));
   Bytes almost = approveCall(0, 0xff);
-  almost[67] = 0xfe;
+  almost[36] = 0x7f;  // 2^255 - 1: below the top-level threshold
   append(&packed, packedCall(kDai, almost));
   const MsRun r = signMultiSend(multiSendCall(packed));
   ASSERT_EQ(r.kind, EIP712_REQ_DONE);
   EXPECT_TRUE(r.warned.empty());
+}
+
+// The top-level threshold: 2^255, not only 2^256 - 1, is unlimited.
+TEST(Eip712Stream, MultiSendApproveOfTwoToThe255Warns) {
+  Bytes threshold = approveCall(0, 0x00);
+  threshold[36] = 0x80;
+  const MsRun r = signMultiSend(multiSendCall(packedCall(kDai, threshold)));
+  ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+  ASSERT_EQ(r.warned.size(), 1u);
+  EXPECT_EQ(r.bodies[r.warned[0]], allowText(threshold, "DAI"));
 }
 
 TEST(Eip712Stream, MultiSendDirtySpenderIsRefused) {

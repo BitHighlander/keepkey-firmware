@@ -300,32 +300,46 @@ class TestStack07Regressions(Erc7730Harness, common.KeepKeyTest):
         self.assertGreater(certified_buttons("\u00e9" * 64),
                            certified_buttons("e" * 128))
 
-    def test_certified_approval_refused_before_annotation_screens(self):
+    def test_certified_approval_runs_the_allowance_policy(self):
+        # 7.17: the host sends only the selector. The first calldata pass
+        # reads both words, the top-level allowance policy runs on them before
+        # any screen, and the signature equals the ordinary path's.
         signature = "approve(address spender,uint256 amount)"
         descriptor = {"display": {"formats": {signature: {
             "intent": "Approve tokens", "fields": [
                 {"path": "amount", "label": "Allowance", "format": "raw"}]}}}}
         program = erc7730_compiler.compile_calldata(descriptor, signature, 1, ADDRESS)
-        envelope = self._preload(program)
         selector = program[38:42]
-        start = eth.EthereumSignTx(address_n=PATH, nonce=b"", gas_price=b"\x01",
-            gas_limit=b"\xff\xff", to=ADDRESS, value=b"", chain_id=1,
-            data_length=68, data_initial_chunk=selector)
-        result, buttons, _, _ = self._walk(start, envelope)
-        assert_failure(self, result, types.Failure_SyntaxError,
-                       "ERC-7730 approval not supported")
-        self.assertEqual(buttons, 0)
 
-        # A finite approval with all 68 bytes supplied up front still reaches
-        # the established ordinary review and signing path.
-        data = selector + b"\x00" * 12 + ADDRESS + (42).to_bytes(32, "big")
-        ordinary = eth.EthereumSignTx(address_n=PATH, nonce=b"", gas_price=b"\x01",
-            gas_limit=b"\xff\xff", to=ADDRESS, value=b"", chain_id=1,
-            data_length=68, data_initial_chunk=data)
-        result, buttons, _, _ = self._walk(ordinary)
-        self.assertIsInstance(result, eth.EthereumTxRequest)
-        self.assertTrue(result.HasField("signature_r"))
-        self.assertGreater(buttons, 0)
+        def start(data):
+            return eth.EthereumSignTx(address_n=PATH, nonce=b"",
+                gas_price=b"\x01", gas_limit=b"\xff\xff", to=ADDRESS,
+                value=b"", chain_id=1, data_length=68, data_initial_chunk=data)
+
+        for amount, warned in ((42, False), ((1 << 256) - 1, True)):
+            arguments = b"\x00" * 12 + ADDRESS + amount.to_bytes(32, "big")
+            ordinary, _, _, _ = self._walk(start(selector + arguments))
+            self.assertTrue(ordinary.HasField("signature_r"))
+            envelope = self._preload(program)
+            result, buttons, _, _ = self._walk(start(selector), envelope,
+                                               arguments=arguments)
+            self.assertIsInstance(result, eth.EthereumTxRequest)
+            self.assertEqual((result.signature_r, result.signature_s),
+                             (ordinary.signature_r, ordinary.signature_s))
+            titles = [title for title, _ in self.screens]
+            self.assertEqual(titles.count("UNLIMITED approval"), int(warned))
+            if warned:
+                self.assertEqual(titles[0], "UNLIMITED approval")
+
+        # A dirty spender word is refused before any screen: the address
+        # word does not decode, and the allowance policy refuses it anyway.
+        arguments = b"\x01" + b"\x00" * 11 + ADDRESS + (42).to_bytes(32, "big")
+        envelope = self._preload(program)
+        result, buttons, _, _ = self._walk(start(selector), envelope,
+                                           arguments=arguments)
+        assert_failure(self, result, types.Failure_SyntaxError,
+                       "ERC-7730 calldata does not match definition")
+        self.assertEqual(buttons, 0)
 
     def test_verifying_contract_mismatch_is_refused_before_certified_review(self):
         doc, program = self._typed_fixture()

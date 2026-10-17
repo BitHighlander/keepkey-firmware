@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstring>
 #include <vector>
 
@@ -415,9 +416,9 @@ static std::vector<uint8_t> innerApprove(uint8_t amount_byte) {
   return call;
 }
 
-// An embedded approve() gets the top-level policy: 2^256-1 is flagged for
-// the UNLIMITED warning with its full spender, a finite amount is not, and a
-// dirty spender word is refused.
+// An embedded approve() gets the top-level policy: an amount of 2^255 or
+// more is flagged for the UNLIMITED warning with its full spender, a smaller
+// one is not, and a dirty spender word is refused.
 TEST(Erc7730Workflow, EmbeddedApproveIsClassifiedLikeATopLevelOne) {
   Erc7730Workflow workflow{};
   ASSERT_TRUE(locateEmbedded(&workflow, innerApprove(0xff)));
@@ -429,8 +430,14 @@ TEST(Erc7730Workflow, EmbeddedApproveIsClassifiedLikeATopLevelOne) {
   EXPECT_EQ(workflow.field.inner_selector_length, 4u);
   EXPECT_EQ(workflow.field.inner_length, 68u);
 
+  // The threshold is the top-level one: 2^255 exactly is unlimited, and
+  // 2^255 - 1 is not.
+  auto threshold = innerApprove(0x00);
+  threshold[36] = 0x80;
+  ASSERT_TRUE(locateEmbedded(&workflow, threshold));
+  EXPECT_TRUE(workflow.field.unlimited_approve);
   auto almost = innerApprove(0xff);
-  almost[67] = 0xfe;
+  almost[36] = 0x7f;
   ASSERT_TRUE(locateEmbedded(&workflow, almost));
   EXPECT_FALSE(workflow.field.unlimited_approve);
   ASSERT_TRUE(locateEmbedded(&workflow, innerApprove(0x01)));
@@ -461,4 +468,76 @@ TEST(Erc7730Workflow, EmbeddedApproveIsClassifiedLikeATopLevelOne) {
   ASSERT_TRUE(locateEmbedded(&workflow, transfer));
   EXPECT_FALSE(workflow.field.unlimited_approve);
   EXPECT_EQ(workflow.field.inner_selector[0], 0xa9);
+}
+
+// An outer approve(address,uint256): the first calldata pass, at any chunking,
+// records what the top-level allowance policy reads. Later passes record
+// nothing; the signing pass is "checked" only once the policy has run.
+static void allowancePass(Erc7730Workflow* workflow,
+                          const std::vector<uint8_t>& args, size_t chunk) {
+  *workflow = Erc7730Workflow{};
+  prepareTypedUintWorkflow(workflow);
+  workflow->typed_data = false;
+  workflow->loader.abi.node_count = 3;
+  workflow->loader.abi.nodes[0].child_count = 2;
+  workflow->loader.abi.nodes[1].kind = ERC7730_ABI_ADDRESS;
+  workflow->loader.abi.nodes[1].size = 0;
+  workflow->loader.abi.nodes[2].kind = ERC7730_ABI_UINT;
+  workflow->loader.abi.nodes[2].size = 256;
+  workflow->allowance = ERC7730_ALLOWANCE_CALL;
+  EthereumSignTx tx{};
+  tx.has_data_length = true;
+  tx.data_length = 68;
+  tx.has_data_initial_chunk = true;
+  tx.data_initial_chunk.size = 4;
+  memcpy(tx.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
+  ASSERT_TRUE(erc7730_tx_continuation_capture(&workflow->continuation, &tx));
+  ASSERT_TRUE(erc7730_workflow_restore_and_start_calldata(workflow, &tx));
+  for (size_t at = 0; at < args.size(); at += chunk) {
+    const size_t n = std::min(chunk, args.size() - at);
+    erc7730_workflow_calldata_feed(workflow, args.data() + at, n);
+  }
+}
+
+TEST(Erc7730Workflow, FirstPassRecordsTheAllowanceFacts) {
+  std::vector<uint8_t> args(64, 0);
+  for (size_t i = 12; i < 32; i++) args[i] = (uint8_t)i;  // spender
+  for (size_t chunk : {size_t{1}, size_t{7}, size_t{64}}) {
+    SCOPED_TRACE(chunk);
+    Erc7730Workflow workflow{};
+    args[32] = 0x7f;  // 2^255 - 1 and below: finite
+    allowancePass(&workflow, args, chunk);
+    EXPECT_EQ((unsigned)workflow.allowance, ERC7730_ALLOWANCE_CALL);
+    EXPECT_EQ(0, memcmp(workflow.allowance_spender, args.data() + 12, 20));
+
+    args[32] = 0x80;  // 2^255: unlimited
+    allowancePass(&workflow, args, chunk);
+    EXPECT_EQ((unsigned)workflow.allowance,
+              ERC7730_ALLOWANCE_CALL | ERC7730_ALLOWANCE_UNLIMITED);
+
+    std::vector<uint8_t> dirty = args;
+    dirty[11] = 1;
+    allowancePass(&workflow, dirty, chunk);
+    EXPECT_TRUE(workflow.allowance & ERC7730_ALLOWANCE_DIRTY);
+  }
+
+  // A later pass records nothing: the first one fixed the facts.
+  Erc7730Workflow workflow{};
+  args[32] = 0;
+  allowancePass(&workflow, args, 64);
+  ASSERT_EQ(erc7730_workflow_calldata_finish(&workflow), ERC7730_ABI_OK);
+  workflow.calldata_validated = true;
+  EXPECT_FALSE(erc7730_workflow_allowance_checked(&workflow));
+  workflow.allowance |= ERC7730_ALLOWANCE_CHECKED;
+  EthereumSignTx tx{};
+  ASSERT_TRUE(erc7730_workflow_start_signing(&workflow, &tx));
+  EXPECT_TRUE(erc7730_workflow_allowance_checked(&workflow));
+  std::vector<uint8_t> unlimited = args;
+  unlimited[32] = 0xff;
+  ASSERT_EQ(erc7730_workflow_calldata_feed(&workflow, unlimited.data(), 64),
+            ERC7730_ABI_OK);
+  EXPECT_FALSE(workflow.allowance & ERC7730_ALLOWANCE_UNLIMITED);
+  // ...and the signing pass must still match the reviewed digest.
+  EXPECT_NE(erc7730_workflow_calldata_finish(&workflow), ERC7730_ABI_OK);
+  EXPECT_FALSE(erc7730_workflow_allowance_checked(&workflow));
 }

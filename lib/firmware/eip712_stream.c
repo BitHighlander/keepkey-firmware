@@ -975,8 +975,7 @@ static const uint8_t* safe_tx_to(void) {
 /* An unlimited embedded approve signs only after the UNLIMITED warning,
  * which names the full spender, and the token from SafeTx.to once seen. */
 static Eip712LeafResult confirm_embedded_unlimited(const uint8_t* value) {
-  for (size_t i = 36; i < 68; i++)
-    if (value[i] != 0xff) return EIP712_LEAF_OK;
+  if (!ethereum_allowanceAmountIsUnlimited(value + 36)) return EIP712_LEAF_OK;
   const uint32_t cid = domain_chain_id();
   const bool safe_tx = in_safe_tx();
   const uint8_t* to = safe_tx_to();
@@ -1011,8 +1010,8 @@ static bool confirm_delegatecall(const char* title, const char* who,
 /* ── Approves inside a MultiSend ──────────────────────────────────────
  * Safe's MultiSend and MultiSendCallOnly take multiSend(bytes transactions),
  * each call packed as operation(1) | to(20) | value(32) | dataLength(32) |
- * data. An approve(spender, 2^256-1) or increaseAllowance(spender, 2^256-1)
- * among them gets the top-level policy: a dirty spender word is refused, and
+ * data. An approve() or increaseAllowance() of 2^255 or more among them
+ * gets the top-level policy: a dirty spender word is refused, and
  * the UNLIMITED warning, naming the spender and the inner `to` as the token,
  * comes as soon as its 68 bytes are read. Matched by selector, not address:
  * the device cannot tell which contract SafeTx.to is, and another contract
@@ -1033,7 +1032,7 @@ enum { MS_OFF, MS_SELECTOR, MS_OFFSET, MS_LENGTH, MS_HEADER, MS_DATA };
 #define MS_SEEN_APPROVE 1   /* data so far starts 0x095ea7b3 */
 #define MS_SEEN_INCREASE 2  /* data so far starts 0x39509351 */
 #define MS_SEEN_DIRTY 4     /* the spender word has high bytes set */
-#define MS_SEEN_FINITE 8    /* the amount word is not all ones */
+#define MS_SEEN_FINITE 8    /* the amount word is below 2^255 */
 #define MS_SEEN_HUGE 16     /* dataLength exceeds 32 bits */
 #define MS_SEEN_DELEGATE 32 /* this call's operation is 1 */
 #define MS_FACT_CLEAN 1     /* read to its end, every call canonical */
@@ -1135,7 +1134,8 @@ static MultisendScan multisend_byte(uint8_t b) {
       } else if (at < 36) {
         ms->spender[at - 16] = b;
       } else if (at < 68) {
-        if (b != 0xff) ms->seen |= MS_SEEN_FINITE;
+        /* The top-level threshold (ethereum_allowanceAmountIsUnlimited). */
+        if (at == 36 && (b & 0x80) == 0) ms->seen |= MS_SEEN_FINITE;
       } else {
         ms->at = 68;
       }

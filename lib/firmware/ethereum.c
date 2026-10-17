@@ -176,7 +176,7 @@ static bool ethereum_isERC20ApproveCall(const EthereumSignTx* msg) {
 /* approve(spender, amount) and increaseAllowance(spender, amount) share a
  * layout and either can grant everything, so the allowance policy covers
  * both. len < 4 matches a selector prefix. */
-static bool ethereum_isAllowanceSelector(const uint8_t* data, size_t len) {
+bool ethereum_isAllowanceSelector(const uint8_t* data, size_t len) {
   return memcmp(data, "\x09\x5e\xa7\xb3", len) == 0 ||
          memcmp(data, "\x39\x50\x93\x51", len) == 0;
 }
@@ -189,9 +189,13 @@ static bool ethereum_allowanceIsWellFormed(const EthereumSignTx* msg) {
   return true;
 }
 
-/* ERC-7730's threshold: an allowance of 2^255 or more is UNLIMITED. */
+bool ethereum_allowanceAmountIsUnlimited(const uint8_t amount[32]) {
+  return (amount[0] & 0x80) != 0;
+}
+
 static bool ethereum_allowanceIsUnlimited(const EthereumSignTx* msg) {
-  return (msg->data_initial_chunk.bytes[36] & 0x80) != 0;
+  return ethereum_allowanceAmountIsUnlimited(msg->data_initial_chunk.bytes +
+                                             36);
 }
 
 /* An unlimited approve signs only after this warning, with the full spender
@@ -1099,10 +1103,14 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
 
   // Keep the selector and both ABI words available to the allowance policy.
   // Otherwise a host could split an approval prefix across streamed chunks.
+  // A certified ERC-7730 review streams them instead: it ran this policy on
+  // the words its first pass hashed, and this pass must match that digest.
+  const bool allowance_checked =
+      erc7730_workflow_allowance_checked(erc7730_workflow_state());
   const size_t selector_bytes =
       msg->data_initial_chunk.size < 4 ? msg->data_initial_chunk.size : 4;
   if (msg->has_to && msg->to.size == 20 && data_total >= 68 &&
-      msg->data_initial_chunk.size < 68 &&
+      !allowance_checked && msg->data_initial_chunk.size < 68 &&
       ethereum_isAllowanceSelector(msg->data_initial_chunk.bytes,
                                    selector_bytes)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
@@ -1115,6 +1123,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   // bytes, so a dirty spender word still grants the allowance on chain.
   bool unlimited_deferred = false;
   if (msg->has_to && msg->to.size == 20 && data_total >= 68 &&
+      !allowance_checked &&
       ethereum_isAllowanceSelector(msg->data_initial_chunk.bytes, 4)) {
     if (!ethereum_allowanceIsWellFormed(msg)) {
       fsm_sendFailure(FailureType_Failure_SyntaxError,

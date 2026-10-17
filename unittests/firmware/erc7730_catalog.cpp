@@ -477,36 +477,37 @@ class Erc7730SigningHandlers : public ::testing::Test {
   }
 };
 
-TEST_F(Erc7730SigningHandlers,
-       CertifiedAllowancesFailBeforeDefinitionReplayOrConsent) {
+// 7.17: an approve() or increaseAllowance() definition starts its replay like
+// any other, with the allowance policy armed for the first calldata pass; a
+// shorter call is no allowance and leaves it unarmed.
+TEST_F(Erc7730SigningHandlers, CertifiedAllowancesStartDefinitionReplay) {
   const uint8_t selectors[][4] = {
       {0x09, 0x5e, 0xa7, 0xb3},   // approve
       {0x39, 0x50, 0x93, 0x51}};  // increaseAllowance
   for (const auto& selector : selectors) {
-    EthereumSignTx tx;
-    prepare(selector, &tx);
-    ASSERT_FALSE(HasFatalFailure());
-    ASSERT_TRUE(kkconfirm_preload(0, 0));
-    fsm_test_clearLastFailure();
-    kkconfirm_capture_start();
-    fsm_msgEthereumSignTx(&tx);
-    EXPECT_TRUE(kkconfirm_capture_finish().empty());
-    EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
-    EXPECT_STREQ("ERC-7730 approval not supported",
-                 fsm_test_lastFailureMessage());
-    EXPECT_FALSE(erc7730_workflow_active(erc7730_workflow_state()));
-    Erc7730CatalogIdentity identity = {};
-    EXPECT_FALSE(erc7730_catalog_preloaded(&identity));
-    Failure refusal = {};
-    ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_Failure,
-                                       Failure_fields, &refusal));
-    EXPECT_EQ(FailureType_Failure_SyntaxError, refusal.code);
-    EXPECT_STREQ("ERC-7730 approval not supported", refusal.message);
-    EthereumTxRequest signature = {};
-    EXPECT_FALSE(
-        kkconfirm_readResponse(MessageType_MessageType_EthereumTxRequest,
-                               EthereumTxRequest_fields, &signature));
-    EXPECT_EQ(0, kkconfirm_drain());
+    for (uint32_t length : {68u, 67u}) {
+      EthereumSignTx tx;
+      prepare(selector, &tx);
+      ASSERT_FALSE(HasFatalFailure());
+      tx.data_length = length;
+      ASSERT_TRUE(kkconfirm_preload(0, 0));
+      fsm_test_clearLastFailure();
+      kkconfirm_capture_start();
+      fsm_msgEthereumSignTx(&tx);
+      EXPECT_TRUE(kkconfirm_capture_finish().empty());
+      EXPECT_EQ(0, fsm_test_lastFailureCode());
+      const Erc7730Workflow* workflow = erc7730_workflow_state();
+      EXPECT_EQ(ERC7730_WORKFLOW_REPLAY, workflow->phase);
+      EXPECT_EQ(length == 68 ? ERC7730_ALLOWANCE_CALL : 0u,
+                (unsigned)workflow->allowance);
+      EXPECT_FALSE(erc7730_workflow_allowance_checked(workflow));
+      EthereumClearSignDefinitionRequest request = {};
+      EXPECT_TRUE(kkconfirm_readResponse(
+          MessageType_MessageType_EthereumClearSignDefinitionRequest,
+          EthereumClearSignDefinitionRequest_fields, &request));
+      EXPECT_EQ(0, kkconfirm_drain());
+      fsm_abort_workflows();
+    }
   }
 }
 
