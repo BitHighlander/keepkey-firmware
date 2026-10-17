@@ -173,7 +173,10 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
   for (uint16_t i = 0; i < num_instructions; i++) {
     if (pos >= raw_len) return -1;
     uint8_t program_idx = raw[pos++];
-    if (program_idx >= tx->num_static_accounts) return -1;
+    /* Solana invokes only static program ids, never a lookup-table key, a
+     * certified one included. */
+    if (program_idx >= num_accounts || program_idx >= tx->num_static_accounts)
+      return -1;
     bool external = false;
 
     uint16_t num_acct_indices;
@@ -638,6 +641,27 @@ static bool solana_header_ok(const SolanaParsedTx* tx, uint16_t num_accounts) {
              num_accounts;
 }
 
+/* More static keys than accounts[] holds: too many to review, so opaque
+ * (AdvancedMode blind-sign; a real transaction is never refused). Signers come
+ * first in the key list, so only they are loaded: num_accounts stays nonzero
+ * and the fsm still requires the derived key to be a signer (F-715-1). More
+ * than SOL_MAX_ACCOUNTS signers cannot fit a Solana packet: MALFORMED. */
+static SolanaTxReview solana_oversizedKeyListIsOpaque(const uint8_t* raw,
+                                                      size_t raw_len,
+                                                      size_t pos,
+                                                      uint16_t num_accounts,
+                                                      SolanaParsedTx* tx) {
+  if (tx->num_required_sigs > SOL_MAX_ACCOUNTS ||
+      raw_len - pos < ((size_t)num_accounts + 1) * SOL_PUBKEY_SIZE) {
+    return SOL_TX_REVIEW_MALFORMED; /* keys + blockhash must be present */
+  }
+  memcpy(tx->accounts, raw + pos,
+         (size_t)tx->num_required_sigs * SOL_PUBKEY_SIZE);
+  tx->num_accounts = tx->num_required_sigs;
+  tx->num_static_accounts = tx->num_required_sigs;
+  return SOL_TX_REVIEW_OPAQUE;
+}
+
 static SolanaTxReview solana_parseLegacyTx(const uint8_t* raw, size_t raw_len,
                                            SolanaParsedTx* tx) {
   memset(tx, 0, sizeof(*tx));
@@ -658,12 +682,11 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t* raw, size_t raw_len,
   pos += n;
   if (!solana_header_ok(tx, num_accounts)) return SOL_TX_REVIEW_MALFORMED;
 
-  /* More accounts than the parser holds: nothing here can be reviewed, so the
-     message is opaque (blind sign behind AdvancedMode), as on 7.15. Return
-     before recording a count: tx->num_accounts stays 0, so the signer check's
-     loop over tx->accounts[] has nothing to walk. Storing a truncated
-     (uint8_t) count here once let that loop run past accounts[31]. */
-  if (num_accounts > SOL_MAX_ACCOUNTS) return SOL_TX_REVIEW_OPAQUE;
+  /* Never stored as a truncated (uint8_t) count: that would let
+     solana_signerInTx() read past accounts[] or wrap to 0 and skip the signer
+     check (#550). */
+  if (num_accounts > SOL_MAX_ACCOUNTS)
+    return solana_oversizedKeyListIsOpaque(raw, raw_len, pos, num_accounts, tx);
   tx->num_accounts = (uint8_t)num_accounts;
   tx->num_static_accounts = (uint8_t)num_accounts;
 
@@ -706,6 +729,10 @@ static SolanaTxReview solana_parseVersionedTx(
   if (raw_len < 1) return SOL_TX_REVIEW_MALFORMED;
   uint8_t version_prefix = raw[pos++];
   if ((version_prefix & SOL_VERSION_FLAG) == 0) return SOL_TX_REVIEW_MALFORMED;
+  /* 0xFF starts an off-chain message envelope, never a transaction. */
+  if (version_prefix == 0xFF) return SOL_TX_REVIEW_MALFORMED;
+  /* A later version is not parsed (num_accounts stays 0): the fsm then
+   * requires the derived key to appear in the message. */
   if ((version_prefix & SOL_VERSION_MASK) != 0) return SOL_TX_REVIEW_OPAQUE;
 
   if (raw_len - pos < 3) return SOL_TX_REVIEW_MALFORMED;
@@ -719,12 +746,15 @@ static SolanaTxReview solana_parseVersionedTx(
   pos += n;
   if (!solana_header_ok(tx, num_accounts)) return SOL_TX_REVIEW_MALFORMED;
 
-  /* Opaque for the same reason, and as early, as in solana_parseLegacyTx. */
-  if (num_accounts > SOL_MAX_ACCOUNTS) return SOL_TX_REVIEW_OPAQUE;
+  /* Host-supplied certified lookup material that does not fit: refused. An
+   * oversized static list alone is opaque, see solana_parseLegacyTx. */
   if (trusted_lut_count > SOL_MAX_LUT_ACCOUNTS ||
-      num_accounts + trusted_lut_count > SOL_MAX_ACCOUNTS) {
+      (trusted_lut_count > 0 &&
+       num_accounts + trusted_lut_count > SOL_MAX_ACCOUNTS)) {
     return SOL_TX_REVIEW_MALFORMED;
   }
+  if (num_accounts > SOL_MAX_ACCOUNTS)
+    return solana_oversizedKeyListIsOpaque(raw, raw_len, pos, num_accounts, tx);
   const bool has_trusted_lut = trusted_lut_accounts && trusted_lut_count > 0;
   tx->num_accounts = (uint8_t)(num_accounts + trusted_lut_count);
   tx->num_static_accounts = (uint8_t)num_accounts;
@@ -1142,29 +1172,33 @@ bool solana_signerInTx(const uint8_t* pubkey, const SolanaParsedTx* tx) {
 
 /* Certified companions beyond inert ones and static Transfers: the SOL
  * wrap/unwrap a DEX trade brackets itself with. Each is natively decoded and
- * screened by the certified review, and only the signer's own accounts
- * qualify: a token account the signer funds and owns, a sync of wrapped SOL,
- * and closing the signer's account back to the signer. */
+ * screened by the certified review, and only the device key's own accounts
+ * qualify: a token account it owns (any signer may fund it), a sync of wrapped
+ * SOL, and closing its account back to it. Another signer is not the user: a
+ * wSOL close moves the whole balance, not just rent. */
 static bool schema_signerAccountCompanion(const SolanaParsedTx* tx,
-                                          const SolanaParsedInstruction* ix) {
+                                          const SolanaParsedInstruction* ix,
+                                          const uint8_t* signer) {
   switch (ix->type) {
     case SOL_INSTR_ATA_CREATE:
       return solana_signerInTx(ix->from, tx) &&
-             solana_signerInTx(ix->authority, tx);
+             memcmp(ix->authority, signer, SOL_PUBKEY_SIZE) == 0;
     case SOL_INSTR_TOKEN_SYNC_NATIVE:
       return true;
     case SOL_INSTR_TOKEN_CLOSE_ACCOUNT:
-      return solana_signerInTx(ix->to, tx) &&
-             solana_signerInTx(ix->authority, tx);
+      return memcmp(ix->to, signer, SOL_PUBKEY_SIZE) == 0 &&
+             memcmp(ix->authority, signer, SOL_PUBKEY_SIZE) == 0;
     default:
       return false;
   }
 }
 
+/* `signer` (the device key) is set only on the certified tier. */
 static bool schema_applies(const SolanaInstrSchema* schema,
-                           const SolanaParsedTx* tx, bool certified,
+                           const SolanaParsedTx* tx, const uint8_t* signer,
                            uint8_t* out_index) {
   if (!schema || !tx || !out_index) return false;
+  const bool certified = signer != NULL;
   if (tx->has_lookup_tables) return false;
 
   bool found = false;
@@ -1219,7 +1253,9 @@ static bool schema_applies(const SolanaInstrSchema* schema,
     const SolanaParsedInstruction* companion = &tx->instructions[i];
     if (companion->external) return false;
     if (solana_schemaCompanionIsInert(companion->type)) continue;
-    if (certified && schema_signerAccountCompanion(tx, companion)) continue;
+    if (certified && schema_signerAccountCompanion(tx, companion, signer)) {
+      continue;
+    }
     if (!certified || companion->type != SOL_INSTR_SYSTEM_TRANSFER ||
         !schema_transferIsStatic(tx, companion)) {
       return false;
@@ -1232,13 +1268,14 @@ static bool schema_applies(const SolanaInstrSchema* schema,
 
 bool solana_schemaApplies(const SolanaInstrSchema* schema,
                           const SolanaParsedTx* tx, uint8_t* out_index) {
-  return schema_applies(schema, tx, false, out_index);
+  return schema_applies(schema, tx, NULL, out_index);
 }
 
 bool solana_schemaAppliesCertified(const SolanaInstrSchema* schema,
                                    const SolanaParsedTx* tx,
+                                   const uint8_t signer[SOL_PUBKEY_SIZE],
                                    uint8_t* out_index) {
-  return schema_applies(schema, tx, true, out_index);
+  return schema_applies(schema, tx, signer, out_index);
 }
 
 bool solana_certifiedLutShapeMatches(const SolanaParsedTx* tx,
@@ -1248,6 +1285,14 @@ bool solana_certifiedLutShapeMatches(const SolanaParsedTx* tx,
                                  : lut_account_count == 0;
 }
 
+bool solana_messageCarriesKey(const uint8_t* msg, size_t len,
+                              const uint8_t pubkey[SOL_PUBKEY_SIZE]) {
+  for (size_t i = 0; i + SOL_PUBKEY_SIZE <= len; i++) {
+    if (memcmp(msg + i, pubkey, SOL_PUBKEY_SIZE) == 0) return true;
+  }
+  return false;
+}
+
 bool solana_rawMessageIsPlainText(const uint8_t* msg, size_t len,
                                   const uint8_t pubkey[SOL_PUBKEY_SIZE]) {
   if (!msg || !pubkey || len == 0) return false;
@@ -1255,10 +1300,7 @@ bool solana_rawMessageIsPlainText(const uint8_t* msg, size_t len,
   for (size_t i = 0; i < len; i++) {
     if ((msg[i] < 0x20 || msg[i] > 0x7e) && msg[i] != '\n') return false;
   }
-  for (size_t i = 0; i + SOL_PUBKEY_SIZE <= len; i++) {
-    if (memcmp(msg + i, pubkey, SOL_PUBKEY_SIZE) == 0) return false;
-  }
-  return true;
+  return !solana_messageCarriesKey(msg, len, pubkey);
 }
 
 bool solana_parseTx(const uint8_t* raw, size_t raw_len, SolanaParsedTx* tx) {

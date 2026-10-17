@@ -275,9 +275,14 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
+      - name: Checkout pinned Python corpus
+        run: git submodule update --init -- deps/python-keepkey
+
       - name: Validate release report evidence gates
         run: |
+          python3 -B -m unittest tools/test_build_entrypoints.py
           python3 -B -m unittest scripts/test_preflight_cppcheck.py scripts/test_preflight_checks.py
+          python3 -B -m unittest discover -s unittests/firmware -p test_eip712_corpus_gen.py -v
           # The SRAM gate must keep refusing unbounded (dynamic) stack frames.
           pip install --quiet --require-hashes -r tools/requirements-sram.txt
           PYTHONPATH=tools python3 -B -m unittest tools/test_check_sram_budget.py
@@ -851,6 +856,10 @@ jobs:
           KK_CI_REHEARSAL: ${{ vars.KK_CI_REHEARSAL }}
           # docker-compose.yml passes this to every image it builds.
           BASE_IMAGE: ${{ env.RESOLVED_BASE }}
+          # The certified fixtures are signed by the alpha root; the emulator
+          # reads it from the environment at startup (DEBUG_LINK builds only),
+          # so no image or release binary carries it.
+          KK_CLEARSIGN_TEST_ROOT: 02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7
         run: |
           COMPOSE_ARGS=(-f docker-compose.yml)
           if [ "${{ matrix.variant }}" = "bitcoin-only" ]; then
@@ -1180,6 +1189,10 @@ jobs:
           cmake --build build-emu --target emulator-unit -j "$(sysctl -n hw.ncpu)"
           mkdir -p test-reports/emulator
           build-emu/bin/emulator-unit --gtest_output=xml:test-reports/emulator/lifecycle.xml
+          cmake --build build-emu --target kkemu -j "$(sysctl -n hw.ncpu)"
+          python unittests/emulator/standalone_backoff.py \
+            --library "$DYLIB_PATH" --emulator build-emu/bin/kkemu \
+            --output test-reports/emulator/standalone-backoff.json
 
       # ── Windows emulator DLL (cross-compiled from this macOS runner) ──
       # Uses cmake/toolchains/mingw-w64-x86_64.cmake, so no Windows runner
@@ -1238,21 +1251,27 @@ jobs:
 
       - name: Assert ClearSign root in emulator libraries
         id: root_assert
-        # Every 7.16 build embeds the alpha ClearSign root. These libs are
-        # what Vault installs, and Vault turns certified ClearSign on from the
-        # firmware version alone, so a lib without the root refuses every
-        # certificate -- and this job's dylib tests never send one.
-        # publish-emulator-libs checks the same bytes again; release.yml
-        # refuses them, because the alpha root never ships in a release.
+        # Every 7.16+ build compiles in the production ClearSign root
+        # (027c1fde...e321). These libs are what Vault installs, and Vault
+        # turns certified ClearSign on from the firmware version alone, so a
+        # lib without the root refuses every certificate. The alpha root
+        # (02de9231...dae7) is only an emulator test root read from
+        # KK_CLEARSIGN_TEST_ROOT at startup, so no lib may carry its bytes.
+        # publish-emulator-libs checks the same bytes again.
         run: |
           python3 - <<'EOF'
           import sys
+          PRODUCTION_ROOT = bytes.fromhex(
+              "027c1fde75db6c36393e095e0dc5ab9a5bcf1ae9eb92b5d36e212a2bf7f8a6e321")
           ALPHA_ROOT = bytes.fromhex(
               "02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7")
           for name in ("libkkemu-macos-arm64.dylib", "libkkemu-win-x64.dll"):
-              if ALPHA_ROOT not in open("emulator-libs/" + name, "rb").read():
-                  sys.exit("::error::%s does not contain the alpha ClearSign root" % name)
-              print("Alpha ClearSign root present: %s" % name)
+              data = open("emulator-libs/" + name, "rb").read()
+              if PRODUCTION_ROOT not in data:
+                  sys.exit("::error::%s does not contain the production ClearSign root" % name)
+              if ALPHA_ROOT in data:
+                  sys.exit("::error::%s contains the alpha ClearSign root" % name)
+              print("Production ClearSign root present, alpha root absent: %s" % name)
           EOF
 
       - name: Upload emulator libraries
@@ -1293,6 +1312,8 @@ jobs:
         env:
           KK_TRANSPORT: dylib
           KK_DYLIB: ${{ env.DYLIB_PATH }}
+          # Alpha test root for the certified fixtures; read by kkemu_init.
+          KK_CLEARSIGN_TEST_ROOT: 02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7
         run: |
           # `keepkeylib/` on PYTHONPATH so the package's relative-style
           # imports inside generated *_pb2.py files resolve.
@@ -1308,6 +1329,7 @@ jobs:
           path: |
             test-reports/dylib-junit.xml
             test-reports/emulator/lifecycle.xml
+            test-reports/emulator/standalone-backoff.json
           retention-days: 30
           if-no-files-found: warn
 
@@ -1583,20 +1605,24 @@ jobs:
             test -f "release-dylib/$asset" || \
               (echo "::error::$asset missing — refusing to publish a partial emulator release" && exit 1)
           done
-          # Every 7.16 build embeds the alpha ClearSign root, and Vault turns
-          # certified ClearSign on from the firmware version alone, so a lib
-          # without the root's 33 bytes would refuse every certificate. Refuse
-          # to publish it. (release.yml does the opposite: the alpha root
-          # never ships in a release.)
+          # Every 7.16+ build compiles in the production ClearSign root, and
+          # Vault turns certified ClearSign on from the firmware version alone,
+          # so a lib without the root's 33 bytes would refuse every
+          # certificate. The alpha root is an emulator test root read from
+          # KK_CLEARSIGN_TEST_ROOT, never compiled in. Refuse to publish
+          # either mistake.
           python3 - <<'EOF'
           import sys
+          PRODUCTION_ROOT = bytes.fromhex(
+              "027c1fde75db6c36393e095e0dc5ab9a5bcf1ae9eb92b5d36e212a2bf7f8a6e321")
           ALPHA_ROOT = bytes.fromhex(
               "02de9231b2094433235532fb1932e324a2c7304195e12e610c675cccbbd606dae7")
           for name in ("libkkemu-macos-arm64.dylib", "libkkemu-win-x64.dll"):
-              if ALPHA_ROOT not in open("release-dylib/" + name, "rb").read():
-                  sys.exit("::error::%s does not contain the alpha ClearSign "
-                           "root -- refusing to publish it." % name)
-              print("Alpha ClearSign root present: %s" % name)
+              data = open("release-dylib/" + name, "rb").read()
+              if PRODUCTION_ROOT not in data or ALPHA_ROOT in data:
+                  sys.exit("::error::%s does not carry exactly the production "
+                           "ClearSign root -- refusing to publish it." % name)
+              print("Production ClearSign root present, alpha root absent: %s" % name)
           EOF
           # Traceability — which firmware/commit these binaries correspond to.
           {
@@ -1622,8 +1648,9 @@ jobs:
           - \`VERSION.txt\` — firmware version + commit these correspond to
 
           Current build: \`${GITHUB_REF_NAME}\` at \`${GITHUB_SHA}\`.
-          The libs trust the alpha ClearSign root, which is alpha-only; a
-          tagged firmware release never ships it.
+          The libs compile in the production ClearSign root. Certificates
+          signed by the alpha test root verify only when the host sets
+          \`KK_CLEARSIGN_TEST_ROOT\` before the emulator starts.
 
           Both platforms are published together; CI fails rather than
           shipping one without the other. Updated on every push to

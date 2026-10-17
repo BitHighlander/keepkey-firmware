@@ -458,7 +458,7 @@ RELEASE_CAPABILITIES = {
             "ripple-memo-policy", "hive-release-review",
             "solana-runtime-review", "maya-single-message",
             "tendermint-progress", "tron-trc20-review",
-            "solana-lut-attestation",
+            "solana-lut-attestation", "certified-contacts",
         )),
     },
 }

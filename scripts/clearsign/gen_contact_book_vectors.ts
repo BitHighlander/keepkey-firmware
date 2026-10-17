@@ -74,4 +74,3 @@ let r17 = Buffer.from(b.req.payload); r17[13] = 17
 const extra = buildCertificationRequest([{ network: 'eip155:1', destinationType: E, destination: addr(0x7f), label: 'Extra' }], 1).payload.subarray(14)
 emit('REQ17', Buffer.concat([r17, extra]))
 console.log(out.join('\n'))
-

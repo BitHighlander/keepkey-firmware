@@ -1009,7 +1009,9 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
   }
   if (!z.set) return false; /* nothing reaches anyone */
   uint8_t direct[32] = {0}, swept[32] = {0}, held[32] = {0};
-  bool consumed = false;
+  /* unswept: a swap left the asset in the router after its last SWEEP.
+   * SWEEP moves only what the router holds when it runs. */
+  bool consumed = false, unswept = false;
   for (uint8_t i = 0; i < plan->n; i++) {
     const UrStep* s = &plan->steps[i];
     uint8_t g[32];
@@ -1032,6 +1034,7 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
           return false;
         }
         from_router_step = true;
+        unswept = false;
         break;
       }
       case UR_PAY_PORTION:
@@ -1063,6 +1066,7 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
           if (!add32(direct, g)) return false;
         } else if (!z.eth && memcmp(s->token_out, z.token, 20) == 0) {
           if (!add32(held, g)) return false;
+          unswept = true;
         }
         if (!s->payer_is_user && !z.eth &&
             memcmp(s->token_in, z.token, 20) == 0) {
@@ -1071,7 +1075,7 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
         break;
     }
   }
-  if (!recipient) return false;
+  if (!recipient || unswept) return false;
   if (fee) {
     /* PAY_PORTION takes from what the router holds for the user (the
      * token, or WETH/ETH before an unwrap); TAKE_PORTION from its own

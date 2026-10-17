@@ -214,8 +214,8 @@ typedef struct {
  * structural completeness: disc + arg widths == data length EXACTLY; every
  * displayed account index exists; lookup-table accounts only once bound to
  * this transaction by a Solana ClearSign certificate; every OTHER instruction
- * is a compute-budget or Memo companion (a certified review also admits the
- * companions it screens in full).
+ * is a compute-budget or Memo companion (certified: also the static Transfer
+ * and signer-account companions, solana_schemaCompanionIsInert and below).
  *
  * Canonical payload (every numeric field is one byte; text printable ASCII,
  * no '%'). The 8-byte instruction arguments it describes (U64, LAMPORTS,
@@ -254,7 +254,7 @@ typedef enum {
   SOL_SCHEMA_ARG_U64 = 1,      /* 8 bytes, shown as a decimal integer */
   SOL_SCHEMA_ARG_U8 = 2,       /* 1 byte */
   SOL_SCHEMA_ARG_PUBKEY = 3,   /* 32 bytes, shown base58 */
-  SOL_SCHEMA_ARG_OPAQUE32 = 4, /* 32 bytes, paged; non-printable as \xNN */
+  SOL_SCHEMA_ARG_OPAQUE32 = 4, /* 32 bytes, shown in full over pages */
   SOL_SCHEMA_ARG_LAMPORTS = 5, /* 8 bytes, shown as decimal SOL */
   /* v2: 8 bytes; mint is ix account mint_account. Scaled only by a trusted
    * token definition, else raw beside the full mint. */
@@ -313,9 +313,11 @@ bool solana_schemaApplies(const SolanaInstrSchema* schema,
                           const SolanaParsedTx* tx, uint8_t* out_index);
 
 /* Same, for a root-certified schema; also admits SystemProgram Transfers whose
- * accounts are all static keys (shown in full, never a LUT-resolved dest). */
+ * accounts are all static keys (shown in full, never a LUT-resolved dest), and
+ * the wSOL wrap/unwrap of `signer`'s (the device key's) own accounts. */
 bool solana_schemaAppliesCertified(const SolanaInstrSchema* schema,
                                    const SolanaParsedTx* tx,
+                                   const uint8_t signer[SOL_PUBKEY_SIZE],
                                    uint8_t* out_index);
 
 /* Exact units: "N d", "N h", "N min" or "N s". */
@@ -378,6 +380,10 @@ bool solana_rawMessageIsPlainText(const uint8_t* msg, size_t len,
 bool solana_parseTx(const uint8_t* raw, size_t raw_len, SolanaParsedTx* tx);
 /* pubkey is one of the tx's required signers. */
 bool solana_signerInTx(const uint8_t* pubkey, const SolanaParsedTx* tx);
+
+/* True when the 32-byte key appears anywhere in msg. */
+bool solana_messageCarriesKey(const uint8_t* msg, size_t len,
+                              const uint8_t pubkey[SOL_PUBKEY_SIZE]);
 
 /* Format SOL amount */
 void solana_formatAmount(char* buf, size_t len, uint64_t lamports);

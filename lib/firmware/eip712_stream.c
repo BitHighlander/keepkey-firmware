@@ -48,6 +48,9 @@
 #include "trezor/crypto/sha3.h"
 
 #define EIP712_QUEUE_BODY 96
+/* Permit2's domain has exactly three members (name, chainId,
+ * verifyingContract); a fourth proves it is not Permit2 and flushes. */
+#define EIP712_QUEUE_SLOTS 3
 
 /* Uniswap Permit2: one immutable deployment, the same address on every EVM
  * chain that uses the canonical CREATE2 factory. */
@@ -100,9 +103,7 @@ bool eip712_type_name(const Eip712FieldType* field, char* out, size_t out_len) {
   switch (field->data_type) {
     case EthereumTypedDataStructAck_EthereumDataType_UINT:
     case EthereumTypedDataStructAck_EthereumDataType_INT: {
-      /* size is carried in BYTES on the wire and spelled in BITS. Anything
-       * outside 1..32 bytes has no canonical spelling, so refuse rather than
-       * invent one. */
+      /* size is BYTES on the wire, spelled in BITS; only 1..32 is canonical. */
       if (!field->has_size || field->size < 1 || field->size > 32) return false;
       const char* stem =
           field->data_type == EthereumTypedDataStructAck_EthereumDataType_UINT
@@ -138,9 +139,7 @@ bool eip712_type_name(const Eip712FieldType* field, char* out, size_t out_len) {
       base = field->struct_name;
       break;
     default:
-      /* ARRAY is reserved on this wire: dimensions live in array_levels, and a
-       * field whose data_type IS an array means the host is speaking a
-       * protocol we did not agree to. */
+      /* ARRAY is reserved: dimensions live in array_levels. */
       return false;
   }
 
@@ -166,12 +165,8 @@ bool eip712_type_name(const Eip712FieldType* field, char* out, size_t out_len) {
   return true;
 }
 
-/* ── encodeData ──────────────────────────────────────────────────────
- *
- * Every member encodes to exactly 32 bytes. Atomics pad, dynamics hash.
- * Structs and arrays never reach here: the walker folds them first and hands
- * the parent their 32-byte digest.
- */
+/* encodeData: every member is 32 bytes; atomics pad, dynamics hash. Structs
+ * and arrays are folded by the walker before reaching here. */
 static void write_rightpad32(const uint8_t* value, uint16_t value_len,
                              uint8_t out[32]) {
   memset(out, 0, 32);
@@ -180,8 +175,7 @@ static void write_rightpad32(const uint8_t* value, uint16_t value_len,
 
 static void write_leftpad32(const uint8_t* value, uint16_t value_len,
                             bool is_signed, uint8_t out[32]) {
-  /* Sign-extend a negative intN to 256 bits. An unsigned value, and a
-   * zero-length one, extend with zeroes. */
+  /* Sign-extend a negative intN; everything else zero-extends. */
   if (is_signed && value_len > 0 && (value[0] & 0x80)) {
     memset(out, 0xFF, 32);
   } else {
@@ -197,8 +191,7 @@ bool eip712_encode_leaf(const Eip712FieldType* field, const uint8_t* value,
       field->data_type != EthereumTypedDataStructAck_EthereumDataType_STRING &&
       !(field->data_type == EthereumTypedDataStructAck_EthereumDataType_BYTES &&
         !field->has_size)) {
-    /* Only the dynamic forms may exceed a word; everything else would be
-     * silently truncated by the padders. */
+    /* Only dynamic forms may exceed a word; padders would truncate. */
     return false;
   }
   if (value_len > 0 && !value) return false;
@@ -288,21 +281,16 @@ bool eip712_validate_leaf(const Eip712FieldType* field, const uint8_t* value,
     case EthereumTypedDataStructAck_EthereumDataType_STRING:
       return is_valid_utf8(value, value_len);
     case EthereumTypedDataStructAck_EthereumDataType_BYTES:
-      /* bytesN is exactly N, N in [1,32] (bytes0 doesn't exist; >32 doesn't
-       * fit a word) -- same bound UINT/INT already enforce below. Without
-       * it, an out-of-spec size only failed later inside eip712_type_name(),
-       * whose failure gets reported to the host as a user Cancel instead of
-       * a validation error. Dynamic bytes (no declared size) is any length
-       * we can hold. */
+      /* bytesN is exactly N, N in [1,32], rejected here as a validation error
+       * rather than later as a Cancel. Dynamic bytes: any length we hold. */
       if (field->has_size)
         return field->size >= 1 && field->size <= 32 &&
                value_len == field->size;
       return value_len <= EIP712_MAX_LEAF;
     case EthereumTypedDataStructAck_EthereumDataType_UINT:
     case EthereumTypedDataStructAck_EthereumDataType_INT:
-      /* The host sends the declared width, big endian, no padding games. A
-       * short value would left-pad into a different number than the host
-       * meant, and a long one would not fit the word. */
+      /* Exactly the declared width, big endian: a short value would pad into
+       * a different number. */
       if (!field->has_size || field->size < 1 || field->size > 32) return false;
       return value_len == field->size;
     default:
@@ -507,20 +495,9 @@ bool eip712_type_hash(const char* name, Eip712StructLookup lookup, void* ctx,
   return true;
 }
 
-/* ── Session state ───────────────────────────────────────────────────
- *
- * Every byte here is .bss, and .bss is the only thing that counts against the
- * linker gap -- that gap IS the stack, so transients on it are free.
- *
- * Measured budget: _stack - _ebss is 17,716 B against a 16,384 B floor, so
- * there are 1,332 B to spend. The sizes in eip712_stream.h are chosen to fit
- * with margin, not chosen first and hoped for.
- *
- * The single SHA3_CTX is shared. Only one hash is ever in progress: either an
- * encodeType stream (which spans round trips, so it must live here) or a frame
- * fold (which completes inside one handler and could have been a local). One
- * context serves both because they never overlap.
- */
+/* Session state, all .bss: counts against the stack gap (_stack - _ebss must
+ * stay >= 16,384 B). One SHA3_CTX: encodeType streams and frame folds never
+ * overlap. */
 typedef struct {
   /* Parent member name for review paths, at e712.labels + label_off; empty
    * for array elements. */
@@ -578,8 +555,7 @@ static struct {
   bool definition_accepted;
   Eip712DomainFacts domain_facts;
 
-  /* Root 0 is the domain, root 1 the message; the domain separator is kept
-   * while the message is walked. */
+  /* 0 = domain, 1 = message. */
   uint8_t root;
   uint8_t domain_separator[32];
   bool have_domain_separator;
@@ -613,23 +589,14 @@ static struct {
 
   SHA3_CTX hash;
 
-  /* Only one value request is ever outstanding, so one pending field serves
-   * the whole walk rather than one per frame.
-   *
-   * Stored COMPACTLY rather than as the wire type: a wire FieldType carries
-   * struct_name[80] and array_levels[4], and by the time a value is in flight
-   * the struct name has already been copied into the child frame and arrays
-   * are refused. Keeping the wire type here cost ~100 bytes of .bss that the
-   * linker gate does not have to spare. */
+  /* The one outstanding value request, stored compactly (not the wire
+   * FieldType) to save .bss. */
   uint8_t pending_data_type;
   bool pending_has_size;
   uint32_t pending_size;
   char pending_name[EIP712_MAX_MEMBER_NAME];
 
-  /* typeHash sub-machine */
-  /* True while an array's LENGTH is the value in flight. The frame is not
-   * pushed until the length arrives, so the member_path the device sees still
-   * points AT the array rather than into it. */
+  /* An array's LENGTH is in flight; its frame is not pushed yet. */
   bool want_array_len;
   uint32_t pending_declared_dim;
 
@@ -652,25 +619,26 @@ static struct {
   Eip712Names types;
   uint8_t schema_digest[EIP712_MAX_STRUCTS + 1][32];
   uint8_t schema_known; /* bit i: schema_digest[i] is set */
-  uint8_t requested;    /* types index of the outstanding StructRequest */
-  Eip712Closure closure;
-  uint8_t closure_index;
+
   /* Permit2: 0 off, 1 PermitSingle whose domain screens are queued until the
    * domain and type hash prove it canonical, 2 recognised (values captured,
    * reviewed in words at the end). Queued screens are shown, in order, the
    * moment that proof fails, so nothing is ever hidden. */
   uint8_t permit2;
   uint8_t queued;
-  char queue[5][EIP712_QUEUE_BODY];
+  char queue[EIP712_QUEUE_SLOTS][EIP712_QUEUE_BODY];
   Eip712Permit2 p2;
 
   /* EIP-2612 / DAI Permit with the canonical type hash (ERC20_PERMIT_*). An
-   * unlimited one is signed after a warning naming spender, token and
-   * deadline; any other unlimited permit is refused. */
+   * unlimited one on a domain naming its token is signed after a warning
+   * naming spender, token and deadline, on top of its UNLIMITED leaf. Its
+   * spender and deadline are kept in p2.spender / p2.sig_deadline: a request
+   * is a Permit or a PermitSingle, never both. */
   uint8_t erc20_permit;
   bool erc20_unlimited;
-  uint8_t erc20_spender[20];
-  uint8_t erc20_deadline[32];
+  uint8_t requested; /* types index of the outstanding StructRequest */
+  Eip712Closure closure;
+  uint8_t closure_index;
 } e712;
 
 #define ERC20_PERMIT_EIP2612 1
@@ -730,23 +698,11 @@ Eip712Wait eip712_stream_waiting(void) {
 
 void eip712_stream_abort(void) { memzero(&e712, sizeof(e712)); }
 
-/* ── Display ─────────────────────────────────────────────────────────
- *
- * One review per leaf, drawn from the SAME bytes that are about to be
- * absorbed. The title names the root being walked -- the domain, or the
- * message -- and the body opens with the member's full path from that
- * root, so from.wallet, to.wallet and the elements of an array never draw
- * the same screen. Member names are the same text hashed into encodeType, so
- * the label and the commitment cannot disagree either.
- *
- * Integers render in decimal (signed for intN), addresses with their EIP-55
- * checksum, bytes as 0x hex and strings through erc7730_format_text(), which
- * escapes every byte the OLED font or pager cannot show one-to-one.
- *
- * confirm() refuses a body longer than BODY_CHAR_MAX rather than truncate it,
- * so a value that does not fit one body is shown in numbered parts, each a
- * required confirmation of its own.
- */
+/* Display: one review per leaf, from the SAME bytes about to be absorbed. The
+ * body opens with the member's full path (the hashed names), so distinct
+ * leaves never draw the same screen. Strings go through
+ * erc7730_format_text(). An over-long value is shown in numbered parts, each
+ * a required confirmation; confirm() never truncates. */
 #define EIP712_BODY_MAX (BODY_CHAR_MAX - 1)
 
 typedef enum {
@@ -917,6 +873,8 @@ static bool leaf_text(const Eip712FieldType* field, const uint8_t* value,
   }
 }
 
+/* ERC-7730's threshold: a uint256 of 2^255 or more is UNLIMITED; a narrower
+ * amount (Permit2's uint160) only at its maximum. */
 bool eip712_amount_unlimited(const uint8_t* value, uint16_t len) {
   if (len == 32) return (value[0] & 0x80) != 0;
   for (uint16_t i = 0; i < len; i++)
@@ -924,29 +882,33 @@ bool eip712_amount_unlimited(const uint8_t* value, uint16_t len) {
   return len > 0;
 }
 
-/* An unlimited permit (EIP-2612, DAI, Permit2-shaped) leaf. */
-static bool is_unlimited_permit(const Eip712FieldType* field,
-                                const uint8_t* value, uint16_t len) {
-  if (e712.root != 1) return false;
+/* An unlimited permit (EIP-2612 or DAI on the domain's verifyingContract,
+ * Permit2 on its token member) names that value on its own screen: the
+ * type's maximum reads UNLIMITED, under a warning title. NULL otherwise. */
+static const char* unlimited_permit_text(const Eip712FieldType* field,
+                                         const uint8_t* value, uint16_t len) {
+  if (e712.root != 1) return NULL;
   const Eip712Frame* f = &e712.stack[e712.depth - 1];
-  if (f->is_array) return false;
+  if (f->is_array) return NULL;
   const char* name = e712.types.names[f->u.s.type];
   const char* member = e712.pending_name;
   if (field->data_type == EthereumTypedDataStructAck_EthereumDataType_BOOL)
     return strcmp(name, "Permit") == 0 && strcmp(member, "allowed") == 0 &&
-           value[0] == 1;
+                   value[0] == 1
+               ? "UNLIMITED (allowed)"
+               : NULL;
   if (field->data_type != EthereumTypedDataStructAck_EthereumDataType_UINT ||
       !((strcmp(name, "Permit") == 0 && strcmp(member, "value") == 0) ||
         ((strcmp(name, "PermitDetails") == 0 ||
           strcmp(name, "TokenPermissions") == 0) &&
          strcmp(member, "amount") == 0)))
-    return false;
-  return eip712_amount_unlimited(value, len);
+    return NULL;
+  return eip712_amount_unlimited(value, len) ? "UNLIMITED" : NULL;
 }
 
 /* Only a canonical EIP-2612 or DAI Permit on a domain naming its token
  * (verifyingContract) and chain can say whose allowance it is; any other
- * unlimited permit is ambiguous and refused. */
+ * unlimited permit gets only its UNLIMITED leaf screen. */
 static bool erc20_permit_reviewable(void) {
   return e712.erc20_permit != 0 && e712.depth == 1 &&
          e712.domain_facts.has_verifying_contract &&
@@ -957,19 +919,9 @@ static bool erc20_permit_reviewable(void) {
 static void erc20_permit_capture(const uint8_t* v, uint16_t len) {
   const char* m = e712.pending_name;
   if (e712.depth != 1) return;
-  if (strcmp(m, "spender") == 0 && len == 20) memcpy(e712.erc20_spender, v, 20);
+  if (strcmp(m, "spender") == 0 && len == 20) memcpy(e712.p2.spender, v, 20);
   if ((strcmp(m, "deadline") == 0 || strcmp(m, "expiry") == 0) && len == 32)
-    memcpy(e712.erc20_deadline, v, 32);
-}
-
-/* An unlimited permit names that value on its own screen: it reads UNLIMITED,
- * under a warning title. NULL otherwise. */
-static const char* unlimited_permit_text(const Eip712FieldType* field,
-                                         const uint8_t* value, uint16_t len) {
-  if (!is_unlimited_permit(field, value, len)) return NULL;
-  return field->data_type == EthereumTypedDataStructAck_EthereumDataType_BOOL
-             ? "UNLIMITED (allowed)"
-             : "UNLIMITED";
+    memcpy(e712.p2.sig_deadline, v, 32);
 }
 
 /* Fixed and short: a wrapped title draws over the body, and a primary type
@@ -1226,8 +1178,9 @@ static MultisendScan multisend_feed(const uint8_t* bytes, size_t len) {
 /* MultiSend and MultiSendCallOnly, every address variant of each release
  * that packs its calls (1.1.1 on; 1.0.0 takes ABI words), from
  * safe-global/safe-deployments 7b1fb6d6, src/assets/v1.x.x/multi_send*.json.
- * Each address holds the same code on every chain that has it, so the
- * list is not per chain. */
+ * The paired masks bind deployments to Ethereum (1) and zkSync Era (324)
+ * using networkAddresses from those same pinned manifests. Other chains
+ * retain the full-authority delegatecall warning. */
 static const uint8_t safe_multisend[][20] = {
     /* 1.1.1 MultiSend */
     {0x8d, 0x29, 0xbe, 0x29, 0x92, 0x3b, 0x68, 0xab, 0xfd, 0xd2,
@@ -1263,9 +1216,19 @@ static const uint8_t safe_multisend[][20] = {
      0x21, 0x9b, 0xa5, 0x02, 0x71, 0x74, 0x33, 0x8d, 0x18, 0x36},
 };
 
+static const uint8_t safe_multisend_chains[] = {1, 3, 3, 2, 3, 3, 2,
+                                                3, 2, 3, 2, 3, 3};
+
 static bool is_safe_multisend(const uint8_t* to) {
+  /* Only pinned deployment evidence on these chains permits the exemption.
+   * Unknown/absent chains still receive the full-authority warning. */
+  const uint32_t chain = domain_chain_id();
+  const uint8_t mask = chain == 1 ? 1 : (chain == 324 ? 2 : 0);
+  if (!mask) return false;
   for (size_t i = 0; i < sizeof(safe_multisend) / 20; i++)
-    if (memcmp(to, safe_multisend[i], 20) == 0) return true;
+    if ((safe_multisend_chains[i] & mask) &&
+        memcmp(to, safe_multisend[i], 20) == 0)
+      return true;
   return false;
 }
 
@@ -1348,9 +1311,11 @@ static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
   }
 }
 
-/* An empty array has no element screen, so it would otherwise sign unseen.
- * `arr` is staged but not pushed, so leaf_path() still ends at the array. */
-static Eip712LeafResult eip712_confirm_empty_array(const Eip712Frame* arr) {
+/* Leaf types omit array dimensions and enclosing struct names. Show each
+ * declared container type before its values so schema substitutions cannot
+ * produce identical approvals. `arr` is staged, so leaf_path ends at it. */
+static Eip712LeafResult eip712_confirm_array(const Eip712Frame* arr,
+                                             uint16_t count) {
   Eip712FieldType type;
   char type_name[EIP712_MAX_TYPE_NAME];
   char path[EIP712_MAX_PATH];
@@ -1370,17 +1335,25 @@ static Eip712LeafResult eip712_confirm_empty_array(const Eip712Frame* arr) {
   if (!eip712_type_name(&type, type_name, sizeof(type_name)) ||
       !leaf_path(path, sizeof(path)))
     return EIP712_LEAF_INVALID;
-  static const char empty[] = "0 items";
+  char count_text[20];
+  snprintf(count_text, sizeof(count_text), "%u items", (unsigned)count);
   return confirm_parts(leaf_title(), path, type_name, EIP712_RENDER_TEXT,
-                       (const uint8_t*)empty, sizeof(empty) - 1);
+                       (const uint8_t*)count_text, strlen(count_text));
 }
 
-/* ── The walk ────────────────────────────────────────────────────────
- *
- * Every function below either emits exactly one request and returns, or
- * finishes the signature. Nothing blocks: KeepKey has no full-message
- * request/response primitive, so the machine is resumed by the next Ack.
- */
+static Eip712LeafResult eip712_confirm_struct(const Eip712FieldType* field) {
+  char type_name[EIP712_MAX_TYPE_NAME];
+  char path[EIP712_MAX_PATH];
+  if (!eip712_type_name(field, type_name, sizeof(type_name)) ||
+      !leaf_path(path, sizeof(path)))
+    return EIP712_LEAF_INVALID;
+  static const char structure[] = "struct";
+  return confirm_parts("EIP-712 type", path, type_name, EIP712_RENDER_TEXT,
+                       (const uint8_t*)structure, sizeof(structure) - 1);
+}
+
+/* The walk: each function emits one request and returns, or finishes; the
+ * next Ack resumes the machine. */
 
 static Eip712Next next_step;
 
@@ -1422,31 +1395,7 @@ static bool review_approved(Eip712LeafResult shown) {
   return true;
 }
 
-/* Scan the next bytes of a multiSend leaf, before any screen of them; `last`
- * when they end the value. True to go on; otherwise the walk has ended. */
-static bool multisend_reviewed(const uint8_t* bytes, size_t len, bool last) {
-  MultisendScan scan = multisend_feed(bytes, len);
-  /* The value ended before the batch did. */
-  if (scan == MS_SCAN_OK && last && e712.multisend.phase != MS_OFF)
-    scan = multisend_unchecked();
-  switch (scan) {
-    case MS_SCAN_OK:
-      return true;
-    case MS_SCAN_CANCELLED:
-      return review_approved(EIP712_LEAF_CANCELLED);
-    default: /* MS_SCAN_DIRTY */
-      fail("Malformed ERC20 approval");
-      return false;
-  }
-}
-
 /* ---- Permit2: described in words (SRS-7.16 §3.7) ---------------------- */
-
-static void cancel_walk(void) {
-  eip712_stream_abort();
-  memzero(&next_step, sizeof(next_step));
-  next_step.kind = EIP712_REQ_CANCELLED;
-}
 
 /* Show the queued domain screens, in order, and leave Permit2 mode. False =
  * the user declined one; the walk is cancelled. */
@@ -1456,10 +1405,9 @@ static bool permit2_flush(void) {
   e712.queued = 0;
   for (uint8_t i = 0; i < n; i++) {
     if (!confirm(ButtonRequestType_ButtonRequest_Other, "EIP-712 Domain", "%s",
-                 e712.queue[i])) {
-      cancel_walk();
-      return false;
-    }
+                 e712.queue[i]))
+      return review_approved(EIP712_LEAF_CANCELLED);
+    e712.domain_value_confirmed = true;
   }
   memzero(e712.queue, sizeof(e712.queue));
   return true;
@@ -1472,7 +1420,7 @@ static bool permit2_queue_leaf(const Eip712FieldType* field,
   char type_name[EIP712_MAX_TYPE_NAME];
   char path[EIP712_MAX_PATH];
   char text[EIP712_QUEUE_BODY];
-  if (e712.queued >= 5 ||
+  if (e712.queued >= EIP712_QUEUE_SLOTS ||
       !eip712_type_name(field, type_name, sizeof(type_name)) ||
       !leaf_path(path, sizeof(path)))
     return false;
@@ -1499,8 +1447,7 @@ static bool permit2_domain_ok(const uint8_t domain_type_hash[32]) {
   const Eip712DomainFacts* f = &e712.domain_facts;
   return f->has_chain_id && f->has_verifying_contract &&
          memcmp(f->verifying_contract, EIP712_PERMIT2_ADDRESS, 20) == 0 &&
-         /* name, chainId and verifyingContract only, none unbindable */
-         f->domain_present == ((1u << 0) | (1u << 3) | (1u << 4)) &&
+         f->domain_present == (0x01 | 0x08 | 0x10) &&
          hash_is(f->domain_hashes[0], "Permit2") &&
          hash_is(domain_type_hash,
                  "EIP712Domain(string name,uint256 chainId,"
@@ -1610,8 +1557,9 @@ static void address_text(const uint8_t a[20], bool shorten, char* out,
   }
 }
 
-/* A signed uint256 deadline as a UTC date, or its full number when it is
- * past what a date can show: two distinct signed values never read alike. */
+/* A signed uint256 deadline as a UTC date to the minute (seconds are not
+ * shown), or its full number when it is past what a date can show, so a
+ * huge value never reads as a near date. */
 static bool deadline_text(const uint8_t v[32], char* out, size_t len) {
   bool huge = false;
   for (int i = 0; i < 24; i++)
@@ -1640,7 +1588,14 @@ bool eip712_permit2_review(const Eip712Permit2* p,
   const PermitToken* t =
       permit_token(p->chain_id, p->token, identity, &tok) ? &tok : NULL;
   if (!permit2_amount(p, t, amount, sizeof(amount))) return false;
-  eip712_format_utc(p->expiration, expires, sizeof(expires));
+  /* Permit2 stores expiration 0 as block.timestamp: the allowance is live,
+   * but only in the block that uses this permit. Never a 1970 date. */
+  const char* until = expires;
+  if (p->expiration) {
+    eip712_format_utc(p->expiration, expires, sizeof(expires));
+  } else {
+    until = "the end of the block that uses this permit";
+  }
   if (!deadline_text(p->sig_deadline, deadline, sizeof(deadline))) return false;
   if (spender_name) {
     strlcpy(spender, spender_name, sizeof(spender));
@@ -1649,12 +1604,12 @@ bool eip712_permit2_review(const Eip712Permit2* p,
   }
   /* Summary: who may take what, until when. */
   snprintf(body, sizeof(body), "Allow %s to spend %s from this wallet until %s",
-           spender, amount, expires);
+           spender, amount, until);
   if (!emit(ctx, "Permit2", body, NULL, 0)) return false;
   /* Limits: firmware wording, exact values. */
   snprintf(body, sizeof(body), "Spender may take\n%s", amount);
   if (!emit(ctx, "Limits", body, NULL, 0)) return false;
-  snprintf(body, sizeof(body), "Allowance expires\n%s", expires);
+  snprintf(body, sizeof(body), "Allowance expires\n%s", until);
   if (!emit(ctx, "Limits", body, NULL, 0)) return false;
   snprintf(body, sizeof(body), "Signature valid until\n%s", deadline);
   if (!emit(ctx, "Limits", body, NULL, 0)) return false;
@@ -1696,15 +1651,15 @@ static bool erc20_permit_warning(void) {
                    e712.domain_facts.verifying_contract, NULL, &tok)
           ? &tok
           : NULL;
-  address_text(e712.erc20_spender, false, spender, sizeof(spender));
+  address_text(e712.p2.spender, false, spender, sizeof(spender));
   address_text(e712.domain_facts.verifying_contract, false, token,
                sizeof(token));
   bool zero = true;
   for (int i = 0; i < 32; i++)
-    if (e712.erc20_deadline[i]) zero = false;
+    if (e712.p2.sig_deadline[i]) zero = false;
   if (e712.erc20_permit == ERC20_PERMIT_DAI && zero) {
     strlcpy(deadline, "no deadline", sizeof(deadline));
-  } else if (!deadline_text(e712.erc20_deadline, deadline, sizeof(deadline))) {
+  } else if (!deadline_text(e712.p2.sig_deadline, deadline, sizeof(deadline))) {
     return false;
   }
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
@@ -1719,6 +1674,24 @@ static bool erc20_permit_warning(void) {
                  "UNLIMITED allowance", "%s", body);
 }
 
+/* Scan the next bytes of a multiSend leaf, before any screen of them; `last`
+ * when they end the value. True to go on; otherwise the walk has ended. */
+static bool multisend_reviewed(const uint8_t* bytes, size_t len, bool last) {
+  MultisendScan scan = multisend_feed(bytes, len);
+  /* The value ended before the batch did. */
+  if (scan == MS_SCAN_OK && last && e712.multisend.phase != MS_OFF)
+    scan = multisend_unchecked();
+  switch (scan) {
+    case MS_SCAN_OK:
+      return true;
+    case MS_SCAN_CANCELLED:
+      return review_approved(EIP712_LEAF_CANCELLED);
+    default: /* MS_SCAN_DIRTY */
+      fail("Malformed ERC20 approval");
+      return false;
+  }
+}
+
 static void request_struct(uint8_t type) {
   memzero(&next_step, sizeof(next_step));
   next_step.kind = EIP712_REQ_STRUCT;
@@ -1728,8 +1701,7 @@ static void request_struct(uint8_t type) {
   e712.waiting = EIP712_WANT_STRUCT;
 }
 
-/* The path is the cursor, and it is rebuilt from the frame stack rather than
- * maintained alongside it -- one source of truth, so they cannot drift. */
+/* The path is rebuilt from the frame stack, so they cannot drift. */
 static void request_value(void) {
   memzero(&next_step, sizeof(next_step));
   next_step.kind = EIP712_REQ_VALUE;
@@ -1848,11 +1820,7 @@ static void array_sponge_final(uint8_t out[32]) {
   e712.array_owner = 0;
 }
 
-/* Fold a completed container into 32 bytes and hand it to its parent.
- *
- *   struct: keccak(typeHash || enc(m1) || ... || enc(mn))
- *   array:  keccak(enc(e1) || ... || enc(en))   -- no typeHash, per EIP-712
- */
+/* struct: keccak(typeHash || enc(m1..mn)); array: keccak(enc(e1..en)). */
 static bool fold_frame(uint8_t out[32]) {
   const Eip712Frame* f = &e712.stack[e712.depth - 1];
   /* A later frame may reuse this one's slots: its `to` is gone with it. */
@@ -1928,13 +1896,11 @@ static void complete_frame(void) {
   }
 
   if (e712.erc20_unlimited && !erc20_permit_warning()) {
-    cancel_walk();
+    review_approved(EIP712_LEAF_CANCELLED);
     return;
   }
 
-  /* Both halves are in hand. The FSM derives the key, shows the final signing
-   * screen and signs: the response buffer and the node live there, and keeping
-   * key material out of this translation unit keeps it unit-testable. */
+  /* The FSM derives the key and signs; no key material in this unit. */
   memzero(&next_step, sizeof(next_step));
   next_step.kind = EIP712_REQ_DONE;
   memcpy(next_step.domain_separator, e712.domain_separator, 32);
@@ -1964,11 +1930,8 @@ static void complete_frame(void) {
   }
 }
 
-/* Point the machine at element member_index of the array frame on top.
- *
- * An element is one of three things, and which one is fixed by the TYPE rather
- * than by anything the host sends alongside the value: another array while
- * dimensions remain, a struct if the leaf type is one, otherwise a leaf. */
+/* An element's kind (array, struct, leaf) is fixed by the TYPE, never by the
+ * host. */
 static void drive_array_element(void) {
   Eip712Frame* arr = &e712.stack[e712.depth - 1];
 
@@ -2060,8 +2023,7 @@ bool eip712_stream_begin(const EthereumSignTypedData* msg,
     fail("EIP-712 primary type missing or too long");
     return false;
   }
-  /* MetaMask v3 hashes arrays of structs differently from v4. We implement v4
-   * only, and refusing v3 is better than signing it under v4 rules. */
+  /* v4 only: never sign a v3 document under v4 rules. */
   if (msg->has_metamask_v4_compat && !msg->metamask_v4_compat) {
     fail("Only MetaMask v4 array hashing is supported");
     return false;
@@ -2141,10 +2103,8 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
     return false;
   }
 
-  /* Names are both encodeType bytes and screen titles. Restrict them to the
-   * canonical ASCII identifier subset that fits pending_name exactly; a host
-   * cannot smuggle controls, Unicode lookalikes or a truncated label onto the
-   * review screen. Duplicate members are not a canonical struct definition. */
+  /* Names are hashed and displayed: ASCII identifiers only (no controls,
+   * lookalikes or truncation); no duplicate members. */
   for (size_t i = 0; i < ack->members_count; i++) {
     const char* member_name = ack->members[i].name;
     char type_name[EIP712_MAX_TYPE_NAME];
@@ -2248,7 +2208,10 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
         }
         if (e712.permit2 == 1) {
           if (permit2_type_ok()) {
-            e712.permit2 = 2; /* the review replaces the queued screens */
+            /* The review replaces the queued screens; it names the Permit2
+             * contract and chain, which is the whole proven domain. */
+            e712.permit2 = 2;
+            e712.domain_value_confirmed = true;
             e712.queued = 0;
             memzero(e712.queue, sizeof(e712.queue));
           } else if (!permit2_flush()) {
@@ -2311,10 +2274,8 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
           fail("EIP-712 array nests too deeply for this device");
           return false;
         }
-        /* Stage the element descriptor in the frame we are ABOUT to push, then
-         * ask for the array's length. The frame is not pushed yet, so the
-         * member_path the device sends still points AT the array rather than
-         * into it -- which is exactly the path whose value is the length. */
+        /* Stage the frame without pushing it, so member_path points AT the
+         * array while its length is requested. */
         Eip712Frame* arr = &e712.stack[e712.depth];
         memzero(arr, sizeof(*arr));
         arr->is_array = true;
@@ -2370,6 +2331,11 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
           fail("EIP-712 member path too long for this device");
           return false;
         }
+        /* Canonical Permit2 is described in words (SRS-7.16 §3.7); its type
+         * hash fixes this member's struct type, so it has no screen here. */
+        if (e712.permit2 != 2 &&
+            !review_approved(eip712_confirm_struct(&m->type)))
+          return false;
         child->slot_base = f->slot_base + f->member_count;
         e712.depth++;
         begin_type_hash();
@@ -2647,9 +2613,7 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
     uint16_t len = (uint16_t)((ack->value.bytes[0] << 8) | ack->value.bytes[1]);
     Eip712Frame* arr = &e712.stack[e712.depth];
 
-    /* A FIXED dimension is part of the type string and therefore of typeHash.
-     * Accepting a different count would sign a document whose type declares
-     * another, and nothing downstream could notice. */
+    /* A fixed dimension is in typeHash; any other count signs another type. */
     if (e712.pending_declared_dim != 0 && len != e712.pending_declared_dim) {
       fail("EIP-712 array length does not match its declared size");
       return false;
@@ -2667,8 +2631,11 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
       fail("EIP-712 array is too long for this device");
       return false;
     }
-    if (len == 0 && e712.permit2 == 1 && !permit2_flush()) return false;
-    if (len == 0 && !review_approved(eip712_confirm_empty_array(arr)))
+    /* The outer array screen includes every declared dimension. Empty inner
+     * arrays still need their own screen because they have no leaf values. */
+    if (e712.permit2 == 1 && !permit2_flush()) return false;
+    if ((len == 0 || arr->u.a.level_index == 0) &&
+        !review_approved(eip712_confirm_array(arr, len)))
       return false;
 
     arr->u.a.array_len = len;
@@ -2690,11 +2657,11 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
   const Eip712FieldType* field = &rebuilt;
   const uint8_t* bytes = ack->value.bytes;
   uint16_t len = ack->value.size;
+  if (e712.permit2 == 1 && ack->has_value_total_length && !permit2_flush())
+    return false;
   if (ack->has_value_total_length) return chunk_begin(field, ack);
 
-  /* Validate BEFORE anything is drawn, so no unvalidated byte reaches the
-   * screen, and before anything is absorbed, so nothing unshown reaches the
-   * hash. */
+  /* Validate before drawing and before absorbing. */
   if (!eip712_validate_leaf(field, bytes, len)) {
     fail("EIP-712 value does not match its declared type");
     return false;
@@ -2710,12 +2677,6 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
     return false;
   }
 
-  /* Queued; shown in order if this does not prove to be Permit2. A leaf that
-   * cannot be queued shows the queue first, ahead of any screen of its own. */
-  const bool queued = e712.permit2 == 1 && e712.root == 0 &&
-                      permit2_queue_leaf(field, bytes, len);
-  if (!queued && e712.permit2 == 1 && !permit2_flush()) return false;
-
   multisend_begin(field, bytes, len);
   if (!multisend_reviewed(bytes, len, true)) return false;
   if (!review_approved(safe_delegate_approved(field, bytes, len)
@@ -2724,22 +2685,20 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
     return false;
 
   if (e712.permit2 == 2 && e712.root == 1) {
-    /* Canonical Permit2: captured from these bytes, described in words before
-     * signing; an unlimited allowance is allowed and stated there. */
+    /* Canonical Permit2: captured from these bytes and described in words,
+     * every value, before signing; an unlimited allowance is stated there. */
     permit2_capture(bytes, len);
     e712.message_value_confirmed = true;
-  } else if (is_unlimited_permit(field, bytes, len) &&
-             !erc20_permit_reviewable()) {
-    fail("Unlimited ERC20 approval is disabled");
-    return false;
-  } else if (queued) {
-    e712.domain_value_confirmed = true;
+  } else if (e712.permit2 == 1 && e712.root == 0 &&
+             permit2_queue_leaf(field, bytes, len)) {
+    /* Queued; shown in order if this does not prove to be Permit2. */
   } else {
+    if (e712.permit2 == 1 && !permit2_flush()) return false;
     /* Display and absorb from the SAME buffer: no second read can differ. */
     if (!review_approved(eip712_confirm_leaf(field, bytes, len))) return false;
-    if (e712.root == 1 && e712.erc20_permit != 0) {
+    if (e712.root == 1 && erc20_permit_reviewable()) {
       erc20_permit_capture(bytes, len);
-      if (is_unlimited_permit(field, bytes, len)) e712.erc20_unlimited = true;
+      if (unlimited_permit_text(field, bytes, len)) e712.erc20_unlimited = true;
     }
   }
 

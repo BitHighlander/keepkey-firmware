@@ -15,6 +15,9 @@
 #include "keepkey/board/usb.h"
 #include "keepkey/board/memory.h"
 #include "keepkey/board/timer.h"
+#if DEBUG_LINK && !BITCOIN_ONLY
+#include "keepkey/firmware/clearsign_root.h"
+#endif
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/storage.h"
@@ -77,27 +80,16 @@ static pthread_t g_poll_thread;
  * surrounding firmware/ring state alongside the flag. */
 #include <stdatomic.h>
 static _Atomic int g_poll_running = 0;
+/* A stop request is not proof that the thread has exited. Keep ownership of
+ * firmware and host flash until it has actually been joined. Lifecycle calls
+ * are serialized by the host; ring consumers may run concurrently. */
+static _Atomic int g_poll_joinable = 0;
+static _Atomic int g_poll_exited = 0;
+static int g_stop_cancel_injected = 0;
 #define POLL_RUNNING() \
   atomic_load_explicit(&g_poll_running, memory_order_acquire)
 #define POLL_SET(v) \
   atomic_store_explicit(&g_poll_running, (v), memory_order_release)
-
-/* Set by the poll thread as its last act, read by the host in kkemu_stop() to
- * bound the join. The clearing of g_poll_running is NOT sufficient for that:
- * the flag says the thread was *asked* to stop, this one says it actually
- * left the firmware body. */
-static _Atomic int g_poll_exited = 0;
-#define POLL_EXITED() atomic_load_explicit(&g_poll_exited, memory_order_acquire)
-
-/* Host-thread-only: latched when a stop timed out. Once set, the abandoned
- * thread is still executing firmware code, so nothing may start a second one
- * or tear the session down underneath it. */
-static int g_poll_wedged = 0;
-
-/* How long kkemu_stop() waits for the poll thread before abandoning it. The
- * thread normally leaves within one poll tick (KKEMU_POLL_INTERVAL_MS) of the
- * injected Cancel; anything past this is a wedge, not slowness. */
-#define KKEMU_STOP_JOIN_TIMEOUT_MS 2000
 
 /* This host thread owns g_fw_lock; unlock keys on this, not on
  * g_poll_running. Per thread, so a thread that got the no-poll-thread success
@@ -286,8 +278,13 @@ int kkemu_init(uint8_t* flash_buf, size_t flash_len) {
   /* Initialize /dev/urandom for RNG */
   setup_urandom_only();
 
+#if DEBUG_LINK && !BITCOIN_ONLY
+  clearsign_root_load_test_root_from_env();
+#endif
+
   /* Board init (timers, etc.) */
   kk_board_init();
+  timer_set_poll_driven(true);
 
   /* Hook display_refresh() so every canvas update is captured into
    * our ring buffer. Must be set before storage_init/fsm_init/
@@ -307,21 +304,11 @@ int kkemu_init(uint8_t* flash_buf, size_t flash_len) {
   return 0;
 }
 
-void kkemu_shutdown(void) {
-  if (!libkkemu_initialized) return;
+int kkemu_shutdown_timeout(uint32_t timeout_ms) {
+  if (!libkkemu_initialized) return 0;
 
-  /* Stop + join the poll thread FIRST so nothing drives firmware execution
-   * while we commit storage and zero the rings below (idempotent if the host
-   * never started the thread). */
-  kkemu_stop();
-
-  /* If that stop timed out the abandoned thread is STILL executing firmware
-   * code and still owns g_fw_lock, so every teardown step below — aborting
-   * workflows, storage_commit(), zeroing the rings, unmapping the flash
-   * buffer — would race a live writer and could tear storage or fault the
-   * host. Stay out. The session deliberately remains marked initialized
-   * (a later kkemu_init() will refuse) and the host must exit the process. */
-  if (g_poll_wedged) return;
+  /* Join the producer before touching firmware, rings, or host flash. */
+  if (kkemu_stop_timeout(timeout_ms) != 0) return -1;
 
   /*
    * End any workflow still in flight BEFORE anything else.
@@ -387,6 +374,13 @@ void kkemu_shutdown(void) {
   }
 
   libkkemu_initialized = 0;
+  return 0;
+}
+
+void kkemu_shutdown(void) {
+  /* Legacy callers have no way to handle a live thread on return. */
+  while (kkemu_shutdown_timeout(UINT32_MAX) != 0) {
+  }
 }
 
 int kkemu_write(const uint8_t* data, size_t len, int iface) {
@@ -432,10 +426,8 @@ static void kkemu_poll_body(void) {
 
 int kkemu_poll(void) {
   if (!libkkemu_initialized) return -1;
-  /* When the poll thread owns execution, the host must not also poll —
-   * that would be two threads driving the single-threaded firmware core.
-   * Treat a stray host poll as a no-op rather than a data race. */
-  if (POLL_RUNNING()) return 0;
+  /* Never let two threads drive the firmware core. */
+  if (atomic_load(&g_poll_joinable)) return 0;
   kkemu_poll_body();
   return 0;
 }
@@ -446,6 +438,16 @@ static void kkemu_sleep_ms(int ms) {
 #else
   struct timespec ts = {ms / 1000, (long)(ms % 1000) * 1000000L};
   nanosleep(&ts, NULL);
+#endif
+}
+
+static uint64_t kkemu_monotonic_ms(void) {
+#ifdef _WIN32
+  return GetTickCount64();
+#else
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
 #endif
 }
 
@@ -464,62 +466,47 @@ static void kkemu_poll_loop(void) {
     FW_UNLOCK();
     kkemu_sleep_ms(KKEMU_POLL_INTERVAL_MS);
   }
+  atomic_store_explicit(&g_poll_exited, 1, memory_order_release);
 }
 
 #ifdef _WIN32
 static DWORD WINAPI kkemu_poll_thread_fn(LPVOID arg) {
   (void)arg;
   kkemu_poll_loop();
-  atomic_store_explicit(&g_poll_exited, 1, memory_order_release);
   return 0;
 }
 #else
 static void* kkemu_poll_thread_fn(void* arg) {
   (void)arg;
   kkemu_poll_loop();
-  atomic_store_explicit(&g_poll_exited, 1, memory_order_release);
   return NULL;
 }
 #endif
 
-/* Push a Cancel (MessageType 20) into the main input ring so a confirm_helper
- * blocked on the poll thread reads it, returns false, and lets the thread exit
- * its loop — otherwise kkemu_stop() would join a thread parked forever waiting
- * for a button decision that will never arrive.
- *
- * This injected Cancel is the ONLY firmware-side wakeup for a parked confirm
- * (confirm_helper has no idle timeout in EMULATOR builds), and kkemu_stop()
- * then joins the thread with no deadline — so a SILENTLY dropped Cancel would
- * freeze the (single-threaded) host forever, beyond any watchdog's reach. The
- * push can only fail if rb_main_in is full; the parked confirm drains one input
- * frame per spin, so a slot frees within ~a poll tick. Retry briefly, and shout
- * loudly if it somehow never takes rather than dropping it. */
+/* Cancel wakes a parked confirm. Retry within the caller's deadline. */
 /* '?##', MessageType_Cancel (20), payload length 0. */
 static const uint8_t kkemu_cancel_frame[KKEMU_PACKET_SIZE] = {0x3F, 0x23, 0x23,
                                                               0x00, 0x14};
 
-static int kkemu_inject_cancel(void) {
-  for (int i = 0; i < 200; i++) {
+static int kkemu_inject_cancel(uint64_t deadline) {
+  do {
     if (ringbuf_push(&rb_main_in, kkemu_cancel_frame, KKEMU_PACKET_SIZE))
       return 1;
+    if (kkemu_monotonic_ms() >= deadline) return 0;
     kkemu_sleep_ms(1);
-  }
-  fprintf(
-      stderr,
-      "[libkkemu] FATAL: could not inject Cancel to wake a parked confirm "
-      "before join — rb_main_in stayed full for ~200ms; the poll thread may "
-      "not exit\n");
+  } while (!atomic_load_explicit(&g_poll_exited, memory_order_acquire));
   return 0;
 }
 
 /* After POLL_SET(0): 1 if the thread is between bodies and needs no Cancel
  * (a stray Cancel would draw an unsolicited Failure). */
-static int kkemu_poll_body_quiesced(void) {
+static int kkemu_poll_body_quiesced(uint64_t deadline) {
   for (int i = 0; i < 2 * KKEMU_POLL_INTERVAL_MS; i++) {
     if (FW_TRYLOCK()) {
       FW_UNLOCK();
       return 1;
     }
+    if (kkemu_monotonic_ms() >= deadline) return 0;
     kkemu_sleep_ms(1);
   }
   return 0;
@@ -537,12 +524,11 @@ static void kkemu_discard_unread_cancel(void) {
 
 int kkemu_start(void) {
   if (!libkkemu_initialized) return -1;
-  if (POLL_RUNNING()) return 0; /* idempotent */
-  /* An abandoned thread from a timed-out kkemu_stop() is still driving the
-   * single-threaded firmware core; a second one would race it. */
-  if (g_poll_wedged) return -1;
+  if (atomic_load(&g_poll_joinable)) return POLL_RUNNING() ? 0 : -1;
+  atomic_store(&g_poll_exited, 0);
+  atomic_store(&g_poll_joinable, 1);
+  g_stop_cancel_injected = 0;
 
-  atomic_store_explicit(&g_poll_exited, 0, memory_order_release);
 #ifdef _WIN32
   if (!g_fw_lock_ready) {
     InitializeCriticalSection(&g_fw_lock);
@@ -552,69 +538,59 @@ int kkemu_start(void) {
   g_poll_thread = CreateThread(NULL, 0, kkemu_poll_thread_fn, NULL, 0, NULL);
   if (!g_poll_thread) {
     POLL_SET(0);
+    atomic_store(&g_poll_joinable, 0);
     return -1;
   }
 #else
   POLL_SET(1);
   if (pthread_create(&g_poll_thread, NULL, kkemu_poll_thread_fn, NULL) != 0) {
     POLL_SET(0);
+    atomic_store(&g_poll_joinable, 0);
     return -1;
   }
 #endif
   return 0;
 }
 
-/* Stop the poll thread. The join is BOUNDED: the thread can get stuck inside
- * the firmware body with no wakeup left, and an INFINITE join there kills the
- * host outright (single-threaded vault, no watchdog reachable). The known way
- * in is delay_ms() reached from inside usbPoll() — e.g. the authenticator
- * generateOTP path — which on POSIX spins on `while (remaining_delay > 0) {}`
- * forever, because lib/board/timer.c advances the ms tick from inside that
- * loop only under _WIN32 and nothing else ticks while the body has not
- * returned. That root cause must be fixed in timer.c; this deadline only
- * keeps the wedge from propagating into the host. */
-void kkemu_stop(void) {
-  if (!POLL_RUNNING()) return;
+int kkemu_stop_timeout(uint32_t timeout_ms) {
+  if (!atomic_load(&g_poll_joinable)) return 0;
 
+  uint64_t deadline = kkemu_monotonic_ms() + timeout_ms;
   POLL_SET(0);
-  /* Unblock any confirm_helper currently parked on the thread, then join. */
-  int injected = !kkemu_poll_body_quiesced() && kkemu_inject_cancel();
-
-  int wedged = 0;
+  if (!g_stop_cancel_injected && !kkemu_poll_body_quiesced(deadline))
+    g_stop_cancel_injected = kkemu_inject_cancel(deadline);
 #ifdef _WIN32
   if (g_poll_thread) {
-    wedged = WaitForSingleObject(g_poll_thread, KKEMU_STOP_JOIN_TIMEOUT_MS) !=
-             WAIT_OBJECT_0;
-    /* Releasing the handle is safe either way; it does not stop the thread. */
+    uint64_t now = kkemu_monotonic_ms();
+    DWORD remaining = now < deadline ? (DWORD)(deadline - now) : 0;
+    /* INFINITE is a sentinel, not a finite timeout. */
+    if (remaining == INFINITE) --remaining;
+    if (WaitForSingleObject(g_poll_thread, remaining) != WAIT_OBJECT_0)
+      return -1;
     CloseHandle(g_poll_thread);
     g_poll_thread = NULL;
   }
   /* Not deleted: the host may still hold it and must be able to release it. */
 #else
-  /* No portable timed join (pthread_timedjoin_np is absent on macOS): wait on
-   * the thread's own exit flag, then join — which returns immediately — or
-   * detach so the abandoned thread leaks nothing on eventual process exit. */
-  for (int i = 0; i < KKEMU_STOP_JOIN_TIMEOUT_MS && !POLL_EXITED(); i++) {
+  /* macOS has no pthread_timedjoin_np. Wait for the thread's final release
+   * publication before joining; no firmware work remains after publication. */
+  while (!atomic_load_explicit(&g_poll_exited, memory_order_acquire)) {
+    if (kkemu_monotonic_ms() >= deadline) return -1;
     kkemu_sleep_ms(1);
   }
-  if (POLL_EXITED()) {
-    pthread_join(g_poll_thread, NULL);
-  } else {
-    wedged = 1;
-    pthread_detach(g_poll_thread);
-  }
+  pthread_join(g_poll_thread, NULL);
 #endif
+  if (g_stop_cancel_injected) kkemu_discard_unread_cancel();
+  g_stop_cancel_injected = 0;
+  atomic_store(&g_poll_joinable, 0);
+  return 0;
+}
 
-  if (wedged) {
-    g_poll_wedged = 1;
-    fprintf(stderr,
-            "[libkkemu] FATAL: poll thread did not leave the firmware body "
-            "within %d ms — it is wedged (see kkemu_stop) and still holds "
-            "g_fw_lock. Abandoning it instead of joining forever; this "
-            "emulator session is dead and the host must exit the process.\n",
-            KKEMU_STOP_JOIN_TIMEOUT_MS);
-  } else if (injected) {
-    kkemu_discard_unread_cancel();
+void kkemu_stop(void) {
+  /* Preserve the legacy void API: returning with a live thread would let
+   * existing callers unload its code or free its flash. New hosts use the
+   * checked timeout APIs and retain both resources when they return -1. */
+  while (kkemu_stop_timeout(UINT32_MAX) != 0) {
   }
 }
 
@@ -629,7 +605,7 @@ void kkemu_stop(void) {
  * yield there instead. kkemu_lock() is retained for paths with no pending
  * confirm. */
 void kkemu_lock(void) {
-  if (!POLL_RUNNING()) return;
+  if (!atomic_load(&g_poll_joinable)) return;
   FW_LOCK();
   HOST_HOLDS_SET(1);
 }
@@ -647,7 +623,8 @@ void kkemu_unlock(void) {
  * No-op success (returns 1, nothing to unlock) when the thread isn't running.
  */
 int kkemu_trylock(void) {
-  if (!POLL_RUNNING()) return 1;
+  if (HOST_HOLDS_LOCK()) return 0;
+  if (!atomic_load(&g_poll_joinable)) return 1;
   if (!FW_TRYLOCK()) return 0;
   HOST_HOLDS_SET(1);
   return 1;

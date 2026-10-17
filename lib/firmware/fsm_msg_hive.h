@@ -510,11 +510,11 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
     return;
   }
 
-  // Warning: this replaces all existing keys.
+  // Install the derived role keys; the same owner key signs this update.
   if (!confirm(ButtonRequestType_ButtonRequest_ProtectCall,
-               "Secure Hive Account",
-               "Replace ALL keys for @%s with KeepKey keys?\n\nOld keys will "
-               "be retired.",
+               "Update Hive Account",
+               "Use KeepKey keys for @%s?\n"
+               "The signing owner key stays authorized.",
                msg->account)) {
     memzero(node, sizeof(*node));
     memzero(owner_raw, sizeof(owner_raw));
@@ -527,7 +527,7 @@ void fsm_msgHiveSignAccountUpdate(const HiveSignAccountUpdate* msg) {
   }
 
   // Show device-derived owner key so user can verify it's their device.
-  if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "New Owner Key", "%s",
+  if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Owner Key", "%s",
                owner_stm)) {
     memzero(node, sizeof(*node));
     memzero(owner_raw, sizeof(owner_raw));

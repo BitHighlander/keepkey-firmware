@@ -34,6 +34,7 @@
 #include "keepkey/firmware/app_layout.h"
 #include "keepkey/firmware/ctap2.h"
 #include "keepkey/firmware/fsm.h"
+#include "keepkey/firmware/ctap2.h"
 #include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/recovery_cipher.h"
 #include "keepkey/firmware/reset.h"

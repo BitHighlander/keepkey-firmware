@@ -133,6 +133,11 @@ static void attestor_signAndReply(const uint8_t* bytes, size_t len) {
 /* Every entry is reviewed before the root is signed: a label nobody saw is a
  * label nobody checked. */
 static void attestor_certifyContacts(const ClearsignAttestorSign* msg) {
+  _Static_assert(
+      sizeof(msg->payload.bytes) >=
+          14 + CONTACT_BOOK_MAX_ENTRIES *
+                   (4 + CONTACT_BOOK_NETWORK_MAX + 20 + CONTACT_BOOK_LABEL_MAX),
+      "Contact certification exceeds the wire payload bound");
   ContactBookEntry entries[CONTACT_BOOK_MAX_ENTRIES];
   ContactBookManifest manifest;
   bool ok = contact_book_parse_request(msg->payload.bytes, msg->payload.size,
@@ -216,7 +221,6 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
              schema.disc[i]);
   }
 
-  /* Separate screens: combined, the discriminator could be clipped. */
   bool confirmed =
       (confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
                "%s\n%s", schema.program_name, schema.instruction_name) &&
@@ -225,8 +229,8 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
        confirm(ButtonRequestType_ButtonRequest_SignTx, "Discriminator", "%s",
                disc_hex));
 
-  /* One label per screen (confirm() does not paginate): a valid schema can
-   * still mislabel an offset, so every label must be seen. */
+  /* One label per screen: a valid schema can still mislabel an offset, so
+   * every label must be seen. */
   for (uint8_t i = 0; confirmed && i < schema.num_args; i++) {
     confirmed = confirm(ButtonRequestType_ButtonRequest_SignTx, "Attest Schema",
                         "Arg %u: %s\n%s", (unsigned)(i + 1),

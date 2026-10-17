@@ -22,6 +22,46 @@ void kkconfirm_capture_start(void);
 std::vector<std::string> kkconfirm_captured_titles(void);
 std::vector<std::string> kkconfirm_capture_finish(void);
 
+TEST(Mayachain, OmittedSwapFieldsCannotImpersonateLiteralMemoFields) {
+  std::vector<std::vector<std::string>> reviews;
+  for (const char* memo : {"=:ETH.ETH", "=:ETH.ETH:self",
+                           "=:ETH.ETH:self:none"}) {
+    ASSERT_TRUE(kkconfirm_preload(3, 0));
+    kkconfirm_capture_start();
+    EXPECT_EQ(MAYACHAIN_MEMO_CONFIRMED,
+              mayachain_parseConfirmMemo(memo, strlen(memo)));
+    reviews.push_back(kkconfirm_capture_finish());
+    EXPECT_EQ(0, kkconfirm_drain());
+    ASSERT_EQ(3u, reviews.back().size());
+  }
+  EXPECT_NE(reviews[0][1], reviews[1][1]);
+  EXPECT_NE(reviews[1][2], reviews[2][2]);
+  EXPECT_EQ("Confirm to self", reviews[1][1]);
+  EXPECT_EQ("Confirm limit none", reviews[2][2]);
+}
+
+// Alpha keeps empty positional fields, so an empty dest or limit must not
+// read as the literal "self" or "none" either.
+TEST(Mayachain, EmptySwapFieldsCannotImpersonateLiteralMemoFields) {
+  std::vector<std::vector<std::string>> reviews;
+  for (const char* memo : {"=:ETH.ETH::0:kk:75", "=:ETH.ETH:self:0:kk:75",
+                           "=:ETH.ETH:0x41e5560054824ea6b0732e656e3ad64e20e94e45::kk:75",
+                           "=:ETH.ETH:0x41e5560054824ea6b0732e656e3ad64e20e94e45:none:kk:75"}) {
+    ASSERT_TRUE(kkconfirm_preload(4, 0));
+    kkconfirm_capture_start();
+    EXPECT_EQ(MAYACHAIN_MEMO_CONFIRMED,
+              mayachain_parseConfirmMemo(memo, strlen(memo)))
+        << memo;
+    reviews.push_back(kkconfirm_capture_finish());
+    EXPECT_EQ(0, kkconfirm_drain());
+    ASSERT_EQ(4u, reviews.back().size()) << memo;
+  }
+  EXPECT_EQ("Destination field empty", reviews[0][1]);
+  EXPECT_EQ("Confirm to self", reviews[1][1]);
+  EXPECT_EQ("Limit field empty", reviews[2][2]);
+  EXPECT_EQ("Confirm limit none", reviews[3][2]);
+}
+
 /* Every MAYAChain screen scales by the denom's own exponent, and they all ask
  * the same function: the send screen renders the amount without a suffix (the
  * denom gets its own screen), so it cannot use the formatter and would

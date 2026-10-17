@@ -1066,6 +1066,15 @@ bool signed_metadata_may_suppress(uint32_t tx_chain_id) {
 
 bool signed_metadata_certified_claimed(void) { return certified_claimed; }
 
+/* R-7.2 coverage puts every token amount in the summary sentence. */
+bool signed_metadata_certified_states_allowance(const EthereumSignTx* msg,
+                                                uint32_t tx_chain_id) {
+  return signed_metadata_may_suppress(tx_chain_id) &&
+         stored_metadata.version == METADATA_VERSION_SCHEMA_INTENT &&
+         signed_metadata_matches_tx(msg) && stored_metadata.num_args == 2 &&
+         stored_metadata.args[1].format == ARG_FORMAT_TOKEN_AMOUNT;
+}
+
 const char* signed_metadata_delegate_alias(void) {
   return (metadata_tier == METADATA_TIER_KEEPKEY) ? delegate_alias : "";
 }

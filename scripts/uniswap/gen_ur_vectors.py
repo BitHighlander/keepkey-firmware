@@ -400,7 +400,7 @@ def summarize(steps, hooks, router, value):
         need(z is not None)
     rcpts = set()
     swept = held = direct_sum = 0
-    router_delivery = consumed = False
+    router_delivery = consumed = unswept = False   # unswept: left in the router after its last SWEEP
     fees = [s for s in steps if s['kind'] in (PAY_PORTION, V4_TAKE_PORTION)]
     need(len(fees) <= 1)
     for f in fees:
@@ -419,6 +419,7 @@ def summarize(steps, hooks, router, value):
             need(s['amount'] != CONTRACT_BALANCE)
             swept += s['amount']
             router_delivery = True
+            unswept = False
         elif s['kind'] in SWAPS:
             g = s['limit'] if exact_in else s['amount']
             if not is_router(s['recipient'], router):
@@ -429,9 +430,10 @@ def summarize(steps, hooks, router, value):
                 direct_sum += g
             elif z != 'ETH' and s['token_out'] == z:
                 held += g
+                unswept = True
             if not s['payer'] and z != 'ETH' and s['token_in'] == z:
                 consumed = True
-    need(len(rcpts) == 1)
+    need(len(rcpts) == 1 and not unswept)
     r = rcpts.pop()
     fee = fees[0] if fees else None
     if fee and fee['kind'] == PAY_PORTION:

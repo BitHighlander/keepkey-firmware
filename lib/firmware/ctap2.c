@@ -528,6 +528,13 @@ static void encode_assertion_response(const PasskeyCredential* resident,
     return;
   }
   uint8_t auth_data[37], signature_base[69], signature[64], der[72];
+  /* status + maps, keys, "id", "type", "public-key", "name", count (32) +
+   * five byte/text headers (2 each) + the largest values. */
+  _Static_assert(1 + 32 + 5 * 2 + PASSKEY_CREDENTIAL_ID_SIZE +
+                         sizeof(auth_data) + sizeof(der) + PASSKEY_USER_ID_MAX +
+                         PASSKEY_USER_NAME_MAX <=
+                     CTAP2_MAX_RESPONSE_SIZE,
+                 "getAssertion response exceeds CTAP2_MAX_RESPONSE_SIZE");
   size_t auth_length;
   const uint32_t counter = storage_nextU2FCounter();
   encode_authenticator_data(
@@ -756,6 +763,11 @@ static void make_credential(const uint8_t* request, size_t request_length,
   }
 
   uint8_t auth_data[256], signature_base[288], signature[64], der[72];
+  /* status + map, keys, "packed", "alg", -7, "sig" (21) + byte-string
+   * headers (3 + 2) + the largest authData and DER signature. */
+  _Static_assert(1 + 21 + 3 + sizeof(auth_data) + 2 + sizeof(der) <=
+                     CTAP2_MAX_RESPONSE_SIZE,
+                 "makeCredential response exceeds CTAP2_MAX_RESPONSE_SIZE");
   size_t auth_length;
   if (!encode_authenticator_data(auth_data, sizeof(auth_data), &auth_length,
                                  rp_id_hash,

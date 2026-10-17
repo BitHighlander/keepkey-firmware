@@ -2772,7 +2772,7 @@ TEST_F(SolanaSchemaSignTest,
     if (mutation == 1) msg.raw_tx.bytes[69] ^= 1;
     if (mutation == 2) msg.lut_account[0].bytes[0] ^= 1;
     if (mutation == 3) msg.lut_signature.bytes[0] ^= 1;
-    if (mutation == 4) msg.lut_signer_key_id = 256; /* must not narrow */
+    if (mutation == 4) msg.lut_signer_key_id = 256 + TEST_KEY_ID; /* aliases the loaded slot */
     kkconfirm_capture_start();
     fsm_test_clearLastFailure();
     fsm_msgSolanaSignTx(&msg);
@@ -3279,6 +3279,54 @@ TEST_F(CertifiedMetadataTest, IntentSchemaWithoutValueRoleKeepsTheValueScreen) {
   msg.value.bytes[0] = 1;
   ASSERT_TRUE(signed_metadata_matches_tx(&msg));
   EXPECT_TRUE(signed_metadata_schema_moves_value());
+}
+
+/* SRS-7.16 R-7.4: a certified approve opens with its summary, which states
+ * the allowance as UNLIMITED <symbol>, so ethereum.c's separate warning waits
+ * for it. Only the certified tier, on its chain, with the amount word decoded
+ * as a token amount, says so. */
+TEST_F(CertifiedMetadataTest, CertifiedApproveIntentStatesTheAllowance) {
+  static const uint8_t PERMIT2[20] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x22, 0xd4,
+                                      0x73, 0x03, 0x0f, 0x11, 0x6d, 0xde, 0xe9,
+                                      0xf6, 0xb4, 0x3a, 0xc7, 0x8b, 0xa3};
+  static const uint8_t SEL_APPROVE[4] = {0x09, 0x5e, 0xa7, 0xb3};
+  IntentSpec s;
+  s.v2 = v2_base_spec();
+  s.v2.selector.assign(SEL_APPROVE, SEL_APPROVE + 4);
+  s.v2.method = "approve";
+  s.v2.args.clear();
+  s.v2.args.push_back(v2_pinned("Spender", PERMIT2, 20));
+  s.v2.args.push_back(v2_token("Allowance", 6, "USDC"));
+  s.roles = {METADATA_ROLE_NONE, METADATA_ROLE_ALLOWANCE};
+  s.value_role = METADATA_ROLE_NONE;
+  s.title = "Uniswap";
+  s.intent = "Let the Uniswap approval contract spend up to {1}";
+
+  std::vector<uint8_t> data(SEL_APPROVE, SEL_APPROVE + 4);
+  put_addr_word(data, PERMIT2);
+  for (int i = 0; i < 32; i++) data.push_back(0xff);
+  EthereumSignTx msg;
+  make_v2_msg(&msg, s.v2.contract.data(), data, true, (uint32_t)data.size());
+
+  std::vector<uint8_t> body = sign_body(build_intent_body(s));
+  ASSERT_EQ(METADATA_VERIFIED,
+            signed_metadata_process(body.data(), body.size(), TEST_KEY_ID));
+  EXPECT_FALSE(signed_metadata_certified_states_allowance(&msg, 1));
+
+  ASSERT_EQ(METADATA_VERIFIED,
+            Process(envelope(mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+                                       EXPECTED_SLOT3_PUB),
+                             body)));
+  EXPECT_TRUE(signed_metadata_certified_states_allowance(&msg, 1));
+  EXPECT_FALSE(signed_metadata_certified_states_allowance(&msg, 137));
+
+  // A plain amount names no token: the warning stays.
+  s.v2.args[1] = V2Arg{"Allowance", ARG_FORMAT_AMOUNT, 0, "", {}};
+  ASSERT_EQ(METADATA_VERIFIED,
+            Process(envelope(mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+                                       EXPECTED_SLOT3_PUB),
+                             sign_body(build_intent_body(s)))));
+  EXPECT_FALSE(signed_metadata_certified_states_allowance(&msg, 1));
 }
 
 /* v0x06: a vouched address name (Permit2 spender). It names, never describes
@@ -3814,15 +3862,15 @@ TEST_F(CertifiedMetadataTest, UniswapV4HookIsShown) {
 }
 
 /* The 2026-10-03 root ceremony (Base, Arbitrum): the device's own verifier,
- * under the compiled-in alpha root, accepts each certificate for its chain
- * only. Certificates are public; the root's private key never left the root
- * KeepKey. */
+ * under the alpha root (installed as the test root; 7.16 compiles in the
+ * production root), accepts each certificate for its chain only. Certificates
+ * are public; the root's private key never left the root KeepKey. */
 TEST(ClearsignRootCeremony20261003, RealCertificatesVerifyOnTheirChainOnly) {
   const char* certs[2] = {
       "0101000021056b359b004b6565704b657920416c706861203731360000000000000000000000000000000342f5f9704494b3f9bd72295eecaf29d783d23ea02b2dc9f48abcd2e46d4850cfd3f4638bcd78bd822b88d56dc66bb34c167e3509597a8d3e86a37f14c5b89a504b04f2868e5fcb3ff93f317e2cae7b1cfca149559a272a3ea713125d37757a98",
       "01010000a4b16b359b004b6565704b657920416c706861203731360000000000000000000000000000000342f5f9704494b3f9bd72295eecaf29d783d23ea02b2dc9f48abcd2e46d4850cf2fe56b2ec1cd8540b8c5eff6ad5c30b5aea85edd7499c3340074e0df12cba0d31a973fb36ab9cc9e3ca759fba08dd96908e3f5541b891f00fc6ff941e9365a6c"};
   const uint32_t scopes[2] = {8453, 42161};
-  clearsign_root_set_test_root(NULL);  // the real compiled-in root
+  AlphaTestRoot alpha;
   ASSERT_TRUE(clearsign_root_is_present());
   for (int i = 0; i < 2; i++) {
     std::vector<uint8_t> c = ur_unhex(certs[i]);

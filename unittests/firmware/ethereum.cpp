@@ -351,9 +351,9 @@ static const char kTUSD[] =
     "\x00\x00\x00\x00\x00\x08\x5d\x47\x80\xB7\x31\x19\xb6\x44\xAE\x5e\xcd\x22"
     "\xb3\x76";
 
-static const char kTGBP[] =
-    "\x00\x00\x00\x00\x44\x13\x78\x00\x8E\xA6\x7F\x42\x84\xA5\x79\x32\xB1\xc0"
-    "\x00\xa5";
+static const char kUSDC[] =
+    "\xa0\xb8\x69\x91\xc6\x21\x8b\x36\xc1\xd1\x9d\x4a\x2e\x9e\xb0\xce\x36\x06"
+    "\xeb\x48";
 
 // transformERC20(address,address,uint256,uint256,(uint32,bytes)[]) — the two
 // address words carry the token in their low 20 bytes.
@@ -673,7 +673,7 @@ static void MakeTransformErc20(EthereumSignTx* msg, const char* in_token,
 
 TEST(Ethereum, TransformErc20RequiresCompleteCalldataForClearSigning) {
   EthereumSignTx msg;
-  MakeTransformErc20(&msg, kTUSD, kTGBP);
+  MakeTransformErc20(&msg, kTUSD, kUSDC);
 
   EXPECT_TRUE(
       ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr));
@@ -693,13 +693,13 @@ TEST(Ethereum, TransformErc20RequiresBothTokensResolvable) {
   EthereumSignTx msg;
 
   // Both known -> the device can name what it is showing.
-  MakeTransformErc20(&msg, kTUSD, kTGBP);
+  MakeTransformErc20(&msg, kTUSD, kUSDC);
   EXPECT_TRUE(
       ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr));
 
   // Either side unknown -> refuse to claim it, so ethereum.c falls through to
   // the raw-calldata path (AdvancedMode-gated, bytes shown).
-  MakeTransformErc20(&msg, nullptr, kTGBP);
+  MakeTransformErc20(&msg, nullptr, kUSDC);
   EXPECT_FALSE(
       ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr))
       << "unknown INPUT token must not clear-sign";
@@ -717,7 +717,7 @@ TEST(Ethereum, TransformErc20RequiresBothTokensResolvable) {
   // must refuse even though 0x deploys the same proxy there. This is what the
   // chain allowlist was previously being asked to approximate.
   for (uint32_t cid : {8453u, 42161u, 43114u}) {
-    MakeTransformErc20(&msg, kTUSD, kTGBP);
+    MakeTransformErc20(&msg, kTUSD, kUSDC);
     msg.chain_id = cid;
     EXPECT_FALSE(
         ethereum_contractHandled(msg.data_initial_chunk.size, &msg, nullptr))
