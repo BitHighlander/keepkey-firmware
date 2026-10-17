@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstring>
 #include <vector>
 
@@ -461,4 +462,72 @@ TEST(Erc7730Workflow, EmbeddedApproveIsClassifiedLikeATopLevelOne) {
   ASSERT_TRUE(locateEmbedded(&workflow, transfer));
   EXPECT_FALSE(workflow.field.unlimited_approve);
   EXPECT_EQ(workflow.field.inner_selector[0], 0xa9);
+}
+
+// A Safe exec (to, value, data, operation): one full calldata pass, fed in
+// `chunk`-byte pieces, of a 68-byte inner call with `operation`.
+static bool safeExecPass(Erc7730Workflow* workflow, const uint8_t selector[4],
+                         uint8_t operation, size_t chunk) {
+  *workflow = Erc7730Workflow{};
+  memcpy(workflow->identity.selector_or_type_hash, selector, 4);
+  workflow->phase = ERC7730_WORKFLOW_READY;
+  workflow->loader.abi_started = true;
+  workflow->loader.index.complete = true;
+  workflow->loader.abi.complete = true;
+  workflow->loader.abi.node_count = 5;
+  workflow->loader.abi.nodes[0].kind = ERC7730_ABI_TUPLE;
+  workflow->loader.abi.nodes[0].first_child = 1;
+  workflow->loader.abi.nodes[0].child_count = 4;
+  workflow->loader.abi.nodes[1].kind = ERC7730_ABI_ADDRESS;
+  workflow->loader.abi.nodes[2].kind = ERC7730_ABI_UINT;
+  workflow->loader.abi.nodes[2].size = 256;
+  workflow->loader.abi.nodes[3].kind = ERC7730_ABI_BYTES;
+  workflow->loader.abi.nodes[4].kind = ERC7730_ABI_UINT;
+  workflow->loader.abi.nodes[4].size = 8;
+
+  std::vector<uint8_t> args(5 * 32 + 96, 0);
+  args[31] = 0x11;        // to
+  args[95] = 128;         // data offset
+  args[127] = operation;  // operation
+  args[159] = 68;         // data length
+  args[160] = 0xa9;       // transfer(...)
+  EthereumSignTx tx{};
+  tx.has_data_length = true;
+  tx.data_length = 4 + args.size();
+  tx.has_data_initial_chunk = true;
+  tx.data_initial_chunk.size = 4;
+  memcpy(tx.data_initial_chunk.bytes, selector, 4);
+  if (!erc7730_tx_continuation_capture(&workflow->continuation, &tx) ||
+      !erc7730_workflow_restore_and_start_calldata(workflow, &tx))
+    return false;
+  for (size_t at = 0; at < args.size(); at += chunk) {
+    const size_t n = std::min(chunk, args.size() - at);
+    if (erc7730_workflow_calldata_feed(workflow, args.data() + at, n) !=
+        ERC7730_ABI_OK)
+      return false;
+  }
+  return erc7730_workflow_calldata_finish(workflow) == ERC7730_ABI_OK;
+}
+
+// The operation word of a Safe exec is read from the signed calldata itself,
+// in any chunking; any value but 0 (CALL) marks the embedded call as a
+// delegatecall. Other functions of the same shape are not Safe execs.
+TEST(Erc7730Workflow, SafeExecOperationIsReadFromTheCalldata) {
+  const uint8_t exec[4] = {0x6a, 0x76, 0x12, 0x02};
+  const uint8_t module[4] = {0x46, 0x87, 0x21, 0xa7};
+  const uint8_t module_data[4] = {0x52, 0x29, 0x07, 0x3f};
+  const uint8_t other[4] = {0x29, 0x23, 0x8e, 0xe4};
+  Erc7730Workflow workflow{};
+  for (const uint8_t* selector : {exec, module, module_data}) {
+    for (size_t chunk : {(size_t)1, (size_t)7, (size_t)100, (size_t)256}) {
+      ASSERT_TRUE(safeExecPass(&workflow, selector, 1, chunk));
+      EXPECT_TRUE(workflow.safe_delegatecall) << chunk;
+      ASSERT_TRUE(safeExecPass(&workflow, selector, 0, chunk));
+      EXPECT_FALSE(workflow.safe_delegatecall) << chunk;
+    }
+    ASSERT_TRUE(safeExecPass(&workflow, selector, 2, 256));
+    EXPECT_TRUE(workflow.safe_delegatecall);
+  }
+  ASSERT_TRUE(safeExecPass(&workflow, other, 1, 256));
+  EXPECT_FALSE(workflow.safe_delegatecall);
 }

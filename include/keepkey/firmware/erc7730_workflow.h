@@ -160,6 +160,9 @@ typedef struct {
   bool resuming; /* the outer program restarts after its inner call */
   /* Inner definition refused: the embedded field is refused. */
   bool inner_refused;
+  /* The outer call is a Safe exec whose operation word is not 0 (CALL): its
+   * embedded call is a delegatecall, run as the Safe. */
+  bool safe_delegatecall;
   uint8_t selection_kind : 4;
   uint8_t display_stage : 4;
   bool typed_data;

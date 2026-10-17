@@ -592,6 +592,19 @@ static void show_erc7730_embedded(Erc7730Workflow* workflow) {
                      _("Inner call cannot be clear-signed"));
 }
 
+/* Refused: a Safe delegatecall runs the callee's code as the Safe, so no
+ * definition of the callee describes what it does. Say so, naming it. */
+static void show_erc7730_delegatecall(Erc7730Workflow* workflow) {
+  char to[43];
+  if (erc7730_format_address(workflow->field.address, false, to, sizeof(to)))
+    (void)review(ButtonRequestType_ButtonRequest_Other, "DELEGATECALL",
+                 "Runs %s as the Safe, with its full authority. "
+                 "Not clear-signed.",
+                 to);
+  fail_erc7730_field(workflow, FailureType_Failure_Other,
+                     _("DELEGATECALL cannot be clear-signed"));
+}
+
 /* A raw bytes/string value longer than the device captures: refused in
  * calldata; typed data has already shown it in full during its walk. */
 static void show_erc7730_long_value(Erc7730Workflow* workflow, size_t length) {
@@ -754,6 +767,11 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
     return;
   }
   if (field->kind == 13) {
+    /* A Safe delegatecall is never shown as the callee's own action. */
+    if (workflow->safe_delegatecall) {
+      show_erc7730_delegatecall(workflow);
+      return;
+    }
     /* An inner approve(spender, 2^256-1) signs only after the device's own
      * UNLIMITED warning, before its inner screens. */
     if (field->unlimited_approve && field->has_address) {

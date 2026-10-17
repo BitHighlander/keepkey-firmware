@@ -671,6 +671,15 @@ bool erc7730_workflow_start_signing(Erc7730Workflow* workflow,
   return true;
 }
 
+/* Safe's execTransaction, execTransactionFromModule and
+ * execTransactionFromModuleReturnData take (to, value, data, operation, ...):
+ * operation 1 delegatecalls `to`, running its code as the Safe. */
+static bool safe_exec_selector(const uint8_t selector[4]) {
+  return memcmp(selector, "\x6a\x76\x12\x02", 4) == 0 ||
+         memcmp(selector, "\x46\x87\x21\xa7", 4) == 0 ||
+         memcmp(selector, "\x52\x29\x07\x3f", 4) == 0;
+}
+
 Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
                                                 const uint8_t* data,
                                                 size_t data_len) {
@@ -702,6 +711,15 @@ Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
   if (result != ERC7730_ABI_OK) {
     fail(workflow);
   } else {
+    /* The operation word (argument bytes 96..127) is read from the signed
+     * calldata, whatever the definition shows: anything but 0 is not a
+     * plain call. */
+    if (workflow->depth == 0 &&
+        safe_exec_selector(workflow->identity.selector_or_type_hash))
+      for (size_t i = 0; i < data_len; i++)
+        if (workflow->outer_received + i >= 96u &&
+            workflow->outer_received + i < 128u && data[i] != 0)
+          workflow->safe_delegatecall = true;
     sha256_Update(&workflow->calldata_hash, data, data_len);
     workflow->outer_received += (uint32_t)data_len;
   }
