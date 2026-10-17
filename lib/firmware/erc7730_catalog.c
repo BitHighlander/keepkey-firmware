@@ -494,9 +494,15 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
   if (v->path_step_opcode == 1)
     v->sibling[8u - v->path_step_remaining] = byte; /* sibling[4..7] */
   if (--v->path_step_remaining != 0) return true;
-  if (v->path_step_opcode == 1 &&
-      !walk_path_index(v, (int32_t)read_be32(v->sibling + 4), false))
-    return false;
+  if (v->path_step_opcode == 1) {
+    const int32_t index = (int32_t)read_be32(v->sibling + 4);
+    if (!walk_path_index(v, index, false)) return false;
+    /* The path [1] after a one-word argument 0: approve()'s second word. */
+    const uint8_t argument0 = (uint8_t)((abi_entry(v, 0) >> 6) & 0x3fu);
+    if (v->path_step_count == 1 && index == 1 &&
+        (abi_entry(v, argument0) >> 12) <= ERC7730_ABI_STRING)
+      v->path_second_word_mask |= UINT64_C(1) << v->entry_index;
+  }
   v->path_last_full = false;
   return finish_path_step(v);
 }
@@ -801,6 +807,12 @@ static bool consume_formatter_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
     return false;
   if (role == 1 && (v->signature[index] & 0x40u) != 0)
     v->formatter_value_literal = true;
+  if (source == 1 && ((v->path_second_word_mask >> index) & 1u) != 0) {
+    if (v->formatter_kind == 4 && role == 1)
+      v->second_word_nft = true;
+    else
+      v->second_word_other = true;
+  }
   if (source == 1) {
     const uint8_t argument_array = v->path_arrays[index];
     if (argument_array != 0xff) v->formatter_any_array = true;
@@ -1265,6 +1277,7 @@ static Erc7730CatalogResult finish(Erc7730CatalogVerifier* v,
   identity->reads_value = v->reads_value;
   identity->trailing_data =
       (v->header[6] & ERC7730_PROGRAM_FLAG_TRAILING_DATA) != 0;
+  identity->second_word_token_id = v->second_word_nft && !v->second_word_other;
   memzero(actual_id, sizeof(actual_id));
   v->state = STREAM_DONE;
   return ERC7730_CATALOG_COMPLETE;

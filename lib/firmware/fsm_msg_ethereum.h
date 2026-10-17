@@ -1040,7 +1040,11 @@ static bool erc7730_allowance_policy(Erc7730Workflow* workflow,
                        _("Malformed ERC20 approval"));
     return false;
   }
+  /* ERC-721 approve(to, tokenId) shares approve()'s selector; a definition
+   * that shows the second word only as a token id grants one token, so a
+   * high id (an ENS-style hash) is not an UNLIMITED allowance. */
   if ((workflow->allowance & ERC7730_ALLOWANCE_UNLIMITED) &&
+      !workflow->identity.second_word_token_id &&
       !ethereum_confirmUnlimitedApproval(
           tx->chain_id, workflow->allowance_spender, tx->to.bytes)) {
     fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,

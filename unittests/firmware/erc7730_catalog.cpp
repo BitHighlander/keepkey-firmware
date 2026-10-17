@@ -1765,6 +1765,38 @@ std::vector<uint8_t> tokenProgram(const std::vector<uint8_t>& formatter,
 
 }  // namespace
 
+// 7.17: ERC-721 approve(to, tokenId) shares approve()'s selector. The identity
+// says when a definition shows argument 1 (after a one-word argument 0) only
+// as an nftName token id, so the allowance policy does not call it UNLIMITED.
+TEST(Erc7730Catalog, IdentityNotesASecondWordShownOnlyAsATokenId) {
+  SignedFixture fixture;
+  loadRuntimeSigner(&fixture, "NFT signer");
+  const struct {
+    std::vector<uint8_t> formatters;
+    uint16_t count;
+    bool token_id;
+  } cases[] = {
+      {{4, 0, 2, 1, 1, 0, 1, 3, 1, 0, 0}, 1, true},   // nftName([1], [0])
+      {{4, 0, 2, 1, 1, 0, 1, 3, 1, 0, 3}, 1, true},   // collection @.to
+      {{3, 0, 2, 1, 1, 0, 1, 2, 1, 0, 0}, 1, false},  // tokenAmount of [1]
+      {{1, 0, 1, 1, 1, 0, 1}, 1, false},              // raw [1]
+      {{1, 0, 1, 1, 1, 0, 0}, 1, false},              // [1] not shown at all
+      {{4, 0, 2, 1, 1, 0, 1, 3, 1, 0, 0,              // nftName and raw [1]
+        1, 0, 1, 1, 1, 0, 1},
+       2,
+       false},
+  };
+  for (const auto& c : cases) {
+    SCOPED_TRACE(c.formatters.size());
+    auto p = replaceTable(tokenProgram({1, 0, 1, 1, 1, 0, 0}), 6, c.formatters,
+                          c.count);
+    Erc7730CatalogIdentity identity{};
+    ASSERT_EQ(feedIdentity(signedEnvelope(fixture, p), &identity),
+              ERC7730_CATALOG_COMPLETE);
+    EXPECT_EQ(identity.second_word_token_id, c.token_id);
+  }
+}
+
 // Phase A: arguments of tokenAmount and addressName, from container and
 // literal values. Every
 // argument is type-checked at preload against the class the runtime needs, so
