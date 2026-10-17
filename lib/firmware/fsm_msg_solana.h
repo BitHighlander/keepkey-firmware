@@ -253,8 +253,8 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
         char fp[METADATA_FINGERPRINT_LEN] = {0};
         signed_metadata_signer_fingerprint((uint8_t)ti->signer_key_id, fp);
         if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Token \"%s\"\nby %s %s\nNOT verified by KeepKey.",
-                     symbol, alias ? alias : "", fp)) {
+                     "Token \"%s\"\nby %s %s\nNOT verified by KeepKey.", symbol,
+                     alias ? alias : "", fp)) {
           return false;
         }
       }
