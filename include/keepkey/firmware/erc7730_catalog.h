@@ -14,6 +14,10 @@
 #define ERC7730_CATALOG_MAX_PROOF_DEPTH 16u
 #define ERC7730_PROGRAM_HEADER_SIZE 179u
 #define ERC7730_PROGRAM_MAX_SECTIONS 9u
+/* Program header byte 6, flags. Calldata definitions only: the signer allows
+ * bytes after the ABI-encoded arguments, which the review states exist. 7.16
+ * and earlier accept the flag and ignore it, refusing any such bytes. */
+#define ERC7730_PROGRAM_FLAG_TRAILING_DATA 1u
 /* Delegate record: [0] version 1 and [2..5] scope == chain id are checked but
  * not signed; [10..41] alias is format-checked only (the user-approved alias
  * is shown); [42..74] pubkey must equal a loaded runtime signer; other bytes
@@ -84,7 +88,10 @@ typedef struct {
   char delegate_fingerprint[METADATA_FINGERPRINT_LEN];
   uint8_t kind;
   bool reads_value; /* a path reads @.value */
-  uint8_t tier;     /* METADATA_TIER_RUNTIME or METADATA_TIER_KEEPKEY */
+  /* Header flag ERC7730_PROGRAM_FLAG_TRAILING_DATA: the call may carry bytes
+   * after its ABI-encoded arguments (a referral or integrator tag). */
+  bool trailing_data;
+  uint8_t tier; /* METADATA_TIER_RUNTIME or METADATA_TIER_KEEPKEY */
 } Erc7730CatalogIdentity;
 
 /* Incremental verifier; size independent of descriptor size. */
