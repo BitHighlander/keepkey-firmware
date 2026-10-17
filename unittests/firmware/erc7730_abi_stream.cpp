@@ -493,3 +493,81 @@ TEST(Erc7730AbiStream, FullDynamicTupleArrayDecodes) {
       EXPECT_EQ(stream(c.program, c.encoded, chunk), c.expected) << chunk;
   }
 }
+
+namespace {
+
+// A suffixed stream over `encoded`: its result, and the suffix it measured.
+Erc7730AbiResult suffixed(const Erc7730AbiProgram* program,
+                          const std::vector<uint8_t>& encoded,
+                          size_t chunk_size, size_t* suffix) {
+  Erc7730AbiStream state{};
+  Erc7730AbiResult result =
+      erc7730_abi_stream_begin_suffixed(&state, program, encoded.size());
+  for (size_t offset = 0;
+       result == ERC7730_ABI_OK && offset < encoded.size();) {
+    const size_t length = std::min(chunk_size, encoded.size() - offset);
+    result = erc7730_abi_stream_feed(&state, offset, encoded.data() + offset,
+                                     length);
+    offset += length;
+  }
+  if (result == ERC7730_ABI_OK) result = erc7730_abi_stream_finish(&state);
+  *suffix = erc7730_abi_stream_suffix(&state);
+  erc7730_abi_stream_clear(&state);
+  return result;
+}
+
+}  // namespace
+
+// A definition may allow bytes after the encoding (a referral tag). The
+// encoding still ends exactly where its canonical layout says; whatever
+// follows, word-aligned or not, is counted and never parsed. The strict
+// stream refuses the same bytes.
+TEST(Erc7730AbiStream, SuffixedStreamCountsBytesAfterTheEncoding) {
+  // f(uint256 a, bytes b): the suffix starts after b's last padded word.
+  const Erc7730AbiNode nodes[] = {
+      {ERC7730_ABI_TUPLE, 0, 1, 2, 0},
+      {ERC7730_ABI_UINT, 256, 0, 0, 0},
+      {ERC7730_ABI_BYTES, 0, 0, 0, 0},
+  };
+  const Erc7730AbiProgram program{nodes, 3, 0};
+  std::vector<uint8_t> encoded;
+  word(encoded, 7);
+  word(encoded, 64);
+  dynamicBytes(encoded, std::vector<uint8_t>(40, 0xab));
+  for (size_t extra : {size_t{0}, size_t{1}, size_t{16}, size_t{31}, size_t{32},
+                       size_t{33}, size_t{100}}) {
+    std::vector<uint8_t> tagged = encoded;
+    for (size_t i = 0; i < extra; i++) tagged.push_back((uint8_t)(0xf0 + i));
+    for (size_t chunk : {size_t{1}, size_t{7}, size_t{32}, size_t{1024}}) {
+      size_t suffix = SIZE_MAX;
+      EXPECT_EQ(suffixed(&program, tagged, chunk, &suffix), ERC7730_ABI_OK)
+          << extra << " " << chunk;
+      EXPECT_EQ(suffix, extra) << extra << " " << chunk;
+      if (extra != 0)
+        EXPECT_NE(stream(&program, tagged, chunk), ERC7730_ABI_OK) << extra;
+    }
+  }
+
+  // A suffix never completes an encoding: bytes cut short are refused.
+  std::vector<uint8_t> cut(encoded.begin(), encoded.end() - 1);
+  size_t suffix = 0;
+  EXPECT_NE(suffixed(&program, cut, 13, &suffix), ERC7730_ABI_OK);
+  cut.resize(encoded.size() - 32);
+  EXPECT_NE(suffixed(&program, cut, 13, &suffix), ERC7730_ABI_OK);
+  // Nor does it relax the encoding it follows.
+  std::vector<uint8_t> dirty = encoded;
+  dirty.back() = 1;  // b's padding
+  dirty.push_back(0);
+  EXPECT_NE(suffixed(&program, dirty, 13, &suffix), ERC7730_ABI_OK);
+
+  // A function without arguments: everything is the suffix (WETH deposit()
+  // with a stray byte).
+  const Erc7730AbiNode none[] = {{ERC7730_ABI_TUPLE, 0, 0, 0, 0}};
+  const Erc7730AbiProgram argumentless{none, 1, 0};
+  for (size_t extra : {size_t{0}, size_t{1}, size_t{32}, size_t{40}}) {
+    const std::vector<uint8_t> tail(extra, 0x5a);
+    suffix = SIZE_MAX;
+    EXPECT_EQ(suffixed(&argumentless, tail, 7, &suffix), ERC7730_ABI_OK);
+    EXPECT_EQ(suffix, extra);
+  }
+}

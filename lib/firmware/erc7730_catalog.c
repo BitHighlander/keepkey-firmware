@@ -119,8 +119,10 @@ static bool verify_certified_delegate(
 static bool validate_header(const Erc7730CatalogVerifier* v) {
   const uint8_t* h = v->header;
   if (memcmp(h, "C773", 4) != 0 || h[4] != 1) return false;
-  if (h[5] != 2 || h[6] > 1) return false;
-  if (h[7] < ERC7730_DEFINITION_CALLDATA || h[7] > ERC7730_DEFINITION_NETWORK)
+  if (h[5] != 2 || (h[6] & ~ERC7730_PROGRAM_FLAG_TRAILING_DATA) != 0)
+    return false;
+  if (h[7] < ERC7730_DEFINITION_CALLDATA || h[7] > ERC7730_DEFINITION_NETWORK ||
+      (h[6] != 0 && h[7] != ERC7730_DEFINITION_CALLDATA))
     return false;
   const uint64_t chain_id = read_be64(h + 10);
   if (read_be16(h + 8) != 0 || chain_id == 0 || chain_id > UINT32_MAX)
@@ -1261,6 +1263,8 @@ static Erc7730CatalogResult finish(Erc7730CatalogVerifier* v,
   identity->program_length = v->program_length;
   identity->envelope_length = v->total_length;
   identity->reads_value = v->reads_value;
+  identity->trailing_data =
+      (v->header[6] & ERC7730_PROGRAM_FLAG_TRAILING_DATA) != 0;
   memzero(actual_id, sizeof(actual_id));
   v->state = STREAM_DONE;
   return ERC7730_CATALOG_COMPLETE;

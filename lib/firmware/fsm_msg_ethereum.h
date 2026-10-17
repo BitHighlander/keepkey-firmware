@@ -1138,6 +1138,17 @@ static void finish_erc7730_calldata(Erc7730Workflow* workflow) {
                                  : _("Signing cancelled by user"));
     return;
   }
+  /* Bytes the definition allows after the arguments: said to exist, since no
+   * field above described them. */
+  if (workflow->suffix_length != 0 &&
+      !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Extra data",
+               "%lu more bytes follow the arguments. The description above "
+               "does not cover them.",
+               (unsigned long)workflow->suffix_length)) {
+    fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
+                       _("Signing cancelled by user"));
+    return;
+  }
   EthereumSignTx tx;
   if (!erc7730_workflow_start_signing(workflow, &tx)) {
     memzero(&tx, sizeof(tx));

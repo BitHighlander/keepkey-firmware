@@ -413,12 +413,18 @@ bool erc7730_workflow_restore_and_start_calldata(Erc7730Workflow* workflow,
    * inside the outer arguments that are replayed and hashed in full. */
   const uint32_t outer = tx->data_length >= 4 ? tx->data_length - 4u : 0;
   const bool inner = workflow->depth == 1;
+  /* Only the outer call may carry bytes after its arguments, and only when
+   * its definition says so. */
   if (tx->data_length < 4 ||
       (inner && (workflow->inner_length < 4 || workflow->inner_offset > outer ||
                  workflow->inner_length > outer - workflow->inner_offset)) ||
       !erc7730_program_loader_complete(&workflow->loader, &program) ||
-      erc7730_abi_stream_begin(&workflow->calldata, &program,
-                               inner ? workflow->inner_length - 4u : outer) !=
+      (inner ? erc7730_abi_stream_begin(&workflow->calldata, &program,
+                                        workflow->inner_length - 4u)
+       : workflow->identity.trailing_data
+           ? erc7730_abi_stream_begin_suffixed(&workflow->calldata, &program,
+                                               outer)
+           : erc7730_abi_stream_begin(&workflow->calldata, &program, outer)) !=
           ERC7730_ABI_OK) {
     fail(workflow);
     return false;
@@ -740,6 +746,9 @@ Erc7730AbiResult erc7730_workflow_calldata_finish(Erc7730Workflow* workflow) {
     fail(workflow);
     return result;
   }
+  if (workflow->depth == 0)
+    workflow->suffix_length =
+        (uint32_t)erc7730_abi_stream_suffix(&workflow->calldata);
   uint8_t digest[32];
   sha256_Final(&workflow->calldata_hash, digest);
   const bool matches = !workflow->reviewed_digest_set ||

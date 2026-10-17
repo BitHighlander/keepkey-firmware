@@ -183,6 +183,9 @@ typedef struct {
   bool signing_pass;
   uint8_t allowance; /* ERC7730_ALLOWANCE_* */
   uint8_t allowance_spender[20];
+  /* Bytes after the outer call's arguments, which its definition allows
+   * (identity.trailing_data); the same in every pass. */
+  uint32_t suffix_length;
 } Erc7730Workflow;
 
 /* One Ethereum workflow exists at a time. Keeping ownership here ensures FSM

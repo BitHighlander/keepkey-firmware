@@ -530,6 +530,33 @@ TEST_F(Erc7730SigningHandlers,
   EXPECT_EQ(0, kkconfirm_drain());
 }
 
+// Header byte 6 holds flags. TRAILING_DATA (bit 0) is the only one, and only
+// for calldata definitions; the identity carries it to the runtime.
+TEST(Erc7730Catalog, TrailingDataFlagIsCalldataOnly) {
+  SignedFixture fixture;
+  loadRuntimeSigner(&fixture, "Flag signer");
+  for (uint8_t flags : {0, 1, 2, 3, 0x80}) {
+    auto program = minimalProgram();
+    program[6] = flags;
+    Erc7730CatalogIdentity identity{};
+    const Erc7730CatalogResult result =
+        feedIdentity(signedEnvelope(fixture, program), &identity);
+    EXPECT_EQ(result, flags <= ERC7730_PROGRAM_FLAG_TRAILING_DATA
+                          ? ERC7730_CATALOG_COMPLETE
+                          : ERC7730_CATALOG_BAD_PROGRAM)
+        << (int)flags;
+    if (result == ERC7730_CATALOG_COMPLETE)
+      EXPECT_EQ(identity.trailing_data, flags != 0);
+  }
+  auto typed = minimalProgram();
+  typed[6] = ERC7730_PROGRAM_FLAG_TRAILING_DATA;
+  typed[7] = ERC7730_DEFINITION_EIP712;
+  for (size_t i = 42; i < 70; i++) typed[i] = 0x5a;  // a type hash
+  EXPECT_EQ(feedAll(envelope(typed), 9), ERC7730_CATALOG_BAD_PROGRAM);
+  typed[6] = 0;
+  EXPECT_EQ(feedAll(envelope(typed), 9), ERC7730_CATALOG_UNTRUSTED);
+}
+
 TEST(Erc7730Catalog, SignatureAuthenticatesProgramUnderLoadedDelegateKey) {
   SignedFixture fixture;
   loadRuntimeSigner(&fixture, "Approved signer");

@@ -283,6 +283,12 @@ static Erc7730AbiResult consume_atomic(const Erc7730AbiNode* n,
 
 static Erc7730AbiResult consume_word(Erc7730AbiStream* s) {
   Erc7730AbiResult r = prepare(s);
+  if (r == ERC7730_ABI_OK && s->depth == 0 && s->allow_suffix) {
+    /* The encoding ended before this word: it and the rest are the suffix. */
+    s->ended = true;
+    s->suffix_start = s->received - sizeof(s->word);
+    return ERC7730_ABI_OK;
+  }
   if (r != ERC7730_ABI_OK || s->depth == 0)
     return r == ERC7730_ABI_OK ? ERC7730_ABI_NON_CANONICAL : r;
   Erc7730AbiStreamFrame* f = &s->frames[s->depth - 1u];
@@ -385,14 +391,14 @@ static Erc7730AbiResult consume_word(Erc7730AbiStream* s) {
   return r;
 }
 
-Erc7730AbiResult erc7730_abi_stream_begin(Erc7730AbiStream* stream,
-                                          const Erc7730AbiProgram* program,
-                                          size_t total_length) {
-  Erc7730AbiStream* s = stream;
+static Erc7730AbiResult stream_begin(Erc7730AbiStream* s,
+                                     const Erc7730AbiProgram* program,
+                                     size_t total_length, bool allow_suffix) {
   if (!s) return ERC7730_ABI_BAD_PROGRAM;
   memzero(s, sizeof(*s));
+  s->allow_suffix = allow_suffix;
   Erc7730AbiResult r = erc7730_abi_validate_program(program);
-  if (r != ERC7730_ABI_OK || (total_length & 31u) != 0) {
+  if (r != ERC7730_ABI_OK || (!allow_suffix && (total_length & 31u) != 0)) {
     s->failed = true;
     return r != ERC7730_ABI_OK ? r : ERC7730_ABI_NON_CANONICAL;
   }
@@ -401,6 +407,24 @@ Erc7730AbiResult erc7730_abi_stream_begin(Erc7730AbiStream* stream,
   r = push_value(s, program->root, 0, true);
   if (r != ERC7730_ABI_OK) s->failed = true;
   return r;
+}
+
+Erc7730AbiResult erc7730_abi_stream_begin(Erc7730AbiStream* stream,
+                                          const Erc7730AbiProgram* program,
+                                          size_t total_length) {
+  return stream_begin(stream, program, total_length, false);
+}
+
+Erc7730AbiResult erc7730_abi_stream_begin_suffixed(
+    Erc7730AbiStream* stream, const Erc7730AbiProgram* program,
+    size_t total_length) {
+  return stream_begin(stream, program, total_length, true);
+}
+
+size_t erc7730_abi_stream_suffix(const Erc7730AbiStream* stream) {
+  return stream && stream->complete && stream->ended
+             ? stream->total_length - stream->suffix_start
+             : 0;
 }
 
 Erc7730AbiResult erc7730_abi_stream_capture_path(Erc7730AbiStream* stream,
@@ -428,6 +452,10 @@ Erc7730AbiResult erc7730_abi_stream_feed(Erc7730AbiStream* stream,
     return ERC7730_ABI_BOUNDS;
   }
   for (size_t i = 0; i < data_len; i++) {
+    if (s->ended) {
+      s->received += data_len - i; /* the suffix is counted, never parsed */
+      break;
+    }
     s->word[s->word_received++] = data[i];
     s->received++;
     if (s->word_received == sizeof(s->word)) {
@@ -446,12 +474,22 @@ Erc7730AbiResult erc7730_abi_stream_feed(Erc7730AbiStream* stream,
 Erc7730AbiResult erc7730_abi_stream_finish(Erc7730AbiStream* stream) {
   Erc7730AbiStream* s = stream;
   if (!s || s->failed || s->received != s->total_length ||
-      s->word_received != 0) {
+      (s->word_received != 0 && !s->allow_suffix && !s->ended)) {
     if (s) s->failed = true;
     return ERC7730_ABI_BOUNDS;
   }
-  Erc7730AbiResult r = prepare(s);
-  if (r != ERC7730_ABI_OK || s->depth != 0 || s->pending_used != 0) {
+  /* A suffix shorter than a word never reached consume_word(). The encoding
+   * must be complete with no word pending, so prepare() can only pop. */
+  Erc7730AbiResult r = ERC7730_ABI_OK;
+  if (!s->ended) {
+    r = prepare(s);
+    if (r == ERC7730_ABI_OK && s->depth == 0 && s->word_received != 0) {
+      s->ended = true;
+      s->suffix_start = s->received - s->word_received;
+    }
+  }
+  if (r != ERC7730_ABI_OK || s->depth != 0 || s->pending_used != 0 ||
+      (s->word_received != 0 && !s->ended)) {
     s->failed = true;
     return r != ERC7730_ABI_OK ? r : ERC7730_ABI_NON_CANONICAL;
   }

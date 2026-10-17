@@ -14,6 +14,10 @@
 #define ERC7730_CATALOG_MAX_PROOF_DEPTH 16u
 #define ERC7730_PROGRAM_HEADER_SIZE 179u
 #define ERC7730_PROGRAM_MAX_SECTIONS 9u
+/* Program header byte 6, flags. Calldata definitions only: the signer allows
+ * bytes after the ABI-encoded arguments, which the review states exist. 7.16
+ * and earlier accept the flag and ignore it, refusing any such bytes. */
+#define ERC7730_PROGRAM_FLAG_TRAILING_DATA 1u
 /* Delegate certificate record (139 bytes, the ClearSign certificate of
  * clearsign_root.h). Two tiers, tried in this order:
  *
@@ -92,7 +96,10 @@ typedef struct {
   char delegate_fingerprint[METADATA_FINGERPRINT_LEN];
   uint8_t kind;
   bool reads_value; /* a path reads @.value */
-  uint8_t tier;     /* METADATA_TIER_RUNTIME or METADATA_TIER_KEEPKEY */
+  /* Header flag ERC7730_PROGRAM_FLAG_TRAILING_DATA: the call may carry bytes
+   * after its ABI-encoded arguments (a referral or integrator tag). */
+  bool trailing_data;
+  uint8_t tier; /* METADATA_TIER_RUNTIME or METADATA_TIER_KEEPKEY */
 } Erc7730CatalogIdentity;
 
 /* Incremental verifier. Its size is bounded independently of descriptor size;
