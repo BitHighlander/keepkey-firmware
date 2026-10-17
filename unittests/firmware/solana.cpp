@@ -2094,6 +2094,29 @@ TEST(Solana, Token2022TransferCheckedWithFeeIsVerifiedWithFee) {
   expect_repeated_pubkey(pi.to, 0x13);
 }
 
+/* Token-2022 withholds at most the amount and fails the transfer on any other
+ * fee, so a signed fee above the amount would draw a screen that cannot be
+ * true: opaque. A fee equal to the amount is the real upper bound. */
+TEST(Solana, Token2022TransferCheckedWithFeeAboveAmountIsOpaque) {
+  uint8_t d[19] = {SOL_TOKEN_TRANSFER_FEE_IX,
+                   SOL_TOKEN_TRANSFER_CHECKED_WITH_FEE,
+                   1, 0, 0, 0, 0, 0, 0, 0,
+                   6,
+                   0xE8, 0x03, 0, 0, 0, 0, 0, 0};
+  uint8_t raw[512];
+  SolanaParsedTx tx;
+  size_t pos =
+      build_single_instr_tx(raw, SOL_TOKEN_2022_PROGRAM, 4, d, sizeof(d));
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
+  d[11] = 1; /* fee 1 == amount 1 */
+  d[12] = 0;
+  pos = build_single_instr_tx(raw, SOL_TOKEN_2022_PROGRAM, 4, d, sizeof(d));
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
+  EXPECT_EQ(tx.instructions[0].amount, 1ULL);
+  EXPECT_EQ(tx.instructions[0].extra_value, 1ULL);
+}
+
 /* Only the exact fee form clear-signs: other lengths, other sub-instructions,
  * extra accounts, and the opcode under legacy SPL (which has no fee
  * extension) are opaque. */

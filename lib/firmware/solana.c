@@ -329,11 +329,12 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
                memcmp(pi->program_id, SOL_TOKEN_2022_PROGRAM,
                       SOL_PUBKEY_SIZE) == 0) {
       /* Token-2022 clear-signs only TransferChecked (or TransferCheckedWithFee)
-       * with exactly [source, mint, dest, authority]. A transfer hook needs
-       * its program and extra accounts after those four, so with exactly four
-       * a hook mint fails (and a hook only ever gets the four read-only). A
-       * fifth account may be a hook or a multisig signer, which the device
-       * cannot tell apart: opaque, as is every other Token-2022 opcode. */
+       * with exactly [source, mint, dest, authority]. Token-2022 passes a
+       * transfer hook only those four, read-only and non-signer, plus any
+       * extra accounts listed after them; with none listed, a hook can only
+       * fail the transaction or log. A fifth account may be a hook extra or a
+       * multisig signer, which the device cannot tell apart: opaque, as is
+       * every other Token-2022 opcode. */
       const bool is_token2022 =
           memcmp(pi->program_id, SOL_TOKEN_2022_PROGRAM, SOL_PUBKEY_SIZE) == 0;
       if (data_len >= 1) {
@@ -352,13 +353,17 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
                      data_len == 10) ||
                     (is_token2022 && token_instr == SOL_TOKEN_TRANSFER_FEE_IX &&
                      data_len == 19 &&
-                     instr_data[1] == SOL_TOKEN_TRANSFER_CHECKED_WITH_FEE)) &&
+                     instr_data[1] == SOL_TOKEN_TRANSFER_CHECKED_WITH_FEE &&
+                     read_le64(instr_data + 11) <=
+                         read_le64(instr_data + 2))) &&
                    num_acct_indices >= 4) {
           /* Canonical data only: opcode + amount(8) + decimals(1), or the
            * Token-2022 fee form: 26, 1, amount(8), decimals(1), fee(8). The
            * fee is withheld from what the destination receives; the
-           * confirmation shows it (data_len == 19). Accounts [source, mint,
-           * dest, authority], then any multisig signers. */
+           * confirmation shows it (data_len == 19). A fee above the amount
+           * fails on chain and would draw a false screen, so it stays opaque.
+           * Accounts [source, mint, dest, authority], then any multisig
+           * signers. */
           const uint8_t* d = instr_data + (data_len == 19 ? 2 : 1);
           pi->type = SOL_INSTR_TOKEN_TRANSFER_CHECKED;
           pi->amount = read_le64(d);
