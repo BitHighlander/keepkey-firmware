@@ -32,9 +32,12 @@
   (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2) | ERC7730_CAP_BIT(3))
 /* Step opcodes: 1 index, 2 every element. Slices (3) are not executed. */
 #define ERC7730_CAP_PATH_STEP_OPCODES (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2))
-/* Calldata only: 1 @.from (derived on device), 2 @.to, 3 @.value. */
+/* Calldata: 1 @.from (derived on device), 2 @.to, 3 @.value. */
 #define ERC7730_CAP_CONTAINERS \
   (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2) | ERC7730_CAP_BIT(3))
+/* ... and for typed data: 2 @.to, the domain's verifyingContract, at which the
+ * definition is deployed (erc7730_program_loader_require_deployment). */
+#define ERC7730_CAP_TYPED_CONTAINERS ERC7730_CAP_BIT(2)
 /* Only "optional" (3), which is always shown: conditions hide nothing. */
 #define ERC7730_CAP_CONDITION_OPCODES ERC7730_CAP_BIT(3)
 /* A tokenAmount native-currency alias set may name at most this many
