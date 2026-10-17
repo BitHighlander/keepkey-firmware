@@ -1859,9 +1859,10 @@ TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
        {"Allow 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45 to spend ALL your "
         "USDC"}},
       // A real MultiSend: approve(max) inside, then a CoW swap order.
+      // WETH is not in the priority-only token table: named by contract.
       {"safe-SafeTx-multisend-approve-unlimited",
        {"Allow 0xC92E8bdf79f0507f65a392b0ab4667716BFE0110 to spend ALL your "
-        "WETH"}},
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"}},
   };
   const std::set<std::string> unbindable = {"evmos-MsgSend",
                                             "injective-MsgSend-v2"};
@@ -1886,9 +1887,19 @@ TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
                           4 * doc.leaves + 8 + (int)(value_bytes / 8));
     const std::vector<std::string> bodies = kkconfirm_capture_finish();
     const std::vector<std::string> titles = kkconfirm_captured_titles();
+    // A warning too long for one screen is paged ("UNLIMITED approval 1/2");
+    // its pages are joined back into one body.
     std::vector<std::string> warned;
-    for (size_t i = 0; i < titles.size(); i++)
-      if (titles[i] == "UNLIMITED approval") warned.push_back(bodies[i]);
+    for (size_t i = 0; i < titles.size(); i++) {
+      if (titles[i] == "UNLIMITED approval") {
+        warned.push_back(bodies[i]);
+      } else if (titles[i].rfind("UNLIMITED approval 1/", 0) == 0) {
+        warned.push_back(bodies[i]);
+      } else if (titles[i].rfind("UNLIMITED approval ", 0) == 0 &&
+                 !warned.empty()) {
+        warned.back() += bodies[i];
+      }
+    }
     // A canonical Permit2 PermitSingle has no screen in the walk; the FSM
     // shows this review, every value in words, before the signing screen.
     const Eip712Next* next = eip712_stream_next();
