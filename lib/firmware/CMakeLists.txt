@@ -103,7 +103,10 @@ add_custom_target(ethereum_tokens.def
   # 7.16 (D-014): stablecoins plus what coins[] and the fixtures need; the long
   # tail is named by signed ClearSign metadata instead of flash.
   COMMAND python3 ${CMAKE_SOURCE_DIR}/deps/python-keepkey/keepkeylib/eth/ethereum_tokens.py ${ETHEREUM_TOKENS}.def --profile priority-only
-  COMMAND python3 ${CMAKE_SOURCE_DIR}/deps/python-keepkey/keepkeylib/eth/uniswap_tokens.py ${UNISWAP_TOKENS}.def
+  COMMAND python3 ${CMAKE_SOURCE_DIR}/deps/python-keepkey/keepkeylib/eth/uniswap_tokens.py ${UNISWAP_TOKENS}.def --profile priority-only
+  # Both tables land in one tokens[] array: store each (chain, address) once.
+  COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/dedupe-token-def.py
+          ${ETHEREUM_TOKENS}.def ${UNISWAP_TOKENS}.def
   COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/tron_tokens.py
           ${CMAKE_SOURCE_DIR}/scripts/tron_tokens.json ${TRON_TOKENS}.def
   COMMAND python3 ${CMAKE_SOURCE_DIR}/scripts/verify-token-def.py

@@ -1865,9 +1865,10 @@ TEST(Ethereum, LiquidityFirstScreenNamesTheOperation) {
 // were checked, so a set upper byte traded on Sushiswap under a "Uniswap"
 // title. Non-canonical words are not claimed.
 TEST(Ethereum, ZxSwapClaimsOnlyCanonicalWords) {
-  static const uint8_t WETH[20] = {0xc0, 0x2a, 0xaa, 0x39, 0xb2, 0x23, 0xfe,
-                                   0x8d, 0x0a, 0x0e, 0x5c, 0x4f, 0x27, 0xea,
-                                   0xd9, 0x08, 0x3c, 0x75, 0x6c, 0xc2};
+  // Both tokens must be in the (priority-only) token table.
+  static const uint8_t USDC[20] = {0xa0, 0xb8, 0x69, 0x91, 0xc6, 0x21, 0x8b,
+                                   0x36, 0xc1, 0xd1, 0x9d, 0x4a, 0x2e, 0x9e,
+                                   0xb0, 0xce, 0x36, 0x06, 0xeb, 0x48};
   EthereumSignTx msg = EthereumSignTx{};
   msg.has_chain_id = true;
   msg.chain_id = 1;
@@ -1883,7 +1884,7 @@ TEST(Ethereum, ZxSwapClaimsOnlyCanonicalWords) {
   d[4 + 2 * 32 + 31] = 5;     // minimum buy
   d[4 + 4 * 32 + 31] = 2;     // tokens.length
   memcpy(d + 4 + 5 * 32 + 12, DAI_MAINNET_ADDRESS, 20);
-  memcpy(d + 4 + 6 * 32 + 12, WETH, 20);
+  memcpy(d + 4 + 6 * 32 + 12, USDC, 20);
   ASSERT_TRUE(zx_isZxSwap(&msg));
 
   for (size_t offset : {size_t{4 + 3 * 32},        // isSushi, top byte
