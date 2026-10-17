@@ -2775,7 +2775,9 @@ TEST(Solana, SchemaAppliesToCertifiedLookupResolvedAccount) {
       solana_inspectTxWithTrustedLut(raw, pos, resolved, 2, &tx),
       SOL_TX_REVIEW_OPAQUE); /* unknown Relay instruction, now resolvable */
   EXPECT_TRUE(tx.has_address_lookups);
-  EXPECT_FALSE(solana_certifiedLutShapeMatches(&tx, 0));
+  /* A proof is optional for a message with lookups; without one, the
+   * certified schema may display only static keys. */
+  EXPECT_TRUE(solana_certifiedLutShapeMatches(&tx, 0));
   EXPECT_TRUE(solana_certifiedLutShapeMatches(&tx, 2));
   ASSERT_FALSE(tx.instructions[0].external);
   EXPECT_EQ(memcmp(tx.instructions[0].program_id, program, 32), 0);
@@ -4657,4 +4659,211 @@ TEST(Solana, IntentReviewAccountPlaceholderReceiveExactAndLegacyFallback) {
   EXPECT_EQ(got[1].body,
             "You spend\n7738120.185405 SDICE\n"
             "4nCmpwne7hCoWTSpAd54uENmCgHJrHTyn4DMPCEMpump");
+}
+
+/* ---- Certified schemas over unresolved lookup tables ---- */
+
+/* The zero-lookup v0 `raw` given one lookup table that loads one writable
+ * key, which each (instruction, account slot) in `uses` then names. `was`
+ * receives the static key the last use replaced. */
+static std::vector<uint8_t> with_lookup(
+    std::vector<uint8_t> raw,
+    const std::vector<std::pair<uint8_t, uint8_t>>& uses,
+    uint8_t* was = nullptr) {
+  SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  EXPECT_FALSE(tx.has_address_lookups);
+  EXPECT_EQ(raw.back(), 0); /* lookup-table count */
+  for (const auto& use : uses) {
+    const size_t off =
+        tx.instructions[use.first].acct_indices + use.second - raw.data();
+    if (was) memcpy(was, tx.accounts[raw[off]], 32);
+    raw[off] = tx.num_static_accounts; /* the first loaded key */
+  }
+  raw.back() = 1;
+  raw.insert(raw.end(), 32, 0x55);
+  raw.insert(raw.end(), {1, 0, 0});
+  return raw;
+}
+
+static std::vector<Screen> pump_sell_review(const SolanaParsedTx& tx,
+                                            const SolanaInstrSchema& s,
+                                            bool* built) {
+  static SolanaSignTx msg; /* certificate + signed SDICE identity */
+  fill_certified_soltoshi_join(&msg);
+  std::vector<Screen> got;
+  *built = solana_buildIntentReview(&msg, &tx, &s, 4, tx.accounts[0],
+                                    "KeepKey Vault", "a9531b9d", true, collect,
+                                    &got);
+  return got;
+}
+
+static void expect_same_screens(const std::vector<Screen>& got,
+                                const std::vector<Screen>& want) {
+  ASSERT_EQ(got.size(), want.size());
+  for (size_t i = 0; i < got.size(); i++) {
+    EXPECT_EQ(got[i].title, want[i].title) << i;
+    EXPECT_EQ(got[i].body, want[i].body) << i;
+  }
+}
+
+/* Without a lookup proof, a certified schema still applies when the lookup
+ * key fills a role the review never shows (here the PumpSwap pool), and the
+ * review is the zero-lookup message's, screen for screen. The runtime tier
+ * still refuses any lookup table. */
+TEST(Solana, CertifiedSchemaAdmitsUnresolvedLookupInHiddenRole) {
+  AlphaTestRoot alpha; /* kCert501Hex is signed by the alpha root */
+  const std::vector<uint8_t> blob = pump_sell_v3("Sell {0} for at least {1}");
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
+  const std::vector<uint8_t> base_raw = solana_unhex(kPumpSellMessageHex);
+  SolanaParsedTx base;
+  ASSERT_EQ(solana_inspectTx(base_raw.data(), base_raw.size(), &base),
+            SOL_TX_REVIEW_OPAQUE);
+  bool built = false;
+  const std::vector<Screen> want = pump_sell_review(base, s, &built);
+  ASSERT_TRUE(built);
+
+  const std::vector<uint8_t> raw = with_lookup(base_raw, {{4, 0}});
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  EXPECT_TRUE(tx.has_lookup_tables);
+  EXPECT_EQ(tx.num_accounts, tx.num_static_accounts);
+  ASSERT_TRUE(tx.instructions[4].external);
+  EXPECT_EQ(memcmp(tx.instructions[4].program_id, kPumpAmmProgram, 32), 0);
+  EXPECT_TRUE(solana_certifiedLutShapeMatches(&tx, 0));
+
+  uint8_t idx = 0xFF;
+  ASSERT_TRUE(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx));
+  EXPECT_EQ(idx, 4);
+  EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx));
+
+  const std::vector<Screen> got = pump_sell_review(tx, s, &built);
+  ASSERT_TRUE(built);
+  expect_same_screens(got, want);
+  EXPECT_EQ(got[0].body,
+            "Sell 7738120.185405 SDICE for at least 8.509507889 SOL");
+}
+
+/* A displayed account (a token-amount mint, or a labelled account) that the
+ * unresolved lookup table supplies is refused; the review itself also fails
+ * closed on it. */
+TEST(Solana, CertifiedSchemaRefusesDisplayedLookupAccount) {
+  AlphaTestRoot alpha;
+  const std::vector<uint8_t> blob = pump_sell_v3("Sell {0} for at least {1}");
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
+  const std::vector<uint8_t> base_raw = solana_unhex(kPumpSellMessageHex);
+
+  for (uint8_t mint_slot : {(uint8_t)3, (uint8_t)4}) {
+    SCOPED_TRACE(mint_slot);
+    const std::vector<uint8_t> raw = with_lookup(base_raw, {{4, mint_slot}});
+    SolanaParsedTx tx;
+    ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+              SOL_TX_REVIEW_OPAQUE);
+    uint8_t idx = 0xFF;
+    EXPECT_FALSE(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx));
+    bool built = true;
+    pump_sell_review(tx, s, &built);
+    EXPECT_FALSE(built);
+  }
+
+  /* The pool, hidden above, labelled here. */
+  const std::vector<uint8_t> labelled = v3_schema(
+      kPumpAmmProgram, {0x33, 0xe6, 0x85, 0xa4, 0x01, 0x7f, 0x83, 0xad},
+      "Pump.fun", "Sell tokens",
+      {{SOL_SCHEMA_ARG_TOKEN_AMOUNT, "You sell", 3, METADATA_ROLE_SPEND_EXACT},
+       {SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Receive at least", 4,
+        METADATA_ROLE_RECEIVE_MIN}},
+      nullptr, {{0, "Pool"}});
+  ASSERT_TRUE(solana_parseInstrSchema(labelled.data(), labelled.size(), &s));
+  SolanaParsedTx tx;
+  uint8_t idx = 0xFF;
+  ASSERT_EQ(solana_inspectTx(base_raw.data(), base_raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  EXPECT_TRUE(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx));
+  const std::vector<uint8_t> raw = with_lookup(base_raw, {{4, 0}});
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  EXPECT_FALSE(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx));
+}
+
+/* Mixed: the hidden lookup key is admitted only while every companion the
+ * review renders stays static. The fee Transfer, the wSOL create and the
+ * wSOL close each refuse a lookup key; so does a Transfer beside a Relay
+ * call whose own accounts are static. */
+TEST(Solana, CertifiedSchemaWithUnresolvedLookupRefusesLookupCompanion) {
+  const std::vector<uint8_t> blob = pump_sell_v3("Sell {0} for at least {1}");
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
+  const std::vector<uint8_t> base_raw = solana_unhex(kPumpSellMessageHex);
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(base_raw.data(), base_raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  ASSERT_EQ(tx.instructions[2].type, SOL_INSTR_SYSTEM_TRANSFER);
+  ASSERT_EQ(tx.instructions[3].type, SOL_INSTR_ATA_CREATE);
+  ASSERT_EQ(tx.instructions[5].type, SOL_INSTR_TOKEN_CLOSE_ACCOUNT);
+
+  for (const auto& companion :
+       std::vector<std::pair<uint8_t, uint8_t>>{{2, 1}, {3, 1}, {5, 0}}) {
+    SCOPED_TRACE(companion.first);
+    const std::vector<uint8_t> raw = with_lookup(base_raw, {{4, 0}, companion});
+    ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+              SOL_TX_REVIEW_OPAQUE);
+    ASSERT_TRUE(tx.instructions[companion.first].external);
+    uint8_t idx = 0xFF;
+    EXPECT_FALSE(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx));
+  }
+
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  uint8_t relay[256];
+  const size_t len = build_relay_schema(relay, program, 2);
+  ASSERT_TRUE(solana_parseInstrSchema(relay, len, &s));
+  for (uint8_t to_index : {(uint8_t)4, (uint8_t)3}) {
+    uint8_t raw[512];
+    const size_t pos = build_lut_transfer_tx(raw, program, to_index);
+    ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+    ASSERT_TRUE(solana_certifiedLutShapeMatches(&tx, 0));
+    uint8_t idx = 0xFF;
+    EXPECT_EQ(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx),
+              to_index == 3)
+        << (unsigned)to_index;
+    EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx)) << (unsigned)to_index;
+  }
+}
+
+/* The 7.16 proof path is unchanged: with the lookup key bound by a certified
+ * proof, a displayed mint may come from the table and renders as if static.
+ * A proof for a message without lookups is still refused. */
+TEST(Solana, CertifiedLookupProofStillResolvesADisplayedAccount) {
+  AlphaTestRoot alpha;
+  const std::vector<uint8_t> blob = pump_sell_v3("Sell {0} for at least {1}");
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
+  const std::vector<uint8_t> base_raw = solana_unhex(kPumpSellMessageHex);
+  SolanaParsedTx base;
+  ASSERT_EQ(solana_inspectTx(base_raw.data(), base_raw.size(), &base),
+            SOL_TX_REVIEW_OPAQUE);
+  EXPECT_FALSE(solana_certifiedLutShapeMatches(&base, 1));
+  bool built = false;
+  const std::vector<Screen> want = pump_sell_review(base, s, &built);
+  ASSERT_TRUE(built);
+
+  uint8_t resolved[1][SOL_PUBKEY_SIZE];
+  const std::vector<uint8_t> raw = with_lookup(base_raw, {{4, 3}}, resolved[0]);
+  SolanaParsedTx tx;
+  ASSERT_EQ(
+      solana_inspectTxWithTrustedLut(raw.data(), raw.size(), resolved, 1, &tx),
+      SOL_TX_REVIEW_OPAQUE);
+  EXPECT_FALSE(tx.has_lookup_tables);
+  EXPECT_FALSE(tx.instructions[4].external);
+  EXPECT_TRUE(solana_certifiedLutShapeMatches(&tx, 1));
+  uint8_t idx = 0xFF;
+  ASSERT_TRUE(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx));
+  EXPECT_EQ(idx, 4);
+  expect_same_screens(pump_sell_review(tx, s, &built), want);
+  EXPECT_TRUE(built);
 }
