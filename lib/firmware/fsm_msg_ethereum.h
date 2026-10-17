@@ -340,6 +340,13 @@ static Erc7730UiResult confirm_erc7730_source_and_intent(
                                  NULL, workflow->intent))
       return ERC7730_UI_CANCELLED;
     workflow->intent_confirmed = true;
+    /* A Safe delegatecall, read from the signed calldata: said before any
+     * field, whatever the definition shows. */
+    if (!inner && workflow->safe_delegatecall &&
+        !confirm(ButtonRequestType_ButtonRequest_Other, "DELEGATECALL",
+                 "Runs the contract in 'to' as the Safe, with its full "
+                 "authority. Not checked."))
+      return ERC7730_UI_CANCELLED;
   }
   return ERC7730_UI_OK;
 }
@@ -593,14 +600,14 @@ static void show_erc7730_embedded(Erc7730Workflow* workflow) {
 }
 
 /* Refused: a Safe delegatecall runs the callee's code as the Safe, so no
- * definition of the callee describes what it does. Say so, naming it. */
+ * definition of the callee describes what it does. The DELEGATECALL screen
+ * comes first; a decline there is the user's. */
 static void show_erc7730_delegatecall(Erc7730Workflow* workflow) {
-  char to[43];
-  if (erc7730_format_address(workflow->field.address, false, to, sizeof(to)))
-    (void)review(ButtonRequestType_ButtonRequest_Other, "DELEGATECALL",
-                 "Runs %s as the Safe, with its full authority. "
-                 "Not clear-signed.",
-                 to);
+  const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
+  if (ui != ERC7730_UI_OK) {
+    fail_erc7730_ui(workflow, ui);
+    return;
+  }
   fail_erc7730_field(workflow, FailureType_Failure_Other,
                      _("DELEGATECALL cannot be clear-signed"));
 }

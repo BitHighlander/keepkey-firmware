@@ -465,9 +465,12 @@ TEST(Erc7730Workflow, EmbeddedApproveIsClassifiedLikeATopLevelOne) {
 }
 
 // A Safe exec (to, value, data, operation): one full calldata pass, fed in
-// `chunk`-byte pieces, of a 68-byte inner call with `operation`.
+// `chunk`-byte pieces, of a 68-byte inner call with `operation` in the
+// operation word's byte `operation_at` (argument byte 96..127). A byte above
+// the last is read as a uint256 word: a uint8 one would not decode.
 static bool safeExecPass(Erc7730Workflow* workflow, const uint8_t selector[4],
-                         uint8_t operation, size_t chunk) {
+                         uint8_t operation, size_t chunk,
+                         size_t operation_at = 127) {
   *workflow = Erc7730Workflow{};
   memcpy(workflow->identity.selector_or_type_hash, selector, 4);
   workflow->phase = ERC7730_WORKFLOW_READY;
@@ -483,12 +486,12 @@ static bool safeExecPass(Erc7730Workflow* workflow, const uint8_t selector[4],
   workflow->loader.abi.nodes[2].size = 256;
   workflow->loader.abi.nodes[3].kind = ERC7730_ABI_BYTES;
   workflow->loader.abi.nodes[4].kind = ERC7730_ABI_UINT;
-  workflow->loader.abi.nodes[4].size = 8;
+  workflow->loader.abi.nodes[4].size = operation_at == 127 ? 8 : 256;
 
   std::vector<uint8_t> args(5 * 32 + 96, 0);
   args[31] = 0x11;        // to
   args[95] = 128;         // data offset
-  args[127] = operation;  // operation
+  args[operation_at] = operation;  // operation
   args[159] = 68;         // data length
   args[160] = 0xa9;       // transfer(...)
   EthereumSignTx tx{};
@@ -516,9 +519,15 @@ TEST(Erc7730Workflow, SafeExecOperationIsReadFromTheCalldata) {
   const uint8_t exec[4] = {0x6a, 0x76, 0x12, 0x02};
   const uint8_t module[4] = {0x46, 0x87, 0x21, 0xa7};
   const uint8_t module_data[4] = {0x52, 0x29, 0x07, 0x3f};
+  // Zodiac Roles v1/v2 execTransactionWithRole(ReturnData).
+  const uint8_t roles_v1[4] = {0x69, 0x28, 0xe7, 0x4b};
+  const uint8_t roles_v2[4] = {0xc6, 0xfe, 0x87, 0x47};
+  const uint8_t roles_v1_data[4] = {0xb0, 0xc1, 0x99, 0x12};
+  const uint8_t roles_v2_data[4] = {0x2b, 0x99, 0xe5, 0x06};
   const uint8_t other[4] = {0x29, 0x23, 0x8e, 0xe4};
   Erc7730Workflow workflow{};
-  for (const uint8_t* selector : {exec, module, module_data}) {
+  for (const uint8_t* selector : {exec, module, module_data, roles_v1, roles_v2,
+                                  roles_v1_data, roles_v2_data}) {
     for (size_t chunk : {(size_t)1, (size_t)7, (size_t)100, (size_t)256}) {
       ASSERT_TRUE(safeExecPass(&workflow, selector, 1, chunk));
       EXPECT_TRUE(workflow.safe_delegatecall) << chunk;
@@ -527,6 +536,11 @@ TEST(Erc7730Workflow, SafeExecOperationIsReadFromTheCalldata) {
     }
     ASSERT_TRUE(safeExecPass(&workflow, selector, 2, 256));
     EXPECT_TRUE(workflow.safe_delegatecall);
+    // Any byte of the operation word counts.
+    for (size_t at : {(size_t)96, (size_t)120}) {
+      ASSERT_TRUE(safeExecPass(&workflow, selector, 1, 7, at));
+      EXPECT_TRUE(workflow.safe_delegatecall) << at;
+    }
   }
   ASSERT_TRUE(safeExecPass(&workflow, other, 1, 256));
   EXPECT_FALSE(workflow.safe_delegatecall);

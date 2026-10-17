@@ -672,12 +672,19 @@ bool erc7730_workflow_start_signing(Erc7730Workflow* workflow,
 }
 
 /* Safe's execTransaction, execTransactionFromModule and
- * execTransactionFromModuleReturnData take (to, value, data, operation, ...):
- * operation 1 delegatecalls `to`, running its code as the Safe. */
+ * execTransactionFromModuleReturnData, and Zodiac Roles v1/v2
+ * execTransactionWithRole and execTransactionWithRoleReturnData, take
+ * (to, value, data, operation, ...): operation 1 delegatecalls `to`, running
+ * its code as the Safe. */
 static bool safe_exec_selector(const uint8_t selector[4]) {
-  return memcmp(selector, "\x6a\x76\x12\x02", 4) == 0 ||
-         memcmp(selector, "\x46\x87\x21\xa7", 4) == 0 ||
-         memcmp(selector, "\x52\x29\x07\x3f", 4) == 0;
+  static const uint8_t selectors[][4] = {
+      {0x6a, 0x76, 0x12, 0x02}, {0x46, 0x87, 0x21, 0xa7},
+      {0x52, 0x29, 0x07, 0x3f}, {0x69, 0x28, 0xe7, 0x4b},
+      {0xc6, 0xfe, 0x87, 0x47}, {0xb0, 0xc1, 0x99, 0x12},
+      {0x2b, 0x99, 0xe5, 0x06}};
+  for (size_t i = 0; i < sizeof(selectors) / sizeof(selectors[0]); i++)
+    if (memcmp(selector, selectors[i], 4) == 0) return true;
+  return false;
 }
 
 Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
