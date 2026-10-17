@@ -764,8 +764,9 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
   }
 
   if (certified_request) {
-    /* Requires a certified schema, plus a tx-bound LUT proof iff the message
-     * has lookups. Anything partial or invalid is a hard failure. */
+    /* Requires a certified schema, and a tx-bound LUT proof only to show a
+     * lookup account (without one, lookup accounts may fill only roles the
+     * review never shows). Anything partial or invalid is a hard failure. */
     const bool has_lut_material = msg->lut_account_count > 0 ||
                                   msg->has_lut_signature ||
                                   msg->has_lut_signer_key_id;
@@ -805,8 +806,7 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
                         : solana_inspectTx(msg->raw_tx.bytes, msg->raw_tx.size,
                                            &parsed);
         if (tx_review == SOL_TX_REVIEW_MALFORMED ||
-            /* A lookup proof if and only if the message has a lookup
-             * section. */
+            /* A lookup proof only for a message with a lookup section. */
             !solana_certifiedLutShapeMatches(&parsed, lut_n) ||
             !solana_parseInstrSchema(msg->schema_payload.bytes,
                                      msg->schema_payload.size, &schema) ||

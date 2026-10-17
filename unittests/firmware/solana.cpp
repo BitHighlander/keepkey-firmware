@@ -4867,3 +4867,136 @@ TEST(Solana, CertifiedLookupProofStillResolvesADisplayedAccount) {
   expect_same_screens(pump_sell_review(tx, s, &built), want);
   EXPECT_TRUE(built);
 }
+
+/* A lookup key keeps a native program from being decoded natively, and a
+ * certified schema for that program must not decode it instead: a token
+ * TransferChecked whose destination comes from the table would sign with the
+ * destination on no screen. Every natively decoded program is refused; any
+ * other program still matches with the same lookup key in a hidden role. */
+TEST(Solana, CertifiedSchemaNeverStandsInForANativeDecoder) {
+  /* v0: static [signer, source, mint, program, destination]; one instruction
+   * (source, mint, destination, owner) with data 12 || amount || decimals,
+   * TransferChecked's encoding. With `lookup`, the destination is the one
+   * key a lookup table loads. */
+  auto build = [](const uint8_t* program, bool lookup) {
+    std::vector<uint8_t> r = {0x80, 1, 0, 2, 5};
+    for (uint8_t b : {0x11, 0x22, 0x44}) r.insert(r.end(), 32, b);
+    r.insert(r.end(), program, program + 32);
+    r.insert(r.end(), 32, 0x66);
+    r.insert(r.end(), 32, 0xBB); /* blockhash */
+    r.insert(r.end(), {1, 3, 4, 1, 2, (uint8_t)(lookup ? 5 : 4), 0, 10, 12,
+                       0x40, 0x42, 0x0F, 0, 0, 0, 0, 0, 6});
+    if (lookup) {
+      r.push_back(1);
+      r.insert(r.end(), 32, 0x55);
+      r.insert(r.end(), {1, 0, 0});
+    } else {
+      r.push_back(0);
+    }
+    return r;
+  };
+  auto schema = [](const uint8_t* program, SolanaInstrSchema* s) {
+    const std::vector<uint8_t> blob = v3_schema(
+        program, {12}, "Token", "Transfer",
+        {{SOL_SCHEMA_ARG_TOKEN_AMOUNT, "Amount", 1, METADATA_ROLE_SPEND_EXACT},
+         {SOL_SCHEMA_ARG_U8, "Decimals", -1, METADATA_ROLE_NONE}},
+        "Send {0}");
+    return solana_parseInstrSchema(blob.data(), blob.size(), s);
+  };
+
+  SolanaInstrSchema s;
+  SolanaParsedTx tx;
+  uint8_t idx = 0xFF;
+  ASSERT_TRUE(schema(SOL_TOKEN_PROGRAM, &s));
+  std::vector<uint8_t> raw = build(SOL_TOKEN_PROGRAM, false);
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_VERIFIED);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_TOKEN_TRANSFER_CHECKED);
+  EXPECT_FALSE(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx));
+
+  const uint8_t* const native[] = {
+      SOL_SYSTEM_PROGRAM,         SOL_TOKEN_PROGRAM, SOL_TOKEN_2022_PROGRAM,
+      SOL_STAKE_PROGRAM,          SOL_VOTE_PROGRAM,  SOL_ATA_PROGRAM,
+      SOL_COMPUTE_BUDGET_PROGRAM, SOL_MEMO_PROGRAM};
+  for (size_t i = 0; i < sizeof(native) / sizeof(native[0]); i++) {
+    SCOPED_TRACE(i);
+    ASSERT_TRUE(schema(native[i], &s));
+    raw = build(native[i], true);
+    ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+              SOL_TX_REVIEW_OPAQUE);
+    ASSERT_TRUE(tx.instructions[0].external);
+    EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_UNKNOWN);
+    EXPECT_FALSE(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx));
+  }
+
+  uint8_t program[32];
+  memset(program, 0x42, sizeof(program));
+  ASSERT_TRUE(schema(program, &s));
+  raw = build(program, true);
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  idx = 0xFF;
+  EXPECT_TRUE(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx));
+  EXPECT_EQ(idx, 0);
+  EXPECT_FALSE(solana_schemaApplies(&s, &tx, &idx));
+}
+
+/* The fsm's proof path, step by step, with a delegate-signed proof: the proof
+ * verifies only for the key the table really loads, then binds it, and the
+ * schema may show it. Without the proof the same message is refused. */
+TEST(Solana, SignedLookupProofLetsTheSchemaShowALookupAccount) {
+  static const uint8_t root_priv[32] = {
+      0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+      0xcc, 0xdd, 0xee, 0xf0, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+      0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11};
+  static const uint8_t delegate_priv[32] = {7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+                                            7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+                                            7, 7, 7, 7, 7, 7, 7, 7, 7, 7};
+  uint8_t root_pub[33], delegate_pub[33];
+  ecdsa_get_public_key33(&secp256k1, root_priv, root_pub);
+  ecdsa_get_public_key33(&secp256k1, delegate_priv, delegate_pub);
+
+  const std::vector<uint8_t> blob = pump_sell_v3("Sell {0} for at least {1}");
+  SolanaInstrSchema s;
+  ASSERT_TRUE(solana_parseInstrSchema(blob.data(), blob.size(), &s));
+  uint8_t resolved[1][SOL_PUBKEY_SIZE];
+  const std::vector<uint8_t> raw =
+      with_lookup(solana_unhex(kPumpSellMessageHex), {{4, 3}}, resolved[0]);
+
+  std::vector<uint8_t> pre((const uint8_t*)"KeepKeySolanaTxAccounts/1",
+                           (const uint8_t*)"KeepKeySolanaTxAccounts/1" + 25);
+  uint8_t h[32], digest[32], sig[64];
+  sha256_Raw(raw.data(), raw.size(), h);
+  pre.insert(pre.end(), h, h + 32);
+  pre.insert(pre.end(), {1, 0, 0, 0});
+  pre.insert(pre.end(), resolved[0], resolved[0] + 32);
+  sha256_Raw(pre.data(), pre.size(), digest);
+  ASSERT_EQ(
+      0, ecdsa_sign_digest(&secp256k1, delegate_priv, digest, sig, NULL, NULL));
+
+  clearsign_root_set_test_root(root_pub);
+  const std::vector<uint8_t> cert =
+      rootCert(root_priv, delegate_pub, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW,
+               CLEARSIGN_SCOPE_SOLANA, 1818806400u, "Test Delegate");
+  EXPECT_TRUE(solana_lut_accounts_certified(raw.data(), raw.size(), resolved, 1,
+                                            cert.data(), cert.size(), sig, 64));
+  uint8_t swapped[1][SOL_PUBKEY_SIZE];
+  memset(swapped[0], 0x55, SOL_PUBKEY_SIZE);
+  EXPECT_FALSE(solana_lut_accounts_certified(
+      raw.data(), raw.size(), swapped, 1, cert.data(), cert.size(), sig, 64));
+  clearsign_root_set_test_root(NULL);
+
+  SolanaParsedTx tx;
+  uint8_t idx = 0xFF;
+  ASSERT_EQ(
+      solana_inspectTxWithTrustedLut(raw.data(), raw.size(), resolved, 1, &tx),
+      SOL_TX_REVIEW_OPAQUE);
+  EXPECT_TRUE(solana_certifiedLutShapeMatches(&tx, 1));
+  ASSERT_TRUE(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx));
+  EXPECT_EQ(idx, 4);
+
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  EXPECT_TRUE(solana_certifiedLutShapeMatches(&tx, 0));
+  EXPECT_FALSE(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx));
+}

@@ -1202,6 +1202,18 @@ static bool schema_accountKnown(const SolanaParsedTx* tx,
          ix->acct_indices[slot] < tx->num_accounts;
 }
 
+/* Programs parse_instruction_section decodes natively. */
+static bool schema_programIsNative(const uint8_t program_id[SOL_PUBKEY_SIZE]) {
+  static const uint8_t* const kNative[] = {
+      SOL_SYSTEM_PROGRAM,         SOL_TOKEN_PROGRAM, SOL_TOKEN_2022_PROGRAM,
+      SOL_STAKE_PROGRAM,          SOL_VOTE_PROGRAM,  SOL_ATA_PROGRAM,
+      SOL_COMPUTE_BUDGET_PROGRAM, SOL_MEMO_PROGRAM};
+  for (size_t i = 0; i < sizeof(kNative) / sizeof(kNative[0]); i++) {
+    if (memcmp(program_id, kNative[i], SOL_PUBKEY_SIZE) == 0) return true;
+  }
+  return false;
+}
+
 /* `signer` (the device key) is set only on the certified tier. */
 static bool schema_applies(const SolanaInstrSchema* schema,
                            const SolanaParsedTx* tx, const uint8_t* signer,
@@ -1216,7 +1228,11 @@ static bool schema_applies(const SolanaInstrSchema* schema,
   uint8_t match = 0;
   for (uint8_t i = 0; i < tx->num_instructions; i++) {
     const SolanaParsedInstruction* ix = &tx->instructions[i];
-    if (ix->external && !certified) continue;
+    /* A lookup key keeps a native program from being decoded; a schema
+     * must not stand in for that decoder (a Transfer would lose its shown
+     * destination). */
+    if (ix->external && (!certified || schema_programIsNative(ix->program_id)))
+      continue;
     /* Schemas never override a native decoder. */
     if (ix->type != SOL_INSTR_UNKNOWN) continue;
     if (memcmp(ix->program_id, schema->program_id, SOL_PUBKEY_SIZE) != 0) {
