@@ -46,6 +46,7 @@ void setup(void);
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -3415,6 +3416,7 @@ TEST_F(CertifiedMetadataTest, NameRecordParsesTheServerSerializedBody) {
 /* ---- v0x07: certified Uniswap Universal Router decoder ------------------- */
 
 #include "uniswap_ur_sample.h"
+#include "uniswap_ur_v4_routers.h"
 #include "uniswap_ur_vectors.h"
 
 namespace {
@@ -3741,7 +3743,7 @@ TEST_F(CertifiedMetadataTest, UniswapCallPastTheOldBufferIsReviewed) {
   UrSummary want;
   for (const auto& c : urs::calls()) {
     if (c.calldata.size() > 1472 &&
-        ur_decode(c.calldata.data(), c.calldata.size(), &plan) &&
+        ur_decode(c.calldata.data(), c.calldata.size(), router.data(), &plan) &&
         ur_summarize(&plan, router.data(), zero, &want)) {
       call = &c;
       break;
@@ -3796,7 +3798,7 @@ void review_v4_call(bool hooked, std::vector<Shown>* got) {
   for (const auto& c : urs::calls()) {
     bool v4 = false;
     if (c.calldata.size() <= 1024 || !c.ok ||
-        !ur_decode(c.calldata.data(), c.calldata.size(), &plan))
+        !ur_decode(c.calldata.data(), c.calldata.size(), router.data(), &plan))
       continue;
     for (size_t i = 0; i < plan.n; i++)
       v4 = v4 || plan.steps[i].kind == UR_V4_SWAP_EXACT_IN;
@@ -3859,6 +3861,83 @@ TEST_F(CertifiedMetadataTest, UniswapV4HookIsShown) {
   size_t hooks = 0;
   for (const auto& s : got) hooks += s.title == "Pool hook";
   EXPECT_EQ(hooks, 1u);
+}
+
+/* Real V4 swaps to the other listed routers (Ethereum UR 2.0 / 2.1.1 /
+ * 2.1.2, Base UR 2.0, Arbitrum UR 2.0 / 2.1.2), each under a certificate for
+ * its own chain, streamed in 200-byte chunks after the first 1,024: the
+ * device reviews what ur_summarize says, and a certificate for another
+ * chain does not make the entry apply. */
+TEST_F(CertifiedMetadataTest, UniswapV4OnEveryListedRouterIsReviewedOnItsChain) {
+  std::map<std::string, bool> done;
+  for (const auto& x : urx::calls()) {
+    if (done[x.router] || x.calldata.compare(0, 8, "3593564c") != 0) continue;
+    const std::vector<uint8_t> router = ur_unhex(x.router);
+    const std::vector<uint8_t> data = ur_unhex(x.calldata);
+    const std::vector<uint8_t> value = ur_unhex(x.value);
+    UrPlan plan;
+    UrSummary want;
+    if (data.size() <= 1024 ||
+        !ur_decode(data.data(), data.size(), router.data(), &plan) ||
+        !ur_summarize(&plan, router.data(), value.data(), &want))
+      continue;
+    bool v4 = false;
+    for (size_t i = 0; i < plan.n; i++)
+      v4 = v4 || plan.steps[i].kind == UR_V4_SWAP_EXACT_IN;
+    if (!v4) continue;
+    std::vector<UrToken> tokens;
+    if (!want.in_is_eth)
+      tokens.push_back({hex_of(want.token_in, 20), "TOKA", 6});
+    if (!want.out_is_eth)
+      tokens.push_back({hex_of(want.token_out, 20), "TOKB", 18});
+    for (int other = 0; other < 2; other++) {
+      // other: an entry certified for chain 10, sent with this tx's chain.
+      const uint32_t chain = other ? 10 : x.chain;
+      auto e = envelope(
+          mint_cert(chain, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+          sign_body(build_decoder_body(router, chain, tokens)));
+      ASSERT_EQ(METADATA_VERIFIED,
+                signed_metadata_process(e.data(), e.size(),
+                                        METADATA_KEYID_DELEGATE))
+          << x.tx;
+      EthereumSignTx msg;
+      std::vector<uint8_t> first(data.begin(), data.begin() + 1024);
+      make_ur_msg(&msg, router, first);
+      msg.chain_id = x.chain;
+      msg.data_length = (uint32_t)data.size();
+      msg.value.size = 32;
+      memcpy(msg.value.bytes, value.data(), 32);
+      if (other) {
+        EXPECT_FALSE(signed_metadata_matches_tx(&msg)) << x.tx;
+        EXPECT_FALSE(signed_metadata_ur_pending()) << x.tx;
+        continue;
+      }
+      ASSERT_FALSE(signed_metadata_matches_tx(&msg)) << x.tx;
+      ASSERT_TRUE(signed_metadata_ur_pending()) << x.tx;
+      size_t at = 1024;
+      while (data.size() - at > 200) {
+        ASSERT_TRUE(signed_metadata_ur_feed(data.data() + at, 200)) << x.tx;
+        at += 200;
+      }
+      ASSERT_TRUE(signed_metadata_ur_feed(data.data() + at,
+                                          (uint32_t)(data.size() - at)))
+          << x.tx;
+      const SignedMetadata* md = signed_metadata_get();
+      EXPECT_EQ(0, memcmp(&md->ur, &want, sizeof(want))) << x.tx;
+      std::vector<Shown> got;
+      ASSERT_TRUE(signed_metadata_build_ur_review(md, "Test Delegate",
+                                                  "A9531B9D", collect_shown,
+                                                  &got));
+      ASSERT_FALSE(got.empty());
+      EXPECT_EQ(got[0].title, "Uniswap") << x.tx;
+      printf("chain %u router %s %s:\n", x.chain, x.router.c_str(),
+             x.tx.c_str());
+      for (const auto& g : got)
+        printf("  [%s] %s\n", g.title.c_str(), g.body.c_str());
+    }
+    done[x.router] = true;
+  }
+  EXPECT_GE(done.size(), 5u);
 }
 
 /* The 2026-10-03 root ceremony (Base, Arbitrum): the device's own verifier,

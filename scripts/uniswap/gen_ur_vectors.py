@@ -8,8 +8,9 @@ C unit tests pass only when the two implementations agree on real calldata.
   gen_ur_vectors.py header DIR > unittests/firmware/uniswap_ur_vectors.h
   gen_ur_vectors.py pack DIR > unittests/firmware/uniswap_ur_sample.bin
   gen_ur_vectors.py expect unittests/firmware/uniswap_ur_sample.bin > unittests/firmware/uniswap_ur_expected.txt
+  gen_ur_vectors.py v4x DIR > unittests/firmware/uniswap_ur_v4_routers.h   # V4 calls to other routers
 """
-import glob, json, os, sys, urllib.request
+import glob, json, os, random, sys, urllib.request
 
 # UR 2.0, UR 1.2, and UR 2.1.2 (the router the Uniswap app sends to on Base).
 ROUTERS = ["0x6fF5693b99212Da76ad316178A184AB56D299b43", "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD",
@@ -151,6 +152,23 @@ def pack(d):
 # ActionConstants.sol, Actions.sol, DeltaResolver.sol, BipsLibrary.sol).
 # Independent of lib/firmware/uniswap_ur.c; uniswap_ur.cpp requires the two to
 # agree on every sample call (`expect`).
+#
+# V4 on other routers: github.com/Uniswap/universal-router tags 2.0.0, 2.1.1
+# and 2.1.2 (Dispatcher.sol and V4SwapRouter.sol identical for V4_SWAP) and
+# the lib/v4-periphery each pins (444c526, 3231810, 545a5d2). IV4Router's
+# Exact{In,Out}putParams gained `uint256[] minHopPriceX36` after the path in
+# 3231810; 545a5d2 makes an exact output revert unless filled
+# (V4ExactOutputUnfilled), before which the router takes what the pool gave.
+# Addresses: deploy-addresses/{mainnet,base,arbitrum}.json.
+V4_LAYOUT = {  # router -> (has minHopPriceX36, exact output delivered in full)
+    0x66a9893cc07d91d95644aedd05d03f95e1dba8af: (False, False),  # mainnet UniversalRouterV2
+    0x6ff5693b99212da76ad316178a184ab56d299b43: (False, False),  # base UniversalRouterV2
+    0xa51afafe0263b40edaef0df8781ea9aa03e381a3: (False, False),  # arbitrum UniversalRouterV2
+    0x4c82d1fbfe28c977cbb58d8c7ff8fcf9f70a2cca: (True, False),   # mainnet UniversalRouterV2_1_1
+    0x23617e59a5925b2a4bf75d73ff6711cd0b29de85: (True, True),    # mainnet UniversalRouterV2_1_2
+    0xd6145b2d3f379919e8cdeda7b97e37c4b2ca9c40: (True, True),    # base UniversalRouterV2_1_2
+    0x2d01411773c8c24805306e89a41f7855c3c4fe65: (True, True),    # arbitrum UniversalRouterV2_1_2
+}
 
 class Refused(Exception):
     pass
@@ -212,7 +230,7 @@ def step(kind, token_in=0, token_out=0, recipient=0, amount=0, limit=0, payer=Fa
                 amount=amount, limit=limit, payer=payer, expiration=expiration)
 
 
-def v4_steps(inp, hooks):
+def v4_steps(inp, hooks, min_hop):
     """V4_SWAP input: abi.encode(bytes actions, bytes[] params) (V4Router)."""
     b = Body(inp)
     actions = b.bytes_at(0, 0)
@@ -231,13 +249,17 @@ def v4_steps(inp, hooks):
         q = Body(p)
         if a in (SW_IN, SW_OUT):
             # Exact{In,Out}putParams(currency, PathKey[] path, uint256[] minHopPriceX36,
-            # uint128 amount, uint128 limit), abi-encoded as one dynamic struct.
+            # uint128 amount, uint128 limit), abi-encoded as one dynamic struct;
+            # UR 2.0 has no minHopPriceX36.
             sb = q.ofs(0)
             cur = q.addr(sb)
             pth = sb + q.ofs(sb + 32)
-            q.ofs(sb + 64)
-            amount = q.uint(sb + 96, 128)
-            limit = q.uint(sb + 128, 128)
+            a0 = sb + 64
+            if min_hop:
+                q.ofs(a0)
+                a0 += 32
+            amount = q.uint(a0, 128)
+            limit = q.uint(a0 + 32, 128)
             npath = q.ofs(pth)
             need(1 <= npath <= V4_MAX_PATH)
             path = []
@@ -281,8 +303,8 @@ def v4_steps(inp, hooks):
     return [swap]
 
 
-def decode_plan(raw):
-    """(steps, hooks, deadline) for an execute() call, or Refused."""
+def decode_plan(raw, router):
+    """(steps, hooks, deadline) for an execute() call to `router`, or Refused."""
     cd = bytes.fromhex(raw[2:] if raw.startswith('0x') else raw)
     need(len(cd) >= 4)
     sel = cd[:4].hex()
@@ -323,7 +345,8 @@ def decode_plan(raw):
             st = step({4: SWEEP, 5: TRANSFER, 6: PAY_PORTION}[c], inp.addr(0), recipient=inp.addr(32),
                       amount=inp.word(64))
         elif c == 0x10:
-            steps += v4_steps(inp.b, hooks)
+            need(router in V4_LAYOUT)
+            steps += v4_steps(inp.b, hooks, V4_LAYOUT[router][0])
             need(len(steps) <= MAX_STEPS)
             continue
         else:
@@ -352,9 +375,12 @@ def summarize(steps, hooks, router, value):
     permits = [k for k, s in enumerate(steps) if s['kind'] == PERMIT]
     need(permits in ([], [0]))
     eth = value != 0
-    # V4 layouts were checked against UR 2.1.2 only (older routers encode
-    # ExactInputParams without minHopPriceX36).
-    need(router == int(ROUTERS[2], 16) or all(s['kind'] not in (V4_IN, V4_OUT) for s in swaps))
+    # V4 only where its layout was checked; exact output only where the
+    # router reverts unless it is delivered in full.
+    for s in swaps:
+        if s['kind'] in (V4_IN, V4_OUT):
+            need(router in V4_LAYOUT)
+            need(s['kind'] == V4_IN or V4_LAYOUT[router][1])
     for s in swaps:
         if s['kind'] not in (V4_IN, V4_OUT):
             need(s['token_in'] != 0 and s['token_out'] != 0)
@@ -489,7 +515,7 @@ def expect_line(key, raw, router, value):
     """One line of uniswap_ur_expected.txt: the plan (or D 0) and the review (or S 0)."""
     h = lambda v, n: '%0*x' % (2 * n, v)
     try:
-        steps, hooks, deadline = decode_plan(raw)
+        steps, hooks, deadline = decode_plan(raw, router)
     except Refused:
         return '%s D 0' % key
     parts = [key, 'D', '1', str(len(steps))]
@@ -523,7 +549,6 @@ def expect(sample_bin):
         i += 69 + n
     # Mutated V4 calls: the C decoder may refuse more (it reads forward only),
     # never accept something this model reads differently.
-    import random
     rng = random.Random(7730)
     i = k = 0
     while i < len(b):
@@ -542,14 +567,100 @@ def expect(sample_bin):
             print(line.replace('mut%d ' % k, 'mut%d %s %d %s ' % (
                 k, key, len(edits), ' '.join('%d:%d' % e for e in edits)), 1))
             k += 1
+    nmut = k
     import re
     hdr = open(os.path.join(os.path.dirname(sample_bin), 'uniswap_ur_vectors.h')).read()
     for k, m in enumerate(re.finditer(r'\{"(0x[0-9a-f]{64})", "([0-9a-f]{40})", "([0-9a-f]{64})", "([0-9a-f]+)"', hdr)):
         print(expect_line('acc%d' % k, m.group(4), int(m.group(2), 16), int(m.group(3), 16)))
     v4 = hdr[hdr.index('v4_rejected()'):]
-    for k, m in enumerate(re.finditer(r'"([0-9a-f]{100,})"', v4)):
-        print(expect_line('v4r%d' % k, m.group(1), router, 0))
+    rejected = [m.group(1) for m in re.finditer(r'"([0-9a-f]{100,})"', v4)]
+    for k, raw in enumerate(rejected):
+        print(expect_line('v4r%d' % k, raw, router, 0))
+    # The same calls read as what they are: V4 calls to Base UR 2.0.
+    for k, raw in enumerate(rejected):
+        print(expect_line('v4o%d' % k, raw, BASE_UR20, 0))
+    # Real V4 calls to the other listed routers (uniswap_ur_v4_routers.h):
+    # as their router reads them (v4x), read with the other V4 layout (v4y),
+    # and mutated.
+    calls = v4x_calls(os.path.join(os.path.dirname(sample_bin), 'uniswap_ur_v4_routers.h'))
+    for j, (h, chain, r, value, raw) in enumerate(calls):
+        print(expect_line('v4x%d' % j, raw, r, value))
+    for j, (h, chain, r, value, raw) in enumerate(calls):
+        print(expect_line('v4y%d' % j, raw, other_layout(r), value))
+    rng = random.Random(7731)
+    k = nmut
+    for j, (h, chain, r, value, raw) in enumerate(calls):
+        for edits in v4_mutants(raw, rng, 8):
+            cd = bytearray(bytes.fromhex(raw))
+            for at, v in edits:
+                cd[at] = v
+            line = expect_line('mut%d' % k, cd.hex(), r, value)
+            print(line.replace('mut%d ' % k, 'mut%d v4x%d %d %s ' % (
+                k, j, len(edits), ' '.join('%d:%d' % e for e in edits)), 1))
+            k += 1
+
+
+BASE_UR20 = 0x6ff5693b99212da76ad316178a184ab56d299b43
+
+
+def other_layout(router):
+    """A listed router with the other Exact{In,Out}putParams layout."""
+    return 0xd6145b2d3f379919e8cdeda7b97e37c4b2ca9c40 if not V4_LAYOUT[router][0] else BASE_UR20
+
+
+def v4x_calls(path):
+    import re
+    out = []
+    for m in re.finditer(r'\{"(0x[0-9a-f]{64})", (\d+), "([0-9a-f]{40})", "([0-9a-f]{64})", "([0-9a-f]+)"\}',
+                         open(path).read()):
+        out.append((m.group(1), int(m.group(2)), int(m.group(3), 16), int(m.group(4), 16), m.group(5)))
+    return out
+
+
+def v4x(d, per_router=6):
+    """uniswap_ur_v4_routers.h: real execute() calls with V4_SWAP to every
+    listed router but Base UR 2.1.2 (the D-021 sample covers it), from
+    DIR/<chain>-<router>[-owner|-shaped].json files of {hash, status, value,
+    raw_input}: the owner's own swaps, then calls found through the chain's
+    V4 PoolManager Swap logs whose sender is the router (-shaped: only calls
+    whose V4 action lists are ones the device reads), read back from public
+    RPCs. Successful calls only, in that order then by hash, at most
+    `per_router` per router."""
+    import re
+    by = {}
+    for f in sorted(glob.glob(os.path.join(d, '*.json'))):
+        m = re.match(r'(\d+)-(0x[0-9a-f]{40})(-owner|-shaped)?\.json$', os.path.basename(f))
+        if not m:
+            continue
+        key = (int(m.group(1)), int(m.group(2), 16))
+        for it in json.load(open(f)):
+            raw = it['raw_input']
+            if it['status'] != 'ok' or not raw.startswith(('0x3593564c', '0x24856bc3')):
+                continue
+            if not any(c[0] == 0x10 for c in decode(raw)):
+                continue
+            rank = {'-owner': 0, '-shaped': 1}.get(m.group(3), 2)
+            prev = by.setdefault(key, {}).get(it['hash'].lower())
+            if not prev or rank < prev[0]:
+                by[key][it['hash'].lower()] = (rank, int(it['value']), raw)
+    p = print
+    p('// Real execute() calls with V4_SWAP to the Universal Routers listed in')
+    p('// uniswap_ur.c V4_ROUTERS other than Base UR 2.1.2, generated by')
+    p('// scripts/uniswap/gen_ur_vectors.py v4x (2026-10-17): the owner\'s own swaps,')
+    p('// then calls found through each chain\'s V4 PoolManager Swap logs. The')
+    p('// expected plans and reviews are uniswap_ur_expected.txt (v4x / v4y lines).')
+    p('#include <cstdint>\n#include <string>\n#include <vector>\nnamespace urx {')
+    p('struct Call { std::string tx; uint32_t chain; std::string router, value, calldata; };')
+    p('inline const std::vector<Call>& calls() { static const std::vector<Call> v = {')
+    for (chain, r) in sorted(by):
+        if r == 0xd6145b2d3f379919e8cdeda7b97e37c4b2ca9c40:
+            continue
+        need(r in V4_LAYOUT)
+        items = sorted(by[(chain, r)].items(), key=lambda kv: (kv[1][0], kv[0]))[:per_router]
+        for h, (_, value, raw) in items:
+            p('  {"%s", %d, "%040x", "%064x", "%s"},' % (h, chain, r, value, raw[2:]))
+    p('}; return v; }\n}  // namespace urx')
 
 
 if __name__ == '__main__':
-    {'fetch': fetch, 'header': header, 'pack': pack, 'expect': expect}[sys.argv[1]](sys.argv[2])
+    {'fetch': fetch, 'header': header, 'pack': pack, 'expect': expect, 'v4x': v4x}[sys.argv[1]](sys.argv[2])

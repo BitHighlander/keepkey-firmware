@@ -106,6 +106,8 @@ typedef struct {
   uint8_t cmds[UR_MAX_STEPS];
   uint8_t nsteps; /* plan steps written (a V4 fee adds one) */
   uint8_t pstep;  /* the current input's plan step */
+  /* The router's V4Router layout (V4_ROUTERS in uniswap_ur.c). */
+  uint8_t v4_layout;
   bool failed;
   /* V4_SWAP: abi.encode(bytes actions, bytes[] params), one level down. */
   struct {
@@ -127,8 +129,11 @@ typedef struct {
   } v4;
 } UrStream;
 
-/* Starts a decode of a `total`-byte call into `out` (cleared now). */
-void ur_stream_begin(UrStream* s, UrPlan* out, size_t total);
+/* Starts a decode of a `total`-byte call to `router` into `out` (cleared
+ * now). V4_SWAP is read with that router's V4Router layout, and refused for
+ * a router whose layout is not known. */
+void ur_stream_begin(UrStream* s, UrPlan* out, size_t total,
+                     const uint8_t router[20]);
 /* The next bytes of the call. False once anything was refused; a refusal is
  * final, and more bytes than `total` are refused. */
 bool ur_stream_feed(UrStream* s, const uint8_t* data, size_t len);
@@ -138,7 +143,8 @@ bool ur_stream_feed(UrStream* s, const uint8_t* data, size_t len);
 bool ur_stream_finish(UrStream* s);
 
 /* The whole call at once: begin, one feed, finish. */
-bool ur_decode(const uint8_t* calldata, size_t len, UrPlan* out);
+bool ur_decode(const uint8_t* calldata, size_t len, const uint8_t router[20],
+               UrPlan* out);
 
 /* True for the router's MSG_SENDER / ADDRESS_THIS placeholders. */
 bool ur_recipient_is_constant(const uint8_t recipient[20], uint8_t which);
@@ -179,9 +185,12 @@ typedef struct {
  * multi-hop through V2/V3/V4 pools) are free to the user. amount_in is the
  * sum the user pays (msg.value with ETH), amount_out the sum of the
  * minimums every delivery enforces; all swaps exact-in, or all exact-out.
- * At most one fee (PAY_PORTION, or a V4 swap's TAKE_PORTION). `router` is
- * the contract being called; `value` is msg.value, big-endian. False for
- * anything else, so nothing partial is ever shown. */
+ * At most one fee (PAY_PORTION, or a V4 swap's TAKE_PORTION). V4 swaps only
+ * on a router whose V4Router layout is known, and exact-output V4 swaps only
+ * where that router reverts unless the output is delivered in full (UR
+ * 2.1.2). `router` is the contract being called, the one the plan was
+ * decoded for; `value` is msg.value, big-endian. False for anything else,
+ * so nothing partial is ever shown. */
 bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
                   const uint8_t value[32], UrSummary* out);
 
