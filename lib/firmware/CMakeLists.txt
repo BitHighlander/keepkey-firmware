@@ -1,6 +1,4 @@
 set(sources
-    ctap2.c
-    ctap2_cbor.c
     app_confirm.c
     app_layout.c
     authenticator.c

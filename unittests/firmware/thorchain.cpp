@@ -319,8 +319,10 @@ TEST(Thorchain, ThorchainSignTxInvalidDenom) {
    empty fields, so the memo is now structured AND every position is labelled
    correctly; the property the old test protected -- an empty field is never
    compacted into a different label -- is asserted for the new parser by
-   MemoSwapEmptyLimitDoesNotShift, MemoSwapFeeWithEmptyAffiliateIsStillShown and
-   MemoAddShowsAffiliateAndFee below. The UNPARSED expectation itself is stale
+   MemoSwapEmptyLimitDoesNotShift (which also carries the old test's "::t:10"
+   vector), MemoSwapFeeWithEmptyAffiliateIsStillShown,
+   MemoSaversEmptyPairedAddressDoesNotShift (the old test's savers memo) and
+   MemoAddShowsAffiliateAndFee below, each by the text of every screen. The UNPARSED expectation itself is stale
    by design and is deliberately not carried over. */
 
 TEST(Thorchain, AmountFormattingCoversProtocolMaximumAndFailsClosed) {
@@ -658,6 +660,22 @@ static bool parseMemo(const char* memo) {
   return parseMemo(memo, strlen(memo));
 }
 
+void kkconfirm_capture_start(void);
+std::vector<std::string> kkconfirm_capture_finish(void);
+
+// Accepts exactly `screens` screens of `memo` and returns their bodies, so a
+// test can check what each position is labelled, not just how many screens.
+static std::vector<std::string> memoScreens(const char* memo, int screens,
+                                            ThorchainMemoResult* result) {
+  std::vector<std::string> shown;
+  if (!kkconfirm_preload(screens, 0)) return shown;
+  kkconfirm_capture_start();
+  *result = thorchain_parseConfirmMemo(memo, strlen(memo));
+  shown = kkconfirm_capture_finish();
+  EXPECT_EQ(0, kkconfirm_drain()) << memo;
+  return shown;
+}
+
 // Classic full-form swap memo: asset + dest + limit + affiliate + fee bps
 // = 4 screens (the 4th is the new affiliate fee screen), but the asset screen
 // pages: "Confirm swap asset USDT-0xdac...ec7\n on chain ETH" is 4 rows and a
@@ -678,9 +696,14 @@ TEST(Thorchain, MemoSwapFullFormShowsAffiliate) {
 // field 5 rather than shifting them into the limit. Gating the screen on the
 // affiliate alone showed the user no fee at all.
 TEST(Thorchain, MemoSwapFeeWithEmptyAffiliateIsStillShown) {
-  ASSERT_TRUE(kkconfirm_preload(4, 0));
-  EXPECT_TRUE(parseMemo("=:ETH.ETH:0xdest:0::75"));
-  EXPECT_EQ(0, kkconfirm_drain());
+  ThorchainMemoResult result = THORCHAIN_MEMO_UNPARSED;
+  const std::vector<std::string> shown =
+      memoScreens("=:ETH.ETH:0xdest:0::75", 4, &result);
+  EXPECT_EQ(THORCHAIN_MEMO_CONFIRMED, result);
+  ASSERT_EQ(4u, shown.size());
+  EXPECT_EQ("Confirm to 0xdest", shown[1]);
+  EXPECT_EQ("Confirm limit 0", shown[2]);
+  EXPECT_EQ("Affiliate fee 75 bps to (none given)", shown[3]);
 }
 
 // The same memo without the fee: one screen fewer, which is what makes the
@@ -704,12 +727,37 @@ TEST(Thorchain, MemoSwapNoChainAssetPair) {
 // The old strtok tokenizer collapsed the empty field and displayed the
 // affiliate ("kk") as the limit in 3 screens.
 TEST(Thorchain, MemoSwapEmptyLimitDoesNotShift) {
-  ASSERT_TRUE(kkconfirm_preload(4, 0));
-  EXPECT_TRUE(parseMemo("=:ETH.ETH:0xdest::kk:75"));
-  EXPECT_EQ(0, kkconfirm_drain());
+  ThorchainMemoResult result = THORCHAIN_MEMO_UNPARSED;
+  std::vector<std::string> shown =
+      memoScreens("=:ETH.ETH:0xdest::kk:75", 4, &result);
+  EXPECT_EQ(THORCHAIN_MEMO_CONFIRMED, result);
+  ASSERT_EQ(4u, shown.size());
+  EXPECT_EQ("Confirm to 0xdest", shown[1]);
+  EXPECT_EQ("Confirm limit none", shown[2]);
+  EXPECT_EQ("Affiliate fee 75 bps to kk", shown[3]);
+
+  // v7.16.0's case: an omitted limit before affiliate `t` (strtok used to
+  // show `t` as the limit).
+  shown = memoScreens("=:ETH.ETH:0xdest::t:10", 4, &result);
+  EXPECT_EQ(THORCHAIN_MEMO_CONFIRMED, result);
+  ASSERT_EQ(4u, shown.size());
+  EXPECT_EQ("Confirm limit none", shown[2]);
+  EXPECT_EQ("Affiliate fee 10 bps to t", shown[3]);
 }
 
-// No affiliate: exactly the 3 historical screens, no affiliate screen
+// v7.16.0's savers case: "+:BTC/BTC::t:10" leaves the paired address empty
+// before the affiliate. A savers asset ("BTC/BTC") has no CHAIN.ASSET pair, so
+// the structured parser does not claim it at all: nothing is shown under a
+// label, and the caller pages the raw memo (thorchain_confirm_full_memo). It
+// can therefore never show `t` as the paired address.
+TEST(Thorchain, MemoSaversEmptyPairedAddressDoesNotShift) {
+  ThorchainMemoResult result = THORCHAIN_MEMO_CONFIRMED;
+  const std::vector<std::string> shown =
+      memoScreens("+:BTC/BTC::t:10", 0, &result);
+  EXPECT_EQ(THORCHAIN_MEMO_UNPARSED, result);
+  EXPECT_TRUE(shown.empty());
+}
+
 TEST(Thorchain, MemoSwapNoAffiliate) {
   ASSERT_TRUE(kkconfirm_preload(3, 0));
   EXPECT_TRUE(parseMemo("SWAP:ETH.ETH:0xdest:420"));
@@ -874,11 +922,16 @@ TEST(Thorchain, MemoSwapTooManyFieldsRejected) {
 // ADD:POOL:PAIREDADDR:AFFILIATE:FEE — affiliate + fee must not be hidden:
 // add asset + pool + affiliate-fee = 3 screens.
 TEST(Thorchain, MemoAddShowsAffiliateAndFee) {
-  ASSERT_TRUE(kkconfirm_preload(3, 0));
-  EXPECT_TRUE(
-      parseMemo("ADD:BTC.BTC:thor18vhdczjut44gpsy804crfhnd5nq003nz0nf20v"
-                ":affil:50"));
-  EXPECT_EQ(0, kkconfirm_drain());
+  ThorchainMemoResult result = THORCHAIN_MEMO_UNPARSED;
+  const std::vector<std::string> shown =
+      memoScreens("ADD:BTC.BTC:thor18vhdczjut44gpsy804crfhnd5nq003nz0nf20v"
+                  ":affil:50",
+                  3, &result);
+  EXPECT_EQ(THORCHAIN_MEMO_CONFIRMED, result);
+  ASSERT_EQ(3u, shown.size());
+  EXPECT_EQ("Confirm to thor18vhdczjut44gpsy804crfhnd5nq003nz0nf20v",
+            shown[1]);
+  EXPECT_EQ("Affiliate fee 50 bps to affil", shown[2]);
 }
 
 // ADD with more than its 5 defined fields is refused (no hidden tail).

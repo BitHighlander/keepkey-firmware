@@ -2456,12 +2456,20 @@ TEST_F(ReviewHandlers, MayaDefaultDenomReachesConsentForMissingAndEmptyField) {
     ack.send.amount = 1;
     ack.send.has_denom = present;
     strcpy(ack.send.to_address, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k");
-    ASSERT_TRUE(kkconfirm_preload(0, 1));
+    // Accept output and asset, reject the final "Sign ... on ...?" screen.
+    ASSERT_TRUE(kkconfirm_preload(2, 1));
     fsm_test_clearLastFailure();
+    kkconfirm_capture_start();
     fsm_msgMayachainMsgAck(&ack);
+    const auto screens = kkconfirm_capture_finish();
     EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
     EXPECT_FALSE(mayachain_signingIsInited());
     EXPECT_EQ(0, kkconfirm_drain());
+    EXPECT_NE(
+        screens.end(),
+        std::find_if(screens.begin(), screens.end(), [](const std::string& s) {
+          return s.rfind("Sign cacao on mayachain?", 0) == 0;
+        }));
   }
 }
 
