@@ -134,3 +134,13 @@ target_link_libraries(firmware-unit
     kkrand
     kkemulator
     kktransport)
+
+# Exercise the Zcash address display (paged address + QR) on its own,
+# independent of KK_ZCASH_PRIVACY and the Zcash signing handlers.
+if(NOT KK_BITCOIN_ONLY)
+  add_executable(zcash-display-unit
+      zcash_display.cpp zcash_display_confirm_probe.c zcash_display_layout_probe.c
+      confirm_test_utils.cpp test_board.cpp)
+  get_target_property(FIRMWARE_TEST_LIBS firmware-unit LINK_LIBRARIES)
+  target_link_libraries(zcash-display-unit ${FIRMWARE_TEST_LIBS})
+endif()

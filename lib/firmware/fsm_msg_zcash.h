@@ -465,30 +465,10 @@ static bool zcash_verify_and_confirm_orchard_output(
   char amount_str[32];
   zcash_format_amount(msg->value, amount_str, sizeof(amount_str));
 
-  /* Two screens, deliberately.
-   *
-   * A unified address is 106 characters, which is three full body rows on its
-   * own -- exactly what layout_zcash_address_text_notification is built to
-   * render, and what the display-address flow already shows. The standard
-   * notification body is three rows and draw_string simply stops emitting
-   * once a character will not fit: there is no scroll and no pagination, so
-   * surplus text is dropped without any indication.
-   *
-   * Putting the question, the address and the amount in one body therefore
-   * rendered the question plus the first 76 characters of the address and
-   * silently discarded the rest of it along with the entire amount line.
-   * That is not a cosmetic screen: total_amount on the summary prompt is
-   * taken from the host message, and the contract documented in
-   * zcash_pczt_sign() delegates verification of Orchard output values to this
-   * confirm -- so dropping the amount removed the only place the user could
-   * see the value being committed to.
-   *
-   * Amount first, on a body that cannot overflow, then the full address
-   * through the layout that fits it.
-   *
-   * test_msg_zcash_sign_pczt_device.py asserts both screens are emitted; it
-   * fails with "expected 2 ConfirmOutput screens, got 1" against the packed
-   * single-screen version. */
+  /* Two screens: a 106-char UA fills the 3-row body and draw_string silently
+   * truncates, which would drop the amount -- the only place the user verifies
+   * the Orchard output value. Amount first, then the address via confirm(),
+   * which paginates, so a longer user_address is never cut off either. */
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Zcash Output",
                "Send shielded ZEC?\nAmount: %s", amount_str)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
@@ -497,9 +477,8 @@ static bool zcash_verify_and_confirm_orchard_output(
     return false;
   }
 
-  if (!confirm_with_custom_layout(&layout_zcash_address_text_notification,
-                                  ButtonRequestType_ButtonRequest_ConfirmOutput,
-                                  title, "%s", shown)) {
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title, "%s",
+               shown)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     _("Signing cancelled"));
     memzero(address, sizeof(address));
