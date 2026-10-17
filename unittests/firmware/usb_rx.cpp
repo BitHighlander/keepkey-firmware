@@ -234,7 +234,6 @@ TEST(USBRX, ShortTinyPacketCancelsAndClearsPendingBuffer) {
   expectMalformedTinyPacketRejected(12);
 }
 
-#if !BITCOIN_ONLY
 static const uint8_t *observed_packet;
 static size_t observed_length;
 static void observe_packet(const void *packet, size_t length) {
@@ -271,7 +270,6 @@ TEST(USBRX, PacketStorageIsWipedAfterCallback) {
   // The transport owns static storage; observe its lifetime after callback.
   for (size_t i = 0; i < sizeof(frame); ++i) EXPECT_EQ(0, observed_packet[i]);
 }
-#endif
 
 TEST(USBRX, BlockingMalformedTinyPacketReturnsWithoutAnotherHostMessage) {
   ASSERT_TRUE(kkconfirm_preload(0, 0));

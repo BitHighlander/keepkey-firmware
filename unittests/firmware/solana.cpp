@@ -4105,6 +4105,7 @@ TEST(Solana, SchemaCertifiedRefusesTransferToLookupTableKey) {
     ASSERT_EQ(solana_inspectTxWithTrustedLut(raw, pos, resolved, 1, &tx),
               SOL_TX_REVIEW_OPAQUE);
     ASSERT_TRUE(tx.has_address_lookups);
+    ASSERT_TRUE(solana_certifiedLutShapeMatches(&tx, 1));
     ASSERT_EQ(tx.num_static_accounts, 4);
     ASSERT_EQ(tx.num_accounts, 5);
     const SolanaParsedInstruction* transfer = &tx.instructions[1];

@@ -436,7 +436,9 @@ TEST_F(BodyFits, PagerCanExceedItsOwnPageCap) {
   // on, so that a future change to BODY_ROWS or BODY_CHAR_MAX that quietly
   // moves the bound fails here rather than in the field.
   EXPECT_TRUE(confirm_body_fits(std::string(3, '\n').c_str(), BODY_WIDTH));
-  const size_t chars_per_page = 2;
+  EXPECT_FALSE(confirm_body_fits(std::string(4, '\n').c_str(), BODY_WIDTH));
+
+  const size_t chars_per_page = 3;
   const size_t worst_case_body = BODY_CHAR_MAX - 1;
   const size_t pages_needed =
       (worst_case_body + chars_per_page - 1) / chars_per_page;

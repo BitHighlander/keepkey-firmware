@@ -3731,6 +3731,14 @@ std::string walk_permit(const PermitDoc& d, int screens, int* used) {
   *used = walk("Permit", permit_types(d), permit_value, screens);
   return join(kkconfirm_capture_finish());
 }
+
+// Pages of the last walk's "UNLIMITED allowance" warning screens.
+int warning_pages() {
+  int n = 0;
+  for (const std::string& title : kkconfirm_captured_titles())
+    if (title.rfind("UNLIMITED allowance", 0) == 0) n++;
+  return n;
+}
 }  // namespace
 
 // D-010 for permits: a canonical EIP-2612 permit of 2^255 or more is signed
@@ -3753,6 +3761,15 @@ TEST(Eip712Stream, CanonicalEip2612UnlimitedPermitIsSignedAfterAWarning) {
             std::string::npos)
       << shown;
   const int with_warning = used;
+  EXPECT_EQ(warning_pages(), 4);  // two warning screens, two pages each
+  // The value's own screen reads UNLIMITED under its warning title, which
+  // fits one row, before the warning.
+  EXPECT_LT(shown.find("value\nuint256: UNLIMITED"), shown.find("Allow 0x22"))
+      << shown;
+  const std::vector<std::string> titles = kkconfirm_captured_titles();
+  EXPECT_EQ(std::count(titles.begin(), titles.end(), "UNLIMITED approval"), 1);
+  EXPECT_EQ(1u,
+            calc_str_line(get_title_font(), "UNLIMITED APPROVAL", TITLE_WIDTH));
   eip712_stream_abort();
 
   // 2^255 - 1: the exact number, no warning.
@@ -3761,6 +3778,7 @@ TEST(Eip712Stream, CanonicalEip2612UnlimitedPermitIsSignedAfterAWarning) {
   shown = walk_permit(d, 40, &used);
   ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
   EXPECT_EQ(shown.find("UNLIMITED"), std::string::npos) << shown;
+  EXPECT_EQ(warning_pages(), 0);
   eip712_stream_abort();
 
   // Declining the warning cancels; nothing is signed.
@@ -3807,7 +3825,7 @@ TEST(Eip712Stream, CanonicalDaiAllowedPermitIsSignedAfterAWarning) {
   shown = walk_permit(d, 40, &used);
   ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
   EXPECT_EQ(shown.find("UNLIMITED"), std::string::npos);
-  EXPECT_LT(used, with_warning);
+  EXPECT_EQ(with_warning - used, 4);  // two warning screens, two pages each
   eip712_stream_abort();
 
   d.amount = Bytes{1};
