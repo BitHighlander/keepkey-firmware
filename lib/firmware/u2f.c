@@ -165,6 +165,10 @@ static uint32_t ctap_cid;
 static bool ctap_cancelled;
 
 void u2fhid_read(char tiny, const U2FHID_FRAME* f) {
+  /* U2F bypasses the protobuf dispatch gate. A new top-level operation,
+   * including INIT, must end a previously approved RNG audit too. */
+  if (!tiny) fsm_revoke_entropy_audit();
+
   if (ctap_active) {
     if (f->init.cmd == U2FHID_INIT) {
       if (MSG_LEN(*f) != 8) { /* INIT carries exactly an 8-byte nonce */
@@ -297,6 +301,14 @@ static MessageType host_end_id = MSG_TINY_TYPE_ERROR;
 
 static bool hostEndRequested(void) {
   const MessageType id = msg_take_tiny_id();
+#if DEBUG_LINK
+  /* Inspect the active prompt without dispatching a nested workflow. Keep
+   * any already-pending host cancellation for the session's own exit path. */
+  if (id == MessageType_MessageType_DebugLinkGetState) {
+    DebugLinkGetState request = {0};
+    call_msg_debug_link_get_state_handler(&request);
+  }
+#endif
   if (id == MessageType_MessageType_Initialize ||
       id == MessageType_MessageType_Cancel) {
     host_end_id = id;
