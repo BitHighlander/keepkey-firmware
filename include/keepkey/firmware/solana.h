@@ -74,6 +74,9 @@
 #define SOL_TOKEN_MINT_TO_CHECKED_IX 14
 #define SOL_TOKEN_BURN_CHECKED_IX 15
 #define SOL_TOKEN_SYNC_NATIVE_IX 17
+/* Token-2022 only: TransferFeeExtension (26), TransferCheckedWithFee (1) */
+#define SOL_TOKEN_TRANSFER_FEE_IX 26
+#define SOL_TOKEN_TRANSFER_CHECKED_WITH_FEE 1
 
 /* Stake program instruction indices */
 #define SOL_STAKE_AUTHORIZE_IX 1

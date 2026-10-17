@@ -313,50 +313,6 @@ TEST(Solana, ParseSPLTokenTransfer) {
   EXPECT_EQ(tx.instructions[0].amount, 1000000ULL);
 }
 
-TEST(Solana, Token2022TransferCheckedIsOpaque) {
-  /* A Token-2022 TransferChecked can invoke an undisclosed transfer hook / fee,
-   * so it must NOT clear-sign (only legacy SPL Token TransferChecked does). */
-  uint8_t raw[512];
-  size_t pos = 0;
-  raw[pos++] = 1;
-  raw[pos++] = 0;
-  raw[pos++] = 1;
-  raw[pos++] = 5; /* source, mint, dest, authority, token-2022 program */
-  memset(raw + pos, 0x11, 32);
-  pos += 32;
-  memset(raw + pos, 0x22, 32);
-  pos += 32;
-  memset(raw + pos, 0x33, 32);
-  pos += 32;
-  memset(raw + pos, 0x44, 32);
-  pos += 32;
-  memcpy(raw + pos, SOL_TOKEN_2022_PROGRAM, 32);
-  pos += 32;
-  memset(raw + pos, 0xBB, 32);
-  pos += 32;
-  raw[pos++] = 1; /* 1 instruction */
-  raw[pos++] = 4; /* program index = token-2022 */
-  raw[pos++] = 4; /* 4 accounts */
-  raw[pos++] = 0;
-  raw[pos++] = 1;
-  raw[pos++] = 2;
-  raw[pos++] = 3;
-  raw[pos++] = 10; /* data length */
-  raw[pos++] = 12; /* TransferChecked */
-  raw[pos++] = 0x40;
-  raw[pos++] = 0x42;
-  raw[pos++] = 0x0F;
-  raw[pos++] = 0x00;
-  raw[pos++] = 0x00;
-  raw[pos++] = 0x00;
-  raw[pos++] = 0x00;
-  raw[pos++] = 0x00;
-  raw[pos++] = 6; /* decimals */
-
-  SolanaParsedTx tx;
-  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
-}
-
 /* Helper: build a Vote UpdateValidatorIdentity tx with the given instruction
  * data length (4 = canonical; >4 = trailing bytes). Accounts: vote(0),
  * new-validator(1), authority(2), vote-program. */
@@ -2069,6 +2025,111 @@ TEST(Solana, TransferCheckedShortAccountsIsOpaque) {
   uint8_t raw[512];
   size_t pos = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 3, d, sizeof(d));
   SolanaParsedTx tx;
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+}
+
+/* Token-2022 TransferChecked with exactly [source, mint, dest, authority]
+ * clear-signs: a transfer hook would need accounts after those four. */
+TEST(Solana, Token2022TransferCheckedFourAccountsIsVerified) {
+  const uint8_t d[10] = {
+      SOL_TOKEN_TRANSFER_CHECKED_IX, 0x40, 0x42, 0x0F, 0, 0, 0, 0, 0, 6};
+  uint8_t raw[512];
+  size_t pos =
+      build_single_instr_tx(raw, SOL_TOKEN_2022_PROGRAM, 4, d, sizeof(d));
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
+  const SolanaParsedInstruction& pi = tx.instructions[0];
+  EXPECT_EQ(pi.type, SOL_INSTR_TOKEN_TRANSFER_CHECKED);
+  EXPECT_EQ(pi.amount, 1000000ULL);
+  EXPECT_EQ(pi.extra_u8, 6);
+  EXPECT_EQ(pi.extra_value, 0ULL);
+  EXPECT_EQ(pi.data_len, 10);
+  expect_repeated_pubkey(pi.from, 0x11);
+  expect_repeated_pubkey(pi.mint, 0x12);
+  expect_repeated_pubkey(pi.to, 0x13);
+  expect_repeated_pubkey(pi.authority, 0x14);
+  EXPECT_EQ(memcmp(pi.program_id, SOL_TOKEN_2022_PROGRAM, SOL_PUBKEY_SIZE), 0);
+}
+
+/* A fifth account may be a transfer hook (program, validation PDA, extras) or
+ * a multisig signer; the device cannot tell which, so it stays opaque. Legacy
+ * SPL has no hooks and keeps accepting multisig signers. */
+TEST(Solana, Token2022TransferCheckedExtraAccountsAreOpaque) {
+  const uint8_t d[10] = {
+      SOL_TOKEN_TRANSFER_CHECKED_IX, 0x40, 0x42, 0x0F, 0, 0, 0, 0, 0, 6};
+  uint8_t raw[512];
+  SolanaParsedTx tx;
+  for (int n = 5; n <= 7; n++) {
+    size_t pos =
+        build_single_instr_tx(raw, SOL_TOKEN_2022_PROGRAM, n, d, sizeof(d));
+    EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE) << n;
+    pos = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, n, d, sizeof(d));
+    EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED) << n;
+  }
+  size_t pos =
+      build_single_instr_tx(raw, SOL_TOKEN_2022_PROGRAM, 3, d, sizeof(d));
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+}
+
+/* TransferCheckedWithFee: 26, 1, amount(8), decimals(1), fee(8). The fee is
+ * parsed so the confirmation can show it. */
+TEST(Solana, Token2022TransferCheckedWithFeeIsVerifiedWithFee) {
+  const uint8_t d[19] = {SOL_TOKEN_TRANSFER_FEE_IX,
+                         SOL_TOKEN_TRANSFER_CHECKED_WITH_FEE,
+                         0x40, 0x42, 0x0F, 0, 0, 0, 0, 0,
+                         6,
+                         0x10, 0x27, 0, 0, 0, 0, 0, 0};
+  uint8_t raw[512];
+  size_t pos =
+      build_single_instr_tx(raw, SOL_TOKEN_2022_PROGRAM, 4, d, sizeof(d));
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
+  const SolanaParsedInstruction& pi = tx.instructions[0];
+  EXPECT_EQ(pi.type, SOL_INSTR_TOKEN_TRANSFER_CHECKED);
+  EXPECT_EQ(pi.amount, 1000000ULL);
+  EXPECT_EQ(pi.extra_u8, 6);
+  EXPECT_EQ(pi.extra_value, 10000ULL);
+  EXPECT_EQ(pi.data_len, 19);
+  expect_repeated_pubkey(pi.mint, 0x12);
+  expect_repeated_pubkey(pi.to, 0x13);
+}
+
+/* Only the exact fee form clear-signs: other lengths, other sub-instructions,
+ * extra accounts, and the opcode under legacy SPL (which has no fee
+ * extension) are opaque. */
+TEST(Solana, TransferFeeNonCanonicalFormsAreOpaque) {
+  uint8_t d[20] = {SOL_TOKEN_TRANSFER_FEE_IX,
+                   SOL_TOKEN_TRANSFER_CHECKED_WITH_FEE, 0x40, 0x42, 0x0F,
+                   0, 0, 0, 0, 0, 6};
+  uint8_t raw[512];
+  SolanaParsedTx tx;
+  size_t pos;
+  pos = build_single_instr_tx(raw, SOL_TOKEN_2022_PROGRAM, 4, d, 18);
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  pos = build_single_instr_tx(raw, SOL_TOKEN_2022_PROGRAM, 4, d, 20);
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  pos = build_single_instr_tx(raw, SOL_TOKEN_2022_PROGRAM, 5, d, 19);
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  pos = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 4, d, 19);
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  d[1] = 0; /* InitializeTransferFeeConfig */
+  pos = build_single_instr_tx(raw, SOL_TOKEN_2022_PROGRAM, 4, d, 19);
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+}
+
+/* Every other Token-2022 opcode keeps the opaque path, even in a shape the
+ * legacy program clear-signs. */
+TEST(Solana, Token2022OtherOpcodesStayOpaque) {
+  const uint8_t revoke[1] = {SOL_TOKEN_REVOKE_IX};
+  const uint8_t close[1] = {SOL_TOKEN_CLOSE_ACCOUNT_IX};
+  uint8_t raw[512];
+  SolanaParsedTx tx;
+  size_t pos =
+      build_single_instr_tx(raw, SOL_TOKEN_2022_PROGRAM, 2, revoke, 1);
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
+  pos = build_single_instr_tx(raw, SOL_TOKEN_PROGRAM, 2, revoke, 1);
+  EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_VERIFIED);
+  pos = build_single_instr_tx(raw, SOL_TOKEN_2022_PROGRAM, 3, close, 1);
   EXPECT_EQ(solana_inspectTx(raw, pos, &tx), SOL_TX_REVIEW_OPAQUE);
 }
 

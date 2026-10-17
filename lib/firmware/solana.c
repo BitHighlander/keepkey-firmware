@@ -328,10 +328,14 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
                    0 ||
                memcmp(pi->program_id, SOL_TOKEN_2022_PROGRAM,
                       SOL_PUBKEY_SIZE) == 0) {
-      /* Token-2022 hooks and fees cannot be shown: opaque (AdvancedMode). */
+      /* Token-2022 clear-signs only TransferChecked (or TransferCheckedWithFee)
+       * with exactly [source, mint, dest, authority]. A transfer hook needs
+       * its program and extra accounts after those four, so with exactly four
+       * a hook mint fails (and a hook only ever gets the four read-only). A
+       * fifth account may be a hook or a multisig signer, which the device
+       * cannot tell apart: opaque, as is every other Token-2022 opcode. */
       const bool is_token2022 =
           memcmp(pi->program_id, SOL_TOKEN_2022_PROGRAM, SOL_PUBKEY_SIZE) == 0;
-      if (is_token2022) *force_opaque = true;
       if (data_len >= 1) {
         uint8_t token_instr = instr_data[0];
         if (token_instr == SOL_TOKEN_TRANSFER_IX && data_len == 9 &&
@@ -344,12 +348,21 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           /* Unchecked Transfer carries no signed mint or decimals. The device
            * cannot identify what asset the amount moves. */
           *force_opaque = true;
-        } else if (token_instr == SOL_TOKEN_TRANSFER_CHECKED_IX &&
-                   data_len == 10 && num_acct_indices >= 4) {
-          /* Canonical data only: opcode + amount(8) + decimals(1). Accounts
-           * [source, mint, dest, authority], then any multisig signers. */
+        } else if (((token_instr == SOL_TOKEN_TRANSFER_CHECKED_IX &&
+                     data_len == 10) ||
+                    (is_token2022 && token_instr == SOL_TOKEN_TRANSFER_FEE_IX &&
+                     data_len == 19 &&
+                     instr_data[1] == SOL_TOKEN_TRANSFER_CHECKED_WITH_FEE)) &&
+                   num_acct_indices >= 4) {
+          /* Canonical data only: opcode + amount(8) + decimals(1), or the
+           * Token-2022 fee form: 26, 1, amount(8), decimals(1), fee(8). The
+           * fee is withheld from what the destination receives; the
+           * confirmation shows it (data_len == 19). Accounts [source, mint,
+           * dest, authority], then any multisig signers. */
+          const uint8_t* d = instr_data + (data_len == 19 ? 2 : 1);
           pi->type = SOL_INSTR_TOKEN_TRANSFER_CHECKED;
-          pi->amount = read_le64(instr_data + 1);
+          pi->amount = read_le64(d);
+          if (data_len == 19) pi->extra_value = read_le64(d + 9);
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->mint, tx, acct_indices, num_acct_indices, 1);
           pi->has_mint = true;
@@ -358,10 +371,10 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           /* Decimals live in the signed instruction bytes and are the only
            * authoritative scale for this transfer, so they must never be
            * fabricated. A real TransferChecked data field is exactly 10 bytes
-           * (tag + u64 amount + decimals); anything else -- short OR long --
+           * (19 for the fee form); anything else -- short OR long --
            * falls through to SOL_INSTR_UNKNOWN and the transaction is treated
            * as opaque. */
-          pi->extra_u8 = instr_data[9];
+          pi->extra_u8 = d[8];
         } else if (token_instr == SOL_TOKEN_APPROVE_IX && data_len == 9 &&
                    num_acct_indices >= 3) {
           pi->type = SOL_INSTR_TOKEN_APPROVE;
@@ -456,6 +469,10 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
       } else {
         pi->type = SOL_INSTR_UNKNOWN;
         *has_unknown = true;
+      }
+      if (is_token2022 && (pi->type != SOL_INSTR_TOKEN_TRANSFER_CHECKED ||
+                           num_acct_indices != 4)) {
+        *force_opaque = true;
       }
     } else if (memcmp(pi->program_id, SOL_STAKE_PROGRAM, SOL_PUBKEY_SIZE) ==
                0) {

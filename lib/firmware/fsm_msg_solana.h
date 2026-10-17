@@ -184,7 +184,13 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
     }
 
     case SOL_INSTR_TOKEN_TRANSFER_CHECKED: {
-      if (!solana_confirm_account(title, "Transfer from token account",
+      /* Name the program: a Token-2022 mint may withhold a transfer fee. */
+      const bool is_token2022 =
+          memcmp(pi->program_id, SOL_TOKEN_2022_PROGRAM, SOL_PUBKEY_SIZE) == 0;
+      if (!solana_confirm_account(title,
+                                  is_token2022
+                                      ? "Transfer from Token-2022 account"
+                                      : "Transfer from token account",
                                   pi->from)) {
         return false;
       }
@@ -254,6 +260,17 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
         if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Token \"%s\"\nby %s %s", symbol, alias ? alias : "",
                      fp)) {
+          return false;
+        }
+      }
+
+      /* TransferCheckedWithFee: the signed fee leaves the amount sent. */
+      if (pi->data_len == 19) {
+        char fee_str[64];
+        solana_formatTokenAmount(fee_str, sizeof(fee_str), pi->extra_value,
+                                 symbol ? symbol : "tokens", pi->extra_u8);
+        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                     "Transfer fee %s\ndeducted from amount sent", fee_str)) {
           return false;
         }
       }
