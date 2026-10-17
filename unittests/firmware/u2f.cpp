@@ -3,6 +3,7 @@ extern "C" {
 #include "keepkey/board/memory.h"
 #include "keepkey/board/messages.h"
 #include "keepkey/board/usb.h"
+#include "keepkey/firmware/ctap2.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/recovery_cipher.h"
 #include "keepkey/firmware/reset.h"
@@ -413,6 +414,44 @@ TEST_F(U2FWait, PresenceNeedsFreshPressAndRelease) {
                 U2F_SW_NO_ERROR}),                // fresh press and release
             statuses());
   EXPECT_TRUE(poll_script.empty());
+}
+
+// Chrome's CTAP 2.0 "touch your security key" request is a makeCredential or
+// getAssertion with an empty pinAuth. The device must wait for a press and
+// then answer PIN_NOT_SET; answering at once left Chrome spinning forever.
+TEST_F(U2FWait, EmptyPinAuthWaitsForTouch) {
+  // makeCredential {1: hash, 2: {"id": ".dummy"}, 3: {"id": h'01', "name":
+  // "dummy"}, 4: [{"alg": -7, "type": "public-key"}], 8: h'', 9: 1} and
+  // getAssertion {1: ".dummy", 2: hash, 6: h'', 7: 1}, as Chrome sends them.
+  std::vector<uint8_t> hash(32, 0x11);
+  std::vector<uint8_t> make = {CTAP2_CMD_MAKE_CREDENTIAL, 0xa6, 0x01, 0x58,
+                               0x20};
+  make.insert(make.end(), hash.begin(), hash.end());
+  make.insert(
+      make.end(),
+      {0x02, 0xa1, 0x62, 'i', 'd', 0x66, '.',  'd',  'u',  'm',  'm', 'y',
+       0x03, 0xa2, 0x62, 'i', 'd', 0x41, 0x01, 0x64, 'n',  'a',  'm', 'e',
+       0x65, 'd',  'u',  'm', 'm', 'y',  0x04, 0x81, 0xa2, 0x63, 'a', 'l',
+       'g',  0x26, 0x64, 't', 'y', 'p',  'e',  0x6a, 'p',  'u',  'b', 'l',
+       'i',  'c',  '-',  'k', 'e', 'y',  0x08, 0x40, 0x09, 0x01});
+  std::vector<uint8_t> get = {CTAP2_CMD_GET_ASSERTION, 0xa4};
+  get.insert(get.end(),
+             {0x01, 0x66, '.', 'd', 'u', 'm', 'm', 'y', 0x02, 0x58, 0x20});
+  get.insert(get.end(), hash.begin(), hash.end());
+  get.insert(get.end(), {0x06, 0x40, 0x07, 0x01});
+  for (const auto& request : {make, get}) {
+    ctap2_init();
+    hold(true, 2);
+    hold(false, 2);
+    hold(true, 1);  // a fresh press and release, seen on the next poll
+    uint8_t response[64] = {0};
+    size_t response_length = 0;
+    ctap2_handle(request.data(), request.size(), response, sizeof(response),
+                 &response_length);
+    EXPECT_EQ(response[0], CTAP2_ERR_PIN_NOT_SET);
+    EXPECT_TRUE(poll_script.empty()) << "answered without waiting for a press";
+    poll_script.clear();
+  }
 }
 
 // Every exit of a U2F session forgets the request. A session ended by the
