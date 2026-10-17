@@ -978,8 +978,10 @@ MetadataClassification signed_metadata_process(const uint8_t* payload,
 
   if (!parse_metadata_binary(payload, payload_len, &stored_metadata) ||
       stored_metadata.key_id != key_id ||
-      /* A decoder entry is KeepKey-certified or nothing. */
-      stored_metadata.version == METADATA_VERSION_DECODER) {
+      /* A decoder entry or a name is KeepKey-certified or nothing: a
+       * runtime name would be acknowledged as Verified and never shown. */
+      stored_metadata.version == METADATA_VERSION_DECODER ||
+      stored_metadata.version == METADATA_VERSION_NAME) {
     signed_metadata_clear();
     return METADATA_MALFORMED;
   }

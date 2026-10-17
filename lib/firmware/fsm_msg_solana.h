@@ -557,9 +557,11 @@ static bool solana_confirm_schema(const SolanaSignTx* msg, const char* alias,
   SolanaSchemaTokenCache token_cache = {NULL, NULL};
 
   /* Aliases are host-chosen and not unique; the fingerprint identifies the
-   * key that actually vouched for this decode. */
-  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Schema Signer",
-               "%s\n%s", alias, fp)) {
+   * key that actually vouched for this decode. Worded as the EVM runtime
+   * Identity screen: the alias is the signer's own words, not KeepKey's. */
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Identity",
+               "'%s' (%s) describes this tx. NOT verified by KeepKey.", alias,
+               fp)) {
     return false;
   }
 

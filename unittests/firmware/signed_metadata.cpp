@@ -2681,8 +2681,21 @@ TEST_F(SolanaSchemaSignTest, MemoCompanionIsShown) {
   fsm_test_clearLastFailure();
   fsm_msgSolanaSignTx(&msg);
   const std::vector<std::string> bodies = kkconfirm_capture_finish();
+  const std::vector<std::string> titles = kkconfirm_captured_titles();
   EXPECT_EQ(0, fsm_test_lastFailureCode()) << fsm_test_lastFailureMessage();
   EXPECT_EQ(0, kkconfirm_drain());
+  /* The runtime signer is named the way the EVM Identity screen names it:
+   * quoted, fingerprinted, and NOT verified by KeepKey. */
+  uint8_t pub_digest[32];
+  sha256_Raw(EXPECTED_SLOT3_PUB, 33, pub_digest);
+  char fp[17];
+  for (int i = 0; i < 8; i++)
+    snprintf(fp + 2 * i, 3, "%02X", pub_digest[i]);
+  ASSERT_FALSE(titles.empty());
+  EXPECT_EQ("Identity", titles[0]);
+  EXPECT_EQ(std::string("'") + TEST_ALIAS + "' (" + fp +
+                ") describes this tx. NOT verified by KeepKey.",
+            bodies[0]);
   std::string shown;
   for (const std::string& b : bodies) shown += b;
   EXPECT_NE(std::string::npos, shown.find(memo)) << shown;
@@ -3389,7 +3402,8 @@ TEST_F(CertifiedMetadataTest, NameRecordScopedToAnotherChainIsRefused) {
 TEST_F(SignedMetadataTest, RuntimeSignerCannotNameAnAddress) {
   std::vector<uint8_t> blob =
       sign_body(name_body(1, UR_V2, "Uniswap Universal Router", TEST_KEY_ID));
-  signed_metadata_process(blob.data(), blob.size(), TEST_KEY_ID);
+  // Refused, not acknowledged as Verified and then silently dropped.
+  ExpectMalformed(blob, TEST_KEY_ID);
   MetadataNameRecord r;
   signed_metadata_take_name(&r);
   EXPECT_FALSE(r.valid);
