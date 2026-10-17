@@ -246,14 +246,15 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       }
 
       /* Aliases are host-chosen and not unique; the fingerprint identifies the
-       * attesting key. symbol_verified implies the signer is loaded. */
+       * attesting key. symbol_verified implies the signer is loaded, and that
+       * signer is runtime-tier: say so, as the Lookup Accounts screen does. */
       if (symbol_verified) {
         const char* alias = signed_metadata_signer_alias(ti->signer_key_id);
         char fp[METADATA_FINGERPRINT_LEN] = {0};
         signed_metadata_signer_fingerprint((uint8_t)ti->signer_key_id, fp);
         if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Token \"%s\"\nby %s %s", symbol, alias ? alias : "",
-                     fp)) {
+                     "Token \"%s\"\nby %s %s\nNOT verified by KeepKey.",
+                     symbol, alias ? alias : "", fp)) {
           return false;
         }
       }
