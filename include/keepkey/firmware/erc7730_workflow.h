@@ -59,6 +59,10 @@ typedef enum {
 #define ERC7730_ALLOWANCE_UNLIMITED 4u /* the amount is 2^255 or more */
 #define ERC7730_ALLOWANCE_CHECKED 8u   /* the policy ran, before any screen */
 
+/* The longest suffix the review shows byte for byte (a power of two); a
+ * longer one is stated by its length alone. */
+#define ERC7730_SUFFIX_SHOWN_MAX 128u
+
 /* The most arguments an executable formatter carries (tokenAmount: value,
  * token, threshold, message, aliases). */
 #define ERC7730_FIELD_MAX_ARGUMENTS 5u
@@ -186,6 +190,8 @@ typedef struct {
   /* Bytes after the outer call's arguments, which its definition allows
    * (identity.trailing_data); the same in every pass. */
   uint32_t suffix_length;
+  /* The outer call's last bytes, which hold a suffix the review shows. */
+  uint8_t suffix_tail[ERC7730_SUFFIX_SHOWN_MAX];
 } Erc7730Workflow;
 
 /* One Ethereum workflow exists at a time. Keeping ownership here ensures FSM
@@ -268,6 +274,10 @@ const Erc7730CatalogIdentity* erc7730_workflow_identity(
  * policy already ran on the reviewed arguments: ethereum_signing_init(), which
  * receives only the selector, need not refuse it for lacking them. */
 bool erc7730_workflow_allowance_checked(const Erc7730Workflow* workflow);
+/* The suffix of the pass just finished, which matched the reviewed digest,
+ * into `out`; 0 when there is none or it exceeds ERC7730_SUFFIX_SHOWN_MAX. */
+size_t erc7730_workflow_suffix(const Erc7730Workflow* workflow,
+                               uint8_t out[ERC7730_SUFFIX_SHOWN_MAX]);
 /* The tier the provenance screen shows. An inner definition is never shown
  * as more trusted than the outer definition that led to it. */
 uint8_t erc7730_workflow_tier(const Erc7730Workflow* workflow);

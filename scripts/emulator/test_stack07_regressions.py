@@ -318,8 +318,9 @@ class TestStack07Regressions(Erc7730Harness, common.KeepKeyTest):
 
         for amount, warned in ((42, False), ((1 << 256) - 1, True)):
             arguments = b"\x00" * 12 + ADDRESS + amount.to_bytes(32, "big")
-            ordinary, _, _, _ = self._walk(start(selector + arguments))
+            ordinary, buttons, _, _ = self._walk(start(selector + arguments))
             self.assertTrue(ordinary.HasField("signature_r"))
+            self.assertGreater(buttons, 0)
             envelope = self._preload(program)
             result, buttons, _, _ = self._walk(start(selector), envelope,
                                                arguments=arguments)
@@ -332,7 +333,9 @@ class TestStack07Regressions(Erc7730Harness, common.KeepKeyTest):
                 self.assertEqual(titles[0], "UNLIMITED approval")
 
         # A dirty spender word is refused before any screen: the address
-        # word does not decode, and the allowance policy refuses it anyway.
+        # word does not decode. (The allowance policy's own refusal, for a
+        # definition whose first argument is not an address, is covered by
+        # python-keepkey's test_certified_dirty_approve_word_is_malformed.)
         arguments = b"\x01" + b"\x00" * 11 + ADDRESS + (42).to_bytes(32, "big")
         envelope = self._preload(program)
         result, buttons, _, _ = self._walk(start(selector), envelope,

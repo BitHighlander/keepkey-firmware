@@ -81,8 +81,9 @@ TEST(Erc7730Workflow, RefusesDataOutsideAuthenticatedLifecycle) {
 
 TEST(Erc7730Workflow, StateIsBoundedIndependentlyOfDescriptorSize) {
   // Host (64-bit) layout. Phase E2 added the inner call's context (184 B on
-  // ARM, where tools/check_sram_budget.py is the real gate).
-  EXPECT_LE(sizeof(Erc7730Workflow), 4352u);
+  // ARM, where tools/check_sram_budget.py is the real gate); 7.17 B5c the
+  // suffix tail the review shows (ERC7730_SUFFIX_SHOWN_MAX, 128 B).
+  EXPECT_LE(sizeof(Erc7730Workflow), 4352u + ERC7730_SUFFIX_SHOWN_MAX);
 }
 
 TEST(Erc7730Workflow, ReportsOnlyUnvalidatedCalldataAsWaiting) {
@@ -540,4 +541,54 @@ TEST(Erc7730Workflow, FirstPassRecordsTheAllowanceFacts) {
   // ...and the signing pass must still match the reviewed digest.
   EXPECT_NE(erc7730_workflow_calldata_finish(&workflow), ERC7730_ABI_OK);
   EXPECT_FALSE(erc7730_workflow_allowance_checked(&workflow));
+}
+
+// 7.17 B5c: the review shows a suffix byte for byte, from the pass that just
+// matched the reviewed digest, up to ERC7730_SUFFIX_SHOWN_MAX; a longer one
+// is stated by its length alone. Chunks of 5 split words and the suffix.
+TEST(Erc7730Workflow, ShowsTheSuffixTheLastPassCarried) {
+  for (size_t n :
+       {size_t{1}, size_t{24}, size_t{33}, size_t{127},
+        size_t{ERC7730_SUFFIX_SHOWN_MAX}, size_t{129}, size_t{300}}) {
+    SCOPED_TRACE(n);
+    Erc7730Workflow workflow{};
+    prepareTypedUintWorkflow(&workflow);
+    workflow.typed_data = false;
+    workflow.identity.trailing_data = true;
+    EthereumSignTx tx{};
+    tx.has_data_length = true;
+    tx.data_length = (uint32_t)(36 + n);
+    tx.has_data_initial_chunk = true;
+    tx.data_initial_chunk.size = 4;
+    tx.data_initial_chunk.bytes[0] = 0xaa;
+    ASSERT_TRUE(erc7730_tx_continuation_capture(&workflow.continuation, &tx));
+    std::vector<uint8_t> data(32 + n, 0);
+    data[31] = 42;
+    for (size_t i = 0; i < n; i++) data[32 + i] = (uint8_t)(7 * i + 1);
+    for (int pass = 0; pass < 2; pass++) {
+      if (workflow.phase == ERC7730_WORKFLOW_COMPLETE)
+        ASSERT_TRUE(erc7730_workflow_resume_field(&workflow));
+      ASSERT_TRUE(erc7730_workflow_restore_and_start_calldata(&workflow, &tx));
+      for (size_t at = 0; at < data.size(); at += 5) {
+        const size_t len = std::min<size_t>(5, data.size() - at);
+        ASSERT_EQ(
+            erc7730_workflow_calldata_feed(&workflow, data.data() + at, len),
+            ERC7730_ABI_OK);
+      }
+      ASSERT_EQ(erc7730_workflow_calldata_finish(&workflow), ERC7730_ABI_OK);
+    }
+    EXPECT_EQ(workflow.suffix_length, n);
+    uint8_t shown[ERC7730_SUFFIX_SHOWN_MAX];
+    const size_t length = erc7730_workflow_suffix(&workflow, shown);
+    if (n > ERC7730_SUFFIX_SHOWN_MAX) {
+      EXPECT_EQ(length, 0u);
+    } else {
+      ASSERT_EQ(length, n);
+      EXPECT_EQ(0, memcmp(shown, data.data() + 32, n));
+    }
+  }
+  Erc7730Workflow none{};
+  uint8_t shown[ERC7730_SUFFIX_SHOWN_MAX];
+  EXPECT_EQ(erc7730_workflow_suffix(&none, shown), 0u);
+  EXPECT_EQ(erc7730_workflow_suffix(nullptr, shown), 0u);
 }

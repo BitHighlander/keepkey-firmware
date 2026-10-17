@@ -9,8 +9,8 @@ static char hex_digit(uint8_t value) {
   return value < 10 ? (char)('0' + value) : (char)('a' + value - 10);
 }
 
-static bool format_hex(const uint8_t* data, size_t length, char* output,
-                       size_t output_size) {
+bool erc7730_format_hex(const uint8_t* data, size_t length, char* output,
+                        size_t output_size) {
   if (!data || !output || length > (SIZE_MAX - 3u) / 2u ||
       output_size < 2u + 2u * length + 1u)
     return false;
@@ -153,10 +153,11 @@ bool erc7730_format_raw(const Erc7730AbiProgram* program,
   if (node->kind == ERC7730_ABI_FIXED_BYTES) {
     if (capture->length != 32 || node->size == 0 || node->size > 32)
       return false;
-    return format_hex(capture->data, node->size, output, output_size);
+    return erc7730_format_hex(capture->data, node->size, output, output_size);
   }
   if (node->kind == ERC7730_ABI_BYTES)
-    return format_hex(capture->data, capture->length, output, output_size);
+    return erc7730_format_hex(capture->data, capture->length, output,
+                              output_size);
   if (node->kind == ERC7730_ABI_STRING)
     return erc7730_format_text(capture->data, capture->length, output,
                                output_size);

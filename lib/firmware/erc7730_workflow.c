@@ -728,6 +728,9 @@ Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
     fail(workflow);
   } else {
     sha256_Update(&workflow->calldata_hash, data, data_len);
+    for (size_t i = 0; i < data_len; i++)
+      workflow->suffix_tail[(workflow->outer_received + i) &
+                            (ERC7730_SUFFIX_SHOWN_MAX - 1u)] = data[i];
     workflow->outer_received += (uint32_t)data_len;
   }
   return result;
@@ -800,6 +803,19 @@ bool erc7730_workflow_allowance_checked(const Erc7730Workflow* workflow) {
   return workflow && workflow->signing_pass && !workflow->typed_data &&
          workflow->phase == ERC7730_WORKFLOW_CALLDATA &&
          (workflow->allowance & ERC7730_ALLOWANCE_CHECKED) != 0;
+}
+
+size_t erc7730_workflow_suffix(const Erc7730Workflow* workflow,
+                               uint8_t out[ERC7730_SUFFIX_SHOWN_MAX]) {
+  const uint32_t length = workflow ? workflow->suffix_length : 0;
+  if (length == 0 || length > ERC7730_SUFFIX_SHOWN_MAX ||
+      length > workflow->outer_total)
+    return 0;
+  const uint32_t start = workflow->outer_total - length;
+  for (uint32_t i = 0; i < length; i++)
+    out[i] =
+        workflow->suffix_tail[(start + i) & (ERC7730_SUFFIX_SHOWN_MAX - 1u)];
+  return length;
 }
 
 uint8_t erc7730_workflow_tier(const Erc7730Workflow* workflow) {

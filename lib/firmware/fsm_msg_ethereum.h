@@ -1142,16 +1142,30 @@ static void finish_erc7730_calldata(Erc7730Workflow* workflow) {
                                  : _("Signing cancelled by user"));
     return;
   }
-  /* Bytes the definition allows after the arguments: said to exist, since no
-   * field above described them. */
-  if (workflow->suffix_length != 0 &&
-      !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Extra data",
-               "%lu more bytes follow the arguments. The description above "
-               "does not cover them.",
-               (unsigned long)workflow->suffix_length)) {
-    fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
-                       _("Signing cancelled by user"));
-    return;
+  /* Bytes the definition allows after the arguments: no field above
+   * described them, so they are shown as they are, or, past
+   * ERC7730_SUFFIX_SHOWN_MAX, said to exist. */
+  if (workflow->suffix_length != 0) {
+    uint8_t suffix[ERC7730_SUFFIX_SHOWN_MAX];
+    char hex[2u + 2u * ERC7730_SUFFIX_SHOWN_MAX + 1u];
+    const size_t shown = erc7730_workflow_suffix(workflow, suffix);
+    if (!shown || !erc7730_format_hex(suffix, shown, hex, sizeof(hex)))
+      hex[0] = '\0';
+    const bool one = workflow->suffix_length == 1;
+    const bool confirmed =
+        confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Extra data",
+                "%lu more byte%s the arguments. The description above does "
+                "not cover %s%s%s",
+                (unsigned long)workflow->suffix_length,
+                one ? " follows" : "s follow", one ? "it" : "them",
+                hex[0] ? ":\n" : ". They are too long to show here.", hex);
+    memzero(suffix, sizeof(suffix));
+    memzero(hex, sizeof(hex));
+    if (!confirmed) {
+      fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
+                         _("Signing cancelled by user"));
+      return;
+    }
   }
   EthereumSignTx tx;
   if (!erc7730_workflow_start_signing(workflow, &tx)) {
