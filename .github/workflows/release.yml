@@ -535,11 +535,10 @@ jobs:
           done
 
           # The emulator-libs side of build-firmware's alpha-root refusal.
-          # CI compiles the alpha ClearSign root into these libs on every run
-          # (no build flag), and the alpha root is alpha-only: a release that
-          # carries it fails here. Production gets its own root from a new
-          # ceremony after the 7.15 re-release, before any 7.16 production
-          # release.
+          # These libs compile in the production ClearSign root, as the device
+          # does; the alpha key is an emulator-only test root read at runtime
+          # from KK_CLEARSIGN_TEST_ROOT and must never be embedded. A release
+          # whose libs carry the alpha root bytes fails here.
           python3 - <<'EOF'
           import sys
           ALPHA_ROOT = bytes.fromhex(
