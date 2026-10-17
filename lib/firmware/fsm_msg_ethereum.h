@@ -863,16 +863,21 @@ static void follow_erc7730_path(Erc7730Workflow* workflow,
     return;
   }
   if (path->source == 2) {
-    /* Containers are calldata-only (refused at preload for typed data). */
     uint8_t value[32];
     size_t length = 0;
     uint8_t cls = ERC7730_CLASS_ADDRESS;
     if (workflow->typed_data) {
-      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
-                         _("Invalid ERC-7730 value path"));
-      return;
-    }
-    if (workflow->depth == 1) {
+      /* Typed data has one container, @.to: the domain's verifyingContract,
+       * the deployment this definition was bound to when its review began
+       * (preload refuses any other container). */
+      if (path->source_index != 2) {
+        fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                           _("Invalid ERC-7730 value path"));
+        return;
+      }
+      memcpy(value, workflow->inner_to, 20);
+      length = 20;
+    } else if (workflow->depth == 1) {
       /* Inside an inner call its own context stands in for the transaction.
        */
       if (path->source_index == 3) {

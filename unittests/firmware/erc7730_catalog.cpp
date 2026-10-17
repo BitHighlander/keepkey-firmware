@@ -1819,26 +1819,31 @@ TEST(Erc7730Catalog, PreloadTypeChecksAddressNameAndRawLiterals) {
       ERC7730_CATALOG_BAD_PROGRAM);  // raw bytes literals are not executed
 }
 
-TEST(Erc7730Catalog, ContainersAreCalldataOnly) {
+// Calldata reads @.from, @.to and @.value; typed data only @.to, the domain's
+// verifyingContract (7.17).
+TEST(Erc7730Catalog, TypedDataHasOnlyTheToContainer) {
   const std::vector<uint8_t> two_paths = {
       1, 1, 0xff, 0xff, 1, 0, 0, 0, 0,  // token
       1, 1, 0xff, 0xff, 1, 0, 0, 0, 1,  // amount
   };
-  auto with_container = two_paths;
-  with_container.insert(with_container.end(), {2, 0, 0, 2});  // @.to
-  for (uint8_t kind : {(uint8_t)ERC7730_DEFINITION_CALLDATA,
-                       (uint8_t)ERC7730_DEFINITION_EIP712}) {
-    auto control =
-        replaceTable(tokenProgram({10, 0, 1, 1, 1, 0, 0}), 3, two_paths, 2);
-    auto p = replaceTable(tokenProgram({10, 0, 1, 1, 1, 0, 0}), 3,
-                          with_container, 3);
-    control[7] = p[7] = kind;
-    EXPECT_EQ(feedAll(envelope(control), 9), ERC7730_CATALOG_UNTRUSTED)
-        << (int)kind;
-    EXPECT_EQ(feedAll(envelope(p), 9), kind == ERC7730_DEFINITION_CALLDATA
-                                           ? ERC7730_CATALOG_UNTRUSTED
-                                           : ERC7730_CATALOG_BAD_PROGRAM)
-        << (int)kind;
+  for (uint8_t container : {1, 2, 3}) {
+    auto with_container = two_paths;
+    with_container.insert(with_container.end(), {2, 0, 0, container});
+    for (uint8_t kind : {(uint8_t)ERC7730_DEFINITION_CALLDATA,
+                         (uint8_t)ERC7730_DEFINITION_EIP712}) {
+      auto control =
+          replaceTable(tokenProgram({10, 0, 1, 1, 1, 0, 0}), 3, two_paths, 2);
+      auto p = replaceTable(tokenProgram({10, 0, 1, 1, 1, 0, 0}), 3,
+                            with_container, 3);
+      control[7] = p[7] = kind;
+      EXPECT_EQ(feedAll(envelope(control), 9), ERC7730_CATALOG_UNTRUSTED)
+          << (int)kind;
+      EXPECT_EQ(feedAll(envelope(p), 9),
+                kind == ERC7730_DEFINITION_CALLDATA || container == 2
+                    ? ERC7730_CATALOG_UNTRUSTED
+                    : ERC7730_CATALOG_BAD_PROGRAM)
+          << (int)kind << " " << (int)container;
+    }
   }
 }
 

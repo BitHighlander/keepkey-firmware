@@ -85,6 +85,8 @@ bool erc7730_workflow_begin_eip712(Erc7730Workflow* workflow,
       facts.has_verifying_contract && facts.chain_id == identity->chain_id &&
       erc7730_program_loader_require_deployment(
           &workflow->loader, facts.chain_id, facts.verifying_contract);
+  /* Typed data's @.to: the deployment just bound. */
+  if (bound) memcpy(workflow->inner_to, facts.verifying_contract, 20);
   memzero(&facts, sizeof(facts));
   if (!bound) {
     fail(workflow);

@@ -155,7 +155,9 @@ typedef struct {
   uint32_t fetch_offset;
   uint32_t fetch_total;
   uint8_t outer_definition_id[32];
-  /* The inner call's own containers: @.to (callee), @.value, @.from. */
+  /* The inner call's own containers: @.to (callee), @.value, @.from. Typed
+   * data has no inner call; its @.to, the domain's verifyingContract the
+   * definition is bound to, is kept in inner_to. */
   uint8_t inner_to[20];
   uint8_t inner_value[32];
   uint8_t inner_from[20];

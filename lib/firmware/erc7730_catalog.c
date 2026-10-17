@@ -431,11 +431,13 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
           (v->path_source == 3 && source_index == UINT16_MAX))
         return false;
       if (v->path_source == 2) {
-        /* @.from and @.to are addresses; containers exist for calldata only.
-         */
-        if ((ERC7730_CAP_CONTAINERS & ERC7730_CAP_BIT(source_index)) == 0 ||
-            v->header[7] != ERC7730_DEFINITION_CALLDATA)
-          return false;
+        /* @.from and @.to are addresses; typed data has only @.to. */
+        const uint32_t containers = v->header[7] == ERC7730_DEFINITION_CALLDATA
+                                        ? ERC7730_CAP_CONTAINERS
+                                    : v->header[7] == ERC7730_DEFINITION_EIP712
+                                        ? ERC7730_CAP_TYPED_CONTAINERS
+                                        : 0;
+        if ((containers & ERC7730_CAP_BIT(source_index)) == 0) return false;
         v->signature[v->entry_index] =
             source_index == 3 ? ERC7730_CLASS_UINT : ERC7730_CLASS_ADDRESS;
         if (source_index == 3) v->reads_value = true;
