@@ -182,13 +182,13 @@ typedef struct {
   uint8_t num_static_accounts;
   uint8_t accounts[SOL_MAX_ACCOUNTS][SOL_PUBKEY_SIZE];
   uint8_t recent_blockhash[SOL_PUBKEY_SIZE];
-  /* v0 message has any LUT entry; stays true after resolution, so policy
-   * still demands a transaction-bound LUT proof. */
+  /* v0 message has any LUT entry; stays true after resolution. */
   bool has_address_lookups;
   uint8_t num_instructions;
   SolanaParsedInstruction instructions[SOL_MAX_INSTRUCTIONS];
   /* v0 message carries an address-table section that no certified proof
-   * resolved (KKSOLSC1 refuses it). */
+   * resolved (runtime KKSOLSC1 refuses it; certified shows only static
+   * accounts). */
   bool has_lookup_tables;
   /* Addresses a v0 message's lookup tables load (writable + readonly); 0 for
    * legacy and zero-LUT messages. */
@@ -212,10 +212,11 @@ typedef struct {
 /* ── KKSOLSC1: reusable instruction schemas, attested once per (program,
  * discriminator); values are decoded from the signed bytes. Safety is
  * structural completeness: disc + arg widths == data length EXACTLY; every
- * displayed account index exists; lookup-table accounts only once bound to
- * this transaction by a Solana ClearSign certificate; every OTHER instruction
- * is a compute-budget or Memo companion (certified: also the static Transfer
- * and signer-account companions, solana_schemaCompanionIsInert and below).
+ * displayed account is a static key or a lookup key bound to this
+ * transaction by a Solana ClearSign certificate (certified: unresolved lookup
+ * accounts may fill roles the review never shows); every OTHER instruction is
+ * a compute-budget or Memo companion (certified: also the static Transfer and
+ * signer-account companions, solana_schemaCompanionIsInert and below).
  *
  * Canonical payload (every numeric field is one byte; text printable ASCII,
  * no '%'). The 8-byte instruction arguments it describes (U64, LAMPORTS,
@@ -312,9 +313,11 @@ bool solana_parseInstrSchema(const uint8_t* payload, size_t payload_len,
 bool solana_schemaApplies(const SolanaInstrSchema* schema,
                           const SolanaParsedTx* tx, uint8_t* out_index);
 
-/* Same, for a root-certified schema; also admits SystemProgram Transfers whose
- * accounts are all static keys (shown in full, never a LUT-resolved dest), and
- * the wSOL wrap/unwrap of `signer`'s (the device key's) own accounts. */
+/* Same, for a root-certified schema. It also matches when the lookup tables
+ * are unresolved, if no account it displays is a lookup key, and admits
+ * SystemProgram Transfers whose accounts are all static keys (shown in full,
+ * never a LUT-resolved dest) and the wSOL wrap/unwrap of `signer`'s (the
+ * device key's) own accounts. */
 bool solana_schemaAppliesCertified(const SolanaInstrSchema* schema,
                                    const SolanaParsedTx* tx,
                                    const uint8_t signer[SOL_PUBKEY_SIZE],
@@ -354,8 +357,9 @@ bool solana_schemaArgValue(const SolanaSignTx* msg, bool certified,
                            SolanaSchemaTokenCache* cache, char* buf,
                            size_t len);
 
-/* A certified request carries resolved LUT accounts if and only if the signed
- * message contains address-lookup entries. */
+/* A certified request carries resolved LUT accounts only when the signed
+ * message contains address-lookup entries. Without them the lookup accounts
+ * stay unresolved and may fill only roles the review never shows. */
 bool solana_certifiedLutShapeMatches(const SolanaParsedTx* tx,
                                      size_t lut_account_count);
 
