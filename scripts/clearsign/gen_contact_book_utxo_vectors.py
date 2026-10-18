@@ -208,8 +208,15 @@ def entries(book):
     return [entry_bytes(NETWORK[c], 2, s, l) for c, s, l in book]
 
 
-def levels(leaves):
-    level = [sha(b"KKABLEAF" + e) for e in leaves]
+def leaf_tag(entry, legacy=False):
+    """UTXO_SCRIPT leaves are tagged KKABUTXO, others KKABLEAF. `legacy`
+    tags every leaf KKABLEAF, as alpha builds before 7.17 did."""
+    dtype = entry[1 + entry[0]]
+    return b"KKABUTXO" if dtype == 2 and not legacy else b"KKABLEAF"
+
+
+def levels(leaves, legacy=False):
+    level = [sha(leaf_tag(e, legacy) + e) for e in leaves]
     width = 1
     while width < len(level):
         width *= 2
@@ -221,18 +228,19 @@ def levels(leaves):
     return out
 
 
-def header(n):
-    return b"\x01" + REVISION.to_bytes(4, "big") + bytes([n])
+def header(n, revision=REVISION):
+    return b"\x01" + revision.to_bytes(4, "big") + bytes([n])
 
 
 def request(leaves):
     return b"KKABREQ1" + header(len(leaves)) + b"".join(leaves)
 
 
-def proof(leaves, index, key, tamper_label=False):
-    lv = levels(leaves)
+def proof(leaves, index, key, tamper_label=False, revision=REVISION,
+          legacy=False):
+    lv = levels(leaves, legacy)
     root = lv[-1][0]
-    manifest = b"KKABRT01" + header(len(leaves)) + root
+    manifest = b"KKABRT01" + header(len(leaves), revision) + root
     sig = key.sign_digest_deterministic(sha(manifest), hashfunc=hashlib.sha256,
                                         sigencode=sigencode_string_canonize)
     pub = key.get_verifying_key().to_string("compressed")
@@ -243,8 +251,8 @@ def proof(leaves, index, key, tamper_label=False):
     leaf = leaves[index]
     if tamper_label:
         leaf = leaf[:-1] + bytes([leaf[-1] ^ 1])
-    return (b"KKABPRF1" + header(len(leaves)) + root + pub + sig + leaf +
-            bytes([index, len(siblings)]) + b"".join(siblings))
+    return (b"KKABPRF1" + header(len(leaves), revision) + root + pub + sig +
+            leaf + bytes([index, len(siblings)]) + b"".join(siblings))
 
 
 def ckd_priv(k, c, i):
@@ -292,6 +300,12 @@ def main():
         print(c_str("UPROOF_BTC_%d" % i, proof(btc, i, key)))
     print(c_str("UPROOF_BTC_0_OTHER_KEY", proof(btc, 0, other)))
     print(c_str("UPROOF_BTC_0_TAMPERED", proof(btc, 0, key, True)))
+    # No revocation: revision 8 of the book still names Alice after revision
+    # 9 is certified. Pinned so no host counts on the device refusing it.
+    print(c_str("UPROOF_BTC_0_REVISION_8", proof(btc, 0, key, revision=8)))
+    # The same book with KKABLEAF leaves, as alpha builds before 7.17 signed
+    # it after showing each script only as hex: never a contact.
+    print(c_str("UPROOF_BTC_0_LEGACY_LEAF", proof(btc, 0, key, legacy=True)))
     print("/* BOOK_MIXED: BOOK_BTC, then %s, then EVM %s */" % (
         ", ".join("%d %s %s" % (len(BOOK_BTC) + i, c, l)
                   for i, (c, _, l) in enumerate(BOOK_MIXED[len(BOOK_BTC):])),

@@ -1894,8 +1894,13 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
     signed_metadata_clear();
     HDNode* node = attestor_getNode();
     if (!node) return;
-    const bool ok = contact_book_process_proof(
-        msg->signed_payload.bytes, msg->signed_payload.size, node->public_key);
+    /* Only an EVM contact can name an EthereumSignTx recipient: a Bitcoin
+     * one would be reported verified and then never shown. */
+    const bool ok = contact_book_process_proof(msg->signed_payload.bytes,
+                                               msg->signed_payload.size,
+                                               node->public_key) &&
+                    contact_book_holds(NULL, CONTACT_BOOK_DEST_EVM_ADDRESS);
+    if (!ok) contact_book_clear();
     memzero(node, sizeof(*node));
     resp->classification = ok ? METADATA_VERIFIED : METADATA_MALFORMED;
     resp->has_display_summary = true;

@@ -160,14 +160,30 @@ bool confirm_transaction_output(ButtonRequestType button_request,
 
 /*
  * confirm_contact_output() - Output to a certified contact: the name, then
- * the full address on the same screen
+ * the full address on the same screen. When both do not fit one screen, the
+ * name gets the first page and the address the second, so the address is
+ * never split across pages.
  */
 bool confirm_contact_output(ButtonRequestType button_request,
                             const char* amount, const char* name,
                             const char* to) {
-  return confirm_with_custom_layout(&layout_notification_no_title_bold,
-                                    button_request, "", "Send %s to %s\n%s",
-                                    amount, name, to);
+  char body[BODY_CHAR_MAX];
+  const int len =
+      snprintf(body, sizeof(body), "Send %s to %s\n%s", amount, name, to);
+  const bool fits = len > 0 && (size_t)len < sizeof(body) &&
+                    confirm_body_fits(body, BODY_WIDTH);
+  memzero(body, sizeof(body));
+  if (fits)
+    return confirm_with_custom_layout(&layout_notification_no_title_bold,
+                                      button_request, "", "Send %s to %s\n%s",
+                                      amount, name, to);
+  /* As the pager does: a short press moves on, the last page takes the
+   * hold. */
+  return review_immediate(button_request, "1/2", "Send %s to %s", amount,
+                          name) &&
+         confirm_with_custom_layout(&layout_notification_no_title_bold,
+                                    ButtonRequestType_ButtonRequest_Other,
+                                    "2/2", "%s", to);
 }
 
 /*

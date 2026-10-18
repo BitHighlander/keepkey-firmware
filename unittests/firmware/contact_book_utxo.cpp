@@ -2,6 +2,7 @@
  * Vectors come from scripts/clearsign/gen_contact_book_utxo_vectors.py, which
  * builds them from the formats alone. */
 extern "C" {
+#include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/coins.h"
 #include "keepkey/firmware/contact_book.h"
 #include "keepkey/firmware/contact_book_utxo.h"
@@ -18,6 +19,7 @@ extern "C" {
 
 #include <cstdint>
 #include <cstdio>
+#include <cctype>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -69,17 +71,19 @@ class UtxoContacts : public ::testing::Test {
     HDNode root = {};
     TxOutputBinType bin = {};
     if (compile_output(coin, &root, &out, &bin, false) <= 0) return "?";
+    char address[MAX_ADDR_SIZE];
     return contact_book_utxo_label(coin, &out, bin.script_pubkey.bytes,
-                                   bin.script_pubkey.size);
+                                   bin.script_pubkey.size, address,
+                                   sizeof(address));
   }
 
   /* The screens compile_output() shows for `out`, all accepted. */
   static std::vector<std::string> review(const char* coin_name,
-                                         TxOutputType out) {
+                                         TxOutputType out, int screens_ = 1) {
     txin_dgst_initialize();
     HDNode root = {};
     TxOutputBinType bin = {};
-    EXPECT_TRUE(kkconfirm_preload(1, 0));
+    EXPECT_TRUE(kkconfirm_preload(screens_, 0));
     kkconfirm_capture_start();
     EXPECT_GT(compile_output(coinByName(coin_name), &root, &out, &bin, true),
               0);
@@ -212,12 +216,19 @@ TEST_F(UtxoContacts, KeepsOnlyAValidProofForTheCoinBeingSigned) {
       {"Bitcoin", UPROOF_BTC_0_TAMPERED},     /* one bit of the name */
       {"Bitcoin", PROOF3_0},                  /* an EVM contact */
       {"Bitcoin", "4b4b414250524631"},        /* truncated */
+      /* signed by alpha before 7.17, which showed the script only as hex */
+      {"Bitcoin", UPROOF_BTC_0_LEGACY_LEAF},
   };
   for (const auto& d : dropped) {
     ASSERT_TRUE(accept("Bitcoin", UPROOF_BTC_0));
     EXPECT_FALSE(accept(d[0], d[1])) << d[0] << " " << d[1];
     EXPECT_EQ(nullptr, contact_book_label());
   }
+  /* No revocation (documented): an older revision of the book still names
+   * its contacts. */
+  ASSERT_TRUE(accept("Bitcoin", UPROOF_BTC_0_REVISION_8));
+  EXPECT_STREQ("Alice", contact_book_label());
+
   /* A coin no network names keeps nothing, even a valid proof. */
   const auto bytes = hex(UPROOF_BTC_0);
   EXPECT_FALSE(contact_book_utxo_accept_proof(nullptr, bytes.data(),
@@ -267,24 +278,30 @@ TEST_F(UtxoContacts, NeverNamesChangeDataOrAnotherCoin) {
   const auto script = hex("0014751e76e8199196d454941c45d1b3a323f1433bd6");
   const CoinType* btc = coinByName("Bitcoin");
 
+  char address[MAX_ADDR_SIZE];
   TxOutputType out = toAddress(kAlice, 1000, OutputScriptType_PAYTOWITNESS);
   EXPECT_STREQ("Alice", contact_book_utxo_label(btc, &out, script.data(),
-                                                script.size()));
+                                                script.size(), address,
+                                                sizeof(address)));
+  EXPECT_STREQ(kAlice, address);
 
   /* Change and own-account transfers are given by path. */
   TxOutputType change = out;
   change.has_address = false;
   change.address_n_count = 5;
-  EXPECT_EQ(nullptr, contact_book_utxo_label(btc, &change, script.data(),
-                                             script.size()));
+  EXPECT_EQ(nullptr,
+            contact_book_utxo_label(btc, &change, script.data(), script.size(),
+                                    address, sizeof(address)));
   change.has_address = true; /* signing refuses this shape anyway */
-  EXPECT_EQ(nullptr, contact_book_utxo_label(btc, &change, script.data(),
-                                             script.size()));
+  EXPECT_EQ(nullptr,
+            contact_book_utxo_label(btc, &change, script.data(), script.size(),
+                                    address, sizeof(address)));
 
   TxOutputType data = out;
   data.script_type = OutputScriptType_PAYTOOPRETURN;
-  EXPECT_EQ(nullptr, contact_book_utxo_label(btc, &data, script.data(),
-                                             script.size()));
+  EXPECT_EQ(nullptr,
+            contact_book_utxo_label(btc, &data, script.data(), script.size(),
+                                    address, sizeof(address)));
 
   /* The same script on Testnet is another network. */
   EXPECT_EQ(nullptr,
@@ -362,6 +379,16 @@ TEST_F(UtxoContacts, OutputScreenNamesTheContactBesideTheFullAddress) {
       review("Bitcoin", toAddress(kAlice, 2500, OutputScriptType_PAYTOWITNESS));
   ASSERT_EQ(1u, again.size());
   EXPECT_EQ(std::string("Send 0.000025 BTC to Alice\n") + kAlice, again[0]);
+
+  /* The address beside a name is spelled as it was certified, whatever
+   * spelling the host sent for the same script. */
+  std::string upper(kAlice);
+  for (auto& c : upper) c = (char)toupper((unsigned char)c);
+  const auto shouted =
+      review("Bitcoin", toAddress(upper.c_str(), 100000,
+                                  OutputScriptType_PAYTOWITNESS));
+  ASSERT_EQ(1u, shouted.size());
+  EXPECT_EQ(std::string("Send 0.001 BTC to Alice\n") + kAlice, shouted[0]);
 #if !BITCOIN_ONLY
   /* CashAddr: the same form as the unnamed screen, prefix included. */
   ASSERT_TRUE(accept("BitcoinCash", UPROOF_MIXED_7));
@@ -373,7 +400,64 @@ TEST_F(UtxoContacts, OutputScreenNamesTheContactBesideTheFullAddress) {
   EXPECT_EQ("Send 0.001 BCH to Carol cash\n"
             "bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a",
             bch[0]);
+  /* The legacy spelling of the same script reads exactly like a Bitcoin
+   * address; beside the name it is shown as the CashAddr certified. */
+  const auto legacy =
+      review("BitcoinCash", toAddress("1BpEi6DfDAUFd7GtittLSdBeYJvcoaVggu",
+                                      100000, OutputScriptType_PAYTOADDRESS));
+  ASSERT_EQ(1u, legacy.size());
+  EXPECT_EQ("Send 0.001 BCH to Carol cash\n"
+            "bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a",
+            legacy[0]);
 #endif
+}
+
+/* A name and address too long for one screen: the name gets the first page,
+ * the address the second, so the address is never cut between pages. */
+TEST_F(UtxoContacts, ALongNameNeverSplitsTheAddress) {
+  const char kErin[] =
+      "bc1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3qccfmv3";
+  const char kLong[] = "WWWWWWWWWWWWWWWWWWWWWWWW"; /* 24, the most */
+
+  ASSERT_TRUE(kkconfirm_preload(2, 0));
+  kkconfirm_capture_start();
+  EXPECT_TRUE(confirm_contact_output(
+      ButtonRequestType_ButtonRequest_ConfirmOutput, "0.00987654 BTC", kLong,
+      kErin));
+  auto screens = kkconfirm_capture_finish();
+  EXPECT_EQ(0, kkconfirm_drain());
+  const std::vector<std::string> expected = {
+      std::string("Send 0.00987654 BTC to ") + kLong, kErin};
+  EXPECT_EQ(expected, screens);
+
+  /* A long amount with a short name does the same. */
+  ASSERT_TRUE(kkconfirm_preload(2, 0));
+  kkconfirm_capture_start();
+  EXPECT_TRUE(confirm_contact_output(
+      ButtonRequestType_ButtonRequest_ConfirmOutput, "21000000.12345678 BTC",
+      "Mom savings acct", kErin));
+  screens = kkconfirm_capture_finish();
+  EXPECT_EQ(0, kkconfirm_drain());
+  ASSERT_EQ(2u, screens.size());
+  EXPECT_EQ(kErin, screens[1]);
+
+  /* Declining the first page declines the output. */
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
+  EXPECT_FALSE(confirm_contact_output(
+      ButtonRequestType_ButtonRequest_ConfirmOutput, "0.00987654 BTC", kLong,
+      kErin));
+  EXPECT_EQ(0, kkconfirm_drain());
+
+  /* What fits stays one screen. */
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  kkconfirm_capture_start();
+  EXPECT_TRUE(confirm_contact_output(
+      ButtonRequestType_ButtonRequest_ConfirmOutput, "0.001 BTC", "Erin",
+      kErin));
+  screens = kkconfirm_capture_finish();
+  EXPECT_EQ(0, kkconfirm_drain());
+  ASSERT_EQ(1u, screens.size());
+  EXPECT_EQ(std::string("Send 0.001 BTC to Erin\n") + kErin, screens[0]);
 }
 
 }  // namespace

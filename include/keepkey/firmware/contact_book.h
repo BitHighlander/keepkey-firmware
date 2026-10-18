@@ -56,7 +56,8 @@ bool contact_book_process_proof(const uint8_t* data, size_t data_len,
 bool contact_book_match(const char* network, uint8_t destination_type,
                         const uint8_t* destination, size_t destination_len);
 const char* contact_book_label(void);
-/* True when the retained proof is for `network` and `destination_type`. */
+/* True when the retained proof is of `destination_type` and for `network`
+ * (any network when NULL). */
 bool contact_book_holds(const char* network, uint8_t destination_type);
 void contact_book_clear(void);
 /* Drops the retained proof only if it is of `destination_type`. */

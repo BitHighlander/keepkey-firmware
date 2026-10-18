@@ -120,13 +120,17 @@ bool contact_book_utxo_accept_proof(const CoinType* coin, const uint8_t* proof,
 
 const char* contact_book_utxo_label(const CoinType* coin,
                                     const TxOutputType* output,
-                                    const uint8_t* script, size_t script_len) {
+                                    const uint8_t* script, size_t script_len,
+                                    char* address, size_t address_len) {
   if (!output || output->address_n_count != 0 || !output->has_address ||
       output->script_type == OutputScriptType_PAYTOOPRETURN)
     return NULL;
   const char* network = contact_book_utxo_network(coin);
-  if (!network || !contact_book_match(network, CONTACT_BOOK_DEST_UTXO_SCRIPT,
-                                      script, script_len))
+  if (!network ||
+      !contact_book_match(network, CONTACT_BOOK_DEST_UTXO_SCRIPT, script,
+                          script_len) ||
+      !contact_book_utxo_address(coin, script, script_len, address,
+                                 address_len))
     return NULL;
   return contact_book_label();
 }

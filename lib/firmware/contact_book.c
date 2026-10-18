@@ -60,7 +60,15 @@ static void leaf_hash(const ContactBookEntry* entry, uint8_t out[32]) {
   uint8_t network_len = (uint8_t)strlen(entry->network);
   uint8_t label_len = (uint8_t)strlen(entry->label);
   sha256_Init(&ctx);
-  sha256_Update(&ctx, (const uint8_t*)"KKABLEAF", 8);
+  /* A UTXO_SCRIPT leaf has its own tag. Alpha builds before 7.17 certified
+   * any entry type, showing a script only as hex and without the duplicate
+   * rules; their leaves must never verify as a reviewed Bitcoin contact. */
+  sha256_Update(
+      &ctx,
+      (const uint8_t*)(entry->destination_type == CONTACT_BOOK_DEST_UTXO_SCRIPT
+                           ? "KKABUTXO"
+                           : "KKABLEAF"),
+      8);
   sha256_Update(&ctx, &network_len, 1);
   sha256_Update(&ctx, (const uint8_t*)entry->network, network_len);
   sha256_Update(&ctx, &entry->destination_type, 1);
@@ -268,8 +276,8 @@ const char* contact_book_label(void) {
 }
 
 bool contact_book_holds(const char* network, uint8_t destination_type) {
-  return proof_available && network &&
-         strcmp(proof_entry.network, network) == 0 &&
+  return proof_available &&
+         (!network || strcmp(proof_entry.network, network) == 0) &&
          proof_entry.destination_type == destination_type;
 }
 

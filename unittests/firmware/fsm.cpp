@@ -4207,6 +4207,15 @@ TEST_F(UtxoContactDispatch, AnEvmProofLoadedBeforeSignTxIsDropped) {
   EXPECT_TRUE(signing_is_active());
   EXPECT_EQ(nullptr, contact_book_label());
 }
+
+/* EthereumTxMetadata keeps (and reports verified) only an EVM contact: a
+ * Bitcoin one could never name an EthereumSignTx recipient. */
+TEST_F(UtxoContactDispatch, EthereumMetadataRefusesABitcoinContact) {
+  sendContactProof(UPROOF_BTC_0);
+  EXPECT_EQ(nullptr, contact_book_label());
+  sendContactProof(PROOF3_0);
+  EXPECT_STREQ("Alice", contact_book_label());
+}
 #endif
 
 #if !BITCOIN_ONLY

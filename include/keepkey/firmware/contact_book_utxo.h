@@ -32,9 +32,12 @@ bool contact_book_utxo_accept_proof(const CoinType* coin, const uint8_t* proof,
 
 /* The certified name for an output, or NULL. Only an output given by address
  * (never change or a transfer to the device's own account), never OP_RETURN,
- * and only when its compiled script and coin are the proof's. */
+ * and only when its compiled script and coin are the proof's. `address`
+ * receives the script in the form it was certified in (lowercase bech32,
+ * CashAddr for BCH), whatever spelling the host sent. */
 const char* contact_book_utxo_label(const CoinType* coin,
                                     const TxOutputType* output,
-                                    const uint8_t* script, size_t script_len);
+                                    const uint8_t* script, size_t script_len,
+                                    char* address, size_t address_len);
 
 #endif

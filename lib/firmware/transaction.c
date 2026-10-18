@@ -594,12 +594,14 @@ int compile_output(const CoinType* coin, const HDNode* root, TxOutputType* in,
     }
 
     /* A certified contact is named beside the full address, never instead
-     * of it. */
+     * of it, and that address is spelled as it was certified. */
+    char contact_address[MAX_ADDR_SIZE];
     const char* contact = contact_book_utxo_label(
-        coin, in, out->script_pubkey.bytes, out->script_pubkey.size);
+        coin, in, out->script_pubkey.bytes, out->script_pubkey.size,
+        contact_address, sizeof(contact_address));
     if (contact ? !confirm_contact_output(
                       ButtonRequestType_ButtonRequest_ConfirmOutput, amount_str,
-                      contact, prefix_len + in->address)
+                      contact, contact_address)
                 : !confirm_transaction_output(
                       ButtonRequestType_ButtonRequest_ConfirmOutput, amount_str,
                       prefix_len + in->address)) {
