@@ -44,11 +44,14 @@
 /* Path step opcodes: 1 index, 2 every element (bound to the iteration's
  * current element). Slices (3) are not executed. */
 #define ERC7730_CAP_PATH_STEP_OPCODES (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2))
-/* Containers the runtime reads, for calldata definitions only: 1 @.from (the
+/* Containers the runtime reads for calldata definitions: 1 @.from (the
  * signing account, derived on device), 2 @.to (the transaction target) and
  * 3 @.value (the transaction's native value). */
 #define ERC7730_CAP_CONTAINERS \
   (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2) | ERC7730_CAP_BIT(3))
+/* ... and for typed data: 2 @.to, the domain's verifyingContract, at which the
+ * definition is deployed (erc7730_program_loader_require_deployment). */
+#define ERC7730_CAP_TYPED_CONTAINERS ERC7730_CAP_BIT(2)
 /* Display conditions (program section 5): only opcode 3, "optional", which
  * the runtime always shows, so a field, group or iteration that references
  * a condition is shown exactly as one that does not. Nothing is hidden. */

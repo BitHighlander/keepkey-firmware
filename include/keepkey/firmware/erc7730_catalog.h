@@ -14,6 +14,10 @@
 #define ERC7730_CATALOG_MAX_PROOF_DEPTH 16u
 #define ERC7730_PROGRAM_HEADER_SIZE 179u
 #define ERC7730_PROGRAM_MAX_SECTIONS 9u
+/* Program header byte 6, flags. Calldata definitions only: the signer allows
+ * bytes after the ABI-encoded arguments, which the review states exist. 7.16
+ * and earlier accept the flag and ignore it, refusing any such bytes. */
+#define ERC7730_PROGRAM_FLAG_TRAILING_DATA 1u
 /* Delegate certificate record (139 bytes, the ClearSign certificate of
  * clearsign_root.h). Two tiers, tried in this order:
  *
@@ -92,7 +96,14 @@ typedef struct {
   char delegate_fingerprint[METADATA_FINGERPRINT_LEN];
   uint8_t kind;
   bool reads_value; /* a path reads @.value */
-  uint8_t tier;     /* METADATA_TIER_RUNTIME or METADATA_TIER_KEEPKEY */
+  /* Header flag ERC7730_PROGRAM_FLAG_TRAILING_DATA: the call may carry bytes
+   * after its ABI-encoded arguments (a referral or integrator tag). */
+  bool trailing_data;
+  /* Argument 1, after a one-word argument 0, is shown only as an nftName
+   * token id: approve(to, tokenId) of ERC-721, whose second word grants one
+   * token, never an amount (fsm_msg_ethereum.h erc7730_allowance_policy). */
+  bool second_word_token_id;
+  uint8_t tier; /* METADATA_TIER_RUNTIME or METADATA_TIER_KEEPKEY */
 } Erc7730CatalogIdentity;
 
 /* Incremental verifier. Its size is bounded independently of descriptor size;
@@ -121,6 +132,9 @@ typedef struct {
   uint64_t literal_decimals_mask; /* one-byte integers <= UNIT_DECIMALS_MAX */
   uint8_t path_arrays[64];        /* ABI node of each path's [] step, or 0xff */
   uint64_t path_iterable_mask;    /* paths that end on their [] step */
+  uint64_t path_second_word_mask; /* paths that are exactly [1] */
+  bool second_word_nft;           /* an nftName token id reads [1] */
+  bool second_word_other;         /* any other formatter argument does */
   uint8_t formatter_value_array;
   uint8_t display_iteration_array;
   bool formatter_any_array;

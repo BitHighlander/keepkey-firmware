@@ -4,6 +4,7 @@
 
 #include "keepkey/firmware/eip712_stream.h"
 #include "keepkey/firmware/erc7730_capabilities.h"
+#include "keepkey/firmware/ethereum.h"
 #include "trezor/crypto/memzero.h"
 
 static Erc7730Workflow active_workflow;
@@ -59,6 +60,9 @@ bool erc7730_workflow_begin(Erc7730Workflow* workflow,
     return false;
   }
   workflow->review_tier = identity->tier;
+  if (tx->data_length >= 68 &&
+      ethereum_isAllowanceSelector(tx->data_initial_chunk.bytes, 4))
+    workflow->allowance = ERC7730_ALLOWANCE_CALL;
   return begin_replay(workflow, identity);
 }
 
@@ -81,6 +85,8 @@ bool erc7730_workflow_begin_eip712(Erc7730Workflow* workflow,
       facts.has_verifying_contract && facts.chain_id == identity->chain_id &&
       erc7730_program_loader_require_deployment(
           &workflow->loader, facts.chain_id, facts.verifying_contract);
+  /* Typed data's @.to: the deployment just bound. */
+  if (bound) memcpy(workflow->inner_to, facts.verifying_contract, 20);
   memzero(&facts, sizeof(facts));
   if (!bound) {
     fail(workflow);
@@ -407,12 +413,18 @@ bool erc7730_workflow_restore_and_start_calldata(Erc7730Workflow* workflow,
    * inside the outer arguments that are replayed and hashed in full. */
   const uint32_t outer = tx->data_length >= 4 ? tx->data_length - 4u : 0;
   const bool inner = workflow->depth == 1;
+  /* Only the outer call may carry bytes after its arguments, and only when
+   * its definition says so. */
   if (tx->data_length < 4 ||
       (inner && (workflow->inner_length < 4 || workflow->inner_offset > outer ||
                  workflow->inner_length > outer - workflow->inner_offset)) ||
       !erc7730_program_loader_complete(&workflow->loader, &program) ||
-      erc7730_abi_stream_begin(&workflow->calldata, &program,
-                               inner ? workflow->inner_length - 4u : outer) !=
+      (inner ? erc7730_abi_stream_begin(&workflow->calldata, &program,
+                                        workflow->inner_length - 4u)
+       : workflow->identity.trailing_data
+           ? erc7730_abi_stream_begin_suffixed(&workflow->calldata, &program,
+                                               outer)
+           : erc7730_abi_stream_begin(&workflow->calldata, &program, outer)) !=
           ERC7730_ABI_OK) {
     fail(workflow);
     return false;
@@ -683,6 +695,19 @@ Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
     fail(workflow);
     return ERC7730_ABI_BOUNDS;
   }
+  /* The first pass reads an approval's words for the allowance policy. */
+  if (workflow->depth == 0 && !workflow->calldata_validated &&
+      (workflow->allowance & ERC7730_ALLOWANCE_CALL)) {
+    for (size_t i = 0; i < data_len; i++) {
+      const uint32_t at = workflow->outer_received + (uint32_t)i;
+      if (at < 12 && data[i] != 0)
+        workflow->allowance |= ERC7730_ALLOWANCE_DIRTY;
+      if (at >= 12 && at < 32) workflow->allowance_spender[at - 12] = data[i];
+      /* ethereum_allowanceAmountIsUnlimited(): the amount's top bit. */
+      if (at == 32 && (data[i] & 0x80) != 0)
+        workflow->allowance |= ERC7730_ALLOWANCE_UNLIMITED;
+    }
+  }
   Erc7730AbiResult result = ERC7730_ABI_OK;
   if (workflow->depth == 0) {
     result = erc7730_abi_stream_feed(
@@ -703,6 +728,9 @@ Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
     fail(workflow);
   } else {
     sha256_Update(&workflow->calldata_hash, data, data_len);
+    for (size_t i = 0; i < data_len; i++)
+      workflow->suffix_tail[(workflow->outer_received + i) &
+                            (ERC7730_SUFFIX_SHOWN_MAX - 1u)] = data[i];
     workflow->outer_received += (uint32_t)data_len;
   }
   return result;
@@ -721,6 +749,9 @@ Erc7730AbiResult erc7730_workflow_calldata_finish(Erc7730Workflow* workflow) {
     fail(workflow);
     return result;
   }
+  if (workflow->depth == 0)
+    workflow->suffix_length =
+        (uint32_t)erc7730_abi_stream_suffix(&workflow->calldata);
   uint8_t digest[32];
   sha256_Final(&workflow->calldata_hash, digest);
   const bool matches = !workflow->reviewed_digest_set ||
@@ -766,6 +797,25 @@ const Erc7730CatalogIdentity* erc7730_workflow_identity(
       !erc7730_workflow_complete(workflow))
     return NULL;
   return &workflow->identity;
+}
+
+bool erc7730_workflow_allowance_checked(const Erc7730Workflow* workflow) {
+  return workflow && workflow->signing_pass && !workflow->typed_data &&
+         workflow->phase == ERC7730_WORKFLOW_CALLDATA &&
+         (workflow->allowance & ERC7730_ALLOWANCE_CHECKED) != 0;
+}
+
+size_t erc7730_workflow_suffix(const Erc7730Workflow* workflow,
+                               uint8_t out[ERC7730_SUFFIX_SHOWN_MAX]) {
+  const uint32_t length = workflow ? workflow->suffix_length : 0;
+  if (length == 0 || length > ERC7730_SUFFIX_SHOWN_MAX ||
+      length > workflow->outer_total)
+    return 0;
+  const uint32_t start = workflow->outer_total - length;
+  for (uint32_t i = 0; i < length; i++)
+    out[i] =
+        workflow->suffix_tail[(start + i) & (ERC7730_SUFFIX_SHOWN_MAX - 1u)];
+  return length;
 }
 
 uint8_t erc7730_workflow_tier(const Erc7730Workflow* workflow) {
@@ -1028,21 +1078,21 @@ bool erc7730_workflow_field_embedded(Erc7730Workflow* workflow) {
   }
   Erc7730Field* field = &workflow->field;
   /* An inner approve() or increaseAllowance() gets the top-level policy
-   * (ethereum.c): a dirty spender word is refused, and 2^256-1 signs only
-   * after the UNLIMITED warning. */
+   * (ethereum.c): a dirty spender word is refused, and an amount of 2^255 or
+   * more signs only after the UNLIMITED warning. */
   if (capture.length == ERC7730_ABI_LOCATE_PREFIX &&
       (memcmp(capture.data, "\x09\x5e\xa7\xb3", 4) == 0 ||
        memcmp(capture.data, "\x39\x50\x93\x51", 4) == 0)) {
-    bool unlimited = true;
-    for (size_t i = 4; i < 68; i++) {
-      if (i < 16 && capture.data[i] != 0) {
+    for (size_t i = 4; i < 16; i++) {
+      if (capture.data[i] != 0) {
         memzero(&capture, sizeof(capture));
         return false;
       }
-      if (i >= 36) unlimited &= capture.data[i] == 0xff;
     }
-    field->unlimited_approve = unlimited;
-    if (unlimited) memcpy(field->approve_spender, capture.data + 16, 20);
+    field->unlimited_approve =
+        ethereum_allowanceAmountIsUnlimited(capture.data + 36);
+    if (field->unlimited_approve)
+      memcpy(field->approve_spender, capture.data + 16, 20);
   }
   const size_t selector_length = capture.length < 4 ? capture.length : 4;
   memcpy(field->inner_selector, capture.data, selector_length);

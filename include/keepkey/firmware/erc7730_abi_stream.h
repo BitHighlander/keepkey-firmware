@@ -70,6 +70,12 @@ typedef struct {
   /* A captured bytes/string value longer than the capture buffer: only its
    * length is kept (located_length); nothing of it is copied. */
   bool capture_overflow;
+  /* Bytes may follow the encoding (a signed definition allows it): the stream
+   * ends where the encoding does, at suffix_start, and only counts the rest.
+   */
+  bool allow_suffix;
+  bool ended;
+  size_t suffix_start;
   uint8_t capture_path_count;
   bool capture_enabled;
   bool capture_found;
@@ -80,6 +86,13 @@ typedef struct {
 Erc7730AbiResult erc7730_abi_stream_begin(Erc7730AbiStream* stream,
                                           const Erc7730AbiProgram* program,
                                           size_t total_length);
+/* As erc7730_abi_stream_begin(), but `total_length` may run past the end of
+ * the encoding, by any number of bytes. */
+Erc7730AbiResult erc7730_abi_stream_begin_suffixed(
+    Erc7730AbiStream* stream, const Erc7730AbiProgram* program,
+    size_t total_length);
+/* Bytes after the encoding of a complete stream; 0 for any other. */
+size_t erc7730_abi_stream_suffix(const Erc7730AbiStream* stream);
 Erc7730AbiResult erc7730_abi_stream_feed(Erc7730AbiStream* stream,
                                          size_t offset, const uint8_t* data,
                                          size_t data_len);

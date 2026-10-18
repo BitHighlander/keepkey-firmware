@@ -754,7 +754,7 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
     return;
   }
   if (field->kind == 13) {
-    /* An inner approve(spender, 2^256-1) signs only after the device's own
+    /* An inner unlimited approve() signs only after the device's own
      * UNLIMITED warning, before its inner screens. */
     if (field->unlimited_approve && field->has_address) {
       const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
@@ -863,16 +863,21 @@ static void follow_erc7730_path(Erc7730Workflow* workflow,
     return;
   }
   if (path->source == 2) {
-    /* Containers are calldata-only (refused at preload for typed data). */
     uint8_t value[32];
     size_t length = 0;
     uint8_t cls = ERC7730_CLASS_ADDRESS;
     if (workflow->typed_data) {
-      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
-                         _("Invalid ERC-7730 value path"));
-      return;
-    }
-    if (workflow->depth == 1) {
+      /* Typed data has one container, @.to: the domain's verifyingContract,
+       * the deployment this definition was bound to when its review began
+       * (preload refuses any other container). */
+      if (path->source_index != 2) {
+        fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                           _("Invalid ERC-7730 value path"));
+        return;
+      }
+      memcpy(value, workflow->inner_to, 20);
+      length = 20;
+    } else if (workflow->depth == 1) {
       /* Inside an inner call its own context stands in for the transaction.
        */
       if (path->source_index == 3) {
@@ -1025,12 +1030,37 @@ static bool erc7730_enum_key_word(const Erc7730Literal* key, uint8_t word[32]) {
   return true;
 }
 
+/* An approve() or increaseAllowance(): the top-level allowance policy, on the
+ * words the first pass fixed, before any screen (ethereum.c). */
+static bool erc7730_allowance_policy(Erc7730Workflow* workflow,
+                                     const EthereumSignTx* tx) {
+  if ((workflow->allowance & ERC7730_ALLOWANCE_CALL) == 0) return true;
+  if (workflow->allowance & ERC7730_ALLOWANCE_DIRTY) {
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("Malformed ERC20 approval"));
+    return false;
+  }
+  /* ERC-721 approve(to, tokenId) shares approve()'s selector; a definition
+   * that shows the second word only as a token id grants one token, so a
+   * high id (an ENS-style hash) is not an UNLIMITED allowance. */
+  if ((workflow->allowance & ERC7730_ALLOWANCE_UNLIMITED) &&
+      !workflow->identity.second_word_token_id &&
+      !ethereum_confirmUnlimitedApproval(
+          tx->chain_id, workflow->allowance_spender, tx->to.bytes)) {
+    fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
+                       _("Signing cancelled by user"));
+    return false;
+  }
+  workflow->allowance |= ERC7730_ALLOWANCE_CHECKED;
+  return true;
+}
+
 static void confirm_erc7730_intent_and_continue(EthereumSignTx* tx) {
   Erc7730Workflow* workflow = erc7730_workflow_state();
   if (!workflow->calldata_validated) {
     /* The first pass only checked the calldata and fixed its digest; every
      * later pass must match it. Now run the display program. */
-    (void)tx;
+    if (workflow->depth == 0 && !erc7730_allowance_policy(workflow, tx)) return;
     workflow->calldata_validated = true;
     if (!erc7730_workflow_resume_field(workflow) ||
         !erc7730_workflow_select_display(workflow, 0)) {
@@ -1111,6 +1141,31 @@ static void finish_erc7730_calldata(Erc7730Workflow* workflow) {
         ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
                                  : _("Signing cancelled by user"));
     return;
+  }
+  /* Bytes the definition allows after the arguments: no field above
+   * described them, so they are shown as they are, or, past
+   * ERC7730_SUFFIX_SHOWN_MAX, said to exist. */
+  if (workflow->suffix_length != 0) {
+    uint8_t suffix[ERC7730_SUFFIX_SHOWN_MAX];
+    char hex[2u + 2u * ERC7730_SUFFIX_SHOWN_MAX + 1u];
+    const size_t shown = erc7730_workflow_suffix(workflow, suffix);
+    if (!shown || !erc7730_format_hex(suffix, shown, hex, sizeof(hex)))
+      hex[0] = '\0';
+    const bool one = workflow->suffix_length == 1;
+    const bool confirmed =
+        confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Extra data",
+                "%lu more byte%s the arguments. The description above does "
+                "not cover %s%s%s",
+                (unsigned long)workflow->suffix_length,
+                one ? " follows" : "s follow", one ? "it" : "them",
+                hex[0] ? ":\n" : ". They are too long to show here.", hex);
+    memzero(suffix, sizeof(suffix));
+    memzero(hex, sizeof(hex));
+    if (!confirmed) {
+      fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
+                         _("Signing cancelled by user"));
+      return;
+    }
   }
   EthereumSignTx tx;
   if (!erc7730_workflow_start_signing(workflow, &tx)) {
@@ -1199,18 +1254,6 @@ void fsm_msgEthereumSignTx(EthereumSignTx* msg) {
       erc7730_catalog_clear_preload();
       fsm_sendFailure(FailureType_Failure_SyntaxError,
                       _("ERC-7730 definition does not match transaction"));
-      layoutHome();
-      return;
-    }
-    /* approve() and increaseAllowance() need the full 68-byte prefix for the
-     * allowance guard, which this path does not have. Refuse both here, before
-     * a review the signing pass could only end in a refusal. */
-    if (memcmp(msg->data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4) == 0 ||
-        memcmp(msg->data_initial_chunk.bytes, "\x39\x50\x93\x51", 4) == 0) {
-      memzero(&definition, sizeof(definition));
-      erc7730_catalog_clear_preload();
-      fsm_sendFailure(FailureType_Failure_SyntaxError,
-                      _("ERC-7730 approval not supported"));
       layoutHome();
       return;
     }
