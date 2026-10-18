@@ -184,7 +184,13 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
     }
 
     case SOL_INSTR_TOKEN_TRANSFER_CHECKED: {
-      if (!solana_confirm_account(title, "Transfer from token account",
+      /* Name the program: a Token-2022 mint may withhold a transfer fee. */
+      const bool is_token2022 =
+          memcmp(pi->program_id, SOL_TOKEN_2022_PROGRAM, SOL_PUBKEY_SIZE) == 0;
+      if (!solana_confirm_account(title,
+                                  is_token2022
+                                      ? "Transfer from Token-2022 account"
+                                      : "Transfer from token account",
                                   pi->from)) {
         return false;
       }
@@ -246,14 +252,26 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       }
 
       /* Aliases are host-chosen and not unique; the fingerprint identifies the
-       * attesting key. symbol_verified implies the signer is loaded. */
+       * attesting key. symbol_verified implies the signer is loaded, and that
+       * signer is runtime-tier: say so, as the Lookup Accounts screen does. */
       if (symbol_verified) {
         const char* alias = signed_metadata_signer_alias(ti->signer_key_id);
         char fp[METADATA_FINGERPRINT_LEN] = {0};
         signed_metadata_signer_fingerprint((uint8_t)ti->signer_key_id, fp);
         if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
-                     "Token \"%s\"\nby %s %s", symbol, alias ? alias : "",
-                     fp)) {
+                     "Token \"%s\"\nby %s %s\nNOT verified by KeepKey.", symbol,
+                     alias ? alias : "", fp)) {
+          return false;
+        }
+      }
+
+      /* TransferCheckedWithFee: the signed fee leaves the amount sent. */
+      if (pi->data_len == 19) {
+        char fee_str[64];
+        solana_formatTokenAmount(fee_str, sizeof(fee_str), pi->extra_value,
+                                 symbol ? symbol : "tokens", pi->extra_u8);
+        if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
+                     "Transfer fee %s\ndeducted from amount sent", fee_str)) {
           return false;
         }
       }
@@ -557,9 +575,11 @@ static bool solana_confirm_schema(const SolanaSignTx* msg, const char* alias,
   SolanaSchemaTokenCache token_cache = {NULL, NULL};
 
   /* Aliases are host-chosen and not unique; the fingerprint identifies the
-   * key that actually vouched for this decode. */
-  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Schema Signer",
-               "%s\n%s", alias, fp)) {
+   * key that actually vouched for this decode. Worded as the EVM runtime
+   * Identity screen: the alias is the signer's own words, not KeepKey's. */
+  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Identity",
+               "'%s' (%s) describes this tx. NOT verified by KeepKey.", alias,
+               fp)) {
     return false;
   }
 
@@ -764,8 +784,9 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
   }
 
   if (certified_request) {
-    /* Requires a certified schema, plus a tx-bound LUT proof iff the message
-     * has lookups. Anything partial or invalid is a hard failure. */
+    /* Requires a certified schema, and a tx-bound LUT proof only to show a
+     * lookup account (without one, lookup accounts may fill only roles the
+     * review never shows). Anything partial or invalid is a hard failure. */
     const bool has_lut_material = msg->lut_account_count > 0 ||
                                   msg->has_lut_signature ||
                                   msg->has_lut_signer_key_id;
@@ -805,8 +826,7 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
                         : solana_inspectTx(msg->raw_tx.bytes, msg->raw_tx.size,
                                            &parsed);
         if (tx_review == SOL_TX_REVIEW_MALFORMED ||
-            /* A lookup proof if and only if the message has a lookup
-             * section. */
+            /* A lookup proof only for a message with a lookup section. */
             !solana_certifiedLutShapeMatches(&parsed, lut_n) ||
             !solana_parseInstrSchema(msg->schema_payload.bytes,
                                      msg->schema_payload.size, &schema) ||

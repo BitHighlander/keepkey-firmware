@@ -219,6 +219,10 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
     pi->num_acct_indices =
         num_acct_indices > 255 ? 255 : (uint8_t)num_acct_indices;
 
+    /* Always static, so a certified schema can still match an instruction
+     * that also reaches into a lookup table. */
+    memcpy(pi->program_id, tx->accounts[program_idx], SOL_PUBKEY_SIZE);
+
     if (external) {
       /* Accounts resolved via lookup tables: unverifiable on-device. */
       pi->type = SOL_INSTR_UNKNOWN;
@@ -226,8 +230,6 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
       *force_opaque = true;
       continue;
     }
-
-    memcpy(pi->program_id, tx->accounts[program_idx], SOL_PUBKEY_SIZE);
 
     /* Classify and decode */
     /* Every fixed-layout decoder below matches its data length EXACTLY, never
@@ -328,10 +330,15 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
                    0 ||
                memcmp(pi->program_id, SOL_TOKEN_2022_PROGRAM,
                       SOL_PUBKEY_SIZE) == 0) {
-      /* Token-2022 hooks and fees cannot be shown: opaque (AdvancedMode). */
+      /* Token-2022 clear-signs only TransferChecked (or TransferCheckedWithFee)
+       * with exactly [source, mint, dest, authority]. Token-2022 passes a
+       * transfer hook only those four, read-only and non-signer, plus any
+       * extra accounts listed after them; with none listed, a hook can only
+       * fail the transaction or log. A fifth account may be a hook extra or a
+       * multisig signer, which the device cannot tell apart: opaque, as is
+       * every other Token-2022 opcode. */
       const bool is_token2022 =
           memcmp(pi->program_id, SOL_TOKEN_2022_PROGRAM, SOL_PUBKEY_SIZE) == 0;
-      if (is_token2022) *force_opaque = true;
       if (data_len >= 1) {
         uint8_t token_instr = instr_data[0];
         if (token_instr == SOL_TOKEN_TRANSFER_IX && data_len == 9 &&
@@ -344,12 +351,25 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           /* Unchecked Transfer carries no signed mint or decimals. The device
            * cannot identify what asset the amount moves. */
           *force_opaque = true;
-        } else if (token_instr == SOL_TOKEN_TRANSFER_CHECKED_IX &&
-                   data_len == 10 && num_acct_indices >= 4) {
-          /* Canonical data only: opcode + amount(8) + decimals(1). Accounts
-           * [source, mint, dest, authority], then any multisig signers. */
+        } else if (((token_instr == SOL_TOKEN_TRANSFER_CHECKED_IX &&
+                     data_len == 10) ||
+                    (is_token2022 && token_instr == SOL_TOKEN_TRANSFER_FEE_IX &&
+                     data_len == 19 &&
+                     instr_data[1] == SOL_TOKEN_TRANSFER_CHECKED_WITH_FEE &&
+                     read_le64(instr_data + 11) <=
+                         read_le64(instr_data + 2))) &&
+                   num_acct_indices >= 4) {
+          /* Canonical data only: opcode + amount(8) + decimals(1), or the
+           * Token-2022 fee form: 26, 1, amount(8), decimals(1), fee(8). The
+           * fee is withheld from what the destination receives; the
+           * confirmation shows it (data_len == 19). A fee above the amount
+           * fails on chain and would draw a false screen, so it stays opaque.
+           * Accounts [source, mint, dest, authority], then any multisig
+           * signers. */
+          const uint8_t* d = instr_data + (data_len == 19 ? 2 : 1);
           pi->type = SOL_INSTR_TOKEN_TRANSFER_CHECKED;
-          pi->amount = read_le64(instr_data + 1);
+          pi->amount = read_le64(d);
+          if (data_len == 19) pi->extra_value = read_le64(d + 9);
           copy_account(pi->from, tx, acct_indices, num_acct_indices, 0);
           copy_account(pi->mint, tx, acct_indices, num_acct_indices, 1);
           pi->has_mint = true;
@@ -358,10 +378,10 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
           /* Decimals live in the signed instruction bytes and are the only
            * authoritative scale for this transfer, so they must never be
            * fabricated. A real TransferChecked data field is exactly 10 bytes
-           * (tag + u64 amount + decimals); anything else -- short OR long --
+           * (19 for the fee form); anything else -- short OR long --
            * falls through to SOL_INSTR_UNKNOWN and the transaction is treated
            * as opaque. */
-          pi->extra_u8 = instr_data[9];
+          pi->extra_u8 = d[8];
         } else if (token_instr == SOL_TOKEN_APPROVE_IX && data_len == 9 &&
                    num_acct_indices >= 3) {
           pi->type = SOL_INSTR_TOKEN_APPROVE;
@@ -456,6 +476,10 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
       } else {
         pi->type = SOL_INSTR_UNKNOWN;
         *has_unknown = true;
+      }
+      if (is_token2022 && (pi->type != SOL_INSTR_TOKEN_TRANSFER_CHECKED ||
+                           num_acct_indices != 4)) {
+        *force_opaque = true;
       }
     } else if (memcmp(pi->program_id, SOL_STAKE_PROGRAM, SOL_PUBKEY_SIZE) ==
                0) {
@@ -1193,19 +1217,44 @@ static bool schema_signerAccountCompanion(const SolanaParsedTx* tx,
   }
 }
 
+static bool schema_accountKnown(const SolanaParsedTx* tx,
+                                const SolanaParsedInstruction* ix,
+                                uint8_t slot) {
+  return slot < ix->num_acct_indices &&
+         ix->acct_indices[slot] < tx->num_accounts;
+}
+
+/* Programs parse_instruction_section decodes natively. */
+static bool schema_programIsNative(const uint8_t program_id[SOL_PUBKEY_SIZE]) {
+  static const uint8_t* const kNative[] = {
+      SOL_SYSTEM_PROGRAM,         SOL_TOKEN_PROGRAM, SOL_TOKEN_2022_PROGRAM,
+      SOL_STAKE_PROGRAM,          SOL_VOTE_PROGRAM,  SOL_ATA_PROGRAM,
+      SOL_COMPUTE_BUDGET_PROGRAM, SOL_MEMO_PROGRAM};
+  for (size_t i = 0; i < sizeof(kNative) / sizeof(kNative[0]); i++) {
+    if (memcmp(program_id, kNative[i], SOL_PUBKEY_SIZE) == 0) return true;
+  }
+  return false;
+}
+
 /* `signer` (the device key) is set only on the certified tier. */
 static bool schema_applies(const SolanaInstrSchema* schema,
                            const SolanaParsedTx* tx, const uint8_t* signer,
                            uint8_t* out_index) {
   if (!schema || !tx || !out_index) return false;
   const bool certified = signer != NULL;
-  if (tx->has_lookup_tables) return false;
+  /* Certified: unresolved lookup accounts may fill only roles the review
+   * never shows (every displayed account is checked below). */
+  if (tx->has_lookup_tables && !certified) return false;
 
   bool found = false;
   uint8_t match = 0;
   for (uint8_t i = 0; i < tx->num_instructions; i++) {
     const SolanaParsedInstruction* ix = &tx->instructions[i];
-    if (ix->external) continue; /* accounts not in the signed message */
+    /* A lookup key keeps a native program from being decoded; a schema
+     * must not stand in for that decoder (a Transfer would lose its shown
+     * destination). */
+    if (ix->external && (!certified || schema_programIsNative(ix->program_id)))
+      continue;
     /* Schemas never override a native decoder. */
     if (ix->type != SOL_INSTR_UNKNOWN) continue;
     if (memcmp(ix->program_id, schema->program_id, SOL_PUBKEY_SIZE) != 0) {
@@ -1224,17 +1273,18 @@ static bool schema_applies(const SolanaInstrSchema* schema,
     }
     if (consumed != ix->data_len) continue;
 
-    /* Every displayed account must actually exist in this instruction. */
+    /* Every displayed account must exist in this instruction and be a key
+     * the device holds: static, or bound by a certified lookup proof. */
     bool accounts_ok = true;
     for (uint8_t a = 0; a < schema->num_accounts; a++) {
-      if (schema->accounts[a].index >= ix->num_acct_indices) {
+      if (!schema_accountKnown(tx, ix, schema->accounts[a].index)) {
         accounts_ok = false;
         break;
       }
     }
     for (uint8_t a = 0; accounts_ok && a < schema->num_args; a++) {
       if (schema->args[a].type == SOL_SCHEMA_ARG_TOKEN_AMOUNT &&
-          schema->args[a].mint_account >= ix->num_acct_indices) {
+          !schema_accountKnown(tx, ix, schema->args[a].mint_account)) {
         accounts_ok = false;
       }
     }
@@ -1281,8 +1331,7 @@ bool solana_schemaAppliesCertified(const SolanaInstrSchema* schema,
 bool solana_certifiedLutShapeMatches(const SolanaParsedTx* tx,
                                      size_t lut_account_count) {
   if (!tx) return false;
-  return tx->has_address_lookups ? lut_account_count > 0
-                                 : lut_account_count == 0;
+  return tx->has_address_lookups || lut_account_count == 0;
 }
 
 bool solana_messageCarriesKey(const uint8_t* msg, size_t len,

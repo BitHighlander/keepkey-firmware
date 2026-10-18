@@ -477,36 +477,37 @@ class Erc7730SigningHandlers : public ::testing::Test {
   }
 };
 
-TEST_F(Erc7730SigningHandlers,
-       CertifiedAllowancesFailBeforeDefinitionReplayOrConsent) {
+// 7.17: an approve() or increaseAllowance() definition starts its replay like
+// any other, with the allowance policy armed for the first calldata pass; a
+// shorter call is no allowance and leaves it unarmed.
+TEST_F(Erc7730SigningHandlers, CertifiedAllowancesStartDefinitionReplay) {
   const uint8_t selectors[][4] = {
       {0x09, 0x5e, 0xa7, 0xb3},   // approve
       {0x39, 0x50, 0x93, 0x51}};  // increaseAllowance
   for (const auto& selector : selectors) {
-    EthereumSignTx tx;
-    prepare(selector, &tx);
-    ASSERT_FALSE(HasFatalFailure());
-    ASSERT_TRUE(kkconfirm_preload(0, 0));
-    fsm_test_clearLastFailure();
-    kkconfirm_capture_start();
-    fsm_msgEthereumSignTx(&tx);
-    EXPECT_TRUE(kkconfirm_capture_finish().empty());
-    EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
-    EXPECT_STREQ("ERC-7730 approval not supported",
-                 fsm_test_lastFailureMessage());
-    EXPECT_FALSE(erc7730_workflow_active(erc7730_workflow_state()));
-    Erc7730CatalogIdentity identity = {};
-    EXPECT_FALSE(erc7730_catalog_preloaded(&identity));
-    Failure refusal = {};
-    ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_Failure,
-                                       Failure_fields, &refusal));
-    EXPECT_EQ(FailureType_Failure_SyntaxError, refusal.code);
-    EXPECT_STREQ("ERC-7730 approval not supported", refusal.message);
-    EthereumTxRequest signature = {};
-    EXPECT_FALSE(
-        kkconfirm_readResponse(MessageType_MessageType_EthereumTxRequest,
-                               EthereumTxRequest_fields, &signature));
-    EXPECT_EQ(0, kkconfirm_drain());
+    for (uint32_t length : {68u, 67u}) {
+      EthereumSignTx tx;
+      prepare(selector, &tx);
+      ASSERT_FALSE(HasFatalFailure());
+      tx.data_length = length;
+      ASSERT_TRUE(kkconfirm_preload(0, 0));
+      fsm_test_clearLastFailure();
+      kkconfirm_capture_start();
+      fsm_msgEthereumSignTx(&tx);
+      EXPECT_TRUE(kkconfirm_capture_finish().empty());
+      EXPECT_EQ(0, fsm_test_lastFailureCode());
+      const Erc7730Workflow* workflow = erc7730_workflow_state();
+      EXPECT_EQ(ERC7730_WORKFLOW_REPLAY, workflow->phase);
+      EXPECT_EQ(length == 68 ? ERC7730_ALLOWANCE_CALL : 0u,
+                (unsigned)workflow->allowance);
+      EXPECT_FALSE(erc7730_workflow_allowance_checked(workflow));
+      EthereumClearSignDefinitionRequest request = {};
+      EXPECT_TRUE(kkconfirm_readResponse(
+          MessageType_MessageType_EthereumClearSignDefinitionRequest,
+          EthereumClearSignDefinitionRequest_fields, &request));
+      EXPECT_EQ(0, kkconfirm_drain());
+      fsm_abort_workflows();
+    }
   }
 }
 
@@ -527,6 +528,33 @@ TEST_F(Erc7730SigningHandlers,
       MessageType_MessageType_EthereumClearSignDefinitionRequest,
       EthereumClearSignDefinitionRequest_fields, &request));
   EXPECT_EQ(0, kkconfirm_drain());
+}
+
+// Header byte 6 holds flags. TRAILING_DATA (bit 0) is the only one, and only
+// for calldata definitions; the identity carries it to the runtime.
+TEST(Erc7730Catalog, TrailingDataFlagIsCalldataOnly) {
+  SignedFixture fixture;
+  loadRuntimeSigner(&fixture, "Flag signer");
+  for (uint8_t flags : {0, 1, 2, 3, 0x80}) {
+    auto program = minimalProgram();
+    program[6] = flags;
+    Erc7730CatalogIdentity identity{};
+    const Erc7730CatalogResult result =
+        feedIdentity(signedEnvelope(fixture, program), &identity);
+    EXPECT_EQ(result, flags <= ERC7730_PROGRAM_FLAG_TRAILING_DATA
+                          ? ERC7730_CATALOG_COMPLETE
+                          : ERC7730_CATALOG_BAD_PROGRAM)
+        << (int)flags;
+    if (result == ERC7730_CATALOG_COMPLETE)
+      EXPECT_EQ(identity.trailing_data, flags != 0);
+  }
+  auto typed = minimalProgram();
+  typed[6] = ERC7730_PROGRAM_FLAG_TRAILING_DATA;
+  typed[7] = ERC7730_DEFINITION_EIP712;
+  for (size_t i = 42; i < 70; i++) typed[i] = 0x5a;  // a type hash
+  EXPECT_EQ(feedAll(envelope(typed), 9), ERC7730_CATALOG_BAD_PROGRAM);
+  typed[6] = 0;
+  EXPECT_EQ(feedAll(envelope(typed), 9), ERC7730_CATALOG_UNTRUSTED);
 }
 
 TEST(Erc7730Catalog, SignatureAuthenticatesProgramUnderLoadedDelegateKey) {
@@ -1737,6 +1765,38 @@ std::vector<uint8_t> tokenProgram(const std::vector<uint8_t>& formatter,
 
 }  // namespace
 
+// 7.17: ERC-721 approve(to, tokenId) shares approve()'s selector. The identity
+// says when a definition shows argument 1 (after a one-word argument 0) only
+// as an nftName token id, so the allowance policy does not call it UNLIMITED.
+TEST(Erc7730Catalog, IdentityNotesASecondWordShownOnlyAsATokenId) {
+  SignedFixture fixture;
+  loadRuntimeSigner(&fixture, "NFT signer");
+  const struct {
+    std::vector<uint8_t> formatters;
+    uint16_t count;
+    bool token_id;
+  } cases[] = {
+      {{4, 0, 2, 1, 1, 0, 1, 3, 1, 0, 0}, 1, true},   // nftName([1], [0])
+      {{4, 0, 2, 1, 1, 0, 1, 3, 1, 0, 3}, 1, true},   // collection @.to
+      {{3, 0, 2, 1, 1, 0, 1, 2, 1, 0, 0}, 1, false},  // tokenAmount of [1]
+      {{1, 0, 1, 1, 1, 0, 1}, 1, false},              // raw [1]
+      {{1, 0, 1, 1, 1, 0, 0}, 1, false},              // [1] not shown at all
+      {{4, 0, 2, 1, 1, 0, 1, 3, 1, 0, 0,              // nftName and raw [1]
+        1, 0, 1, 1, 1, 0, 1},
+       2,
+       false},
+  };
+  for (const auto& c : cases) {
+    SCOPED_TRACE(c.formatters.size());
+    auto p = replaceTable(tokenProgram({1, 0, 1, 1, 1, 0, 0}), 6, c.formatters,
+                          c.count);
+    Erc7730CatalogIdentity identity{};
+    ASSERT_EQ(feedIdentity(signedEnvelope(fixture, p), &identity),
+              ERC7730_CATALOG_COMPLETE);
+    EXPECT_EQ(identity.second_word_token_id, c.token_id);
+  }
+}
+
 // Phase A: arguments of tokenAmount and addressName, from container and
 // literal values. Every
 // argument is type-checked at preload against the class the runtime needs, so
@@ -1818,26 +1878,31 @@ TEST(Erc7730Catalog, PreloadTypeChecksAddressNameAndRawLiterals) {
       ERC7730_CATALOG_BAD_PROGRAM);  // raw bytes literals are not executed
 }
 
-TEST(Erc7730Catalog, ContainersAreCalldataOnly) {
+// Calldata reads @.from, @.to and @.value; typed data only @.to, the domain's
+// verifyingContract (7.17).
+TEST(Erc7730Catalog, TypedDataHasOnlyTheToContainer) {
   const std::vector<uint8_t> two_paths = {
       1, 1, 0xff, 0xff, 1, 0, 0, 0, 0,  // token
       1, 1, 0xff, 0xff, 1, 0, 0, 0, 1,  // amount
   };
-  auto with_container = two_paths;
-  with_container.insert(with_container.end(), {2, 0, 0, 2});  // @.to
-  for (uint8_t kind : {(uint8_t)ERC7730_DEFINITION_CALLDATA,
-                       (uint8_t)ERC7730_DEFINITION_EIP712}) {
-    auto control =
-        replaceTable(tokenProgram({10, 0, 1, 1, 1, 0, 0}), 3, two_paths, 2);
-    auto p = replaceTable(tokenProgram({10, 0, 1, 1, 1, 0, 0}), 3,
-                          with_container, 3);
-    control[7] = p[7] = kind;
-    EXPECT_EQ(feedAll(envelope(control), 9), ERC7730_CATALOG_UNTRUSTED)
-        << (int)kind;
-    EXPECT_EQ(feedAll(envelope(p), 9), kind == ERC7730_DEFINITION_CALLDATA
-                                           ? ERC7730_CATALOG_UNTRUSTED
-                                           : ERC7730_CATALOG_BAD_PROGRAM)
-        << (int)kind;
+  for (uint8_t container : {1, 2, 3}) {
+    auto with_container = two_paths;
+    with_container.insert(with_container.end(), {2, 0, 0, container});
+    for (uint8_t kind : {(uint8_t)ERC7730_DEFINITION_CALLDATA,
+                         (uint8_t)ERC7730_DEFINITION_EIP712}) {
+      auto control =
+          replaceTable(tokenProgram({10, 0, 1, 1, 1, 0, 0}), 3, two_paths, 2);
+      auto p = replaceTable(tokenProgram({10, 0, 1, 1, 1, 0, 0}), 3,
+                            with_container, 3);
+      control[7] = p[7] = kind;
+      EXPECT_EQ(feedAll(envelope(control), 9), ERC7730_CATALOG_UNTRUSTED)
+          << (int)kind;
+      EXPECT_EQ(feedAll(envelope(p), 9),
+                kind == ERC7730_DEFINITION_CALLDATA || container == 2
+                    ? ERC7730_CATALOG_UNTRUSTED
+                    : ERC7730_CATALOG_BAD_PROGRAM)
+          << (int)kind << " " << (int)container;
+    }
   }
 }
 

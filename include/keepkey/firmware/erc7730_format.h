@@ -33,6 +33,9 @@ bool erc7730_format_text(const uint8_t* bytes, size_t length, char* output,
 bool erc7730_format_label(const uint8_t* bytes, size_t length, char* output,
                           size_t output_size);
 
+/* "0x" and the bytes in lowercase hex. */
+bool erc7730_format_hex(const uint8_t* data, size_t length, char* output,
+                        size_t output_size);
 bool erc7730_format_raw(const Erc7730AbiProgram* program,
                         const Erc7730AbiCapture* capture, char* output,
                         size_t output_size);

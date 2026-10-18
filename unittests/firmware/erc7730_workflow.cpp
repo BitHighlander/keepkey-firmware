@@ -81,8 +81,9 @@ TEST(Erc7730Workflow, RefusesDataOutsideAuthenticatedLifecycle) {
 
 TEST(Erc7730Workflow, StateIsBoundedIndependentlyOfDescriptorSize) {
   // Host (64-bit) layout. Phase E2 added the inner call's context (184 B on
-  // ARM, where tools/check_sram_budget.py is the real gate).
-  EXPECT_LE(sizeof(Erc7730Workflow), 4352u);
+  // ARM, where tools/check_sram_budget.py is the real gate); 7.17 B5c the
+  // suffix tail the review shows (ERC7730_SUFFIX_SHOWN_MAX, 128 B).
+  EXPECT_LE(sizeof(Erc7730Workflow), 4352u + ERC7730_SUFFIX_SHOWN_MAX);
 }
 
 TEST(Erc7730Workflow, ReportsOnlyUnvalidatedCalldataAsWaiting) {
@@ -416,9 +417,9 @@ static std::vector<uint8_t> innerApprove(uint8_t amount_byte) {
   return call;
 }
 
-// An embedded approve() gets the top-level policy: 2^256-1 is flagged for
-// the UNLIMITED warning with its full spender, a finite amount is not, and a
-// dirty spender word is refused.
+// An embedded approve() gets the top-level policy: an amount of 2^255 or
+// more is flagged for the UNLIMITED warning with its full spender, a smaller
+// one is not, and a dirty spender word is refused.
 TEST(Erc7730Workflow, EmbeddedApproveIsClassifiedLikeATopLevelOne) {
   Erc7730Workflow workflow{};
   ASSERT_TRUE(locateEmbedded(&workflow, innerApprove(0xff)));
@@ -430,8 +431,14 @@ TEST(Erc7730Workflow, EmbeddedApproveIsClassifiedLikeATopLevelOne) {
   EXPECT_EQ(workflow.field.inner_selector_length, 4u);
   EXPECT_EQ(workflow.field.inner_length, 68u);
 
+  // The threshold is the top-level one: 2^255 exactly is unlimited, and
+  // 2^255 - 1 is not.
+  auto threshold = innerApprove(0x00);
+  threshold[36] = 0x80;
+  ASSERT_TRUE(locateEmbedded(&workflow, threshold));
+  EXPECT_TRUE(workflow.field.unlimited_approve);
   auto almost = innerApprove(0xff);
-  almost[67] = 0xfe;
+  almost[36] = 0x7f;
   ASSERT_TRUE(locateEmbedded(&workflow, almost));
   EXPECT_FALSE(workflow.field.unlimited_approve);
   ASSERT_TRUE(locateEmbedded(&workflow, innerApprove(0x01)));
@@ -544,4 +551,126 @@ TEST(Erc7730Workflow, SafeExecOperationIsReadFromTheCalldata) {
   }
   ASSERT_TRUE(safeExecPass(&workflow, other, 1, 256));
   EXPECT_FALSE(workflow.safe_delegatecall);
+}
+
+// An outer approve(address,uint256): the first calldata pass, at any chunking,
+// records what the top-level allowance policy reads. Later passes record
+// nothing; the signing pass is "checked" only once the policy has run.
+static void allowancePass(Erc7730Workflow* workflow,
+                          const std::vector<uint8_t>& args, size_t chunk) {
+  *workflow = Erc7730Workflow{};
+  prepareTypedUintWorkflow(workflow);
+  workflow->typed_data = false;
+  workflow->loader.abi.node_count = 3;
+  workflow->loader.abi.nodes[0].child_count = 2;
+  workflow->loader.abi.nodes[1].kind = ERC7730_ABI_ADDRESS;
+  workflow->loader.abi.nodes[1].size = 0;
+  workflow->loader.abi.nodes[2].kind = ERC7730_ABI_UINT;
+  workflow->loader.abi.nodes[2].size = 256;
+  workflow->allowance = ERC7730_ALLOWANCE_CALL;
+  EthereumSignTx tx{};
+  tx.has_data_length = true;
+  tx.data_length = 68;
+  tx.has_data_initial_chunk = true;
+  tx.data_initial_chunk.size = 4;
+  memcpy(tx.data_initial_chunk.bytes, "\x09\x5e\xa7\xb3", 4);
+  ASSERT_TRUE(erc7730_tx_continuation_capture(&workflow->continuation, &tx));
+  ASSERT_TRUE(erc7730_workflow_restore_and_start_calldata(workflow, &tx));
+  for (size_t at = 0; at < args.size(); at += chunk) {
+    const size_t n = std::min(chunk, args.size() - at);
+    erc7730_workflow_calldata_feed(workflow, args.data() + at, n);
+  }
+}
+
+TEST(Erc7730Workflow, FirstPassRecordsTheAllowanceFacts) {
+  std::vector<uint8_t> args(64, 0);
+  for (size_t i = 12; i < 32; i++) args[i] = (uint8_t)i;  // spender
+  for (size_t chunk : {size_t{1}, size_t{7}, size_t{64}}) {
+    SCOPED_TRACE(chunk);
+    Erc7730Workflow workflow{};
+    args[32] = 0x7f;  // 2^255 - 1 and below: finite
+    allowancePass(&workflow, args, chunk);
+    EXPECT_EQ((unsigned)workflow.allowance, ERC7730_ALLOWANCE_CALL);
+    EXPECT_EQ(0, memcmp(workflow.allowance_spender, args.data() + 12, 20));
+
+    args[32] = 0x80;  // 2^255: unlimited
+    allowancePass(&workflow, args, chunk);
+    EXPECT_EQ((unsigned)workflow.allowance,
+              ERC7730_ALLOWANCE_CALL | ERC7730_ALLOWANCE_UNLIMITED);
+
+    std::vector<uint8_t> dirty = args;
+    dirty[11] = 1;
+    allowancePass(&workflow, dirty, chunk);
+    EXPECT_TRUE(workflow.allowance & ERC7730_ALLOWANCE_DIRTY);
+  }
+
+  // A later pass records nothing: the first one fixed the facts.
+  Erc7730Workflow workflow{};
+  args[32] = 0;
+  allowancePass(&workflow, args, 64);
+  ASSERT_EQ(erc7730_workflow_calldata_finish(&workflow), ERC7730_ABI_OK);
+  workflow.calldata_validated = true;
+  EXPECT_FALSE(erc7730_workflow_allowance_checked(&workflow));
+  workflow.allowance |= ERC7730_ALLOWANCE_CHECKED;
+  EthereumSignTx tx{};
+  ASSERT_TRUE(erc7730_workflow_start_signing(&workflow, &tx));
+  EXPECT_TRUE(erc7730_workflow_allowance_checked(&workflow));
+  std::vector<uint8_t> unlimited = args;
+  unlimited[32] = 0xff;
+  ASSERT_EQ(erc7730_workflow_calldata_feed(&workflow, unlimited.data(), 64),
+            ERC7730_ABI_OK);
+  EXPECT_FALSE(workflow.allowance & ERC7730_ALLOWANCE_UNLIMITED);
+  // ...and the signing pass must still match the reviewed digest.
+  EXPECT_NE(erc7730_workflow_calldata_finish(&workflow), ERC7730_ABI_OK);
+  EXPECT_FALSE(erc7730_workflow_allowance_checked(&workflow));
+}
+
+// 7.17 B5c: the review shows a suffix byte for byte, from the pass that just
+// matched the reviewed digest, up to ERC7730_SUFFIX_SHOWN_MAX; a longer one
+// is stated by its length alone. Chunks of 5 split words and the suffix.
+TEST(Erc7730Workflow, ShowsTheSuffixTheLastPassCarried) {
+  for (size_t n :
+       {size_t{1}, size_t{24}, size_t{33}, size_t{127},
+        size_t{ERC7730_SUFFIX_SHOWN_MAX}, size_t{129}, size_t{300}}) {
+    SCOPED_TRACE(n);
+    Erc7730Workflow workflow{};
+    prepareTypedUintWorkflow(&workflow);
+    workflow.typed_data = false;
+    workflow.identity.trailing_data = true;
+    EthereumSignTx tx{};
+    tx.has_data_length = true;
+    tx.data_length = (uint32_t)(36 + n);
+    tx.has_data_initial_chunk = true;
+    tx.data_initial_chunk.size = 4;
+    tx.data_initial_chunk.bytes[0] = 0xaa;
+    ASSERT_TRUE(erc7730_tx_continuation_capture(&workflow.continuation, &tx));
+    std::vector<uint8_t> data(32 + n, 0);
+    data[31] = 42;
+    for (size_t i = 0; i < n; i++) data[32 + i] = (uint8_t)(7 * i + 1);
+    for (int pass = 0; pass < 2; pass++) {
+      if (workflow.phase == ERC7730_WORKFLOW_COMPLETE)
+        ASSERT_TRUE(erc7730_workflow_resume_field(&workflow));
+      ASSERT_TRUE(erc7730_workflow_restore_and_start_calldata(&workflow, &tx));
+      for (size_t at = 0; at < data.size(); at += 5) {
+        const size_t len = std::min<size_t>(5, data.size() - at);
+        ASSERT_EQ(
+            erc7730_workflow_calldata_feed(&workflow, data.data() + at, len),
+            ERC7730_ABI_OK);
+      }
+      ASSERT_EQ(erc7730_workflow_calldata_finish(&workflow), ERC7730_ABI_OK);
+    }
+    EXPECT_EQ(workflow.suffix_length, n);
+    uint8_t shown[ERC7730_SUFFIX_SHOWN_MAX];
+    const size_t length = erc7730_workflow_suffix(&workflow, shown);
+    if (n > ERC7730_SUFFIX_SHOWN_MAX) {
+      EXPECT_EQ(length, 0u);
+    } else {
+      ASSERT_EQ(length, n);
+      EXPECT_EQ(0, memcmp(shown, data.data() + 32, n));
+    }
+  }
+  Erc7730Workflow none{};
+  uint8_t shown[ERC7730_SUFFIX_SHOWN_MAX];
+  EXPECT_EQ(erc7730_workflow_suffix(&none, shown), 0u);
+  EXPECT_EQ(erc7730_workflow_suffix(nullptr, shown), 0u);
 }
