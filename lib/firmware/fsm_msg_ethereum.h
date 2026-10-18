@@ -340,6 +340,13 @@ static Erc7730UiResult confirm_erc7730_source_and_intent(
                                  NULL, workflow->intent))
       return ERC7730_UI_CANCELLED;
     workflow->intent_confirmed = true;
+    /* A Safe delegatecall, read from the signed calldata: said before any
+     * field, whatever the definition shows. */
+    if (!inner && workflow->safe_delegatecall &&
+        !confirm(ButtonRequestType_ButtonRequest_Other, "DELEGATECALL",
+                 "Runs the contract in 'to' as the Safe, with its full "
+                 "authority. Not checked."))
+      return ERC7730_UI_CANCELLED;
   }
   return ERC7730_UI_OK;
 }
@@ -592,6 +599,19 @@ static void show_erc7730_embedded(Erc7730Workflow* workflow) {
                      _("Inner call cannot be clear-signed"));
 }
 
+/* Refused: a Safe delegatecall runs the callee's code as the Safe, so no
+ * definition of the callee describes what it does. The DELEGATECALL screen
+ * comes first; a decline there is the user's. */
+static void show_erc7730_delegatecall(Erc7730Workflow* workflow) {
+  const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
+  if (ui != ERC7730_UI_OK) {
+    fail_erc7730_ui(workflow, ui);
+    return;
+  }
+  fail_erc7730_field(workflow, FailureType_Failure_Other,
+                     _("DELEGATECALL cannot be clear-signed"));
+}
+
 /* A raw bytes/string value longer than the device captures: refused in
  * calldata; typed data has already shown it in full during its walk. */
 static void show_erc7730_long_value(Erc7730Workflow* workflow, size_t length) {
@@ -754,6 +774,11 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
     return;
   }
   if (field->kind == 13) {
+    /* A Safe delegatecall is never shown as the callee's own action. */
+    if (workflow->safe_delegatecall) {
+      show_erc7730_delegatecall(workflow);
+      return;
+    }
     /* An inner unlimited approve() signs only after the device's own
      * UNLIMITED warning, before its inner screens. */
     if (field->unlimited_approve && field->has_address) {
