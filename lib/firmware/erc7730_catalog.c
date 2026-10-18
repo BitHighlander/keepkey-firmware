@@ -119,8 +119,10 @@ static bool verify_certified_delegate(
 static bool validate_header(const Erc7730CatalogVerifier* v) {
   const uint8_t* h = v->header;
   if (memcmp(h, "C773", 4) != 0 || h[4] != 1) return false;
-  if (h[5] != 2 || h[6] > 1) return false;
-  if (h[7] < ERC7730_DEFINITION_CALLDATA || h[7] > ERC7730_DEFINITION_NETWORK)
+  if (h[5] != 2 || (h[6] & ~ERC7730_PROGRAM_FLAG_TRAILING_DATA) != 0)
+    return false;
+  if (h[7] < ERC7730_DEFINITION_CALLDATA || h[7] > ERC7730_DEFINITION_NETWORK ||
+      (h[6] != 0 && h[7] != ERC7730_DEFINITION_CALLDATA))
     return false;
   const uint64_t chain_id = read_be64(h + 10);
   if (read_be16(h + 8) != 0 || chain_id == 0 || chain_id > UINT32_MAX)
@@ -431,11 +433,13 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
           (v->path_source == 3 && source_index == UINT16_MAX))
         return false;
       if (v->path_source == 2) {
-        /* @.from and @.to are addresses; containers exist for calldata only.
-         */
-        if ((ERC7730_CAP_CONTAINERS & ERC7730_CAP_BIT(source_index)) == 0 ||
-            v->header[7] != ERC7730_DEFINITION_CALLDATA)
-          return false;
+        /* @.from and @.to are addresses; typed data has only @.to. */
+        const uint32_t containers = v->header[7] == ERC7730_DEFINITION_CALLDATA
+                                        ? ERC7730_CAP_CONTAINERS
+                                    : v->header[7] == ERC7730_DEFINITION_EIP712
+                                        ? ERC7730_CAP_TYPED_CONTAINERS
+                                        : 0;
+        if ((containers & ERC7730_CAP_BIT(source_index)) == 0) return false;
         v->signature[v->entry_index] =
             source_index == 3 ? ERC7730_CLASS_UINT : ERC7730_CLASS_ADDRESS;
         if (source_index == 3) v->reads_value = true;
@@ -490,9 +494,15 @@ static bool consume_path_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
   if (v->path_step_opcode == 1)
     v->sibling[8u - v->path_step_remaining] = byte; /* sibling[4..7] */
   if (--v->path_step_remaining != 0) return true;
-  if (v->path_step_opcode == 1 &&
-      !walk_path_index(v, (int32_t)read_be32(v->sibling + 4), false))
-    return false;
+  if (v->path_step_opcode == 1) {
+    const int32_t index = (int32_t)read_be32(v->sibling + 4);
+    if (!walk_path_index(v, index, false)) return false;
+    /* The path [1] after a one-word argument 0: approve()'s second word. */
+    const uint8_t argument0 = (uint8_t)((abi_entry(v, 0) >> 6) & 0x3fu);
+    if (v->path_step_count == 1 && index == 1 &&
+        (abi_entry(v, argument0) >> 12) <= ERC7730_ABI_STRING)
+      v->path_second_word_mask |= UINT64_C(1) << v->entry_index;
+  }
   v->path_last_full = false;
   return finish_path_step(v);
 }
@@ -797,6 +807,12 @@ static bool consume_formatter_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
     return false;
   if (role == 1 && (v->signature[index] & 0x40u) != 0)
     v->formatter_value_literal = true;
+  if (source == 1 && ((v->path_second_word_mask >> index) & 1u) != 0) {
+    if (v->formatter_kind == 4 && role == 1)
+      v->second_word_nft = true;
+    else
+      v->second_word_other = true;
+  }
   if (source == 1) {
     const uint8_t argument_array = v->path_arrays[index];
     if (argument_array != 0xff) v->formatter_any_array = true;
@@ -1259,6 +1275,9 @@ static Erc7730CatalogResult finish(Erc7730CatalogVerifier* v,
   identity->program_length = v->program_length;
   identity->envelope_length = v->total_length;
   identity->reads_value = v->reads_value;
+  identity->trailing_data =
+      (v->header[6] & ERC7730_PROGRAM_FLAG_TRAILING_DATA) != 0;
+  identity->second_word_token_id = v->second_word_nft && !v->second_word_other;
   memzero(actual_id, sizeof(actual_id));
   v->state = STREAM_DONE;
   return ERC7730_CATALOG_COMPLETE;
