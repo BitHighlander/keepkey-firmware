@@ -95,6 +95,8 @@ CipherKeyValue.iv			max_size:16
 CipheredKeyValue.value			max_size:1024
 
 SignTx.coin_name			max_size:21
+# CONTACT_BOOK_PROOF_MAX (contact_book.h, static-asserted in fsm_msg_coin.h)
+SignTx.contact_proof		max_size:428
 
 SignIdentity.challenge_hidden		max_size:256
 SignIdentity.challenge_visual		max_size:256

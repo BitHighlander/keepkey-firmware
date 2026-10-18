@@ -267,7 +267,18 @@ const char* contact_book_label(void) {
   return proof_available ? proof_entry.label : NULL;
 }
 
+bool contact_book_holds(const char* network, uint8_t destination_type) {
+  return proof_available && network &&
+         strcmp(proof_entry.network, network) == 0 &&
+         proof_entry.destination_type == destination_type;
+}
+
 void contact_book_clear(void) {
   proof_available = false;
   memzero(&proof_entry, sizeof(proof_entry));
+}
+
+void contact_book_clear_type(uint8_t destination_type) {
+  if (proof_available && proof_entry.destination_type == destination_type)
+    contact_book_clear();
 }

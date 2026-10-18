@@ -12,6 +12,7 @@ set(sources
     nanopb_bounds.cpp
     authenticator.cpp
     confirm_test_utils.cpp
+    contact_book_utxo.cpp
     crypto_cleanup.cpp
     fsm.cpp
     dice.cpp

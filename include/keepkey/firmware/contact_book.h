@@ -17,6 +17,13 @@
 #define CONTACT_BOOK_DEST_UTXO_SCRIPT 2
 #define CONTACT_BOOK_DEST_ACCOUNT_BYTES 3
 
+/* KKABPRF1 at its largest: manifest, key and signature, the longest entry,
+ * index and depth, and a full Merkle path. */
+#define CONTACT_BOOK_PROOF_MAX                                             \
+  (46 + 33 + 64 + (1 + CONTACT_BOOK_NETWORK_MAX) + 1 +                     \
+   (1 + CONTACT_BOOK_DESTINATION_MAX) + (1 + CONTACT_BOOK_LABEL_MAX) + 2 + \
+   32 * CONTACT_BOOK_MAX_DEPTH)
+
 typedef struct {
   char network[CONTACT_BOOK_NETWORK_MAX + 1]; /* canonical CAIP-2 */
   uint8_t destination_type;
@@ -49,6 +56,10 @@ bool contact_book_process_proof(const uint8_t* data, size_t data_len,
 bool contact_book_match(const char* network, uint8_t destination_type,
                         const uint8_t* destination, size_t destination_len);
 const char* contact_book_label(void);
+/* True when the retained proof is for `network` and `destination_type`. */
+bool contact_book_holds(const char* network, uint8_t destination_type);
 void contact_book_clear(void);
+/* Drops the retained proof only if it is of `destination_type`. */
+void contact_book_clear_type(uint8_t destination_type);
 
 #endif

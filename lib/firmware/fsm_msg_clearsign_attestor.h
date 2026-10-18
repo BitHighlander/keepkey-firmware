@@ -26,10 +26,14 @@
  * Also certifies KKABREQ1 address books (no AdvancedMode: a fully parsed,
  * user-reviewed list of the user's own contacts). The device recomputes the
  * Merkle root, shows every label, network and address, and signs only the
- * 46-byte KKABRT01 root manifest. EVM addresses only for now.
+ * 46-byte KKABRT01 root manifest. Entries are EVM addresses and, in both
+ * builds, exact output scripts for the SignTx coins in contact_book_utxo.c
+ * (docs/design/certified-contacts-utxo.md). The bitcoin-only build compiles
+ * only this address-book half.
  */
 
 #include "keepkey/firmware/contact_book.h"
+#include "keepkey/firmware/contact_book_utxo.h"
 
 /* m/'KK'/'CS'/0', all hardened and outside SLIP-44 space: never a funds key. */
 #define ATTESTOR_PATH_LEN 3
@@ -48,6 +52,7 @@ static HDNode* attestor_getNode(void) {
   return node;
 }
 
+#if !BITCOIN_ONLY
 /* Types are security-relevant (equal total widths can shift label offsets):
  * never attest a label without showing its type. */
 static const char* attestor_schemaArgTypeName(SolanaSchemaArgType type) {
@@ -91,6 +96,7 @@ void fsm_msgClearsignAttestorGetPublicKey(
   msg_write(MessageType_MessageType_ClearsignAttestorPublicKey, resp);
   layoutHome();
 }
+#endif  // !BITCOIN_ONLY
 
 /* ECDSA over SHA256(bytes) with the attestor key, as
  * signed_metadata_verify_attestation() and contact_book_process_proof()
@@ -130,6 +136,35 @@ static void attestor_signAndReply(const uint8_t* bytes, size_t len) {
   layoutHome();
 }
 
+/* The address an entry is reviewed as, and the network it is named with:
+ * the CAIP-2 string for EVM, the coin's name for a UTXO script. False for an
+ * entry this build cannot show, which is refused before any screen. */
+static bool attestor_contactDestination(const ContactBookEntry* entry,
+                                        char address[MAX_ADDR_SIZE],
+                                        const char** network) {
+  *network = entry->network;
+  switch (entry->destination_type) {
+#if !BITCOIN_ONLY
+    case CONTACT_BOOK_DEST_EVM_ADDRESS:
+      if (entry->destination_len != 20 ||
+          strncmp(entry->network, "eip155:", 7) != 0)
+        return false;
+      memcpy(address, "0x", 3);
+      ethereum_address_checksum(entry->destination, address + 2, false, 0);
+      return true;
+#endif
+    case CONTACT_BOOK_DEST_UTXO_SCRIPT: {
+      const CoinType* coin = contact_book_utxo_coin(entry->network);
+      if (!coin) return false;
+      *network = coin->coin_name;
+      return contact_book_utxo_address(coin, entry->destination,
+                                       entry->destination_len, address,
+                                       MAX_ADDR_SIZE);
+    }
+  }
+  return false;
+}
+
 /* Every entry is reviewed before the root is signed: a label nobody saw is a
  * label nobody checked. */
 static void attestor_certifyContacts(const ClearsignAttestorSign* msg) {
@@ -138,14 +173,20 @@ static void attestor_certifyContacts(const ClearsignAttestorSign* msg) {
           14 + CONTACT_BOOK_MAX_ENTRIES *
                    (4 + CONTACT_BOOK_NETWORK_MAX + 20 + CONTACT_BOOK_LABEL_MAX),
       "Contact certification exceeds the wire payload bound");
+  /* A UTXO entry: a 39-character bip122 network and a script of at most 34
+   * bytes (P2WSH, P2TR). */
+  _Static_assert(sizeof(msg->payload.bytes) >=
+                     14 + CONTACT_BOOK_MAX_ENTRIES *
+                              (4 + 39 + 34 + CONTACT_BOOK_LABEL_MAX),
+                 "UTXO contact certification exceeds the wire payload bound");
   ContactBookEntry entries[CONTACT_BOOK_MAX_ENTRIES];
   ContactBookManifest manifest;
+  char address[MAX_ADDR_SIZE];
+  const char* network = NULL;
   bool ok = contact_book_parse_request(msg->payload.bytes, msg->payload.size,
                                        &manifest, entries, NULL);
   for (uint8_t i = 0; ok && i < manifest.count; i++) {
-    ok = entries[i].destination_type == CONTACT_BOOK_DEST_EVM_ADDRESS &&
-         entries[i].destination_len == 20 &&
-         strncmp(entries[i].network, "eip155:", 7) == 0;
+    ok = attestor_contactDestination(&entries[i], address, &network);
   }
   if (!ok) {
     memzero(entries, sizeof(entries));
@@ -159,15 +200,15 @@ static void attestor_certifyContacts(const ClearsignAttestorSign* msg) {
               "Approve %u contacts?\nRevision %lu", (unsigned)manifest.count,
               (unsigned long)manifest.revision);
   for (uint8_t i = 0; confirmed && i < manifest.count; i++) {
-    char address[43] = "0x";
-    ethereum_address_checksum(entries[i].destination, address + 2, false, 0);
     confirmed =
+        attestor_contactDestination(&entries[i], address, &network) &&
         confirm(ButtonRequestType_ButtonRequest_SignTx, "Certify Contact",
-                "%s\n%s", entries[i].label, entries[i].network) &&
+                "%s\n%s", entries[i].label, network) &&
         confirm(ButtonRequestType_ButtonRequest_SignTx, "Destination", "%s",
                 address);
   }
   memzero(entries, sizeof(entries));
+  memzero(address, sizeof(address));
   if (!confirmed) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();
@@ -192,6 +233,10 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
     return;
   }
 
+#if BITCOIN_ONLY
+  fsm_sendFailure(FailureType_Failure_SyntaxError, "Unsupported payload");
+  layoutHome();
+#else
   /* Validate with the verifier's own parser: no raw signing oracle. */
   SolanaInstrSchema schema;
   CHECK_PARAM(storage_isPolicyEnabled("AdvancedMode"),
@@ -258,4 +303,5 @@ void fsm_msgClearsignAttestorSign(const ClearsignAttestorSign* msg) {
   }
 
   attestor_signAndReply(msg->payload.bytes, msg->payload.size);
+#endif  // BITCOIN_ONLY
 }

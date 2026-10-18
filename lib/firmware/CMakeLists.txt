@@ -4,6 +4,8 @@ set(sources
     authenticator.c
     bip85.c
     coins.c
+    contact_book.c
+    contact_book_utxo.c
     crypto.c
     ctap2.c
     ctap2_cbor.c
@@ -52,7 +54,6 @@ if(NOT ${KK_BITCOIN_ONLY})
       ethereum_tokens.c
       clearsign_root.c
       signed_metadata.c
-      contact_book.c
       uniswap_ur.c
       mayachain.c
       nano.c

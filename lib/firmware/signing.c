@@ -25,6 +25,7 @@
 #include "keepkey/crypto/curves.h"
 #include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/coins.h"
+#include "keepkey/firmware/contact_book.h"
 #include "keepkey/firmware/crypto.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/home_sm.h"
@@ -2270,6 +2271,10 @@ void signing_abort(void) {
   if (signing) {
     layoutHome();
   }
+  /* A SignTx contact proof is for that transaction only. Only a UTXO one:
+   * every engine reset (an EthereumSignTx too) passes through here, and must
+   * not drop the EVM proof loaded for it. */
+  contact_book_clear_type(CONTACT_BOOK_DEST_UTXO_SCRIPT);
   fsm_clearDerivedNode();
   txin_dgst_reset_current();
   memzero(&inputs_count, sizeof(inputs_count));

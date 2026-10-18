@@ -624,8 +624,8 @@ static bool fsm_dispatchGate(MessageType msg_id) {
         case MessageType_MessageType_HiveSignAccountUpdate:
         case MessageType_MessageType_HiveSignMessage:
         case MessageType_MessageType_HiveSignOperations:
-        case MessageType_MessageType_ClearsignAttestorSign:
 #endif
+        case MessageType_MessageType_ClearsignAttestorSign:
 #if ZCASH_PRIVACY
         case MessageType_MessageType_ZcashSignPCZT:
 #endif
@@ -781,8 +781,8 @@ void fsm_abort_signing_workflows(void) {
   abort_signing_engines();
 #if !BITCOIN_ONLY
   erc7730_catalog_clear_preload();
-  contact_book_clear(); /* as the preload: next signing request only */
 #endif
+  contact_book_clear(); /* as the preload: next signing request only */
 }
 
 void fsm_msgClearSession(ClearSession* msg) {
@@ -821,8 +821,6 @@ void fsm_msgClearSession(ClearSession* msg) {
 #include "fsm_msg_tron.h"
 #include "fsm_msg_ton.h"
 #include "fsm_msg_solana.h"
-/* After fsm_msg_solana.h: reuses its base58 helper and the KKSOLSC1 parser. */
-#include "fsm_msg_clearsign_attestor.h"
 #include "fsm_msg_hive.h"
 #else
 // The coin engines above are compiled out, and every call to these hooks is
@@ -833,6 +831,9 @@ void tendermint_signAbort(void) {}
 void eos_signingAbort(void) {}
 void signed_metadata_clear_signers(void) {}
 #endif  // !BITCOIN_ONLY
+/* After fsm_msg_solana.h: reuses its base58 helper and the KKSOLSC1 parser.
+ * The bitcoin-only build keeps only its address-book certification. */
+#include "fsm_msg_clearsign_attestor.h"
 #if ZCASH_PRIVACY
 #include "fsm_msg_zcash.h"
 #else

@@ -19,7 +19,8 @@ REQUIRED_BITCOIN_SYMBOLS = (
 )
 FORBIDDEN_HANDLER_PREFIXES = (
     b"fsm_msgBinance",
-    b"fsm_msgClearsignAttestor",
+    # fsm_msgClearsignAttestorSign certifies address books in both builds.
+    b"fsm_msgClearsignAttestorGetPublicKey",
     b"fsm_msgCosmos",
     b"fsm_msgEos",
     b"fsm_msgEthereum",

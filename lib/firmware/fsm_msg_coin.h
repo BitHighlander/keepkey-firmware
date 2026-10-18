@@ -1,3 +1,9 @@
+#include "keepkey/firmware/contact_book_utxo.h"
+
+/* Defined in fsm_msg_clearsign_attestor.h, included later into fsm.c; also
+ * used by fsm_msg_ethereum.h. */
+static HDNode* attestor_getNode(void);
+
 void fsm_msgGetPublicKey(GetPublicKey* msg) {
   RESP_INIT(PublicKey);
 
@@ -104,8 +110,27 @@ void fsm_msgSignTx(SignTx* msg) {
   if (!coin) {
     return;
   }
+
+  /* A certified contact for this transaction only. A proof the device cannot
+   * verify, or one for another coin or chain, is dropped and the transaction
+   * is reviewed as usual: a proof never makes a send fail. Checked before the
+   * root is derived, because both use fsm_getDerivedNode()'s scratch. */
+  _Static_assert(
+      sizeof(msg->contact_proof.bytes) == CONTACT_BOOK_PROOF_MAX,
+      "SignTx.contact_proof max_size must be CONTACT_BOOK_PROOF_MAX");
+  contact_book_clear();
+  if (msg->has_contact_proof && msg->contact_proof.size > 0) {
+    HDNode* attestor = attestor_getNode();
+    if (!attestor) return;
+    contact_book_utxo_accept_proof(coin, msg->contact_proof.bytes,
+                                   msg->contact_proof.size,
+                                   attestor->public_key);
+    memzero(attestor, sizeof(*attestor));
+  }
+
   const HDNode* node = fsm_getDerivedNode(coin->curve_name, 0, 0, NULL);
   if (!node) {
+    contact_book_clear();
     return;
   }
 

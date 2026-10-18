@@ -4,8 +4,7 @@
 #include "keepkey/firmware/erc7730_workflow.h"
 #include "keepkey/firmware/contact_book.h"
 
-/* Defined in fsm_msg_clearsign_attestor.h, included later into fsm.c. */
-static HDNode* attestor_getNode(void);
+/* attestor_getNode(): declared in fsm_msg_coin.h, included earlier. */
 
 /*
  * This file is part of the Keepkey project

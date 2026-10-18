@@ -3960,6 +3960,255 @@ TEST(Fsm, SessionClearDropsTheContactProof) {
 }
 #endif
 
+/* Certified UTXO contacts through the real dispatch, in both builds: the
+ * KKABPRF1 proof rides on SignTx.contact_proof
+ * (docs/design/certified-contacts-utxo.md). */
+#include "contact_book_utxo_vectors.h"
+#include "contact_book_vectors.h"
+namespace {
+std::vector<uint8_t> utxoHex(const char* value) {
+  std::vector<uint8_t> out;
+  for (size_t i = 0; value[i] && value[i + 1]; i += 2) {
+    unsigned byte = 0;
+    sscanf(value + i, "%2x", &byte);
+    out.push_back(static_cast<uint8_t>(byte));
+  }
+  return out;
+}
+
+std::vector<uint8_t> utxoEntry(const std::string& network, uint8_t type,
+                               const std::vector<uint8_t>& dest,
+                               const std::string& label) {
+  std::vector<uint8_t> out = {static_cast<uint8_t>(network.size())};
+  out.insert(out.end(), network.begin(), network.end());
+  out.push_back(type);
+  out.push_back(static_cast<uint8_t>(dest.size()));
+  out.insert(out.end(), dest.begin(), dest.end());
+  out.push_back(static_cast<uint8_t>(label.size()));
+  out.insert(out.end(), label.begin(), label.end());
+  return out;
+}
+
+std::vector<uint8_t> utxoRequest(
+    const std::vector<std::vector<uint8_t>>& entries) {
+  std::vector<uint8_t> out = {'K', 'K', 'A', 'B', 'R', 'E', 'Q', '1',
+                              1,   0,   0,   0,   9,
+                              static_cast<uint8_t>(entries.size())};
+  for (const auto& e : entries) out.insert(out.end(), e.begin(), e.end());
+  return out;
+}
+
+const char kBtcNetwork[] = "bip122:000000000019d6689c085ae165831e93";
+
+class UtxoContactDispatch : public ::testing::Test {
+ protected:
+  ScopedFlash flash;
+  void SetUp() override {
+    kk_test_board_init();
+    fsm_init();
+    signing_abort();
+    storage_reset();
+    storage_setMnemonic("all all all all all all all all all all all all");
+    ASSERT_TRUE(storage_isInitialized());
+  }
+  void TearDown() override {
+    signing_abort();
+    contact_book_clear();
+  }
+
+  void signTx(const char* coin, const char* proof) {
+    SignTx tx = {};
+    tx.inputs_count = 1;
+    tx.outputs_count = 1;
+    tx.has_coin_name = true;
+    std::strcpy(tx.coin_name, coin);
+    if (proof) {
+      const auto bytes = utxoHex(proof);
+      tx.has_contact_proof = true;
+      tx.contact_proof.size = bytes.size();
+      std::memcpy(tx.contact_proof.bytes, bytes.data(), bytes.size());
+    }
+    fsm_test_clearLastFailure();
+    receiveMessage(MessageType_MessageType_SignTx, SignTx_fields, &tx);
+  }
+
+  /* Certify `request`, accepting `yes` screens and declining the next; the
+   * bodies shown. */
+  std::vector<std::string> certify(const std::vector<uint8_t>& request,
+                                   int yes) {
+    ClearsignAttestorSign sign = {};
+    sign.has_payload = true;
+    sign.payload.size = request.size();
+    std::memcpy(sign.payload.bytes, request.data(), request.size());
+    fsm_test_clearLastFailure();
+    kkconfirm_drain();
+    EXPECT_TRUE(kkconfirm_preload(yes, yes ? 1 : 0));
+    kkconfirm_capture_start();
+    receiveMessage(MessageType_MessageType_ClearsignAttestorSign,
+                   ClearsignAttestorSign_fields, &sign);
+    auto screens = kkconfirm_capture_finish();
+    EXPECT_EQ(0, kkconfirm_drain());
+    return screens;
+  }
+};
+}  // namespace
+
+TEST_F(UtxoContactDispatch, SignTxCarriesTheProofForThatTransactionOnly) {
+  signTx("Bitcoin", UPROOF_BTC_0);
+  EXPECT_TRUE(signing_is_active());
+  EXPECT_EQ(0, fsm_test_lastFailureCode());
+  EXPECT_STREQ("Alice", contact_book_label()) << "no AdvancedMode needed";
+
+  Ping ping = {};
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+  EXPECT_STREQ("Alice", contact_book_label()) << "status polls keep it";
+
+  /* A new SignTx without a proof starts unnamed. */
+  signTx("Bitcoin", nullptr);
+  EXPECT_TRUE(signing_is_active());
+  EXPECT_EQ(nullptr, contact_book_label());
+
+  signTx("Bitcoin", UPROOF_BTC_1);
+  EXPECT_STREQ("Bob", contact_book_label());
+  Cancel cancel = {};
+  receiveMessage(MessageType_MessageType_Cancel, Cancel_fields, &cancel);
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_EQ(nullptr, contact_book_label());
+
+  /* A lock or passphrase change ends the session the proof was checked in. */
+  signTx("Testnet", UPROOF_BTC_5);
+  EXPECT_STREQ("Tess", contact_book_label());
+  storage_reset(); /* this fixture's session_clear() needs no flash */
+  session_clear(/*clear_pin=*/true);
+  EXPECT_FALSE(signing_is_active());
+  EXPECT_EQ(nullptr, contact_book_label());
+}
+
+/* Real world never rejected: a proof the device cannot use is dropped and the
+ * transaction goes on to its ordinary review. */
+TEST_F(UtxoContactDispatch, AProofItCannotUseNeverStopsTheSend) {
+  const char* const unusable[][2] = {
+      {"Testnet", UPROOF_BTC_0},           /* another coin's contact */
+      {"Bitcoin", UPROOF_BTC_5},           /* a Testnet contact */
+      {"Bitcoin", UPROOF_BTC_0_OTHER_KEY}, /* another wallet's book */
+      {"Bitcoin", UPROOF_BTC_0_TAMPERED},  /* an altered name */
+      {"Bitcoin", PROOF3_0},               /* an EVM contact */
+      {"Bitcoin", "00ff"},                 /* not a proof */
+  };
+  for (const auto& u : unusable) {
+    SCOPED_TRACE(u[1]);
+    signTx(u[0], u[1]);
+    EXPECT_TRUE(signing_is_active());
+    EXPECT_EQ(0, fsm_test_lastFailureCode());
+    EXPECT_EQ(nullptr, contact_book_label());
+  }
+}
+
+/* Every contact is reviewed with its coin's name and its address before the
+ * root is signed. The last screen is declined, so nothing is signed here. */
+TEST_F(UtxoContactDispatch, CertificationShowsEachScriptAsItsCoinsAddress) {
+  const auto screens = certify(utxoHex(UREQ_BTC), 12);
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  const std::vector<std::string> expected = {
+      "Approve 6 contacts?\nRevision 9",
+      "Alice\nBitcoin",
+      "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+      "Bob\nBitcoin",
+      "bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0",
+      "Carol\nBitcoin",
+      "1BpEi6DfDAUFd7GtittLSdBeYJvcoaVggu",
+      "Dave\nBitcoin",
+      "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy",
+      "Erin\nBitcoin",
+      "bc1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3qccfmv3",
+      "Tess\nTestnet",
+      "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx"};
+  EXPECT_EQ(expected, screens);
+}
+
+TEST_F(UtxoContactDispatch, AContactItCannotShowIsRefusedBeforeAnyScreen) {
+  const auto p2wpkh = utxoHex("0014751e76e8199196d454941c45d1b3a323f1433bd6");
+  const std::vector<std::vector<uint8_t>> refused = {
+      /* OP_RETURN, a bare public key, a truncated script */
+      utxoEntry(kBtcNetwork, CONTACT_BOOK_DEST_UTXO_SCRIPT,
+                utxoHex("6a0568656c6c6f"), "Data"),
+      utxoEntry(kBtcNetwork, CONTACT_BOOK_DEST_UTXO_SCRIPT,
+                utxoHex("2102f2ffb8489096035d8bc25201ea7439379fa3dd55a6ed781bf"
+                        "7a94213408ed015ac"),
+                "Key"),
+      utxoEntry(kBtcNetwork, CONTACT_BOOK_DEST_UTXO_SCRIPT,
+                utxoHex("0014751e76e8199196d454941c45d1b3a323f1433b"), "Short"),
+      /* a network no coin is bound to, an EVM network, the wrong case */
+      utxoEntry("bip122:00000000000000000000000000000000",
+                CONTACT_BOOK_DEST_UTXO_SCRIPT, p2wpkh, "Nowhere"),
+      utxoEntry("eip155:1", CONTACT_BOOK_DEST_UTXO_SCRIPT, p2wpkh, "Evm"),
+      utxoEntry("BIP122:000000000019d6689c085ae165831e93",
+                CONTACT_BOOK_DEST_UTXO_SCRIPT, p2wpkh, "Upper"),
+      /* a script entry marked as an EVM address, an unknown type */
+      utxoEntry(kBtcNetwork, CONTACT_BOOK_DEST_EVM_ADDRESS, p2wpkh, "Typed"),
+      utxoEntry(kBtcNetwork, CONTACT_BOOK_DEST_ACCOUNT_BYTES, p2wpkh, "Acct"),
+#if BITCOIN_ONLY
+      /* coins this image does not sign, and EVM contacts */
+      utxoEntry("bip122:12a765e31ffd4059bada1e25190f6e98",
+                CONTACT_BOOK_DEST_UTXO_SCRIPT, p2wpkh, "Lite"),
+      utxoEntry("eip155:1", CONTACT_BOOK_DEST_EVM_ADDRESS,
+                utxoHex("d8da6bf26964af9d7eed9e03e53415d37aa96045"), "Eve"),
+#endif
+  };
+  const auto good =
+      utxoEntry(kBtcNetwork, CONTACT_BOOK_DEST_UTXO_SCRIPT, p2wpkh, "Alice");
+  for (const auto& entry : refused) {
+    SCOPED_TRACE(std::string(entry.begin(), entry.end()));
+    /* One bad entry refuses the whole book, wherever it is. */
+    EXPECT_TRUE(certify(utxoRequest({good, entry}), 0).empty());
+    EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+  }
+  /* The 7.16 rules hold: one address per name on a network. */
+  const auto bob = utxoEntry(
+      kBtcNetwork, CONTACT_BOOK_DEST_UTXO_SCRIPT,
+      utxoHex("512079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"),
+      "Alice");
+  EXPECT_TRUE(certify(utxoRequest({good, bob}), 0).empty());
+  EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+}
+
+#if !BITCOIN_ONLY
+/* One book holds EVM and UTXO contacts. Each is shown in its own form. */
+TEST_F(UtxoContactDispatch, AMixedBookShowsEveryCoinAndTheEvmContact) {
+  const auto screens = certify(utxoHex(UREQ_MIXED), 26);
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  ASSERT_EQ(27u, screens.size());
+  EXPECT_EQ("Approve 13 contacts?\nRevision 9", screens[0]);
+  const std::vector<std::string> tail(screens.begin() + 13, screens.end());
+  const std::vector<std::string> expected = {
+      "Alice\nLitecoin",
+      "ltc1qw508d6qejxtdg4y5r3zarvary0c5xw7kgmn4n9",
+      "Carol cash\nBitcoinCash",
+      "bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a",
+      "Doge\nDogecoin",
+      "DFpN6QqFfUm3gKNaxN6tNcab1FArL9cZLE",
+      "Dash\nDash",
+      "XmN7PQYWKn5MJFna5fRYgP6mxT2F7xpekE",
+      "Zed\nZcash",
+      "t1UYsZVJkLPeMjxEtACvSxfWuNmddpWfxzs",
+      "Digi\nDigiByte",
+      "dgb1qw508d6qejxtdg4y5r3zarvary0c5xw7kmudfnm",
+      "Eve\neip155:1",
+      "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"};
+  EXPECT_EQ(expected, tail);
+}
+
+/* An EVM proof loaded for the next EthereumSignTx never names a Bitcoin
+ * output: SignTx is another request, and it drops it. */
+TEST_F(UtxoContactDispatch, AnEvmProofLoadedBeforeSignTxIsDropped) {
+  sendContactProof(PROOF3_0);
+  ASSERT_STREQ("Alice", contact_book_label());
+  signTx("Bitcoin", nullptr);
+  EXPECT_TRUE(signing_is_active());
+  EXPECT_EQ(nullptr, contact_book_label());
+}
+#endif
+
 #if !BITCOIN_ONLY
 TEST(Fsm, MissingEosCommonTerminatesSigning) {
   fsm_init();
@@ -4329,6 +4578,7 @@ TEST(Fsm, FeaturesReportExactlyTheStagedCapabilities) {
       Features_Capability_CAPABILITY_SOLANA_CERTIFIED_REVIEW,
       Features_Capability_CAPABILITY_CERTIFIED_CONTACTS,
 #endif
+      Features_Capability_CAPABILITY_CERTIFIED_CONTACTS_UTXO,
   };
   EXPECT_EQ(expected, std::vector<Features_Capability>(
                           features.capabilities,

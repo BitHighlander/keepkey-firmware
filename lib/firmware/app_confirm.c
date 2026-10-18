@@ -159,6 +159,18 @@ bool confirm_transaction_output(ButtonRequestType button_request,
 }
 
 /*
+ * confirm_contact_output() - Output to a certified contact: the name, then
+ * the full address on the same screen
+ */
+bool confirm_contact_output(ButtonRequestType button_request,
+                            const char* amount, const char* name,
+                            const char* to) {
+  return confirm_with_custom_layout(&layout_notification_no_title_bold,
+                                    button_request, "", "Send %s to %s\n%s",
+                                    amount, name, to);
+}
+
+/*
  * confirm_erc_token_transfer() - Show transaction output confirmation without
  * bold
  *

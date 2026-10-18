@@ -37,6 +37,9 @@ bool confirm_transfer_output(ButtonRequestType button_request,
                              const char* amount, const char* to);
 bool confirm_transaction_output(ButtonRequestType button_request,
                                 const char* amount, const char* to);
+bool confirm_contact_output(ButtonRequestType button_request,
+                            const char* amount, const char* name,
+                            const char* to);
 bool confirm_transaction_output_no_bold(ButtonRequestType button_request,
                                         const char* amount, const char* to);
 

@@ -25,6 +25,7 @@
 #include "keepkey/board/util.h"
 #include "keepkey/firmware/app_confirm.h"
 #include "keepkey/firmware/coins.h"
+#include "keepkey/firmware/contact_book_utxo.h"
 #include "keepkey/firmware/crypto.h"
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/thorchain.h"
@@ -592,9 +593,16 @@ int compile_output(const CoinType* coin, const HDNode* root, TxOutputType* in,
       prefix_len = 0;
     }
 
-    if (!confirm_transaction_output(
-            ButtonRequestType_ButtonRequest_ConfirmOutput, amount_str,
-            prefix_len + in->address)) {
+    /* A certified contact is named beside the full address, never instead
+     * of it. */
+    const char* contact = contact_book_utxo_label(
+        coin, in, out->script_pubkey.bytes, out->script_pubkey.size);
+    if (contact ? !confirm_contact_output(
+                      ButtonRequestType_ButtonRequest_ConfirmOutput, amount_str,
+                      contact, prefix_len + in->address)
+                : !confirm_transaction_output(
+                      ButtonRequestType_ButtonRequest_ConfirmOutput, amount_str,
+                      prefix_len + in->address)) {
       return -1;  // user aborted
     }
 
