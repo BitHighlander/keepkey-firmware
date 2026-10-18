@@ -14,6 +14,7 @@ extern "C" {
 #include "uniswap_ur_expected.h"
 #include "uniswap_ur_oracle.h"
 #include "uniswap_ur_sample.h"
+#include "uniswap_ur_v4_routers.h"
 #include "uniswap_ur_vectors.h"
 
 namespace {
@@ -34,6 +35,26 @@ std::string hex(const uint8_t* p, size_t n) {
     s += d[p[i] & 15];
   }
   return s;
+}
+
+/* UR 2.1.2 on Base, the router the sample calls went to. */
+const std::vector<uint8_t>& base_router() {
+  static const std::vector<uint8_t> r =
+      unhex("d6145b2d3f379919e8cdeda7b97e37c4b2ca9c40");
+  return r;
+}
+
+/* The listed UR 2.0 routers (V4 swaps without minHopPriceX36). */
+bool is_ur20(const std::string& router) {
+  return router == "66a9893cc07d91d95644aedd05d03f95e1dba8af" ||
+         router == "6ff5693b99212da76ad316178a184ab56d299b43" ||
+         router == "a51afafe0263b40edaef0df8781ea9aa03e381a3";
+}
+
+/* A listed router with the other V4 layout. */
+std::vector<uint8_t> other_layout(const std::string& router) {
+  return unhex(is_ur20(router) ? "d6145b2d3f379919e8cdeda7b97e37c4b2ca9c40"
+                               : "6ff5693b99212da76ad316178a184ab56d299b43");
 }
 
 size_t word(const std::vector<uint8_t>& b, size_t off) {
@@ -76,7 +97,7 @@ TEST(UniswapUr, RealBaseSwapsDecodeAsTheIndependentDecoderSays) {
   for (const auto& v : urv::accepted()) {
     std::vector<uint8_t> cd = unhex(v.calldata);
     UrPlan plan;
-    ASSERT_TRUE(ur_decode(cd.data(), cd.size(), &plan)) << v.tx;
+    ASSERT_TRUE(ur_decode(cd.data(), cd.size(), base_router().data(), &plan)) << v.tx;
     ASSERT_EQ(plan.n, v.steps.size()) << v.tx;
     for (size_t i = 0; i < plan.n; i++) {
       const UrStep& got = plan.steps[i];
@@ -104,7 +125,7 @@ TEST(UniswapUr, OlderRouterV4LayoutIsNotDecoded) {
   for (const auto& h : urv::v4_rejected()) {
     std::vector<uint8_t> cd = unhex(h);
     UrPlan plan;
-    EXPECT_FALSE(ur_decode(cd.data(), cd.size(), &plan));
+    EXPECT_FALSE(ur_decode(cd.data(), cd.size(), base_router().data(), &plan));
     EXPECT_EQ(plan.n, 0);  // never a partial plan
   }
 }
@@ -113,23 +134,23 @@ TEST(UniswapUr, AllowRevertFlagIsNotDecoded) {
   std::vector<uint8_t> cd = sample(UR_V3_SWAP_EXACT_IN);
   ASSERT_FALSE(cd.empty());
   UrPlan plan;
-  ASSERT_TRUE(ur_decode(cd.data(), cd.size(), &plan));
+  ASSERT_TRUE(ur_decode(cd.data(), cd.size(), base_router().data(), &plan));
   cd[command_index(cd, 0)] |= 0x80;
-  EXPECT_FALSE(ur_decode(cd.data(), cd.size(), &plan));
+  EXPECT_FALSE(ur_decode(cd.data(), cd.size(), base_router().data(), &plan));
 }
 
 TEST(UniswapUr, UnknownCommandIsNotDecoded) {
   std::vector<uint8_t> cd = sample(UR_V3_SWAP_EXACT_IN);
   cd[command_index(cd, 0)] = 0x10;  // V4_SWAP
   UrPlan plan;
-  EXPECT_FALSE(ur_decode(cd.data(), cd.size(), &plan));
+  EXPECT_FALSE(ur_decode(cd.data(), cd.size(), base_router().data(), &plan));
 }
 
 TEST(UniswapUr, TruncatedCalldataIsNotDecoded) {
   std::vector<uint8_t> cd = sample(UR_V3_SWAP_EXACT_IN);
   UrPlan plan;
   for (size_t cut = 1; cut < cd.size(); cut += 31) {
-    EXPECT_FALSE(ur_decode(cd.data(), cd.size() - cut, &plan)) << cut;
+    EXPECT_FALSE(ur_decode(cd.data(), cd.size() - cut, base_router().data(), &plan)) << cut;
   }
 }
 
@@ -137,21 +158,21 @@ TEST(UniswapUr, DirtyRecipientWordIsNotDecoded) {
   std::vector<uint8_t> cd = sample(UR_V3_SWAP_EXACT_IN);
   size_t step = 0;
   UrPlan plan;
-  ASSERT_TRUE(ur_decode(cd.data(), cd.size(), &plan));
+  ASSERT_TRUE(ur_decode(cd.data(), cd.size(), base_router().data(), &plan));
   while (plan.steps[step].kind != UR_V3_SWAP_EXACT_IN) step++;
   cd[input_data(cd, step)] = 0x01;  // high byte of the recipient word
-  EXPECT_FALSE(ur_decode(cd.data(), cd.size(), &plan));
+  EXPECT_FALSE(ur_decode(cd.data(), cd.size(), base_router().data(), &plan));
 }
 
 TEST(UniswapUr, Permit2AmountWiderThanUint160IsNotDecoded) {
   std::vector<uint8_t> cd = sample(UR_PERMIT2_PERMIT);
   ASSERT_FALSE(cd.empty());
   UrPlan plan;
-  ASSERT_TRUE(ur_decode(cd.data(), cd.size(), &plan));
+  ASSERT_TRUE(ur_decode(cd.data(), cd.size(), base_router().data(), &plan));
   size_t step = 0;
   while (plan.steps[step].kind != UR_PERMIT2_PERMIT) step++;
   cd[input_data(cd, step) + 32] = 0x01;  // amount word, above 160 bits
-  EXPECT_FALSE(ur_decode(cd.data(), cd.size(), &plan));
+  EXPECT_FALSE(ur_decode(cd.data(), cd.size(), base_router().data(), &plan));
 }
 
 TEST(UniswapUr, CommandAndInputCountsMustAgree) {
@@ -160,7 +181,7 @@ TEST(UniswapUr, CommandAndInputCountsMustAgree) {
   size_t len_word = 4 + word(cd, 4);
   cd[len_word + 31] -= 1;
   UrPlan plan;
-  EXPECT_FALSE(ur_decode(cd.data(), cd.size(), &plan));
+  EXPECT_FALSE(ur_decode(cd.data(), cd.size(), base_router().data(), &plan));
 }
 
 TEST(UniswapUr, RecipientConstants) {
@@ -177,7 +198,7 @@ bool summarize_vec(const urv::Vec& v, UrSummary* s, UrPlan* plan) {
   std::vector<uint8_t> cd = unhex(v.calldata);
   std::vector<uint8_t> router = unhex(v.router);
   std::vector<uint8_t> value = unhex(v.value);
-  return ur_decode(cd.data(), cd.size(), plan) &&
+  return ur_decode(cd.data(), cd.size(), router.data(), plan) &&
          ur_summarize(plan, router.data(), value.data(), s);
 }
 bool has_kind(const urv::Vec& v, int kind) {
@@ -439,9 +460,9 @@ TEST(UniswapUr, OutputLeftInTheRouterAfterItsSweepIsRefused) {
 TEST(UniswapUr, OffsetsWiderThan32BitsAreNotDecoded) {
   std::vector<uint8_t> cd = sample(UR_V3_SWAP_EXACT_IN);
   UrPlan plan;
-  ASSERT_TRUE(ur_decode(cd.data(), cd.size(), &plan));
+  ASSERT_TRUE(ur_decode(cd.data(), cd.size(), base_router().data(), &plan));
   cd[4 + 27] = 0x01;  // commands offset word: 2^32 + original
-  EXPECT_FALSE(ur_decode(cd.data(), cd.size(), &plan));
+  EXPECT_FALSE(ur_decode(cd.data(), cd.size(), base_router().data(), &plan));
 }
 
 /* ---- Streaming decoder vs the buffered decoder it replaced (D-021) ----
@@ -457,11 +478,12 @@ struct Outcome {
 };
 
 Outcome stream_decode(const std::vector<uint8_t>& cd,
-                      const std::vector<size_t>& chunks) {
+                      const std::vector<size_t>& chunks,
+                      const uint8_t* router = base_router().data()) {
   Outcome o;
   memset(&o.plan, 0xa5, sizeof(o.plan));  // begin must clear it
   UrStream s;
-  ur_stream_begin(&s, &o.plan, cd.size());
+  ur_stream_begin(&s, &o.plan, cd.size(), router);
   size_t off = 0;
   for (size_t c : chunks) {
     c = std::min(c, cd.size() - off);
@@ -717,11 +739,11 @@ TEST(UniswapUrStream, InputsOutOfOrderAreRefused) {
   UroPlan abi;
   ASSERT_TRUE(ur_oracle_decode(cd.data(), cd.size(), &abi));  // abi-valid
   UrPlan plan;
-  EXPECT_FALSE(ur_decode(cd.data(), cd.size(), &plan));
+  EXPECT_FALSE(ur_decode(cd.data(), cd.size(), base_router().data(), &plan));
   EXPECT_EQ(plan.n, 0);
   // The layout as sent decodes.
   std::vector<uint8_t> same = unhex(v->calldata);
-  EXPECT_TRUE(ur_decode(same.data(), same.size(), &plan));
+  EXPECT_TRUE(ur_decode(same.data(), same.size(), base_router().data(), &plan));
 }
 
 TEST(UniswapUrStream, OffsetIntoTheCommandsIsRefused) {
@@ -730,19 +752,19 @@ TEST(UniswapUrStream, OffsetIntoTheCommandsIsRefused) {
   std::vector<uint8_t> cd = sample(UR_V3_SWAP_EXACT_IN);
   put_word(&cd, 4 + 32, word(cd, 4));
   UrPlan plan;
-  EXPECT_FALSE(ur_decode(cd.data(), cd.size(), &plan));
+  EXPECT_FALSE(ur_decode(cd.data(), cd.size(), base_router().data(), &plan));
 }
 
 TEST(UniswapUrStream, MoreBytesThanDeclaredAreRefused) {
   std::vector<uint8_t> cd = sample(UR_V3_SWAP_EXACT_IN);
   UrPlan plan;
   UrStream s;
-  ur_stream_begin(&s, &plan, cd.size() - 1);
+  ur_stream_begin(&s, &plan, cd.size() - 1, base_router().data());
   EXPECT_FALSE(ur_stream_feed(&s, cd.data(), cd.size()));
   EXPECT_FALSE(ur_stream_finish(&s));
   EXPECT_EQ(plan.n, 0);
   // A refusal is final: the right bytes afterwards do not revive it.
-  ur_stream_begin(&s, &plan, cd.size());
+  ur_stream_begin(&s, &plan, cd.size(), base_router().data());
   std::vector<uint8_t> bad = cd;
   bad[0] ^= 1;  // selector
   EXPECT_FALSE(ur_stream_feed(&s, bad.data(), 4));
@@ -754,7 +776,7 @@ TEST(UniswapUrStream, ShortCallIsRefusedAtFinish) {
   std::vector<uint8_t> cd = sample(UR_V3_SWAP_EXACT_IN);
   UrPlan plan;
   UrStream s;
-  ur_stream_begin(&s, &plan, cd.size());
+  ur_stream_begin(&s, &plan, cd.size(), base_router().data());
   EXPECT_TRUE(ur_stream_feed(&s, cd.data(), cd.size() - 1));
   EXPECT_FALSE(ur_stream_finish(&s));
   EXPECT_EQ(plan.n, 0);
@@ -767,12 +789,6 @@ TEST(UniswapUrStream, ShortCallIsRefusedAtFinish) {
  * each call the same way in every chunking, and the summarizer must say
  * the same thing. */
 namespace {
-
-const std::vector<uint8_t>& base_router() {
-  static const std::vector<uint8_t> r =
-      unhex("d6145b2d3f379919e8cdeda7b97e37c4b2ca9c40");
-  return r;
-}
 
 const urs::Call* sample_call(const std::string& tx) {
   static std::map<std::string, const urs::Call*> by_tx;
@@ -800,6 +816,14 @@ bool case_for(const ure::Expect& e, Case* c) {
     c->cd = unhex(v.calldata);
     c->router = unhex(v.router);
     c->value = unhex(v.value);
+  } else if (key.compare(0, 3, "v4x") == 0 || key.compare(0, 3, "v4y") == 0) {
+    const urx::Call& x = urx::calls()[std::stoul(key.substr(3))];
+    c->cd = unhex(x.calldata);
+    c->router = key[2] == 'x' ? unhex(x.router) : other_layout(x.router);
+    c->value = unhex(x.value);
+  } else if (key.compare(0, 3, "v4o") == 0) {
+    c->cd = unhex(urv::v4_rejected()[std::stoul(key.substr(3))]);
+    c->router = unhex("6ff5693b99212da76ad316178a184ab56d299b43");
   } else {
     c->cd = unhex(urv::v4_rejected()[std::stoul(key.substr(3))]);
   }
@@ -852,8 +876,12 @@ TEST(UniswapUrModel, EveryCallReadsAsThePythonModelReadsIt) {
     Case c;
     ASSERT_TRUE(case_for(e, &c)) << e.key;
     calls++;
+    /* A call read with the other V4 layout is not laid out in order for it:
+     * the forward-only decoder may refuse more, never read differently. */
+    const bool cross = e.key.compare(0, 3, "v4y") == 0;
     for (const auto& ch : chunkings(c.cd.size(), seed++)) {
-      Outcome got = stream_decode(c.cd, ch);
+      Outcome got = stream_decode(c.cd, ch, c.router.data());
+      if (cross && !got.ok) continue;
       ASSERT_EQ(got.ok, e.decoded) << e.key;
       if (!got.ok) continue;
       ASSERT_EQ(plan_diff(got.plan, e), "") << e.key;
@@ -892,7 +920,8 @@ TEST(UniswapUrModel, MutatedV4CallsNeverReadDifferently) {
     Case c;
     ASSERT_TRUE(case_for(e, &c)) << e.key;
     tried++;
-    Outcome got = stream_decode(c.cd, chunkings(c.cd.size(), tried)[3]);
+    Outcome got =
+        stream_decode(c.cd, chunkings(c.cd.size(), tried)[3], c.router.data());
     if (!got.ok) {
       stricter += e.decoded;
       continue;
@@ -923,7 +952,7 @@ TEST(UniswapUrModel, SameReviewAsThe716SummarizerWhereItReviewed) {
     UroSummary os;
     UrPlan plan;
     UrSummary s;
-    const bool dec = ur_decode(cd.data(), cd.size(), &plan);
+    const bool dec = ur_decode(cd.data(), cd.size(), router.data(), &plan);
     const bool now = dec && ur_summarize(&plan, router.data(), value.data(), &s);
     if (!in_oracle_scope(cd) || !ur_oracle_decode(cd.data(), cd.size(), &op) ||
         !ur_oracle_summarize(&op, router.data(), value.data(), &os)) {
@@ -1001,7 +1030,7 @@ const urs::Call* v4_swap_call(bool hooked) {
     if (has_hook != hooked) continue;
     UrPlan plan;
     UrSummary s;
-    if (ur_decode(cd.data(), cd.size(), &plan) &&
+    if (ur_decode(cd.data(), cd.size(), base_router().data(), &plan) &&
         ur_summarize(&plan, base_router().data(), c.value.data(), &s))
       return &c;
   }
@@ -1010,14 +1039,14 @@ const urs::Call* v4_swap_call(bool hooked) {
 
 bool decodes(const std::vector<uint8_t>& cd) {
   UrPlan plan;
-  return ur_decode(cd.data(), cd.size(), &plan);
+  return ur_decode(cd.data(), cd.size(), base_router().data(), &plan);
 }
 
 bool reviews(const std::vector<uint8_t>& cd, const std::vector<uint8_t>& value,
              UrSummary* s = nullptr) {
   UrPlan plan;
   UrSummary tmp;
-  return ur_decode(cd.data(), cd.size(), &plan) &&
+  return ur_decode(cd.data(), cd.size(), base_router().data(), &plan) &&
          ur_summarize(&plan, base_router().data(), value.data(), s ? s : &tmp);
 }
 }  // namespace
@@ -1027,7 +1056,7 @@ TEST(UniswapUrV4, RealSwapReviewsWithItsLimits) {
   ASSERT_NE(c, nullptr);
   UrPlan plan;
   UrSummary s;
-  ASSERT_TRUE(ur_decode(c->calldata.data(), c->calldata.size(), &plan));
+  ASSERT_TRUE(ur_decode(c->calldata.data(), c->calldata.size(), base_router().data(), &plan));
   ASSERT_EQ(plan.n, 1);
   EXPECT_EQ(plan.steps[0].kind, UR_V4_SWAP_EXACT_IN);
   ASSERT_TRUE(ur_summarize(&plan, base_router().data(), c->value.data(), &s));
@@ -1151,4 +1180,131 @@ TEST(UniswapUrV4, NestedOffsetsMustPointForward) {
     std::vector<uint8_t> t(cd.begin(), cd.begin() + cut);
     EXPECT_FALSE(decodes(t)) << cut;
   }
+}
+
+/* ---- V4 on the other listed routers (uniswap_ur_v4_routers.h) ----
+ * Real calls to Ethereum, Base and Arbitrum routers. UniswapUrModel checks
+ * every one, in every chunking, field by field against the Python model,
+ * read with its own router's layout (v4x) and with the other one (v4y). */
+TEST(UniswapUrV4Routers, EachListedRouterReviewsRealV4Calls) {
+  std::map<std::string, size_t> reviewed;
+  for (const auto& x : urx::calls()) {
+    std::vector<uint8_t> cd = unhex(x.calldata), r = unhex(x.router),
+                         value = unhex(x.value);
+    UrPlan plan;
+    UrSummary s;
+    bool v4 = false;
+    if (!ur_decode(cd.data(), cd.size(), r.data(), &plan)) continue;
+    for (size_t i = 0; i < plan.n; i++)
+      v4 = v4 || plan.steps[i].kind == UR_V4_SWAP_EXACT_IN;
+    if (v4 && ur_summarize(&plan, r.data(), value.data(), &s))
+      reviewed[x.router]++;
+  }
+  for (const char* r : {"66a9893cc07d91d95644aedd05d03f95e1dba8af",   // ETH 2.0
+                        "4c82d1fbfe28c977cbb58d8c7ff8fcf9f70a2cca",   // ETH 2.1.1
+                        "23617e59a5925b2a4bf75d73ff6711cd0b29de85",   // ETH 2.1.2
+                        "6ff5693b99212da76ad316178a184ab56d299b43",   // Base 2.0
+                        "a51afafe0263b40edaef0df8781ea9aa03e381a3",   // Arb 2.0
+                        "2d01411773c8c24805306e89a41f7855c3c4fe65"})  // Arb 2.1.2
+    EXPECT_GE(reviewed[r], 1u) << r;
+}
+
+/* The V4 layout belongs to the router: read with the other one, a real
+ * call is refused or reads as another swap (minHopPriceX36's offset taken
+ * for the amount). Never the same review, so the table cannot be loosened
+ * to "any UR". */
+TEST(UniswapUrV4Routers, TheOtherLayoutNeverReadsTheSameSwap) {
+  size_t misread = 0, refused = 0;
+  for (const auto& x : urx::calls()) {
+    std::vector<uint8_t> cd = unhex(x.calldata), r = unhex(x.router),
+                         o = other_layout(x.router), value = unhex(x.value);
+    UrPlan own, other;
+    UrSummary a, b;
+    if (!ur_decode(cd.data(), cd.size(), r.data(), &own) ||
+        !ur_summarize(&own, r.data(), value.data(), &a))
+      continue;
+    if (!ur_decode(cd.data(), cd.size(), o.data(), &other) ||
+        !ur_summarize(&other, o.data(), value.data(), &b)) {
+      refused++;
+      continue;
+    }
+    EXPECT_NE(review_fields(a), review_fields(b)) << x.tx;
+    misread++;
+  }
+  printf("other layout: %zu refused, %zu read as another swap\n", refused,
+         misread);
+  EXPECT_GT(refused + misread, 0u);
+}
+
+/* Exact-output V4 swaps are reviewed only where the router reverts unless
+ * the output is delivered in full (UR 2.1.2, V4ExactOutputUnfilled). UR
+ * 2.1.1 reads the same bytes the same way, but takes what the pool gave. */
+TEST(UniswapUrV4Routers, ExactOutputOnlyWhereDeliveredInFull) {
+  const std::vector<uint8_t> eth211 =
+      unhex("4c82d1fbfe28c977cbb58d8c7ff8fcf9f70a2cca");
+  const std::vector<uint8_t> eth212 =
+      unhex("23617e59a5925b2a4bf75d73ff6711cd0b29de85");
+  size_t n = 0;
+  for (const auto& c : urs::calls()) {
+    UrPlan plan, same;
+    UrSummary s, t;
+    if (!ur_decode(c.calldata.data(), c.calldata.size(), base_router().data(),
+                   &plan) ||
+        !ur_summarize(&plan, base_router().data(), c.value.data(), &s))
+      continue;
+    bool out = false;
+    for (size_t i = 0; i < plan.n; i++)
+      out = out || plan.steps[i].kind == UR_V4_SWAP_EXACT_OUT;
+    if (!out) continue;
+    ASSERT_TRUE(
+        ur_decode(c.calldata.data(), c.calldata.size(), eth211.data(), &same))
+        << c.tx;
+    EXPECT_EQ(memcmp(&plan, &same, sizeof(plan)), 0) << c.tx;
+    EXPECT_FALSE(ur_summarize(&same, eth211.data(), c.value.data(), &t))
+        << c.tx;
+    n++;
+  }
+  EXPECT_GT(n, 0u);
+  /* A built exact-output swap: refused on 2.0 and 2.1.1, reviewed on 2.1.2. */
+  UrPlan p = {};
+  p.n = 1;
+  UrStep& sw = p.steps[0];
+  sw.kind = UR_V4_SWAP_EXACT_OUT;
+  memset(sw.token_in, 0x11, 20);
+  memset(sw.token_out, 0x22, 20);
+  sw.recipient[19] = UR_RECIPIENT_MSG_SENDER;
+  sw.amount[31] = 100;
+  sw.limit[31] = 120;
+  sw.payer_is_user = true;
+  const uint8_t value[32] = {0};
+  UrSummary s;
+  ASSERT_TRUE(ur_summarize(&p, eth212.data(), value, &s));
+  EXPECT_FALSE(s.exact_in);
+  EXPECT_EQ(s.amount_out[31], 100);
+  EXPECT_FALSE(ur_summarize(&p, eth211.data(), value, &s));
+  EXPECT_FALSE(ur_summarize(
+      &p, unhex("66a9893cc07d91d95644aedd05d03f95e1dba8af").data(), value, &s));
+  sw.kind = UR_V4_SWAP_EXACT_IN;  // control: exact input is reviewed on both
+  EXPECT_TRUE(ur_summarize(&p, eth211.data(), value, &s));
+}
+
+/* A router not in V4_ROUTERS: V4_SWAP is not decoded at all (no layout to
+ * read it with); its V2/V3 commands still are. */
+TEST(UniswapUrV4Routers, UnlistedRouterDoesNotDecodeV4) {
+  const urs::Call* c = v4_swap_call(false);
+  ASSERT_NE(c, nullptr);
+  UrPlan plan;
+  std::vector<uint8_t> other = base_router();
+  other[19] ^= 1;
+  EXPECT_FALSE(
+      ur_decode(c->calldata.data(), c->calldata.size(), other.data(), &plan));
+  EXPECT_EQ(plan.n, 0);
+  for (const char* r : {"3fc91a3afd70395cd496c647d5a6cc9d4b2b7fad",   // UR 1.2
+                        "8b844f885672f333bc0042cb669255f93a4c1e6b",   // 2.1.1, not listed
+                        "fdf682f51fe81aa4898f0ae2163d8a55c127fbc7"}) {
+    EXPECT_FALSE(ur_decode(c->calldata.data(), c->calldata.size(),
+                           unhex(r).data(), &plan)) << r;
+  }
+  std::vector<uint8_t> cd = sample(UR_V3_SWAP_EXACT_IN);
+  EXPECT_TRUE(ur_decode(cd.data(), cd.size(), other.data(), &plan));
 }

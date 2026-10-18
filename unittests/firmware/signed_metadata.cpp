@@ -46,6 +46,8 @@ void setup(void);
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -3429,6 +3431,7 @@ TEST_F(CertifiedMetadataTest, NameRecordParsesTheServerSerializedBody) {
 /* ---- v0x07: certified Uniswap Universal Router decoder ------------------- */
 
 #include "uniswap_ur_sample.h"
+#include "uniswap_ur_v4_routers.h"
 #include "uniswap_ur_vectors.h"
 
 namespace {
@@ -3755,7 +3758,7 @@ TEST_F(CertifiedMetadataTest, UniswapCallPastTheOldBufferIsReviewed) {
   UrSummary want;
   for (const auto& c : urs::calls()) {
     if (c.calldata.size() > 1472 &&
-        ur_decode(c.calldata.data(), c.calldata.size(), &plan) &&
+        ur_decode(c.calldata.data(), c.calldata.size(), router.data(), &plan) &&
         ur_summarize(&plan, router.data(), zero, &want)) {
       call = &c;
       break;
@@ -3810,7 +3813,7 @@ void review_v4_call(bool hooked, std::vector<Shown>* got) {
   for (const auto& c : urs::calls()) {
     bool v4 = false;
     if (c.calldata.size() <= 1024 || !c.ok ||
-        !ur_decode(c.calldata.data(), c.calldata.size(), &plan))
+        !ur_decode(c.calldata.data(), c.calldata.size(), router.data(), &plan))
       continue;
     for (size_t i = 0; i < plan.n; i++)
       v4 = v4 || plan.steps[i].kind == UR_V4_SWAP_EXACT_IN;
@@ -3873,6 +3876,162 @@ TEST_F(CertifiedMetadataTest, UniswapV4HookIsShown) {
   size_t hooks = 0;
   for (const auto& s : got) hooks += s.title == "Pool hook";
   EXPECT_EQ(hooks, 1u);
+}
+
+/* Real V4 swaps to the other listed routers (Ethereum UR 2.0 / 2.1.1 /
+ * 2.1.2, Base UR 2.0, Arbitrum UR 2.0 / 2.1.2), each under a certificate for
+ * its own chain, streamed in 200-byte chunks after the first 1,024: the
+ * device reviews what ur_summarize says, and a certificate for another
+ * chain does not make the entry apply. */
+TEST_F(CertifiedMetadataTest, UniswapV4OnEveryListedRouterIsReviewedOnItsChain) {
+  /* Every screen of the first such call per router, title and full body.
+   * TOKA / TOKB are the test's identities (6 and 18 decimals), not the
+   * tokens' own. */
+  const std::map<std::string, std::vector<std::pair<std::string, std::string>>>
+      screens = {
+          {"23617e59a5925b2a4bf75d73ff6711cd0b29de85",  // Ethereum UR 2.1.2
+           {{"Uniswap",
+             "Swap 0.001 ETH for at least 2579.065420826155348709 TOKB"},
+            {"Limits", "You spend\n0.001 ETH"},
+            {"Limits", "You receive at least\n2579.065420826155348709 TOKB"},
+            {"Recipient",
+             "Output goes to\n0x5f46E5fF883eA67ea5Cc92E77ED32a90dae27170"},
+            {"Contract", "execute\n0x23617e59A5925b2A4Bf75d73ff6711cD0b29De85"},
+            {"KeepKey ClearSign",
+             "Described by Test Delegate A9531B9D\ncertified by KeepKey"}}},
+          {"4c82d1fbfe28c977cbb58d8c7ff8fcf9f70a2cca",  // Ethereum UR 2.1.1
+           {{"Uniswap",
+             "Swap 0.151916760629316603 ETH for at least "
+             "0.000000000305960247 TOKB"},
+            {"Limits", "You spend\n0.151916760629316603 ETH"},
+            {"Limits", "You receive at least\n0.000000000305960247 TOKB"},
+            {"Recipient",
+             "Output goes to\n0x909Ef6B32DfDc12CA86aA710b54c991af3C5F82E"},
+            {"Contract", "execute\n0x4C82D1fBFe28C977cBB58D8C7FF8FCF9F70a2cCA"},
+            {"KeepKey ClearSign",
+             "Described by Test Delegate A9531B9D\ncertified by KeepKey"}}},
+          {"66a9893cc07d91d95644aedd05d03f95e1dba8af",  // Ethereum UR 2.0
+           {{"Uniswap", "Swap 1.3 ETH for at least 0.000000003293705049 TOKB"},
+            {"Limits", "You spend\n1.3 ETH"},
+            {"Limits", "You receive at least\n0.000000003293705049 TOKB"},
+            {"Recipient",
+             "Output goes to\n0x141D9959cAe3853b035000490C03991eB70Fc4aC"},
+            {"Fee",
+             "0.25% of the output to\n"
+             "0x000000fee13a103A10D593b9AE06b3e05F2E7E1c"},
+            {"Contract", "execute\n0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af"},
+            {"KeepKey ClearSign",
+             "Described by Test Delegate A9531B9D\ncertified by KeepKey"}}},
+          {"6ff5693b99212da76ad316178a184ab56d299b43",  // Base UR 2.0
+           {{"Uniswap",
+             "Swap 10000000000 TOKA for at least 0.000000000008292364 TOKB"},
+            {"Limits", "You spend\n10000000000 TOKA"},
+            {"Limits", "You receive at least\n0.000000000008292364 TOKB"},
+            {"Recipient",
+             "Output goes to\n0x141D9959cAe3853b035000490C03991eB70Fc4aC"},
+            {"Allowance",
+             "This router may spend up to UNLIMITED TOKA until "
+             "2026-05-02 UTC"},
+            {"Contract", "execute\n0x6fF5693b99212Da76ad316178A184AB56D299b43"},
+            {"KeepKey ClearSign",
+             "Described by Test Delegate A9531B9D\ncertified by KeepKey"}}},
+          {"2d01411773c8c24805306e89a41f7855c3c4fe65",  // Arbitrum UR 2.1.2
+           {{"Uniswap",
+             "Swap 0.00102 ETH for at least 0.000000000002399249 TOKB"},
+            {"Limits", "You spend\n0.00102 ETH"},
+            {"Limits", "You receive at least\n0.000000000002399249 TOKB"},
+            {"Recipient",
+             "Output goes to\n0x3Df0742385a6F0688fB6B12a7C25dC7A9E6aAEbe"},
+            {"Contract", "execute\n0x2d01411773c8C24805306E89A41F7855C3c4Fe65"},
+            {"KeepKey ClearSign",
+             "Described by Test Delegate A9531B9D\ncertified by KeepKey"}}},
+          {"a51afafe0263b40edaef0df8781ea9aa03e381a3",  // Arbitrum UR 2.0
+           {{"Uniswap",
+             "Swap 19.3023 TOKA for at least 2.691975216520974078 TOKB"},
+            {"Limits", "You spend\n19.3023 TOKA"},
+            {"Limits", "You receive at least\n2.691975216520974078 TOKB"},
+            {"Recipient",
+             "Output goes to\n0x041e9e88288C0C62B8549C50A759a74a1a65b6b7"},
+            {"Contract", "execute\n0xA51afAFe0263b40EdaEf0Df8781eA9aa03E381a3"},
+            {"KeepKey ClearSign",
+             "Described by Test Delegate A9531B9D\ncertified by KeepKey"}}},
+      };
+  std::set<std::string> done;
+  for (const auto& x : urx::calls()) {
+    if (done.count(x.router) || x.calldata.compare(0, 8, "3593564c") != 0)
+      continue;
+    const std::vector<uint8_t> router = ur_unhex(x.router);
+    const std::vector<uint8_t> data = ur_unhex(x.calldata);
+    const std::vector<uint8_t> value = ur_unhex(x.value);
+    UrPlan plan;
+    UrSummary want;
+    if (data.size() <= 1024 ||
+        !ur_decode(data.data(), data.size(), router.data(), &plan) ||
+        !ur_summarize(&plan, router.data(), value.data(), &want))
+      continue;
+    bool v4 = false;
+    for (size_t i = 0; i < plan.n; i++)
+      v4 = v4 || plan.steps[i].kind == UR_V4_SWAP_EXACT_IN;
+    if (!v4) continue;
+    std::vector<UrToken> tokens;
+    if (!want.in_is_eth)
+      tokens.push_back({hex_of(want.token_in, 20), "TOKA", 6});
+    if (!want.out_is_eth)
+      tokens.push_back({hex_of(want.token_out, 20), "TOKB", 18});
+    for (int other = 0; other < 2; other++) {
+      // other: an entry certified for chain 10, sent with this tx's chain.
+      const uint32_t chain = other ? 10 : x.chain;
+      auto e = envelope(
+          mint_cert(chain, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+          sign_body(build_decoder_body(router, chain, tokens)));
+      ASSERT_EQ(METADATA_VERIFIED,
+                signed_metadata_process(e.data(), e.size(),
+                                        METADATA_KEYID_DELEGATE))
+          << x.tx;
+      EthereumSignTx msg;
+      std::vector<uint8_t> first(data.begin(), data.begin() + 1024);
+      make_ur_msg(&msg, router, first);
+      msg.chain_id = x.chain;
+      msg.data_length = (uint32_t)data.size();
+      msg.value.size = 32;
+      memcpy(msg.value.bytes, value.data(), 32);
+      if (other) {
+        EXPECT_FALSE(signed_metadata_matches_tx(&msg)) << x.tx;
+        EXPECT_FALSE(signed_metadata_ur_pending()) << x.tx;
+        continue;
+      }
+      ASSERT_FALSE(signed_metadata_matches_tx(&msg)) << x.tx;
+      ASSERT_TRUE(signed_metadata_ur_pending()) << x.tx;
+      size_t at = 1024;
+      while (data.size() - at > 200) {
+        ASSERT_TRUE(signed_metadata_ur_feed(data.data() + at, 200)) << x.tx;
+        at += 200;
+      }
+      ASSERT_TRUE(signed_metadata_ur_feed(data.data() + at,
+                                          (uint32_t)(data.size() - at)))
+          << x.tx;
+      const SignedMetadata* md = signed_metadata_get();
+      EXPECT_EQ(0, memcmp(&md->ur, &want, sizeof(want))) << x.tx;
+      std::vector<Shown> got;
+      ASSERT_TRUE(signed_metadata_build_ur_review(md, "Test Delegate",
+                                                  "A9531B9D", collect_shown,
+                                                  &got));
+      const auto want_screens = screens.find(x.router);
+      ASSERT_NE(want_screens, screens.end()) << x.router;
+      ASSERT_EQ(got.size(), want_screens->second.size()) << x.tx;
+      for (size_t i = 0; i < got.size(); i++) {
+        EXPECT_EQ(got[i].title, want_screens->second[i].first)
+            << x.tx << " " << i;
+        EXPECT_EQ(got[i].body, want_screens->second[i].second)
+            << x.tx << " " << i;
+      }
+    }
+    done.insert(x.router);
+  }
+  /* Each listed router other than Base UR 2.1.2 (covered above), by name. */
+  std::set<std::string> want;
+  for (const auto& r : screens) want.insert(r.first);
+  EXPECT_EQ(done, want);
 }
 
 /* The 2026-10-03 root ceremony (Base, Arbitrum): the device's own verifier,

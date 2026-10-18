@@ -1198,7 +1198,8 @@ bool signed_metadata_matches_tx(const EthereumSignTx* msg) {
         !store_tx_value(&stored_metadata, msg)) {
       return false;
     }
-    ur_stream_begin(&ur_stream, &stored_metadata.ur_plan, total);
+    ur_stream_begin(&ur_stream, &stored_metadata.ur_plan, total,
+                    stored_metadata.contract_address);
     ur_total = total;
     return signed_metadata_ur_feed(msg->data_initial_chunk.bytes, initsz) &&
            metadata_schema_decoded;

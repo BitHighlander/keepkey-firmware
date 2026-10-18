@@ -30,7 +30,7 @@
 
 #define V3_HOP 23 /* fee(3) + token(20) */
 
-/* v4-periphery Actions.sol (the version UR 2.1.2 on Base was built with) */
+/* v4-periphery Actions.sol (unchanged across UR 2.0, 2.1.1 and 2.1.2) */
 #define ACT_SWAP_EXACT_IN 0x07
 #define ACT_SWAP_EXACT_OUT 0x09
 #define ACT_SETTLE 0x0b
@@ -126,6 +126,61 @@ static const Command COMMANDS[] = {
     /* Parsed by the S4_ states; the kind is set from its actions. */
     {CMD_V4_SWAP, UR_V4_SWAP_EXACT_IN, 0, NULL},
 };
+
+/* Universal Routers whose V4_SWAP is decoded. Each was checked against
+ * Uniswap's source at the tag deployed there (universal-router
+ * deploy-addresses, and the lib/v4-periphery that tag pins) and against real
+ * calls to it; each address is the same router version on every chain
+ * Uniswap lists it on. The V4 actions, SETTLE/TAKE semantics and the V4_SWAP
+ * dispatch are the same in all three versions. Only these differ: */
+#define V4_DECODED 0x01 /* UR 2.0 (v4-periphery 444c526) */
+/* UR 2.1.x (v4-periphery 3231810, 545a5d2): Exact{In,Out}putParams carry a
+ * uint256[] minHopPriceX36 after the path. UR 2.0's do not, so the same
+ * bytes would read as other amounts there. */
+#define V4_MIN_HOP 0x02
+/* UR 2.1.2 (v4-periphery 545a5d2): an exact output reverts unless every hop
+ * delivers its full amount (V4ExactOutputUnfilled). Earlier routers take
+ * what the pool delivered: "you receive exactly" would not hold. */
+#define V4_EXACT_OUT 0x04
+
+static const struct {
+  uint8_t addr[20];
+  uint8_t flags;
+} V4_ROUTERS[] = {
+    /* UR 2.0: Ethereum, Base, Arbitrum */
+    {{0x66, 0xa9, 0x89, 0x3c, 0xc0, 0x7d, 0x91, 0xd9, 0x56, 0x44,
+      0xae, 0xdd, 0x05, 0xd0, 0x3f, 0x95, 0xe1, 0xdb, 0xa8, 0xaf},
+     V4_DECODED},
+    {{0x6f, 0xf5, 0x69, 0x3b, 0x99, 0x21, 0x2d, 0xa7, 0x6a, 0xd3,
+      0x16, 0x17, 0x8a, 0x18, 0x4a, 0xb5, 0x6d, 0x29, 0x9b, 0x43},
+     V4_DECODED},
+    {{0xa5, 0x1a, 0xfa, 0xfe, 0x02, 0x63, 0xb4, 0x0e, 0xda, 0xef,
+      0x0d, 0xf8, 0x78, 0x1e, 0xa9, 0xaa, 0x03, 0xe3, 0x81, 0xa3},
+     V4_DECODED},
+    /* UR 2.1.1: Ethereum */
+    {{0x4c, 0x82, 0xd1, 0xfb, 0xfe, 0x28, 0xc9, 0x77, 0xcb, 0xb5,
+      0x8d, 0x8c, 0x7f, 0xf8, 0xfc, 0xf9, 0xf7, 0x0a, 0x2c, 0xca},
+     V4_DECODED | V4_MIN_HOP},
+    /* UR 2.1.2: Ethereum, Base, Arbitrum */
+    {{0x23, 0x61, 0x7e, 0x59, 0xa5, 0x92, 0x5b, 0x2a, 0x4b, 0xf7,
+      0x5d, 0x73, 0xff, 0x67, 0x11, 0xcd, 0x0b, 0x29, 0xde, 0x85},
+     V4_DECODED | V4_MIN_HOP | V4_EXACT_OUT},
+    {{0xd6, 0x14, 0x5b, 0x2d, 0x3f, 0x37, 0x99, 0x19, 0xe8, 0xcd,
+      0xed, 0xa7, 0xb9, 0x7e, 0x37, 0xc4, 0xb2, 0xca, 0x9c, 0x40},
+     V4_DECODED | V4_MIN_HOP | V4_EXACT_OUT},
+    {{0x2d, 0x01, 0x41, 0x17, 0x73, 0xc8, 0xc2, 0x48, 0x05, 0x30,
+      0x6e, 0x89, 0xa4, 0x1f, 0x78, 0x55, 0xc3, 0xc4, 0xfe, 0x65},
+     V4_DECODED | V4_MIN_HOP | V4_EXACT_OUT},
+};
+
+static uint8_t v4_flags(const uint8_t router[20]) {
+  for (size_t i = 0; i < sizeof(V4_ROUTERS) / sizeof(V4_ROUTERS[0]); i++) {
+    if (memcmp(V4_ROUTERS[i].addr, router, 20) == 0) {
+      return V4_ROUTERS[i].flags;
+    }
+  }
+  return 0;
+}
 
 static const Command* command(uint8_t cmd) {
   for (size_t i = 0; i < sizeof(COMMANDS) / sizeof(COMMANDS[0]); i++) {
@@ -318,7 +373,8 @@ static bool v2_path_word(UrStream* s) {
 
 /* ---- V4_SWAP -------------------------------------------------------------
  * The input is abi.encode(bytes actions, bytes[] params) for the router's
- * V4Router (v4-periphery as built into UR 2.1.2). Accepted action lists:
+ * V4Router (V4_ROUTERS: v4-periphery as built into it). Accepted action
+ * lists:
  *   SWAP_EXACT_IN|SWAP_EXACT_OUT, SETTLE, [TAKE_PORTION,] TAKE
  *   SETTLE, SWAP_EXACT_IN, [TAKE_PORTION,] TAKE
  * which the router resolves completely (PoolManager reverts on any open
@@ -471,14 +527,16 @@ static bool v4_arg(UrStream* s) {
 }
 
 /* Exact{In,Out}putParams: (currency, PathKey[] path, uint256[]
- * minHopPriceX36, uint128 amount, uint128 limit). minHopPriceX36 only adds
- * revert conditions and is not read. */
+ * minHopPriceX36, uint128 amount, uint128 limit), without minHopPriceX36
+ * on UR 2.0. minHopPriceX36 only adds revert conditions and is not read. */
 static bool v4_swap_head(UrStream* s) {
   UrStep* st = current_step(s);
   const bool exact_in = st->kind == UR_V4_SWAP_EXACT_IN;
   const uint8_t* w = s->word;
   uint64_t v = 0;
-  switch (s->field) {
+  /* The field read, numbered as in the UR 2.1.x layout. */
+  const uint8_t f = s->field + (s->field >= 2 && !(s->v4_layout & V4_MIN_HOP));
+  switch (f) {
     case 0:
       if (!narrow(w, 20, NULL)) return fail(s);
       memcpy(exact_in ? st->token_in : st->token_out, w + 12, 20);
@@ -702,6 +760,8 @@ static bool on_word(UrStream* s) {
       s->field = 0;
       s->state = S_FIELD;
       if (s->cmds[s->step] == CMD_V4_SWAP) {
+        /* Only a router whose V4Router layout is known. */
+        if (!(s->v4_layout & V4_DECODED)) return fail(s);
         memset(&s->v4, 0, sizeof(s->v4));
         s->state = S4_HEAD;
       }
@@ -718,10 +778,12 @@ static bool on_word(UrStream* s) {
   }
 }
 
-void ur_stream_begin(UrStream* s, UrPlan* out, size_t total) {
+void ur_stream_begin(UrStream* s, UrPlan* out, size_t total,
+                     const uint8_t router[20]) {
   memset(s, 0, sizeof(*s));
   memset(out, 0, sizeof(*out));
   s->plan = out;
+  s->v4_layout = v4_flags(router);
   if (total > UINT32_MAX) {
     s->failed = true;
     return;
@@ -761,9 +823,10 @@ bool ur_stream_finish(UrStream* s) {
   return true;
 }
 
-bool ur_decode(const uint8_t* calldata, size_t len, UrPlan* out) {
+bool ur_decode(const uint8_t* calldata, size_t len, const uint8_t router[20],
+               UrPlan* out) {
   UrStream s;
-  ur_stream_begin(&s, out, len);
+  ur_stream_begin(&s, out, len, router);
   if (calldata && len) ur_stream_feed(&s, calldata, len);
   return ur_stream_finish(&s);
 }
@@ -871,23 +934,6 @@ static bool same_recipient(const uint8_t** r, const uint8_t* to,
  * to it, and from SWEEP / UNWRAP_WETH of what the router holds. The review
  * states the sum of what the user pays, the sum of the minimums every one
  * of those deliveries enforces, and at most one fee. */
-/* Routers whose V4Router uses the ExactInputParams / ExactOutputParams
- * layout read above (with minHopPriceX36), checked against their verified
- * source. Older routers (UR 2.0) encode V4 swaps without that field: the
- * same bytes would read as different amounts there. */
-static const uint8_t V4_ROUTERS[][20] = {
-    /* Base, UR 2.1.2 */
-    {0xd6, 0x14, 0x5b, 0x2d, 0x3f, 0x37, 0x99, 0x19, 0xe8, 0xcd,
-     0xed, 0xa7, 0xb9, 0x7e, 0x37, 0xc4, 0xb2, 0xca, 0x9c, 0x40},
-};
-
-static bool v4_router(const uint8_t router[20]) {
-  for (size_t i = 0; i < sizeof(V4_ROUTERS) / sizeof(V4_ROUTERS[0]); i++) {
-    if (memcmp(V4_ROUTERS[i], router, 20) == 0) return true;
-  }
-  return false;
-}
-
 bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
                   const uint8_t value[32], UrSummary* out) {
   memset(out, 0, sizeof(*out));
@@ -902,6 +948,7 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
   Asset z = {0};
   bool exact_in = true, uses_eth = false;
   uint8_t spent[32] = {0};
+  const uint8_t v4f = v4_flags(router);
 
   /* Pass 1: what is paid, by whom, and what each swap delivers where. */
   for (uint8_t i = 0; i < plan->n; i++) {
@@ -936,7 +983,12 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
         last_swap = s;
         const bool v4 =
             s->kind == UR_V4_SWAP_EXACT_IN || s->kind == UR_V4_SWAP_EXACT_OUT;
-        if (v4 && !v4_router(router)) return false;
+        /* A V4 swap only on a listed router; an exact output only where
+         * it is delivered in full. */
+        if (v4 && (!(v4f & V4_DECODED) || (s->kind == UR_V4_SWAP_EXACT_OUT &&
+                                           !(v4f & V4_EXACT_OUT)))) {
+          return false;
+        }
         /* Only a V4 swap moves native ETH. */
         if (!v4 && (is_zero(s->token_in, 20) || is_zero(s->token_out, 20))) {
           return false;

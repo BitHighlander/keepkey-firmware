@@ -1,6 +1,7 @@
-// Plans and reviews of every D-021 sample call, every vector, and 2,048
-// mutated V4 calls, as the independent Python model reads them
-// (scripts/uniswap/gen_ur_vectors.py expect). One line per call:
+// Plans and reviews of every D-021 sample call, every vector (the V4 calls
+// to other routers too) and mutated V4 calls, as the independent Python
+// model reads them (scripts/uniswap/gen_ur_vectors.py expect). One line per
+// call:
 //   key [base-tx n off:byte...] D 0
 //   key [...] D 1 n {kind tin tout rcpt amount limit payer expiration}*n
 //     H nh hook* S 0
