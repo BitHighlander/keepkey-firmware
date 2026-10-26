@@ -48,6 +48,13 @@ BASE_REQUIRED_CASES = {
     "SetupCeremony.AbortScrubsEveryByteOfSharedMnemonicDisplayScratch",
     "test_msg_recoverydevice_cipher.TestDeviceRecovery."
     "test_unknown_word_count_failure_aborts_recovery",
+    "test_p03_recovery.TestP03Recovery.test_non_word_failure_names_the_word",
+    "test_p03_recovery.TestP03Recovery."
+    "test_non_word_last_word_is_named_not_blamed_on_cipher",
+    "test_p03_recovery.TestP03Recovery.test_recovery_checksum_failure_is_named",
+    "test_p03_recovery.TestP03Recovery.test_dry_run_checksum_failure_is_named",
+    "test_p03_recovery.TestP03Recovery."
+    "test_dry_run_valid_other_wallet_is_not_a_checksum_failure",
 }
 
 # Bitcoin-only must pass the base controls too. Its set is BASE_REQUIRED_CASES
