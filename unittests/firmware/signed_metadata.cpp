@@ -3430,6 +3430,7 @@ TEST_F(CertifiedMetadataTest, NameRecordParsesTheServerSerializedBody) {
 
 /* ---- v0x07: certified Uniswap Universal Router decoder ------------------- */
 
+#include "uniswap_ur_realworld.h"
 #include "uniswap_ur_sample.h"
 #include "uniswap_ur_v4_routers.h"
 #include "uniswap_ur_vectors.h"
@@ -4032,6 +4033,57 @@ TEST_F(CertifiedMetadataTest, UniswapV4OnEveryListedRouterIsReviewedOnItsChain) 
   std::set<std::string> want;
   for (const auto& r : screens) want.insert(r.first);
   EXPECT_EQ(done, want);
+}
+
+/* A real exact-output swap on Ethereum UR 1.2 (0x3407a3f2...: 0.9 ETH for
+ * 3,007.5 USDT, of which a TRANSFER pays 7.5 USDT to the app's fee address
+ * and a SWEEP delivers the rest): the fee is shown as that amount, and
+ * "You receive" is what the SWEEP guarantees after it. */
+TEST_F(CertifiedMetadataTest, UniswapTransferFeeIsShownAsAnAmount) {
+  const urr::Call* x = nullptr;
+  for (const auto& c : urr::calls())
+    if (c.tx.rfind("0x3407a3f2", 0) == 0) x = &c;
+  ASSERT_NE(x, nullptr);
+  const std::vector<uint8_t> router = ur_unhex(x->router);
+  const std::vector<uint8_t> data = ur_unhex(x->calldata);
+  const std::vector<uint8_t> value = ur_unhex(x->value);
+  ASSERT_GT(data.size(), 1024u);
+  auto e = envelope(
+      mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+      sign_body(build_decoder_body(
+          router, 1, {{"dac17f958d2ee523a2206206994597c13d831ec7", "USDT", 6}})));
+  ASSERT_EQ(METADATA_VERIFIED,
+            signed_metadata_process(e.data(), e.size(),
+                                    METADATA_KEYID_DELEGATE));
+  EthereumSignTx msg;
+  std::vector<uint8_t> first(data.begin(), data.begin() + 1024);
+  make_ur_msg(&msg, router, first);
+  msg.chain_id = 1;
+  msg.data_length = (uint32_t)data.size();
+  msg.value.size = 32;
+  memcpy(msg.value.bytes, value.data(), 32);
+  ASSERT_FALSE(signed_metadata_matches_tx(&msg));
+  ASSERT_TRUE(signed_metadata_ur_pending());
+  ASSERT_TRUE(signed_metadata_ur_feed(data.data() + 1024,
+                                      (uint32_t)(data.size() - 1024)));
+  std::vector<Shown> got;
+  ASSERT_TRUE(signed_metadata_build_ur_review(
+      signed_metadata_get(), "Test Delegate", "A9531B9D", collect_shown,
+      &got));
+  const std::vector<std::pair<std::string, std::string>> want = {
+      {"Uniswap", "Swap at most 0.911978350461416632 ETH for 3000 USDT"},
+      {"Limits", "You spend at most\n0.911978350461416632 ETH"},
+      {"Limits", "You receive\n3000 USDT"},
+      {"Fee", "7.5 USDT to\n0x000000fee13a103A10D593b9AE06b3e05F2E7E1c"},
+      {"Contract", "execute\n0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD"},
+      {"KeepKey ClearSign",
+       "Described by Test Delegate A9531B9D\ncertified by KeepKey"},
+  };
+  ASSERT_EQ(got.size(), want.size());
+  for (size_t i = 0; i < want.size(); i++) {
+    EXPECT_EQ(got[i].title, want[i].first) << i;
+    EXPECT_EQ(got[i].body, want[i].second) << i;
+  }
 }
 
 /* The 2026-10-03 root ceremony (Base, Arbitrum): the device's own verifier,

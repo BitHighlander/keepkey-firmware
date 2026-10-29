@@ -9,6 +9,7 @@ C unit tests pass only when the two implementations agree on real calldata.
   gen_ur_vectors.py pack DIR > unittests/firmware/uniswap_ur_sample.bin
   gen_ur_vectors.py expect unittests/firmware/uniswap_ur_sample.bin > unittests/firmware/uniswap_ur_expected.txt
   gen_ur_vectors.py v4x DIR > unittests/firmware/uniswap_ur_v4_routers.h   # V4 calls to other routers
+  gen_ur_vectors.py realworld FILE > unittests/firmware/uniswap_ur_realworld.h   # a wallet's own calls
 """
 import glob, json, os, random, sys, urllib.request
 
@@ -182,7 +183,7 @@ def need(cond):
 # UrKind, in the order of uniswap_ur.h
 (V3_IN, V3_OUT, V2_IN, V2_OUT, PERMIT, WRAP, UNWRAP, SWEEP, PAY_PORTION, TRANSFER,
  V4_IN, V4_OUT, V4_TAKE_PORTION) = range(13)
-MAX_STEPS, MAX_HOOKS, V4_MAX_PATH = 6, 3, 4
+MAX_STEPS, MAX_HOOKS, V4_MAX_PATH = 8, 3, 4
 CONTRACT_BALANCE = 1 << 255
 MSG_SENDER, ADDRESS_THIS = 1, 2
 
@@ -368,7 +369,7 @@ def summarize(steps, hooks, router, value):
     """The review: see ur_summarize() in uniswap_ur.h for the rules."""
     U = (1 << 256) - 1
     swaps = [s for s in steps if s['kind'] in SWAPS]
-    need(swaps and all(s['kind'] in SWAPS + (PERMIT, WRAP, UNWRAP, SWEEP, PAY_PORTION, V4_TAKE_PORTION)
+    need(swaps and all(s['kind'] in SWAPS + (PERMIT, WRAP, UNWRAP, SWEEP, PAY_PORTION, V4_TAKE_PORTION, TRANSFER)
                        for s in steps))
     exact_in = swaps[0]['kind'] in EXACT_IN
     need(all((s['kind'] in EXACT_IN) == exact_in for s in swaps))
@@ -427,10 +428,17 @@ def summarize(steps, hooks, router, value):
     rcpts = set()
     swept = held = direct_sum = 0
     router_delivery = consumed = unswept = False   # unswept: left in the router after its last SWEEP
-    fees = [s for s in steps if s['kind'] in (PAY_PORTION, V4_TAKE_PORTION)]
+    fees = [s for s in steps if s['kind'] in (PAY_PORTION, V4_TAKE_PORTION, TRANSFER)]
     need(len(fees) <= 1)
     for f in fees:
-        need(1 <= f['amount'] <= 10000 and not is_router(f['recipient'], router))
+        need(not is_router(f['recipient'], router))
+        if f['kind'] == TRANSFER:
+            # Payments.pay(token, recipient, value): exactly `value` of the
+            # delivered token from the router's balance (CONTRACT_BALANCE
+            # would be all of it).
+            need(z != 'ETH' and f['token_in'] == z and f['amount'] not in (0, CONTRACT_BALANCE))
+        else:
+            need(1 <= f['amount'] <= 10000)
     for k, s in enumerate(steps):
         if s['kind'] in (SWEEP, UNWRAP):
             if s['kind'] == UNWRAP and is_router(s['recipient'], router):
@@ -467,18 +475,25 @@ def summarize(steps, hooks, router, value):
             fee['token_in'] == 0 or any(s['kind'] in SWAPS and is_router(s['recipient'], router) and
                                         s['token_out'] == fee['token_in'] for s in steps))
         need(ok and router_delivery)
+    elif fee and fee['kind'] == TRANSFER:
+        # Before the SWEEP that delivers the token (whose minimum is what
+        # the user receives after the fee).
+        k = steps.index(fee)
+        need(any(s['kind'] == SWEEP and s['token_in'] == z for s in steps[k + 1:]))
     elif fee:
         k = steps.index(fee)
         need(k > 0 and steps[k - 1]['kind'] == V4_IN and not is_router(steps[k - 1]['recipient'], router))
     from_router = swept
-    if (not fee or fee['kind'] != PAY_PORTION) and not consumed and z != 'ETH' and held > swept:
+    if (not fee or fee['kind'] == V4_TAKE_PORTION) and not consumed and z != 'ETH' and held > swept:
         from_router = held
     total = direct_sum + from_router
     need(total <= U and swept <= U and held <= U)
     out.update(exact_in=exact_in, out_is_eth=z == 'ETH',
                token_out=swaps[-1]['token_out'] if z == 'ETH' else z, amount_out=total,
                recipient=r, recipient_is_sender=r == MSG_SENDER, hooks=list(hooks))
-    if fee:
+    if fee and fee['kind'] == TRANSFER:
+        out.update(has_fee=True, fee_amount=fee['amount'], fee_recipient=fee['recipient'])
+    elif fee:
         out.update(has_fee=True, fee_bips=fee['amount'], fee_recipient=fee['recipient'])
     return out
 
@@ -532,7 +547,8 @@ def expect_line(key, raw, router, value):
               h(o['recipient'], 20), str(int(o['recipient_is_sender'])),
               str(int(o.get('has_permit', False))), h(o.get('permit_token', 0), 20),
               h(o.get('permit_amount', 0), 32), str(o.get('permit_expiration', 0)),
-              str(int(o.get('has_fee', False))), str(o.get('fee_bips', 0)), h(o.get('fee_recipient', 0), 20)]
+              str(int(o.get('has_fee', False))), str(o.get('fee_bips', 0)), h(o.get('fee_amount', 0), 32),
+              h(o.get('fee_recipient', 0), 20)]
     return ' '.join(parts)
 
 
@@ -598,6 +614,10 @@ def expect(sample_bin):
             print(line.replace('mut%d ' % k, 'mut%d v4x%d %d %s ' % (
                 k, j, len(edits), ' '.join('%d:%d' % e for e in edits)), 1))
             k += 1
+    # A wallet's own calls to every router it used (uniswap_ur_realworld.h).
+    calls = rw_calls(os.path.join(os.path.dirname(sample_bin), 'uniswap_ur_realworld.h'))
+    for j, (h, chain, r, value, ok, raw) in enumerate(calls):
+        print(expect_line('rw%d' % j, raw, r, value))
 
 
 BASE_UR20 = 0x6ff5693b99212da76ad316178a184ab56d299b43
@@ -662,5 +682,47 @@ def v4x(d, per_router=6):
     p('}; return v; }\n}  // namespace urx')
 
 
+def rw_calls(path):
+    import re
+    out = []
+    for m in re.finditer(r'\{"(0x[0-9a-f]{64})", (\d+), "([0-9a-f]{40})", "([0-9a-f]{64})", (true|false), "([0-9a-f]+)"\}',
+                         open(path).read()):
+        out.append((m.group(1), int(m.group(2)), int(m.group(3), 16), int(m.group(4), 16), m.group(5) == 'true',
+                    m.group(6)))
+    return out
+
+
+def realworld(path):
+    """uniswap_ur_realworld.h: every execute() call in FILE, a JSON list of
+    {hash, chain, router, status ('ok' or 'error'), value, raw_input}: one
+    wallet's own Universal Router calls, reverted ones included (the replay
+    of 2026-10-16). Calls already in uniswap_ur_vectors.h or
+    uniswap_ur_v4_routers.h are left out. Sorted by chain, router, hash."""
+    import re
+    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'unittests', 'firmware')
+    have = set()
+    for f in ('uniswap_ur_vectors.h', 'uniswap_ur_v4_routers.h'):
+        have |= set(re.findall(r'0x[0-9a-f]{64}', open(os.path.join(here, f)).read()))
+    rows = {}
+    for it in json.load(open(path)):
+        raw, h = it['raw_input'].lower(), it['hash'].lower()
+        if raw.startswith(('0x3593564c', '0x24856bc3')) and h not in have:
+            rows[(int(it['chain']), int(it['router'], 16), h)] = (it['status'] == 'ok', int(it['value']), raw)
+    p = print
+    p('// One wallet\'s own Universal Router calls (the 2026-10-16 replay of its')
+    p('// history), reverted ones included, generated by')
+    p('// scripts/uniswap/gen_ur_vectors.py realworld. Calls already in the other')
+    p('// vector headers are left out. Expected plans and reviews:')
+    p('// uniswap_ur_expected.txt (rw lines).')
+    p('#include <cstdint>\n#include <string>\n#include <vector>\nnamespace urr {')
+    p('struct Call { std::string tx; uint32_t chain; std::string router, value; bool ok; std::string calldata; };')
+    p('inline const std::vector<Call>& calls() { static const std::vector<Call> v = {')
+    for (chain, r, h) in sorted(rows):
+        ok, value, raw = rows[(chain, r, h)]
+        p('  {"%s", %d, "%040x", "%064x", %s, "%s"},' % (h, chain, r, value, 'true' if ok else 'false', raw[2:]))
+    p('}; return v; }\n}  // namespace urr')
+
+
 if __name__ == '__main__':
-    {'fetch': fetch, 'header': header, 'pack': pack, 'expect': expect, 'v4x': v4x}[sys.argv[1]](sys.argv[2])
+    {'fetch': fetch, 'header': header, 'pack': pack, 'expect': expect, 'v4x': v4x,
+     'realworld': realworld}[sys.argv[1]](sys.argv[2])
