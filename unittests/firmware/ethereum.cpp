@@ -614,6 +614,128 @@ TEST(Ethereum, BaseThorchainRealDepositsReviewCompleteMemo) {
   }
 }
 
+// Ethereum mainnet depositWithExpiry() calls KeepKey Desktop sent and the chain
+// confirmed (txids below). The memo's limit is the least the swap pays out, in
+// THORChain's 1e8 units; the device used to show it as a bare integer
+// ("Confirm limit 6074"). A Maya router deposit is MAYAChain's memo grammar
+// and units, so it is reviewed by the Maya parser and its limit is never
+// scaled as a THORChain amount.
+TEST(Ethereum, ThorchainRealDepositsShowTheMinimumReceived) {
+  const struct {
+    const char* txid;
+    const char* router;
+    const char* data;
+    const char* value;
+    const char* limit_screen;  // NULL: no "Receive at least" screen expected
+    const char* memo_title;
+  } cases[] = {
+      // ETH -> BTC, native deposit. 6074 sats.
+      {"ffe642e76215d69f3a1519f49049124f471828cf28cb28ada18177d602c346f5",
+       THOR_ROUTER,
+       "44bc937b000000000000000000000000ed23d1bf7ac2ce8b4c09a090e252ea6e"
+       "e5145e6e00000000000000000000000000000000000000000000000000000000"
+       "000000000000000000000000000000000000000000000000000000000009acae"
+       "705fa80000000000000000000000000000000000000000000000000000000000"
+       "000000a000000000000000000000000000000000000000000000000000000000"
+       "6a5a5a4b00000000000000000000000000000000000000000000000000000000"
+       "000000413d3a4254432e4254433a626331713877327970716778333967756378"
+       "6379707176326d3930777a397276686d6d72636e70646a733a363037343a6b65"
+       "65703a3330000000000000000000000000000000000000000000000000000000"
+       "00000000",
+       "09acae705fa800", "Receive at least 0.00006074 BTC.BTC",
+       "Thorchain swap"},
+      // ETH -> USDT; the asset carries its contract, the screen drops it.
+      {"2f7453f4f210492f4cf103ea6faf34ef8880eb527ff8702347c9ccaec5d98e9a",
+       THOR_ROUTER,
+       "44bc937b00000000000000000000000015a18266c5331ac3a7f6bc5cdf25bcc5"
+       "5561b4fa00000000000000000000000000000000000000000000000000000000"
+       "000000000000000000000000000000000000000000000000000000001828bd8f"
+       "7fc0a00000000000000000000000000000000000000000000000000000000000"
+       "000000a000000000000000000000000000000000000000000000000000000000"
+       "6a55b69800000000000000000000000000000000000000000000000000000000"
+       "000000753d3a4554482e555344542d3058444143313746393538443245453532"
+       "334132323036323036393934353937433133443833314543373a307832376465"
+       "3632326363343463353562353363614632393965436564636364414232396143"
+       "393841383a3239383636303035373538303a6b6565703a333000000000000000"
+       "00000000",
+       "1828bd8f7fc0a000", "Receive at least 2986.6005758 ETH.USDT",
+       "Thorchain swap"},
+      // USDT token deposit (value 0) -> ETH on Base.
+      {"25bd372e518e39a1f14103a6c6e186322c60f24d8a6ddc393d0845b50ca78dab",
+       THOR_ROUTER,
+       "44bc937b00000000000000000000000064fb273b328cde17b15d3fff2731b409"
+       "6ff0a132000000000000000000000000dac17f958d2ee523a2206206994597c1"
+       "3d831ec700000000000000000000000000000000000000000000000000000000"
+       "20c8557f00000000000000000000000000000000000000000000000000000000"
+       "000000a000000000000000000000000000000000000000000000000000000000"
+       "6a41ebde00000000000000000000000000000000000000000000000000000000"
+       "000000443d3a424153452e4554483a3078323163396139344146373642353962"
+       "313731623332664431323541346564463065394132416433653a333334373639"
+       "35313a6b6b3a3330000000000000000000000000000000000000000000000000"
+       "00000000",
+       "", "Receive at least 0.33476951 BASE.ETH", "Thorchain swap"},
+      // ETH -> CACAO through the Maya router: empty limit, Maya's screens.
+      {"28eb32ce031e092041a35591310ce61eb77a25bae74d567dcbf56c2eddbbaf43",
+       MAYA_ROUTER,
+       "44bc937b0000000000000000000000006a16f961e24e6e90bd9f950f768dc42a"
+       "7f30566400000000000000000000000000000000000000000000000000000000"
+       "0000000000000000000000000000000000000000000000000000000000a948c2"
+       "34281bfe00000000000000000000000000000000000000000000000000000000"
+       "000000a000000000000000000000000000000000000000000000000000000000"
+       "6a554c3f00000000000000000000000000000000000000000000000000000000"
+       "000000413d3a4d4159412e434143414f3a6d61796131336434747a6d6568686d"
+       "74347238773973346e3067306c77376833676770797639356635356b3a3a6b65"
+       "65703a3330000000000000000000000000000000000000000000000000000000"
+       "00000000",
+       "a948c234281bfe", NULL, "Mayachain swap"},
+  };
+  for (const auto& c : cases) {
+    EthereumSignTx msg;
+    MakeThorDeposit(&msg, c.router, 1);
+    ASSERT_EQ(0u, std::strlen(c.data) % 2) << c.txid;
+    msg.data_initial_chunk.size = std::strlen(c.data) / 2;
+    for (size_t i = 0; i < msg.data_initial_chunk.size; i++) {
+      msg.data_initial_chunk.bytes[i] = (bin_from_ascii(c.data[2 * i]) << 4) |
+                                        bin_from_ascii(c.data[2 * i + 1]);
+    }
+    msg.has_data_length = true;
+    msg.data_length = msg.data_initial_chunk.size;
+    msg.has_value = true;
+    msg.value.size = std::strlen(c.value) / 2;
+    for (size_t i = 0; i < msg.value.size; i++) {
+      msg.value.bytes[i] = (bin_from_ascii(c.value[2 * i]) << 4) |
+                           bin_from_ascii(c.value[2 * i + 1]);
+    }
+    const bool maya = thor_isMayachainTx(&msg);
+    ASSERT_TRUE(maya || thor_isThorchainTx(&msg)) << c.txid;
+    ASSERT_EQ(nullptr, thor_depositRefusal(&msg)) << c.txid;
+    ASSERT_TRUE(kkconfirm_preload(20, 0));
+    kkconfirm_capture_start();
+    const bool confirmed =
+        maya ? thor_confirmMayaTx(msg.data_length, &msg)
+             : thor_confirmThorTx(msg.data_length, &msg);
+    const auto titles = kkconfirm_captured_titles();
+    const auto screens = kkconfirm_capture_finish();
+    kkconfirm_drain();
+    EXPECT_TRUE(confirmed) << c.txid;
+    if (c.limit_screen) {
+      EXPECT_TRUE(HasScreen(screens, c.limit_screen))
+          << c.txid << ::testing::PrintToString(screens);
+    }
+    for (const auto& screen : screens) {
+      if (!c.limit_screen) {
+        EXPECT_EQ(std::string::npos, screen.find("Receive at least"))
+            << c.txid << " " << screen;
+      }
+      EXPECT_EQ(std::string::npos, screen.find("Confirm limit")) << screen;
+    }
+    EXPECT_TRUE(HasScreen(titles, c.memo_title))
+        << c.txid << ::testing::PrintToString(titles);
+    const char* other = maya ? "Thorchain swap" : "Mayachain swap";
+    EXPECT_FALSE(HasScreen(titles, other)) << c.txid;
+  }
+}
+
 // A complete, clear-signable depositWithExpiry() to the mainnet router: native
 // asset (zero address), zero amount, a real expiry, and a 15-byte memo whose
 // 32-byte ABI slot therefore has 17 bytes of tail padding to play with.
