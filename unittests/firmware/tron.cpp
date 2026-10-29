@@ -6,8 +6,14 @@ extern "C" {
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/tron.h"
 #include "trezor/crypto/base58.h"
+#include "trezor/crypto/ecdsa.h"
+#include "trezor/crypto/secp256k1.h"
+#include "trezor/crypto/sha2.h"
+#include "trezor/crypto/sha3.h"
 #include "storage.h"
 }
+
+#include "tron_vectors.h"
 
 #include "gtest/gtest.h"
 #include <cstring>
@@ -20,6 +26,7 @@ bool kkconfirm_readResponse(uint16_t expected, const pb_field_t* fields,
                             void* result);
 void kkconfirm_capture_start(void);
 std::vector<std::string> kkconfirm_capture_finish(void);
+std::vector<std::string> kkconfirm_capture_titles(void);
 
 TEST(Tron, LongBinaryMemoRequiresApprovalOfEveryPage) {
   std::vector<uint8_t> memo(114, 'W');
@@ -918,4 +925,383 @@ TEST(Tron, AddressFromBytes) {
   ASSERT_TRUE(tron_addressFromBytes(addr, out, sizeof(out)));
   EXPECT_EQ(out[0], 'T'); /* mainnet addresses render as T... */
   EXPECT_GE(strlen(out), 33u);
+}
+
+/* ------------------------------------------------------------------ */
+/*  7.17: TRC-20 approve, Stake 2.0 and votes, on real mainnet bytes   */
+/*  (tron_vectors.h, from scripts/tron_vectors.py; expected values are */
+/*  TronGrid's own decode of each transaction).                        */
+/* ------------------------------------------------------------------ */
+
+namespace {
+std::vector<uint8_t> fromHex(const std::string& hex) {
+  std::vector<uint8_t> out;
+  for (size_t i = 0; i + 1 < hex.size(); i += 2)
+    out.push_back(static_cast<uint8_t>(std::stoul(hex.substr(i, 2), nullptr,
+                                                  16)));
+  return out;
+}
+
+const tronv::Vec& vec(const char* name) {
+  for (const auto& v : tronv::all())
+    if (v.name == name) return v;
+  ADD_FAILURE() << "no vector " << name;
+  return tronv::all()[0];
+}
+
+TronTxType expectedType(const tronv::Vec& v) {
+  if (v.permission_id) return TRON_TX_UNVERIFIED; /* multisig account slot */
+  if (v.type == "TriggerSmartContract")
+    return v.data.compare(0, 8, "095ea7b3") == 0 ? TRON_TX_TRC20_APPROVE
+                                                 : TRON_TX_UNVERIFIED;
+  if (v.type == "FreezeBalanceV2Contract") return TRON_TX_FREEZE_V2;
+  if (v.type == "UnfreezeBalanceV2Contract") return TRON_TX_UNFREEZE_V2;
+  if (v.type == "VoteWitnessContract") return TRON_TX_VOTE_WITNESS;
+  return TRON_TX_UNVERIFIED;
+}
+
+/* The real transaction with its single owner_address replaced by `owner`:
+ * same length, so every protobuf length prefix stays valid. */
+std::vector<uint8_t> withOwner(const tronv::Vec& v,
+                               const std::vector<uint8_t>& owner) {
+  auto raw = fromHex(v.raw_hex);
+  const auto from = fromHex(v.owner);
+  size_t found = 0, at = 0;
+  for (size_t i = 0; i + from.size() <= raw.size(); i++) {
+    if (std::equal(from.begin(), from.end(), raw.begin() + i)) {
+      found++;
+      at = i;
+    }
+  }
+  EXPECT_EQ(1u, found) << v.name;
+  std::copy(owner.begin(), owner.end(), raw.begin() + at);
+  return raw;
+}
+}  // namespace
+
+// Every captured transaction is the exact byte string the chain accepted
+// (sha256(raw_data) is its txID), and the parser reads it as TronGrid did.
+TEST(Tron, RealTransactionsParseAsTronGridDecodesThem) {
+  for (const auto& v : tronv::all()) {
+    SCOPED_TRACE(v.name);
+    const auto raw = fromHex(v.raw_hex);
+    uint8_t digest[32];
+    sha256_Raw(raw.data(), raw.size(), digest);
+    ASSERT_EQ(v.txid, [&] {
+      std::string hex;
+      char b[3];
+      for (uint8_t c : digest) {
+        snprintf(b, sizeof(b), "%02x", c);
+        hex += b;
+      }
+      return hex;
+    }());
+
+    TronParsedTx parsed;
+    const TronTxType type = tron_parseRawTx(raw.data(), raw.size(), &parsed);
+    ASSERT_EQ(expectedType(v), type);
+    if (type == TRON_TX_UNVERIFIED) continue;
+    EXPECT_EQ(fromHex(v.owner),
+              std::vector<uint8_t>(parsed.owner, parsed.owner + 21));
+    EXPECT_EQ(v.fee_limit, parsed.has_fee_limit);
+
+    if (type == TRON_TX_TRC20_APPROVE) {
+      const auto data = fromHex(v.data);
+      std::vector<uint8_t> spender = {0x41};
+      spender.insert(spender.end(), data.begin() + 16, data.begin() + 36);
+      EXPECT_EQ(fromHex(v.contract),
+                std::vector<uint8_t>(parsed.contract, parsed.contract + 21));
+      EXPECT_EQ(spender, std::vector<uint8_t>(parsed.to, parsed.to + 21));
+      EXPECT_EQ(std::vector<uint8_t>(data.begin() + 36, data.end()),
+                std::vector<uint8_t>(parsed.trc20_amount,
+                                     parsed.trc20_amount + 32));
+    } else if (type == TRON_TX_VOTE_WITNESS) {
+      ASSERT_EQ(v.votes.size(), parsed.vote_count);
+      for (uint8_t i = 0; i < parsed.vote_count; i++) {
+        uint8_t sr[21];
+        uint64_t count = 0;
+        ASSERT_TRUE(tron_voteAt(&parsed, i, sr, &count));
+        EXPECT_EQ(fromHex(v.votes[i].address),
+                  std::vector<uint8_t>(sr, sr + 21));
+        EXPECT_EQ(v.votes[i].count, count);
+      }
+      uint8_t sr[21];
+      uint64_t count;
+      EXPECT_FALSE(tron_voteAt(&parsed, parsed.vote_count, sr, &count));
+    } else {
+      EXPECT_EQ(v.stake_amount, parsed.amount);
+      EXPECT_EQ(v.resource, parsed.resource);
+    }
+  }
+}
+
+// Each real approve, stake, unstake and vote clear-signs on its own screens,
+// with every value spelled out (expected text computed from TronGrid's decode,
+// not by the firmware), and signs sha256(raw_data) with the account's key.
+// TRC-20 calls to a contract outside the trusted table keep needing
+// AdvancedMode, and then name the contract first.
+TEST(Tron, RealApprovesStakesAndVotesShowEveryValue) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  TronSignFixture f;
+  struct Case {
+    const char* name;
+    std::vector<std::pair<std::string, std::string>> screens;
+  };
+  const Case cases[] = {
+      {"usdt_approve_unlimited",
+       {{"UNLIMITED approval",
+         "Allow TKwNfJYb2iyouByKpNdxQ6tryXK8KhTPT9 to spend ALL your USDT?"},
+        {"TRON", "Energy fee limit 150 TRX\nBandwidth fees are extra"}}},
+      {"usdt_approve_unlimited_41_word",
+       {{"UNLIMITED approval",
+         "Allow TJ4KeiGTvTX4wRUgLARiwr8rGLaurmVkdZ to spend ALL your USDT?"},
+        {"TRON", "Energy fee limit 9.9827 TRX\nBandwidth fees are extra"}}},
+      {"usdt_approve_100",
+       {{"TRC-20 Approve",
+         "Allow TKzxdSv2FZKQrEqkKVgp5DcwEXBEKMg2Ax to spend up to 100 USDT?"},
+        {"TRON", "Energy fee limit 50 TRX\nBandwidth fees are extra"}}},
+      {"usdt_approve_100_41_word",
+       {{"TRC-20 Approve",
+         "Allow TJ4KeiGTvTX4wRUgLARiwr8rGLaurmVkdZ to spend up to 100 USDT?"},
+        {"TRON", "Energy fee limit 9.9827 TRX\nBandwidth fees are extra"}}},
+      {"usdt_approve_revoke",
+       {{"TRC-20 Approve",
+         "Remove approval for TTJxU3P8rHycAyFY4kVtGNfmnMH4ezcuM9 to spend "
+         "your USDT?"},
+        {"TRON", "Energy fee limit 100 TRX\nBandwidth fees are extra"}}},
+      {"usdd_approve",
+       {{"TRC-20 Approve",
+         "Allow TBXW4hS5KYjjbJXDpnrPf4zhkLwrpUjbyz to spend up to "
+         "60000.00000028 USDD?"},
+        {"TRON", "Energy fee limit 1.24215 TRX\nBandwidth fees are extra"}}},
+      {"usdd_approve_unlimited",
+       {{"UNLIMITED approval",
+         "Allow TTJxU3P8rHycAyFY4kVtGNfmnMH4ezcuM9 to spend ALL your USDD?"},
+        {"TRON", "Energy fee limit 100 TRX\nBandwidth fees are extra"}}},
+      {"unknown_token_approve",
+       {{"TRON Blind Sign", ""},
+        {"TRC-20 Approve", "Token contract TN3W4H6rK2ce4vX9YnFQHwKENnHjoxb3m9"},
+        {"TRC-20 Approve",
+         "Allow TDH4dhmVQQNc1ZNudJwWzBcs2h6ahhWrpp to spend up to 57066 base "
+         "units?"},
+        {"TRON", "Energy fee limit 200 TRX\nBandwidth fees are extra"}}},
+      {"unknown_token_approve_unlimited",
+       {{"TRON Blind Sign", ""},
+        {"TRC-20 Approve", "Token contract TSSMHYeV2uE9qYH95DqyoCuNCzEL1NvU3S"},
+        {"UNLIMITED approval",
+         "Allow TTJxU3P8rHycAyFY4kVtGNfmnMH4ezcuM9 to spend ALL your tokens?"},
+        {"TRON", "Energy fee limit 150 TRX\nBandwidth fees are extra"}}},
+      {"freeze_energy", {{"TRON Stake", "Stake 13 TRX for ENERGY?"}}},
+      {"freeze_bandwidth",
+       {{"TRON Stake", "Stake 2.993143 TRX for BANDWIDTH?"}}},
+      {"freeze_with_fee_limit",
+       {{"TRON Stake", "Stake 909 TRX for ENERGY?"},
+        {"TRON", "Energy fee limit 100 TRX\nNot used by this transaction"}}},
+      {"unfreeze_energy", {{"TRON Unstake", "Unstake 24 TRX from ENERGY?"}}},
+      {"unfreeze_bandwidth",
+       {{"TRON Unstake", "Unstake 18 TRX from BANDWIDTH?"}}},
+      {"vote_1",
+       {{"TRON Vote", "Vote for 1 SR? This replaces all your current votes."},
+        {"Vote 1/1", "2498 votes for TFqEaQBVpJmc6y6sbvXgzu9zsXL1pTKw47"}}},
+      {"vote_3",
+       {{"TRON Vote", "Vote for 3 SRs? This replaces all your current votes."},
+        {"Vote 1/3", "83306 votes for TKSXDA8HfE9E1y39RczVQ1ZascUEtaSToF"},
+        {"Vote 2/3", "83304 votes for TNeEwWHXLLUgEtfzTnYN8wtVenGxuMzZCE"},
+        {"Vote 3/3", "83304 votes for TTMNxTmRpBZnjtUnohX84j25NLkTqDga7j"}}},
+      {"vote_7",
+       {{"TRON Vote", "Vote for 7 SRs? This replaces all your current votes."},
+        {"Vote 1/7", "6400 votes for TVFKwzE8qeETLaZEHMx2tjEsdnujAgAWaA"},
+        {"Vote 2/7", "1631 votes for TDpt9adA6QidL1B1sy3D8NC717C6L5JxFo"},
+        {"Vote 3/7", "1200 votes for TJvaAeFb8Lykt9RQcVyyTFN2iDvGMuyD4M"},
+        {"Vote 4/7", "652 votes for TTMNxTmRpBZnjtUnohX84j25NLkTqDga7j"},
+        {"Vote 5/7", "614 votes for TQopP5GM68QoqLzpz8YReDfSoCMkvwcZYd"},
+        {"Vote 6/7", "334 votes for TFXHSwdMruwXk18r8s5LpJuMiiPxUn2XMV"},
+        {"Vote 7/7", "223 votes for TNajWcLPBuxKmCVT8DZh7Xs4X9Bkme9poG"}}},
+  };
+  for (const Case& c : cases) {
+    SCOPED_TRACE(c.name);
+    const auto raw = withOwner(vec(c.name), f.owner);
+    TronSignTx tx = f.request(raw);
+    const bool blind = c.screens[0].first == "TRON Blind Sign";
+    const int n = (int)c.screens.size();
+
+    ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+    if (blind) { /* refused before any screen without AdvancedMode */
+      ASSERT_TRUE(kkconfirm_preload(0, 1));
+      fsm_test_clearLastFailure();
+      fsm_msgTronSignTx(&tx);
+      EXPECT_STREQ("Enable AdvancedMode to blind-sign",
+                   fsm_test_lastFailureMessage());
+      EXPECT_EQ(2, kkconfirm_drain());
+      ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+    }
+
+    /* Declining the last screen cancels: no screen is decoration. */
+    ASSERT_TRUE(kkconfirm_preload(n - 1, 1));
+    fsm_test_clearLastFailure();
+    fsm_msgTronSignTx(&tx);
+    EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+    EXPECT_EQ(0, kkconfirm_drain());
+
+    ASSERT_TRUE(kkconfirm_preload(n, 0));
+    kkconfirm_capture_start();
+    fsm_test_clearLastFailure();
+    fsm_msgTronSignTx(&tx);
+    const auto titles = kkconfirm_capture_titles();
+    const auto bodies = kkconfirm_capture_finish();
+    EXPECT_EQ(0, fsm_test_lastFailureCode());
+    static TronSignedTx signed_tx;
+    signed_tx = TronSignedTx{};
+    ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_TronSignedTx,
+                                       TronSignedTx_fields, &signed_tx));
+    EXPECT_EQ(0, kkconfirm_drain());
+    ASSERT_EQ((size_t)n, bodies.size());
+    for (int i = 0; i < n; i++) {
+      EXPECT_EQ(c.screens[i].first, titles[i]) << i;
+      if (!(blind && i == 0)) EXPECT_EQ(c.screens[i].second, bodies[i]) << i;
+    }
+
+    uint8_t digest[32], pub[65], hash[32];
+    sha256_Raw(raw.data(), raw.size(), digest);
+    ASSERT_EQ(65, signed_tx.signature.size);
+    ASSERT_EQ(0, ecdsa_recover_pub_from_sig(&secp256k1, pub,
+                                            signed_tx.signature.bytes, digest,
+                                            signed_tx.signature.bytes[64]));
+    keccak_256(pub + 1, 64, hash);
+    EXPECT_EQ(0, memcmp(hash + 12, f.owner.data() + 1, 20));
+    EXPECT_TRUE(fsm_test_derivedNodeIsZero());
+  }
+}
+
+// A multisig Permission_id still leaves the device unable to say whose
+// authority signs, so those real stakes and votes stay blind-sign only.
+TEST(Tron, RealMultisigStakeAndVoteStayBlind) {
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  TronSignFixture f;
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+  for (const char* name :
+       {"freeze_multisig_permission", "vote_multisig_permission"}) {
+    SCOPED_TRACE(name);
+    TronSignTx tx = f.request(withOwner(vec(name), f.owner));
+    ASSERT_TRUE(kkconfirm_preload(0, 1));
+    fsm_test_clearLastFailure();
+    fsm_msgTronSignTx(&tx);
+    EXPECT_STREQ("Enable AdvancedMode to blind-sign",
+                 fsm_test_lastFailureMessage());
+    EXPECT_EQ(2, kkconfirm_drain());
+  }
+}
+
+namespace {
+/* VoteWitnessContract { owner=1, votes=2 { address=1, count=2 } } */
+std::vector<uint8_t> voteValue(size_t n, uint64_t count) {
+  std::vector<uint8_t> v;
+  putBytesField(v, 1, tronAddr(0x11));
+  for (size_t i = 0; i < n; i++) {
+    std::vector<uint8_t> vote;
+    putBytesField(vote, 1, tronAddr(0x30 + (uint8_t)i));
+    putVarintField(vote, 2, count);
+    putBytesField(v, 2, vote);
+  }
+  return v;
+}
+
+/* FreezeBalanceV2Contract { owner=1, frozen_balance=2, resource=3 } */
+std::vector<uint8_t> stakeValue(uint64_t amount, int resource) {
+  std::vector<uint8_t> v;
+  putBytesField(v, 1, tronAddr(0x11));
+  putVarintField(v, 2, amount);
+  if (resource >= 0) putVarintField(v, 3, (uint64_t)resource);
+  return v;
+}
+
+TronTxType parseOnly(uint64_t type, const char* url,
+                     const std::vector<uint8_t>& value) {
+  auto raw = rawTx(contractMsg(type, url, value), nullptr, 0);
+  TronParsedTx parsed;
+  return tron_parseRawTx(raw.data(), raw.size(), &parsed);
+}
+
+const char* VOTE_URL = "type.googleapis.com/protocol.VoteWitnessContract";
+const char* FREEZE_URL = "type.googleapis.com/protocol.FreezeBalanceV2Contract";
+const char* UNFREEZE_URL =
+    "type.googleapis.com/protocol.UnfreezeBalanceV2Contract";
+}  // namespace
+
+// Anything outside what the chain accepts, or what the screens can state,
+// stays blind: the boundaries next to the accepted shapes.
+TEST(Tron, StakeAndVoteBoundariesFailClosed) {
+  EXPECT_EQ(TRON_TX_VOTE_WITNESS, parseOnly(4, VOTE_URL, voteValue(1, 1)));
+  EXPECT_EQ(TRON_TX_VOTE_WITNESS,
+            parseOnly(4, VOTE_URL, voteValue(TRON_MAX_VOTES, 5)));
+  EXPECT_EQ(TRON_TX_UNVERIFIED,
+            parseOnly(4, VOTE_URL, voteValue(TRON_MAX_VOTES + 1, 5)));
+  EXPECT_EQ(TRON_TX_UNVERIFIED, parseOnly(4, VOTE_URL, voteValue(0, 5)));
+  EXPECT_EQ(TRON_TX_UNVERIFIED, parseOnly(4, VOTE_URL, voteValue(2, 0)));
+  auto support = voteValue(1, 1);
+  putVarintField(support, 3, 1); /* VoteWitnessContract.support */
+  EXPECT_EQ(TRON_TX_UNVERIFIED, parseOnly(4, VOTE_URL, support));
+  EXPECT_EQ(TRON_TX_UNVERIFIED, parseOnly(54, VOTE_URL, voteValue(1, 1)));
+
+  for (uint64_t type : {54, 55}) {
+    const char* url = type == 54 ? FREEZE_URL : UNFREEZE_URL;
+    const TronTxType ok = type == 54 ? TRON_TX_FREEZE_V2 : TRON_TX_UNFREEZE_V2;
+    EXPECT_EQ(ok, parseOnly(type, url, stakeValue(1000000, -1)));
+    EXPECT_EQ(ok, parseOnly(type, url, stakeValue(1000000, 2)));
+    EXPECT_EQ(TRON_TX_UNVERIFIED, parseOnly(type, url, stakeValue(1000000, 3)));
+    EXPECT_EQ(TRON_TX_UNVERIFIED, parseOnly(type, url, stakeValue(0, 1)));
+    auto receiver = stakeValue(1000000, 1);
+    putBytesField(receiver, 4, tronAddr(0x22)); /* not a V2 field */
+    EXPECT_EQ(TRON_TX_UNVERIFIED, parseOnly(type, url, receiver));
+  }
+  /* FreezeBalanceContract (v1, type 11) is not decoded. */
+  EXPECT_EQ(TRON_TX_UNVERIFIED,
+            parseOnly(11, "type.googleapis.com/protocol.FreezeBalanceContract",
+                      stakeValue(1000000, 1)));
+
+  /* No truncation of a real vote reads as a shorter vote list. */
+  const auto raw = fromHex(vec("vote_7").raw_hex);
+  for (size_t cut = 1; cut < raw.size(); cut++) {
+    TronParsedTx parsed;
+    const TronTxType type =
+        tron_parseRawTx(raw.data(), raw.size() - cut, &parsed);
+    /* Dropping only trailing timestamp/expiration fields is legal. */
+    if (type != TRON_TX_UNVERIFIED) {
+      EXPECT_EQ(TRON_TX_VOTE_WITNESS, type);
+      EXPECT_EQ(7, parsed.vote_count) << "cut=" << cut;
+    }
+  }
+}
+
+// approve() calldata gets the same exact-shape checks as transfer().
+TEST(Tron, ApproveCalldataMustBeExact) {
+  auto data = trc20Calldata(tronAddr(0x22), 42, false);
+  const uint8_t approve[4] = {0x09, 0x5e, 0xa7, 0xb3};
+  std::copy(approve, approve + 4, data.begin());
+  EXPECT_EQ(TRON_TX_TRC20_APPROVE,
+            parseOnly(31, TRIGGER_URL,
+                      triggerContractValue(tronAddr(0x11), tronAddr(0x33),
+                                           data)));
+  auto dirty = data;
+  dirty[4 + 3] = 0x01;
+  EXPECT_EQ(TRON_TX_UNVERIFIED,
+            parseOnly(31, TRIGGER_URL,
+                      triggerContractValue(tronAddr(0x11), tronAddr(0x33),
+                                           dirty)));
+  auto longer = data;
+  longer.push_back(0);
+  EXPECT_EQ(TRON_TX_UNVERIFIED,
+            parseOnly(31, TRIGGER_URL,
+                      triggerContractValue(tronAddr(0x11), tronAddr(0x33),
+                                           longer)));
+  /* increaseAllowance(address,uint256) is not decoded. */
+  auto increase = data;
+  const uint8_t inc[4] = {0x39, 0x50, 0x93, 0x51};
+  std::copy(inc, inc + 4, increase.begin());
+  EXPECT_EQ(TRON_TX_UNVERIFIED,
+            parseOnly(31, TRIGGER_URL,
+                      triggerContractValue(tronAddr(0x11), tronAddr(0x33),
+                                           increase)));
 }
