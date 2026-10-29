@@ -33,6 +33,7 @@ extern "C" {
 #include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha2.h"
 #include "keepkey/firmware/clearsign_root.h"
+#include "keepkey/firmware/ethereum.h"
 
 void setup(void);
 }
@@ -42,6 +43,7 @@ void setup(void);
 #include "kkconfirm_driver.h"
 #include "test_board.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <cstdint>
@@ -4060,4 +4062,325 @@ TEST(ClearsignRootCeremony20261003, RealCertificatesVerifyOnTheirChainOnly) {
     EXPECT_FALSE(clearsign_root_cert_delegate(c.data(), c.size(), scopes[i],
                                               pub, alias));
   }
+}
+
+/* ---- 7.17: a 0x06 name beside the native approve spender (G03) ----------
+ *
+ * Request bytes captured from swaps.pro through Desktop on 2026-10-29
+ * (docs/clearsign-case-studies/swapspro-20261029/requests): approve 25000
+ * USDC to CoW's GPv2VaultRelayer on Ethereum. Fees and nonce are from the
+ * same session's 0x approve capture (the CoW capture has no fee fields). */
+namespace {
+
+const char kCowApprove[] =
+    "095ea7b3000000000000000000000000c92e8bdf79f0507f65a392b0ab4667716bfe0110"
+    "00000000000000000000000000000000000000000000000000000005d21dba00";
+const uint8_t kMainnetUsdc[20] = {0xa0, 0xb8, 0x69, 0x91, 0xc6, 0x21, 0x8b,
+                                  0x36, 0xc1, 0xd1, 0x9d, 0x4a, 0x2e, 0x9e,
+                                  0xb0, 0xce, 0x36, 0x06, 0xeb, 0x48};
+const uint8_t kCowRelayer[20] = {0xc9, 0x2e, 0x8b, 0xdf, 0x79, 0xf0, 0x50,
+                                 0x7f, 0x65, 0xa3, 0x92, 0xb0, 0xab, 0x46,
+                                 0x67, 0x71, 0x6b, 0xfe, 0x01, 0x10};
+// 0x AllowanceHolder, the spender of the same session's 0x route.
+const uint8_t kZxAllowanceHolder[20] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f, 0xf3, 0x68, 0x4f,
+    0x28, 0xc6, 0x75, 0x38, 0xd4, 0xd0, 0x72, 0xc2, 0x27, 0x34};
+const char kCowRelayerText[] = "0xC92E8bdf79f0507f65a392b0ab4667716BFE0110";
+
+EthereumSignTx usdcTx(const std::string& data_hex) {
+  EthereumSignTx msg = {};
+  const uint32_t path[5] = {0x8000002c, 0x8000003c, 0x80000000, 0, 0};
+  memcpy(msg.address_n, path, sizeof(path));
+  msg.address_n_count = 5;
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.has_type = true;
+  msg.type = 2;
+  msg.has_nonce = true;
+  msg.nonce.size = 1;
+  msg.nonce.bytes[0] = 0x07;
+  msg.has_gas_limit = true;
+  msg.gas_limit.size = 2;
+  msg.gas_limit.bytes[0] = 0xea;
+  msg.gas_limit.bytes[1] = 0x60;
+  const uint8_t max_fee[5] = {0x0d, 0x52, 0xbe, 0xf1, 0x38};
+  msg.has_max_fee_per_gas = true;
+  msg.max_fee_per_gas.size = sizeof(max_fee);
+  memcpy(msg.max_fee_per_gas.bytes, max_fee, sizeof(max_fee));
+  const uint8_t tip[4] = {0x3b, 0x9a, 0xca, 0x00};
+  msg.has_max_priority_fee_per_gas = true;
+  msg.max_priority_fee_per_gas.size = sizeof(tip);
+  memcpy(msg.max_priority_fee_per_gas.bytes, tip, sizeof(tip));
+  msg.has_to = true;
+  msg.to.size = 20;
+  memcpy(msg.to.bytes, kMainnetUsdc, 20);
+  const std::vector<uint8_t> data = ur_unhex(data_hex);
+  msg.has_data_length = msg.has_data_initial_chunk = true;
+  msg.data_length = (uint32_t)data.size();
+  msg.data_initial_chunk.size = (pb_size_t)data.size();
+  memcpy(msg.data_initial_chunk.bytes, data.data(), data.size());
+  return msg;
+}
+
+struct NamedRun {
+  std::vector<std::string> titles, bodies;
+  int code = 0;
+  std::string message;
+  std::string signature;  // hex(v r s), empty unless signed
+};
+
+/* Loads `record` (if any) as Desktop would, then signs, approving `yes`
+ * screens and declining the next. */
+NamedRun signWithRecord(const std::vector<uint8_t>* record,
+                        MetadataClassification want, EthereumSignTx msg,
+                        int yes) {
+  NamedRun run;
+  kk_test_board_init();
+  fsm_init();
+  fsm_test_clearLastFailure();
+  kkconfirm_drain();
+  signed_metadata_clear();
+  if (record) {
+    EXPECT_EQ(want, signed_metadata_process(record->data(), record->size(),
+                                            METADATA_KEYID_DELEGATE));
+  }
+  EXPECT_TRUE(kkconfirm_preload(yes, 1));
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  EXPECT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+  kkconfirm_capture_start();
+  ethereum_signing_init(&msg, &node, /*needs_confirm=*/true);
+  run.bodies = kkconfirm_capture_finish();
+  run.titles = kkconfirm_captured_titles();
+  run.code = (int)fsm_test_lastFailureCode();
+  run.message = fsm_test_lastFailureMessage();
+  if (run.code == 0) {
+    EthereumTxRequest response{};
+    if (kkconfirm_readResponse(MessageType_MessageType_EthereumTxRequest,
+                               EthereumTxRequest_fields, &response) &&
+        response.has_signature_r && response.has_signature_s) {
+      run.signature = std::to_string(response.signature_v) + ":" +
+                      hex_of(response.signature_r.bytes, 32) +
+                      hex_of(response.signature_s.bytes, 32);
+    }
+  }
+  kkconfirm_drain();
+  ethereum_signing_abort();
+  return run;
+}
+
+std::string joined(const NamedRun& run, const std::string& title_prefix) {
+  std::string out;
+  for (size_t i = 0; i < run.titles.size() && i < run.bodies.size(); i++)
+    if (run.titles[i].rfind(title_prefix, 0) == 0) out += run.bodies[i];
+  return out;
+}
+
+std::string testDelegateFp8() {
+  char fp[METADATA_FINGERPRINT_LEN];
+  signed_metadata_pubkey_fingerprint(EXPECTED_SLOT3_PUB, fp);
+  return std::string(fp, 8);
+}
+
+class ApproveNameTest : public CertifiedMetadataTest {
+ protected:
+  void SetUp() override {
+    CertifiedMetadataTest::SetUp();
+    set_advanced_mode_for_test(false);  // a native approve never needs it
+  }
+  std::vector<uint8_t> Record(uint32_t chain, const uint8_t addr[20],
+                              const std::string& name) {
+    return envelope(
+        mint_cert(chain, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+        sign_body(name_body(chain, addr, name, METADATA_KEYID_DELEGATE)));
+  }
+  // Every screen approved: the unnamed reference run.
+  NamedRun Unnamed(const EthereumSignTx& msg) {
+    return signWithRecord(nullptr, METADATA_VERIFIED, msg, 16);
+  }
+};
+
+}  // namespace
+
+TEST_F(ApproveNameTest, VerifiedNameForTheSpenderIsShownBesideIt) {
+  const EthereumSignTx msg = usdcTx(kCowApprove);
+  const auto record = Record(1, kCowRelayer, "CoW Protocol");
+  NamedRun named = signWithRecord(&record, METADATA_VERIFIED, msg, 16);
+  ASSERT_EQ(0, named.code) << named.message;
+
+  EXPECT_EQ(std::string("Approve withdrawal of up to 25000 USDC by CoW "
+                        "Protocol (") +
+                kCowRelayerText + ")?",
+            joined(named, "Approve"))
+      << ::testing::PrintToString(named.bodies);
+  // Who vouched for the name, once, right after the screen that showed it.
+  auto at = std::find(named.titles.begin(), named.titles.end(),
+                      "KeepKey ClearSign");
+  ASSERT_NE(named.titles.end(), at) << ::testing::PrintToString(named.titles);
+  EXPECT_EQ(1, std::count(named.titles.begin(), named.titles.end(),
+                          "KeepKey ClearSign"));
+  EXPECT_EQ("Transaction", *(at + 1));
+  EXPECT_EQ("Spender named by Test Delegate " + testDelegateFp8() +
+                "\ncertified by KeepKey",
+            named.bodies[at - named.titles.begin()]);
+
+  // Control: the same request without a record reads the raw spender, as
+  // 7.16 does, and the name changes nothing that is signed.
+  NamedRun plain = Unnamed(msg);
+  ASSERT_EQ(0, plain.code) << plain.message;
+  EXPECT_EQ(std::string("Approve withdrawal of up to 25000 USDC by ") +
+                kCowRelayerText + "?",
+            joined(plain, "Approve"));
+  EXPECT_EQ(0, std::count(plain.titles.begin(), plain.titles.end(),
+                          "KeepKey ClearSign"));
+  ASSERT_FALSE(plain.signature.empty());
+  EXPECT_EQ(plain.signature, named.signature);
+}
+
+TEST_F(ApproveNameTest, NameForAnotherSpenderIsIgnored) {
+  const EthereumSignTx msg = usdcTx(kCowApprove);
+  const auto record = Record(1, kZxAllowanceHolder, "0x AllowanceHolder");
+  NamedRun other = signWithRecord(&record, METADATA_VERIFIED, msg, 16);
+  NamedRun plain = Unnamed(msg);
+  ASSERT_EQ(0, other.code) << other.message;
+  ASSERT_FALSE(other.signature.empty());
+  EXPECT_EQ(plain.titles, other.titles);
+  EXPECT_EQ(plain.bodies, other.bodies);
+  EXPECT_EQ(plain.signature, other.signature);
+}
+
+TEST_F(ApproveNameTest, NameForTheSpenderOnAnotherChainIsIgnored) {
+  const EthereumSignTx msg = usdcTx(kCowApprove);
+  // A verified Base name for the same relayer address.
+  const auto record = Record(8453, kCowRelayer, "CoW Protocol");
+  NamedRun other = signWithRecord(&record, METADATA_VERIFIED, msg, 16);
+  NamedRun plain = Unnamed(msg);
+  ASSERT_EQ(0, other.code) << other.message;
+  ASSERT_FALSE(other.signature.empty());
+  EXPECT_EQ(plain.titles, other.titles);
+  EXPECT_EQ(plain.bodies, other.bodies);
+  EXPECT_EQ(plain.signature, other.signature);
+}
+
+TEST_F(ApproveNameTest, MalformedNameRecordRefusesTheApprove) {
+  auto record = Record(1, kCowRelayer, "CoW Protocol");
+  record[record.size() - 10] ^= 1;  // inside the delegate's signature
+  NamedRun run = signWithRecord(&record, METADATA_MALFORMED,
+                                usdcTx(kCowApprove), 16);
+  EXPECT_EQ(FailureType_Failure_Other, run.code);
+  EXPECT_EQ("Certified description invalid or not for this tx", run.message);
+  EXPECT_TRUE(run.titles.empty()) << ::testing::PrintToString(run.titles);
+  EXPECT_TRUE(run.signature.empty());
+}
+
+/* Unlimited: the warning names the spender, the provenance follows it, and
+ * the approve screen after it does not repeat the provenance. */
+TEST_F(ApproveNameTest, UnlimitedWarningNamesTheSpender) {
+  std::string hex = kCowApprove;
+  hex.replace(hex.size() - 64, 64, std::string(64, 'f'));
+  const EthereumSignTx msg = usdcTx(hex);
+  const auto record = Record(1, kCowRelayer, "CoW Protocol");
+  NamedRun named = signWithRecord(&record, METADATA_VERIFIED, msg, 16);
+  ASSERT_EQ(0, named.code) << named.message;
+  ASSERT_GE(named.titles.size(), 3u);
+  EXPECT_EQ("UNLIMITED approval", named.titles[0]);
+  EXPECT_EQ(std::string("Allow CoW Protocol (") + kCowRelayerText +
+                ") to spend ALL your USDC",
+            named.bodies[0]);
+  EXPECT_EQ("KeepKey ClearSign", named.titles[1]);
+  EXPECT_EQ(1, std::count(named.titles.begin(), named.titles.end(),
+                          "KeepKey ClearSign"));
+  EXPECT_EQ(std::string("Unlock full USDC balance for withdrawal by CoW "
+                        "Protocol (") +
+                kCowRelayerText + ")?",
+            joined(named, "Approve"));
+  ASSERT_FALSE(named.signature.empty());
+  EXPECT_EQ(Unnamed(msg).signature, named.signature);
+
+  // increaseAllowance gets the same named warning; declining the provenance
+  // signs nothing.
+  EthereumSignTx inc = msg;
+  memcpy(inc.data_initial_chunk.bytes, "\x39\x50\x93\x51", 4);
+  NamedRun declined = signWithRecord(&record, METADATA_VERIFIED, inc, 1);
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, declined.code);
+  EXPECT_EQ((std::vector<std::string>{"UNLIMITED approval",
+                                      "KeepKey ClearSign"}),
+            declined.titles);
+  EXPECT_EQ(named.bodies[0], declined.bodies[0]);
+  EXPECT_TRUE(declined.signature.empty());
+}
+
+/* The same record names an ERC-20 transfer's recipient. */
+TEST_F(ApproveNameTest, VerifiedNameForATransferRecipientIsShown) {
+  std::string hex = kCowApprove;
+  hex.replace(0, 8, "a9059cbb");
+  const EthereumSignTx msg = usdcTx(hex);
+  const auto record = Record(1, kCowRelayer, "CoW Protocol");
+  NamedRun named = signWithRecord(&record, METADATA_VERIFIED, msg, 16);
+  ASSERT_EQ(0, named.code) << named.message;
+  EXPECT_EQ(std::string("Send 25000 USDC to CoW Protocol (") +
+                kCowRelayerText + ")",
+            joined(named, "Send"))
+      << ::testing::PrintToString(named.titles);
+  auto at = std::find(named.titles.begin(), named.titles.end(),
+                      "KeepKey ClearSign");
+  ASSERT_NE(named.titles.end(), at);
+  EXPECT_EQ(0u, named.bodies[at - named.titles.begin()].find(
+                    "Recipient named by Test Delegate "));
+  ASSERT_FALSE(named.signature.empty());
+  EXPECT_EQ(Unnamed(msg).signature, named.signature);
+}
+
+/* Production name records: batch 2 of the 2026-10-16 ClearSign ceremony
+ * (signed-catalog-batch2.json), verified under the compiled-in production
+ * root. Uniswap's Universal Router on Ethereum, and another router address
+ * named on BNB Chain only. */
+TEST_F(ApproveNameTest, ProductionNameRecordsNameOnlyTheirSpenderOnTheirChain) {
+  const std::vector<uint8_t> eth_ur = ur_unhex(
+      "030101000000016cb3ad994b6565704b657920436c6561725369676e00000000"
+      "000000000000000000000003bb5314410309cc4e56b8140565106714e4dbf33f"
+      "6d75e2c89b78e0e6cb1cd1655c9f942208d3b4812e1a9434993f65d9c05990cb"
+      "e379faade132d14987cbfaeb387f0dd3e015210934fe1103770b89272e64a653"
+      "97d5d22a3501aa089ea13000060000000166a9893cc07d91d95644aedd05d03f"
+      "95e1dba8af18556e697377617020556e6976657273616c20526f757465720100"
+      "00000080362cd9a3aa09724ff3758120fc36f96c207a28f4290d7f7415976b75"
+      "d090f87d758ad594ec569c63736cc94f4bd63af4d66edd778f6472cd8e8f28e8"
+      "860c52be01");
+  const std::vector<uint8_t> bsc_ur = ur_unhex(
+      "030101000000386cb3ad994b6565704b657920436c6561725369676e00000000"
+      "00000000000000000000000250edcaf4c63b0922bd1d3171a1bf3ee3fb2dec5d"
+      "c8c316c8a0706a079f5ab8021950a0c858d54f27668aff057711a484582d3c56"
+      "30fe7246d452ba85fd57a053554d4d22ca57aa97443541bb2dd1b70ace1e24dd"
+      "6d48120fc9704cd363883a170600000038ec8b0f7ffe3ae75d7ffab09429e367"
+      "5bb63503e418556e697377617020556e6976657273616c20526f757465720100"
+      "0000008097d9e9c94f5e03c18e328c25fee813a9a58b95a1d62bceb9c3289b12"
+      "e228d208448dc499cc9f5b7b19dc2eee58c0b2e399b6203654176350e742cbec"
+      "fc12949f00");
+  clearsign_root_set_test_root(nullptr);  // the compiled-in production root
+  std::string hex = kCowApprove;
+  hex.replace(32, 40, "66a9893cc07d91d95644aedd05d03f95e1dba8af");
+  NamedRun named = signWithRecord(&eth_ur, METADATA_VERIFIED, usdcTx(hex), 16);
+  ASSERT_EQ(0, named.code) << named.message;
+  EXPECT_EQ("Approve withdrawal of up to 25000 USDC by Uniswap Universal "
+            "Router (0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af)?",
+            joined(named, "Approve"));
+  auto at = std::find(named.titles.begin(), named.titles.end(),
+                      "KeepKey ClearSign");
+  ASSERT_NE(named.titles.end(), at);
+  EXPECT_EQ("Spender named by KeepKey ClearSign FDD258EC\ncertified by "
+            "KeepKey",
+            named.bodies[at - named.titles.begin()]);
+  ASSERT_FALSE(named.signature.empty());
+  EXPECT_EQ(Unnamed(usdcTx(hex)).signature, named.signature);
+
+  // The BNB Chain record names its address there, not on Ethereum.
+  hex.replace(32, 40, "ec8b0f7ffe3ae75d7ffab09429e3675bb63503e4");
+  NamedRun other =
+      signWithRecord(&bsc_ur, METADATA_VERIFIED, usdcTx(hex), 16);
+  NamedRun plain = Unnamed(usdcTx(hex));
+  ASSERT_EQ(0, other.code) << other.message;
+  ASSERT_FALSE(other.signature.empty());
+  EXPECT_EQ(plain.titles, other.titles);
+  EXPECT_EQ(plain.bodies, other.bodies);
+  EXPECT_EQ(plain.signature, other.signature);
 }

@@ -789,7 +789,7 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
       }
       if (!ethereum_confirmUnlimitedApproval(
               (uint32_t)workflow->identity.chain_id, field->approve_spender,
-              field->address)) {
+              field->address, NULL)) {
         fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
                            _("Signing cancelled by user"));
         return;
@@ -1071,7 +1071,7 @@ static bool erc7730_allowance_policy(Erc7730Workflow* workflow,
   if ((workflow->allowance & ERC7730_ALLOWANCE_UNLIMITED) &&
       !workflow->identity.second_word_token_id &&
       !ethereum_confirmUnlimitedApproval(
-          tx->chain_id, workflow->allowance_spender, tx->to.bytes)) {
+          tx->chain_id, workflow->allowance_spender, tx->to.bytes, NULL)) {
     fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
                        _("Signing cancelled by user"));
     return false;

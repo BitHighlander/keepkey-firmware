@@ -96,6 +96,10 @@ bool ethereum_eip712_is_domain_primary_type(const char* primary_type) {
 #if ETHEREUM_CONFIRM_BODY_SIZE != BODY_CHAR_MAX
 #error "Ethereum confirmation capacity must match the confirmation renderer"
 #endif
+/* name + " (0x" + 40 hex + ")" + NUL */
+#if ETHEREUM_PARTY_TEXT_LEN < METADATA_NAME_MAX + 3 + 40 + 1 + 1
+#error "A vouched name and its full address must fit the party text"
+#endif
 
 static bool ethereum_signing = false;
 static uint32_t data_total, data_left;
@@ -198,13 +202,27 @@ static bool ethereum_allowanceIsUnlimited(const EthereumSignTx* msg) {
                                              36);
 }
 
+/* "<name> (0x<address>)", or the address alone when nothing names it. */
+static void ethereum_partyText(const uint8_t address[20], uint32_t cid,
+                               const char* name, char* out, size_t len) {
+  char addr[43] = "0x";
+  ethereum_address_checksum(address, addr + 2, false, cid);
+  if (name && name[0]) {
+    snprintf(out, len, "%s (%s)", name, addr);
+  } else {
+    strlcpy(out, addr, len);
+  }
+}
+
 /* An unlimited approve signs only after this warning, with the full spender
  * and the token named by symbol, or by contract when the table lacks it. */
 bool ethereum_confirmUnlimitedApproval(uint32_t cid,
                                        const uint8_t* spender_address,
-                                       const uint8_t* token_address) {
-  char spender[43] = "0x";
-  ethereum_address_checksum(spender_address, spender + 2, false, cid);
+                                       const uint8_t* token_address,
+                                       const char* spender_name) {
+  char spender[ETHEREUM_PARTY_TEXT_LEN];
+  ethereum_partyText(spender_address, cid, spender_name, spender,
+                     sizeof(spender));
   char asset[43] = "0x";
   const TokenType* token = tokenByChainAddress(cid, token_address);
   if (token != UnknownToken) {
@@ -722,7 +740,7 @@ static bool layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
                                     const uint8_t* value, uint32_t value_len,
                                     const TokenType* token, char* out_str,
                                     size_t out_str_len, bool approve,
-                                    bool* contact) {
+                                    bool* contact, const char* name) {
   bignum256 val;
   uint8_t pad_val[32];
   memset(pad_val, 0, sizeof(pad_val));
@@ -746,9 +764,9 @@ static bool layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
       return false;
   }
 
-  char addr[43] = "0x";
+  char addr[ETHEREUM_PARTY_TEXT_LEN] = "0x";
   if (to_len) {
-    ethereum_address_checksum(to, addr + 2, false, chain_id);
+    ethereum_partyText(to, chain_id, name, addr, sizeof(addr));
   }
 
   bool approve_all =
@@ -768,7 +786,7 @@ static bool layoutEthereumConfirmTx(const uint8_t* to, uint32_t to_len,
   }
   if (contact && *contact) {
     address = contact_book_label();
-  } else if (to_len && makerdao_isOasisDEXAddress(to, chain_id)) {
+  } else if (to_len && !name && makerdao_isOasisDEXAddress(to, chain_id)) {
     address = "OasisDEX";
   }
 
@@ -932,10 +950,26 @@ static bool ethereum_signing_check(const EthereumSignTx* msg) {
   return true;
 }
 
-static bool ethereum_warnUnlimitedOrAbort(const EthereumSignTx* msg) {
+static bool ethereum_warnUnlimitedOrAbort(const EthereumSignTx* msg,
+                                          const char* spender_name) {
   if (ethereum_confirmUnlimitedApproval(msg->has_chain_id ? msg->chain_id : 0,
                                         msg->data_initial_chunk.bytes + 16,
-                                        msg->to.bytes)) {
+                                        msg->to.bytes, spender_name)) {
+    return true;
+  }
+  fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                  "Signing cancelled by user");
+  ethereum_signing_abort();
+  return false;
+}
+
+/* After the first screen that showed a vouched name: who vouched for it. */
+static bool ethereum_vouchedOrAbort(bool* due, bool spender, const char* by) {
+  if (!*due) return true;
+  *due = false;
+  if (confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+              "KeepKey ClearSign", "%s named by %s\ncertified by KeepKey",
+              spender ? "Spender" : "Recipient", by)) {
     return true;
   }
   fsm_sendFailure(FailureType_Failure_ActionCancelled,
@@ -1101,6 +1135,30 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     return;
   }
 
+  /* 7.17: a KeepKey-certified 0x06 name for exactly this approval's spender,
+   * or this transfer's recipient, on this chain is shown beside its full
+   * address. It changes nothing that is signed; anything else reads as
+   * before. */
+  char party_name[METADATA_NAME_MAX + 1] = "";
+  char named_by[METADATA_NAME_BY_LEN] = "";
+  const uint8_t* party = NULL;
+  if (wanchain_tx_type == 0 && msg->to.size == 20 &&
+      erc7730_workflow_state()->phase == ERC7730_WORKFLOW_IDLE) {
+    if (data_total == 0) {
+      party = msg->to.bytes;
+    } else if (msg->data_initial_chunk.size >= 68 &&
+               (ethereum_isAllowanceSelector(msg->data_initial_chunk.bytes,
+                                             4) ||
+                ethereum_isStandardERC20Transfer(msg))) {
+      party = msg->data_initial_chunk.bytes + 16;
+    }
+  }
+  if (!party ||
+      !signed_metadata_name_for(chain_id, party, party_name, named_by)) {
+    party = NULL;
+  }
+  bool vouch_due = party != NULL;
+
   // Keep the selector and both ABI words available to the allowance policy.
   // Otherwise a host could split an approval prefix across streamed chunks.
   // A certified ERC-7730 review streams them instead: it ran this policy on
@@ -1139,7 +1197,11 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     if (ethereum_allowanceIsUnlimited(msg)) {
       unlimited_deferred =
           signed_metadata_certified_states_allowance(msg, chain_id);
-      if (!unlimited_deferred && !ethereum_warnUnlimitedOrAbort(msg)) return;
+      if (!unlimited_deferred &&
+          (!ethereum_warnUnlimitedOrAbort(msg, party_name) ||
+           !ethereum_vouchedOrAbort(&vouch_due, true, named_by))) {
+        return;
+      }
     }
   }
 
@@ -1219,7 +1281,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       }
     }
   }
-  if (unlimited_deferred && !ethereum_warnUnlimitedOrAbort(msg)) return;
+  if (unlimited_deferred && !ethereum_warnUnlimitedOrAbort(msg, NULL)) return;
   // Keep metadata only when its decoded screens were approved, so their
   // attestation remains bound to the signature. Otherwise prevent stale reuse
   // when contractHandled / ERC-20 paths bypassed metadata review.
@@ -1248,6 +1310,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
                  erc7730_workflow_state()->phase == ERC7730_WORKFLOW_IDLE &&
                  (token == NULL ? data_total == 0 : token != UnknownToken);
   const uint8_t* recipient = NULL;
+  const char* recipient_name = NULL;
   if (needs_confirm) {
     if (token == UnknownToken) {
       if (!ethereumFormatUnknownTokenReview(msg, confirm_body_message,
@@ -1259,10 +1322,11 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       }
     } else if (token != NULL) {
       recipient = msg->data_initial_chunk.bytes + 16;
+      if (party == recipient) recipient_name = party_name;
       if (!layoutEthereumConfirmTx(
               recipient, 20, msg->data_initial_chunk.bytes + 36, 32, token,
               confirm_body_message, sizeof(confirm_body_message),
-              /*approve=*/is_approve, &contact)) {
+              /*approve=*/is_approve, &contact, recipient_name)) {
         fsm_sendFailure(FailureType_Failure_SyntaxError,
                         _("Ethereum amount too large"));
         ethereum_signing_abort();
@@ -1270,10 +1334,11 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       }
     } else {
       recipient = msg->to.bytes;
-      if (!layoutEthereumConfirmTx(recipient, msg->to.size, msg->value.bytes,
-                                   msg->value.size, NULL, confirm_body_message,
-                                   sizeof(confirm_body_message),
-                                   /*approve=*/false, &contact)) {
+      if (party == recipient) recipient_name = party_name;
+      if (!layoutEthereumConfirmTx(
+              recipient, msg->to.size, msg->value.bytes, msg->value.size, NULL,
+              confirm_body_message, sizeof(confirm_body_message),
+              /*approve=*/false, &contact, recipient_name)) {
         fsm_sendFailure(FailureType_Failure_SyntaxError,
                         _("Ethereum amount too large"));
         ethereum_signing_abort();
@@ -1311,6 +1376,10 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
         ethereum_signing_abort();
         return;
       }
+    }
+    if (recipient_name &&
+        !ethereum_vouchedOrAbort(&vouch_due, is_approve, named_by)) {
+      return;
     }
   }
   /* A proof labels exactly one signing request. */
