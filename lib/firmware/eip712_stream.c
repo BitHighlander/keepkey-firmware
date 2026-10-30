@@ -789,17 +789,18 @@ static bool render_part(Eip712Render how, const uint8_t* value, size_t len,
   return true;
 }
 
-static Eip712LeafResult confirm_parts(const char* title, const char* path,
-                                      const char* type_name, Eip712Render how,
-                                      const uint8_t* value, size_t len) {
+/* Rendered whether or not `show`, so a hidden value is refused exactly when
+ * a shown one would be. */
+static Eip712LeafResult confirm_parts_if(bool show, const char* title,
+                                         const char* path,
+                                         const char* type_name,
+                                         Eip712Render how, const uint8_t* value,
+                                         size_t len) {
   char part[BODY_CHAR_MAX];
   size_t consumed = 0;
   const size_t fixed = strlen(path) + 1 + strlen(type_name) + 2;
   /* " (999/999)" is the widest part counter. */
   if (fixed + 10 + 8 > EIP712_BODY_MAX) return EIP712_LEAF_INVALID;
-  /* Rendered either way, so a hidden value is refused exactly when a shown
-   * one would be. */
-  const bool show = value_shown(len);
 
   if (!render_part(how, value, len, 0, true, part, EIP712_BODY_MAX - fixed,
                    &consumed))
@@ -827,6 +828,13 @@ static Eip712LeafResult confirm_parts(const char* title, const char* path,
       return EIP712_LEAF_CANCELLED;
   }
   return EIP712_LEAF_OK;
+}
+
+static Eip712LeafResult confirm_parts(const char* title, const char* path,
+                                      const char* type_name, Eip712Render how,
+                                      const uint8_t* value, size_t len) {
+  return confirm_parts_if(value_shown(len), title, path, type_name, how, value,
+                          len);
 }
 
 /* The member's path from the root being walked: "amount", "from.wallet",
@@ -1314,9 +1322,10 @@ static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
   const char* title = leaf_title();
   const char* unlimited = unlimited_permit_text(field, value, len);
   if (unlimited) {
-    return confirm_parts("UNLIMITED approval", path, type_name,
-                         EIP712_RENDER_TEXT, (const uint8_t*)unlimited,
-                         strlen(unlimited));
+    /* A warning, not a value: the first field walk shows it too. */
+    return confirm_parts_if(warning_shown(), "UNLIMITED approval", path,
+                            type_name, EIP712_RENDER_TEXT,
+                            (const uint8_t*)unlimited, strlen(unlimited));
   }
 
   switch (field->data_type) {

@@ -4152,6 +4152,112 @@ TEST(Eip712Stream, CertifiedWalksWarnAndShowLongValuesOnce) {
   eip712_stream_abort();
 }
 
+// An unlimited Permit2 amount has no native review once a definition is
+// required: its UNLIMITED leaf screen is the device's own warning. It is a
+// warning, not a value, so the first field walk shows it whatever its length.
+namespace {
+std::map<std::string, Struct> permit2Domain() {
+  std::map<std::string, Struct> types;
+  Struct& domain = types["EIP712Domain"];
+  addMember(domain, "name",
+            mk(EthereumTypedDataStructAck_EthereumDataType_STRING));
+  addMember(domain, "chainId",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  addMember(domain, "verifyingContract",
+            mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
+  return types;
+}
+
+Bytes permit2DomainValue(uint32_t member) {
+  if (member == 0) return text("Permit2");
+  if (member == 1) return word(1);
+  return fromHex("000000000022d473030f116ddee9f6b43ac78ba3");
+}
+
+// PermitBatch, one PermitDetails with amount 2^160 - 1.
+Bytes permitBatchValue(const std::vector<uint32_t>& path) {
+  if (path[0] == 0) return permit2DomainValue(path[1]);
+  if (path[1] == 0 && path.size() == 2) return Bytes{0, 1};  // details[]
+  if (path[1] == 0) {
+    switch (path[3]) {
+      case 0:
+        return fromHex("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
+      case 1:
+        return Bytes(20, 0xff);
+      default:
+        return fromHex("00006ae3b754");
+    }
+  }
+  if (path[1] == 1) return Bytes(20, 0x22);  // spender
+  return word(9);                            // sigDeadline
+}
+
+// PermitTransferFrom (UniswapX), TokenPermissions.amount 2^256 - 1.
+Bytes permitTransferValue(const std::vector<uint32_t>& path) {
+  if (path[0] == 0) return permit2DomainValue(path[1]);
+  if (path[1] == 0)
+    return path[2] == 0 ? fromHex("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
+                        : Bytes(32, 0xff);
+  if (path[1] == 1) return Bytes(20, 0x22);  // spender
+  return word(7);                            // nonce, deadline
+}
+
+void expectUnlimitedOnceIn(const std::vector<Phase>& phases, const char* body) {
+  ASSERT_EQ(phases.size(), 3u);
+  EXPECT_EQ(phases[1].titles, std::vector<std::string>{"UNLIMITED approval"});
+  EXPECT_EQ(phases[1].bodies, std::vector<std::string>{body});
+  EXPECT_EQ(phases[2].titles, std::vector<std::string>());
+  EXPECT_EQ(phases[2].message_hash, phases[1].message_hash);
+}
+}  // namespace
+
+TEST(Eip712Stream, CertifiedPermitBatchWarnsUnlimitedOnce) {
+  std::map<std::string, Struct> types = permit2Domain();
+  Struct& details = types["PermitDetails"];
+  addMember(details, "token",
+            mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
+  addMember(details, "amount",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 20));
+  addMember(details, "expiration",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 6));
+  addMember(details, "nonce",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 6));
+  Field list = structField("PermitDetails");
+  list.array_levels_count = 1;
+  list.array_levels[0] = 0;
+  Struct& batch = types["PermitBatch"];
+  addMember(batch, "details", list);
+  addMember(batch, "spender",
+            mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
+  addMember(batch, "sigDeadline",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  expectUnlimitedOnceIn(
+      certifiedWalk("PermitBatch", types, permitBatchValue, 2),
+      "details[0].amount\nuint160: UNLIMITED");
+  eip712_stream_abort();
+}
+
+TEST(Eip712Stream, CertifiedPermitTransferFromWarnsUnlimitedOnce) {
+  std::map<std::string, Struct> types = permit2Domain();
+  Struct& permissions = types["TokenPermissions"];
+  addMember(permissions, "token",
+            mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
+  addMember(permissions, "amount",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  Struct& transfer = types["PermitTransferFrom"];
+  addMember(transfer, "permitted", structField("TokenPermissions"));
+  addMember(transfer, "spender",
+            mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
+  addMember(transfer, "nonce",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  addMember(transfer, "deadline",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  expectUnlimitedOnceIn(
+      certifiedWalk("PermitTransferFrom", types, permitTransferValue, 2),
+      "permitted.amount\nuint256: UNLIMITED");
+  eip712_stream_abort();
+}
+
 // A definition whose display reads no message value never starts a field
 // walk: the runtime resumes the message itself at the end of the program,
 // and every leaf is shown, as plain streaming shows it.
