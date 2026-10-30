@@ -702,8 +702,60 @@ TEST(Thorchain, MemoSwapFeeWithEmptyAffiliateIsStillShown) {
   EXPECT_EQ(THORCHAIN_MEMO_CONFIRMED, result);
   ASSERT_EQ(4u, shown.size());
   EXPECT_EQ("Confirm to 0xdest", shown[1]);
-  EXPECT_EQ("Confirm limit 0", shown[2]);
+  EXPECT_EQ("No minimum output (limit 0)", shown[2]);
   EXPECT_EQ("Affiliate fee 75 bps to (none given)", shown[3]);
+}
+
+// The limit is the least the swap must pay out, in THORChain's 1e8 units for
+// every asset, so it is shown as an amount of the output asset. The memos are
+// from swaps KeepKey Desktop made (native, BTC OP_RETURN and EVM router
+// deposits all carry this grammar). Only a canonical decimal is scaled: any
+// other spelling is shown verbatim, and an output on the MAYA chain is never
+// scaled (CACAO is 1e10, and a BTC OP_RETURN memo may be MAYAChain's).
+TEST(Thorchain, MemoSwapLimitIsShownAsTheMinimumReceived) {
+  const struct {
+    const char* memo;
+    const char* limit_screen;
+  } cases[] = {
+      {"=:BTC.BTC:bc1q8w2ypqgx39gucxcypqv2m90wz9rvhmmrcnpdjs:6074:keep:30",
+       "Receive at least 0.00006074 BTC.BTC"},
+      {"=:ETH.USDT-0XDAC17F958D2EE523A2206206994597C13D831EC7:"
+       "0x27de622cc44c55b53caF299eCedccdAB29aC98A8:298660057580:keep:30",
+       "Receive at least 2986.6005758 ETH.USDT"},
+      {"=:THOR.RUNE:thor13d4tzmehhmt4r8w9s4n0g0lw7h3ggpyv9rhczx:19279214390:"
+       "keep:30",
+       "Receive at least 192.7921439 THOR.RUNE"},
+      {"=:GAIA.ATOM:cosmos12ngfd0l294kyplm6xaxwp0lx63al9ch5lqg7p5:6161177290:"
+       "keep:30",
+       "Receive at least 61.6117729 GAIA.ATOM"},
+      {"=:ETH.ETH:0xdest:18446744073709551615:kk:30",
+       "Receive at least 184467440737.09551615 ETH.ETH"},
+      {"=:ETH.ETH:0xdest:0:kk:30", "No minimum output (limit 0)"},
+      // Not a canonical decimal: shown exactly as written.
+      {"=:ETH.ETH:0xdest:0/1/0:kk:30", "Confirm limit 0/1/0"},
+      {"=:ETH.ETH:0xdest:1e8:kk:30", "Confirm limit 1e8"},
+      {"=:ETH.ETH:0xdest:0100:kk:30", "Confirm limit 0100"},
+      {"=:ETH.ETH:0xdest:18446744073709551616:kk:30",
+       "Confirm limit 18446744073709551616"},
+      {"=:ETH.ETH:0xdest::kk:30", "Confirm limit none"},
+      // MAYA-chain outputs keep the raw limit, in any case spelling.
+      {"=:MAYA.CACAO:maya13d4tzmehhmt4r8w9s4n0g0lw7h3ggpyv95f55k:123:kk:30",
+       "Confirm limit 123"},
+      {"=:maya.cacao:maya13d4tzmehhmt4r8w9s4n0g0lw7h3ggpyv95f55k:123:kk:30",
+       "Confirm limit 123"},
+      // A symbol too long to label is shown raw rather than cut.
+      {"=:ETH.ABCDEFGHIJKLMNOPQRSTU:0xdest:5:kk:30", "Confirm limit 5"},
+  };
+  for (const auto& c : cases) {
+    ThorchainMemoResult result = THORCHAIN_MEMO_UNPARSED;
+    const size_t asset_pages =
+        strstr(c.memo, "USDT-0X") != NULL ? 2u : 1u;  // see FullForm above
+    const std::vector<std::string> shown =
+        memoScreens(c.memo, (int)asset_pages + 3, &result);
+    EXPECT_EQ(THORCHAIN_MEMO_CONFIRMED, result) << c.memo;
+    ASSERT_EQ(asset_pages + 3, shown.size()) << c.memo;
+    EXPECT_EQ(c.limit_screen, shown[asset_pages + 1]) << c.memo;
+  }
 }
 
 // The same memo without the fee: one screen fewer, which is what makes the
