@@ -298,4 +298,11 @@ Eip712Wait eip712_stream_waiting(void);
  */
 void eip712_stream_abort(void);
 
+/* Safe{Wallet}'s setup() module call: `to` is Safe's SafeToL2Setup, pinned on
+ * `chain_id`, and `call` (36 bytes) is setupToL2(Safe's SafeL2, pinned there).
+ * It runs as the new Safe and only sets that SafeL2 as its code, off chain 1.
+ */
+bool eip712_safe_setup_to_l2(uint64_t chain_id, const uint8_t to[20],
+                             const uint8_t call[36]);
+
 #endif /* KEEPKEY_FIRMWARE_EIP712_STREAM_H */

@@ -209,6 +209,13 @@ typedef struct {
   /* The level-d call is a Safe exec whose operation word is not 0 (CALL):
    * its embedded call is a delegatecall, run as the Safe. */
   bool safe_delegatecall;
+  /* A level-d setup()'s module call, as its calldata pass reads it: `to`,
+   * the offset of `data` within setup()'s arguments, data's length and first
+   * 36 bytes (UINT32_MAX: a word above 32 bits). */
+  uint8_t safe_module_to[20];
+  uint8_t safe_module_call[36];
+  uint32_t safe_module_at;
+  uint32_t safe_module_length;
   /* A field whose value the definition states equals the transaction's
    * native value (ERC7730_FORMATTER_FLAG_TX_VALUE) matched it and was shown,
    * at the top level of a certified review. */
@@ -354,6 +361,12 @@ bool erc7730_workflow_inner_fetchable(const Erc7730Workflow* workflow);
  * only sends the native value. The value is part of the description: the
  * field must show it (amountPath), except for setup(), which moves none. */
 bool erc7730_workflow_inner_empty_call(const Erc7730Workflow* workflow);
+/* The level is a Safe setup() whose module call, read from its calldata, is
+ * Safe{Wallet}'s own: Safe's SafeToL2Setup with setupToL2(Safe's SafeL2),
+ * both pinned on the transaction's chain (eip712_safe_setup_to_l2). With
+ * `field`, also that the embedded call it holds is exactly that call. */
+bool erc7730_workflow_safe_setup_to_l2(const Erc7730Workflow* workflow,
+                                       const Erc7730Field* field);
 /* A TX_VALUE field: true when the value word equals this level's @.value.
  * At the top level of a review this binds the transaction's value to the
  * field (see erc7730_workflow_value_bound()). */
