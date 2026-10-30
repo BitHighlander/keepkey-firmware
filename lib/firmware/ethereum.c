@@ -842,7 +842,7 @@ static void formatEthereumFeeEIP1559(bignum256* fee,
 }
 
 static bool layoutEthereumFee(const EthereumSignTx* msg, bool is_token,
-                              char* out_str, size_t out_str_len) {
+                              bool name_to, char* out_str, size_t out_str_len) {
   bignum256 val, gas;
   /* Sized like the Send screen's amount: a value that screen showed and the
    * user approved must not be refused here for being long. */
@@ -879,10 +879,17 @@ static bool layoutEthereumFee(const EthereumSignTx* msg, bool is_token,
       return false;
   }
 
+  /* The Send screen was skipped: its destination is named here. */
+  char to[48] = "";
+  if (name_to && msg->to.size == 20) {
+    strcpy(to, " to 0x");
+    ethereum_address_checksum(msg->to.bytes, to + 6, false, chain_id);
+  }
+
   if ((uint32_t)snprintf(
           out_str, out_str_len,
-          _("Send %s from your wallet, paying up to %s for gas?"), tx_value,
-          gas_value) >= out_str_len) {
+          _("Send %s%s from your wallet, paying up to %s for gas?"), tx_value,
+          to, gas_value) >= out_str_len) {
     /*error detected.  Clear the buffer */
     memset(out_str, 0, out_str_len);
     return false;
@@ -1153,6 +1160,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   }
 
   bool data_needs_confirm = true;
+  bool fee_names_to = false;
   if (ethereum_contractHandled(data_total, msg, node)) {
     if (!ethereum_contractConfirmed(data_total, msg, node)) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
@@ -1176,8 +1184,11 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     /* 7.17 (D-020, value == arg): the review showed the native value as a
      * field it matched against this transaction's value, so the amount
      * screen would only repeat it as a payment to the contract. The fee
-     * screen below still states the value. */
-    if (erc7730_workflow_value_bound(certified)) needs_confirm = false;
+     * screen below still states the value, and names the contract. */
+    if (erc7730_workflow_value_bound(certified)) {
+      needs_confirm = false;
+      fee_names_to = true;
+    }
   }
 
   /* SRS R-1.4: a certified claim is honoured completely or refused, never
@@ -1363,7 +1374,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   }
 
   memset(confirm_body_message, 0, sizeof(confirm_body_message));
-  if (!layoutEthereumFee(msg, token != NULL, confirm_body_message,
+  if (!layoutEthereumFee(msg, token != NULL, fee_names_to, confirm_body_message,
                          sizeof(confirm_body_message))) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Ethereum fee too large"));

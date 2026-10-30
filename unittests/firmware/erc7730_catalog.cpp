@@ -2989,14 +2989,38 @@ TEST_F(EmbeddedTest, SafeCreationShowsItsOwnersAndThreshold) {
   EXPECT_EQ(run.depths, std::vector<uint32_t>{1});
 
   // A module call to a contract, with no data, is not "nothing": setup()
-  // DELEGATECALLs it. Refused (`to` is argument word 2 of setup(), whose
-  // arguments start at byte 4 + 128 + 4 of the calldata).
+  // DELEGATECALLs it. Named and refused (`to` is argument word 2 of setup(),
+  // whose arguments start at byte 4 + 128 + 4 of the calldata).
   const auto module = withByte(unhex(tx.data), 4 + 132 + 95, 0x01);
   const EmbeddedRun refused =
       signEmbedded(catalog, "safe_factory", tx, &module);
   EXPECT_EQ(refused.code, FailureType_Failure_Other) << dump(refused);
-  EXPECT_EQ(refused.message, "Inner call cannot be clear-signed");
+  EXPECT_EQ(refused.message, "DELEGATECALL cannot be clear-signed");
   EXPECT_FALSE(refused.signature);
+}
+
+// G14 as Safe{Wallet} creates a 1.4.1 Safe (tx 0x08c3fb8c...): setup()'s
+// module call DELEGATECALLs SafeToL2Setup.setupToL2, which runs as the new
+// Safe. A certified definition of the callee describes it as a plain call,
+// so it is never used: the DELEGATECALL is named and refused.
+TEST_F(EmbeddedTest, SafeCreationModuleIsADelegatecall) {
+  TestRoot root(catalog.fixture.root_pubkey);
+  ScopedWallet wallet;
+  for (const char* name :
+       {"safe_factory", "safe_setup_141", "safe_to_l2_setup"})
+    catalog.add(name);
+  const EmbeddedRun run =
+      signEmbedded(catalog, "safe_factory", realTx("safe_create_l2_setup"));
+  EXPECT_EQ(run.code, FailureType_Failure_Other) << dump(run);
+  EXPECT_EQ(run.message, "DELEGATECALL cannot be clear-signed");
+  EXPECT_FALSE(run.signature);
+  EXPECT_TRUE(hasScreen(run, "Inner action", "Setup Safe"));
+  EXPECT_TRUE(hasScreen(run, "DELEGATECALL",
+                        "Runs the contract in 'to' as the Safe, with its full "
+                        "authority. Not checked."))
+      << dump(run);
+  EXPECT_FALSE(run.shows("Use L2 singleton"));
+  EXPECT_EQ(run.depths, std::vector<uint32_t>{1});
 }
 
 // G13: a real Safe execTransaction (tx 0x1084535e...) of an ERC-20 transfer,
@@ -3059,6 +3083,27 @@ TEST_F(EmbeddedTest, SafeSendOfEthNeedsNoInnerDefinition) {
   EXPECT_EQ(refused.message, "DELEGATECALL cannot be clear-signed")
       << dump(refused);
   EXPECT_FALSE(refused.signature);
+}
+
+// The same real send under a format with no amountPath: the 1.765 ETH the
+// Safe pays out would be on no screen, so the empty call is refused. So is
+// one to no callee at all.
+TEST_F(EmbeddedTest, AnEmptyCallWhoseValueIsNotShownIsRefused) {
+  TestRoot root(catalog.fixture.root_pubkey);
+  ScopedWallet wallet;
+  catalog.add("safe_exec_b_no_value");
+  const auto& tx = realTx("safe_exec_native");
+  const EmbeddedRun run = signEmbedded(catalog, "safe_exec_b_no_value", tx);
+  EXPECT_EQ(run.code, FailureType_Failure_Other) << dump(run);
+  EXPECT_EQ(run.message, "Inner call cannot be clear-signed");
+  EXPECT_FALSE(run.signature);
+
+  auto nobody = unhex(tx.data);
+  std::fill(nobody.begin() + 4 + 12, nobody.begin() + 4 + 32, 0);
+  const EmbeddedRun burn =
+      signEmbedded(catalog, "safe_exec_b_no_value", tx, &nobody);
+  EXPECT_EQ(burn.message, "Inner call cannot be clear-signed") << dump(burn);
+  EXPECT_FALSE(burn.signature);
 }
 
 // G13: a Safe calling itself (tx 0x5e3b4323...: the Safe executes
@@ -3270,7 +3315,12 @@ TEST_F(EmbeddedTest, CowOrderSellsExactlyTheTransactionValue) {
   EXPECT_TRUE(hasScreen(run, "Signer field",
                         "Receiver:\n0x9858EfFD232B4033E47d90003D41EC34EcaEda94"
                         "\nNOT this wallet"));
-  EXPECT_TRUE(run.shows("Send 10 ETH from your wallet"));
+  // No Send screen: the fee screen names the contract that receives the ETH.
+  EXPECT_TRUE(
+      run.shows("Send 10 ETH to "
+                "0xbA3cB449bD2B4ADddBc894D8697F5170800EAdeC from your "
+                "wallet"))
+      << dump(run);
 
   // Any other value is refused when the field is reached.
   const EmbeddedRun other =

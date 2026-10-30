@@ -347,7 +347,8 @@ bool erc7730_workflow_inner_fetchable(const Erc7730Workflow* workflow);
 /* An embedded call with no data that the device describes completely
  * without a definition: no callee at all (the zero address, as a Safe's
  * setup() with no module), or a Safe exec that CALLs (operation 0) and so
- * only sends the native value. */
+ * only sends the native value. The value is part of the description: the
+ * field must show it (amountPath), except for setup(), which moves none. */
 bool erc7730_workflow_inner_empty_call(const Erc7730Workflow* workflow);
 /* A TX_VALUE field: true when the value word equals this level's @.value.
  * At the top level of a review this binds the transaction's value to the

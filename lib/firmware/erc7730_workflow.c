@@ -699,6 +699,13 @@ static bool safe_exec_selector(const uint8_t selector[4]) {
   return false;
 }
 
+/* Safe's setup(owners, threshold, to, data, ...) delegatecalls a nonzero `to`
+ * (argument bytes 64..95) with `data`, and moves no value doing it. */
+static bool safe_setup_selector(const uint8_t selector[4]) {
+  static const uint8_t setup[4] = {0xb6, 0x3e, 0x80, 0x0d};
+  return memcmp(selector, setup, 4) == 0;
+}
+
 Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
                                                 const uint8_t* data,
                                                 size_t data_len) {
@@ -745,13 +752,17 @@ Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
   } else {
     /* The operation word (argument bytes 96..127 of this level's call) is
      * read from the signed calldata, whatever the definition shows: anything
-     * but 0 is not a plain call. */
-    if (safe_exec_selector(workflow->identity.selector_or_type_hash)) {
+     * but 0 is not a plain call. For setup() the word is `to` (64..95):
+     * anything but 0 is delegatecalled. */
+    const uint8_t* selector = workflow->identity.selector_or_type_hash;
+    const bool setup = safe_setup_selector(selector);
+    if (setup || safe_exec_selector(selector)) {
       const uint32_t base =
-          workflow->depth == 0 ? 0u : workflow->inner_offset + 4u;
+          (workflow->depth == 0 ? 0u : workflow->inner_offset + 4u) +
+          (setup ? 64u : 96u);
       for (size_t i = 0; i < data_len; i++) {
         const uint32_t at = workflow->outer_received + (uint32_t)i;
-        if (at >= base + 96u && at < base + 128u && data[i] != 0)
+        if (at >= base && at < base + 32u && data[i] != 0)
           workflow->safe_delegatecall = true;
       }
     }
@@ -947,12 +958,14 @@ bool erc7730_workflow_inner_empty_call(const Erc7730Workflow* workflow) {
   static const uint8_t nobody[20] = {0};
   if (!workflow) return false;
   const Erc7730Field* field = &workflow->field;
+  const uint8_t* selector = workflow->identity.selector_or_type_hash;
   if (workflow->typed_data || field->kind != 13 || !field->has_inner ||
       !field->has_address || field->inner_length != 0)
     return false;
+  /* The value it moves is all of it: shown, or none by setup()'s code. */
+  if (!field->has_value && !safe_setup_selector(selector)) return false;
   return memcmp(field->address, nobody, 20) == 0 ||
-         (safe_exec_selector(workflow->identity.selector_or_type_hash) &&
-          !workflow->safe_delegatecall);
+         (safe_exec_selector(selector) && !workflow->safe_delegatecall);
 }
 
 bool erc7730_workflow_begin_fetch(Erc7730Workflow* workflow, uint8_t depth) {

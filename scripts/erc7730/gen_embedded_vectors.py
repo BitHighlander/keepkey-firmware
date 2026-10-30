@@ -26,6 +26,8 @@ from keepkeylib.erc7730_compiler import compile_calldata  # noqa: E402
 
 FACTORY = "0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67"
 SAFE_L2 = "0x29fcB43b46531BcA003ddC8FCB67FFE91900C762"
+SAFE_141 = "0x41675C099F32341bf84BFc5382aF534df5C7461a"
+SAFE_TO_L2_SETUP = "0xBD89A1CE4DDe368FFAB0eC35506eEcE0b1fFdc54"
 SAFE_A = "0xe9619c0450fd890e28a5baa09ab2e83e6a02c3fd"  # executes the transfer
 SAFE_B = "0x0da96062099823ae487aeb33da6331b8b5001c48"  # sends ETH
 SAFE_C = "0x7ef04d8026b553d7ab16c6d4f91878f5345e142b"  # adds an owner
@@ -52,6 +54,7 @@ EXEC = ("execTransaction(address to, uint256 value, bytes data, "
         "bytes signatures)")
 
 ADD_OWNER = "addOwnerWithThreshold(address owner, uint256 _threshold)"
+SETUP_TO_L2 = "setupToL2(address l2Singleton)"
 
 REGISTRY_FORMATS = {
     CREATE_PROXY: {
@@ -123,6 +126,15 @@ def safe(signature):
             "display": {"formats": {signature: REGISTRY_FORMATS[signature]}}}
 
 
+def without_amount(descriptor):
+    """The same descriptor with no amountPath on its calldata field."""
+    descriptor = json.loads(json.dumps(descriptor))
+    for formats in descriptor["display"]["formats"].values():
+        for field in formats["fields"]:
+            field.get("params", {}).pop("amountPath", None)
+    return descriptor
+
+
 def one(signature, intent, fields):
     return {"display": {"formats": {signature: {
         "intent": intent, "fields": fields}}}}
@@ -147,9 +159,18 @@ PROGRAMS = [
     # G14: the factory, and the singleton's setup() it embeds.
     ("safe_factory", safe(CREATE_PROXY), CREATE_PROXY, FACTORY),
     ("safe_setup", safe(SETUP), SETUP, SAFE_L2),
+    # Safe{Wallet}'s 1.4.1 creation: setup() at the Safe singleton, whose
+    # module call DELEGATECALLs SafeToL2Setup.setupToL2 (certified here only
+    # to show the device refuses it anyway).
+    ("safe_setup_141", safe(SETUP), SETUP, SAFE_141),
+    ("safe_to_l2_setup", one(SETUP_TO_L2, "Use L2 singleton", [
+        {"path": "l2Singleton", "label": "L2 singleton",
+         "format": "addressName"}]), SETUP_TO_L2, SAFE_TO_L2_SETUP),
     # G13: execTransaction at each Safe (exact address), and the token.
     ("safe_exec_a", safe(EXEC), EXEC, SAFE_A),
     ("safe_exec_b", safe(EXEC), EXEC, SAFE_B),
+    # The same format without amountPath: the value moved is not shown.
+    ("safe_exec_b_no_value", without_amount(safe(EXEC)), EXEC, SAFE_B),
     # A Safe calling itself: the inner definition is bound to the same
     # address as the outer one (the transaction's `to`).
     ("safe_exec_c", safe(EXEC), EXEC, SAFE_C),
