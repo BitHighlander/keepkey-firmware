@@ -28,6 +28,7 @@ FACTORY = "0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67"
 SAFE_L2 = "0x29fcB43b46531BcA003ddC8FCB67FFE91900C762"
 SAFE_A = "0xe9619c0450fd890e28a5baa09ab2e83e6a02c3fd"  # executes the transfer
 SAFE_B = "0x0da96062099823ae487aeb33da6331b8b5001c48"  # sends ETH
+SAFE_C = "0x7ef04d8026b553d7ab16c6d4f91878f5345e142b"  # adds an owner
 TOKEN = "0x8292bb45bf1ee4d140127049757c2e0ff06317ed"   # the transfer's token
 ROUTER02 = "0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45"
 ALLOWANCE_HOLDER = "0x0000000000001ff3684f28c67538d4d072c22734"
@@ -49,6 +50,8 @@ EXEC = ("execTransaction(address to, uint256 value, bytes data, "
         "uint8 operation, uint256 safeTxGas, uint256 baseGas, "
         "uint256 gasPrice, address gasToken, address refundReceiver, "
         "bytes signatures)")
+
+ADD_OWNER = "addOwnerWithThreshold(address owner, uint256 _threshold)"
 
 REGISTRY_FORMATS = {
     CREATE_PROXY: {
@@ -106,6 +109,12 @@ REGISTRY_FORMATS = {
             {"label": "Safe Tx Gas", "path": "safeTxGas", "visible": "never"},
             {"label": "Signatures", "path": "signatures",
              "visible": "never"}]},
+    ADD_OWNER: {
+        "$id": "addOwnerWithThreshold", "intent": "Add signer", "fields": [
+            {"path": "owner", "label": "Signer", "format": "addressName",
+             "params": {"types": ["eoa"]}, "visible": "always"},
+            {"path": "_threshold", "label": "New threshold", "format": "raw",
+             "visible": "always"}]},
 }
 
 
@@ -141,6 +150,10 @@ PROGRAMS = [
     # G13: execTransaction at each Safe (exact address), and the token.
     ("safe_exec_a", safe(EXEC), EXEC, SAFE_A),
     ("safe_exec_b", safe(EXEC), EXEC, SAFE_B),
+    # A Safe calling itself: the inner definition is bound to the same
+    # address as the outer one (the transaction's `to`).
+    ("safe_exec_c", safe(EXEC), EXEC, SAFE_C),
+    ("safe_add_owner", safe(ADD_OWNER), ADD_OWNER, SAFE_C),
     ("token_transfer", one(TRANSFER, "Send", [
         {"path": "to", "label": "To", "format": "addressName",
          "params": {"recipient": True}},

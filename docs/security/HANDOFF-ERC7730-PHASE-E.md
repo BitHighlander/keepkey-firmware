@@ -216,5 +216,6 @@ New wire tests: `test_only_a_raw_field_shows_a_signer_constant`, `test_a_long_ty
 - **Constraints** (formatter byte 1). `RECIPIENT` on an addressName adds "NOT this wallet" when the address is not the signer. `TX_VALUE` on a calldata amount refuses a call whose `@.value` differs; at the top level of a KeepKey-certified review the amount screen ("Send X to <contract>") is then skipped, the fee screen still states the value.
 - **Safe operation** is read per level, so a Safe executing a second Safe's DELEGATECALL is named and refused at the second Safe.
 - An inner definition the device refuses ends the review at once (7.16 refused it after refetching the outer one).
+- A Safe calling itself (owner and threshold changes: inner `to` == the transaction's `to`) is bound by the same exact-address definition as its `execTransaction`; the inner definition is still checked against the callee in the signed calldata.
 - Not done: a Safe proxy's own `execTransaction` still needs an exact-address definition (proxy binding is an owner decision, G13); `SafeTx.data` in typed data; the command-stream type (Settler `actions`, Universal Router).
 - Tests: `EmbeddedTest.*` in `unittests/firmware/erc7730_catalog.cpp` over real calldata (`scripts/erc7730/gen_embedded_vectors.py`), and the `test_717_*` runtime tests in python-keepkey.

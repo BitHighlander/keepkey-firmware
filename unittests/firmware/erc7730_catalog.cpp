@@ -3061,6 +3061,46 @@ TEST_F(EmbeddedTest, SafeSendOfEthNeedsNoInnerDefinition) {
   EXPECT_FALSE(refused.signature);
 }
 
+// G13: a Safe calling itself (tx 0x5e3b4323...: the Safe executes
+// addOwnerWithThreshold on its own address). The inner callee is the
+// transaction's `to`, so the registry format bound to that Safe binds the
+// inner call too; no proxy rule is involved.
+TEST_F(EmbeddedTest, ASafeCallingItselfIsBoundToThatSafe) {
+  TestRoot root(catalog.fixture.root_pubkey);
+  ScopedWallet wallet;
+  catalog.add("safe_exec_c");
+  catalog.add("safe_add_owner");
+  const auto& tx = realTx("safe_exec_self");
+  const EmbeddedRun run = signEmbedded(catalog, "safe_exec_c", tx);
+  ASSERT_EQ(run.code, (FailureType)0) << dump(run);
+  EXPECT_TRUE(run.signature);
+  EXPECT_TRUE(hasScreen(run, "Signer field",
+                        "Transaction:\nTo "
+                        "0x7EF04d8026b553D7AB16C6D4f91878F5345E142b\n"
+                        "Function 0x0d582f13\nData 68 bytes\nValue 0 Wei\nAs "
+                        "0x7EF04d8026b553D7AB16C6D4f91878F5345E142b"))
+      << dump(run);
+  EXPECT_TRUE(hasScreen(run, "Inner action", "Add signer"));
+  EXPECT_TRUE(hasScreen(run, "Inner field",
+                        "Signer:\n0x1C41D4fAA2419a062EEA24A2c663cD7ac82EeE6f"));
+  EXPECT_TRUE(hasScreen(run, "Inner field", "New threshold:\n1"));
+  EXPECT_EQ(run.depths, std::vector<uint32_t>{1});
+
+  // The same call made to another address, and a host that answers with this
+  // Safe's definition anyway: the device binds the inner definition to the
+  // callee in the signed calldata, and refuses.
+  auto elsewhere = unhex(tx.data);
+  elsewhere[4 + 31] ^= 0x01;
+  catalog.entries.back().contract.assign(elsewhere.begin() + 16,
+                                         elsewhere.begin() + 36);
+  const EmbeddedRun refused =
+      signEmbedded(catalog, "safe_exec_c", tx, &elsewhere);
+  EXPECT_EQ(refused.message, "ERC-7730 inner definition does not match")
+      << dump(refused);
+  EXPECT_FALSE(refused.signature);
+  EXPECT_FALSE(refused.shows("Add signer"));
+}
+
 // An empty inner call is described only where the device knows what it does:
 // no callee at all, or a Safe's CALL. The real 0x request with its route
 // emptied names a callee and is refused.
