@@ -1014,7 +1014,6 @@ static bool confirm_delegatecall(const char* title, const char* who,
 enum {
   SAFE_LIB_NONE,
   SAFE_LIB_MULTISEND, /* MultiSend and MultiSendCallOnly */
-  SAFE_LIB_SIGN_MESSAGE,
   SAFE_LIB_MIGRATION,
   SAFE_LIB_TO_L2_SETUP,
   SAFE_LIB_TO_L2_MIGRATION,
@@ -1072,24 +1071,6 @@ static const uint8_t safe_contracts[][20] = {
     /* 1.5.0 MultiSendCallOnly canonical */
     {0xa8, 0x3c, 0x33, 0x6b, 0x20, 0x40, 0x1a, 0xf7, 0x73, 0xb6,
      0x21, 0x9b, 0xa5, 0x02, 0x71, 0x74, 0x33, 0x8d, 0x18, 0x36},
-    /* 1.3.0 SignMessageLib canonical */
-    {0xa6, 0x53, 0x87, 0xf1, 0x6b, 0x01, 0x3c, 0xf2, 0xaf, 0x46,
-     0x05, 0xad, 0x8a, 0xa5, 0xec, 0x25, 0xa2, 0xcb, 0xa3, 0xa2},
-    /* 1.3.0 SignMessageLib eip155 */
-    {0x98, 0xff, 0xbb, 0xf5, 0x1b, 0xb3, 0x3a, 0x05, 0x6b, 0x08,
-     0xdd, 0xf7, 0x11, 0xf2, 0x89, 0x93, 0x6a, 0xaf, 0xf7, 0x17},
-    /* 1.3.0 SignMessageLib zksync */
-    {0x35, 0x71, 0x47, 0xca, 0xf9, 0xc0, 0xcc, 0xa6, 0x7d, 0xfa,
-     0x0c, 0xf5, 0x36, 0x93, 0x18, 0xd8, 0x19, 0x3c, 0x84, 0x07},
-    /* 1.4.1 SignMessageLib canonical */
-    {0xd5, 0x3c, 0xd0, 0xab, 0x83, 0xd8, 0x45, 0xac, 0x26, 0x5b,
-     0xe9, 0x39, 0xc5, 0x7f, 0x53, 0xad, 0x83, 0x80, 0x12, 0xc9},
-    /* 1.4.1 SignMessageLib zksync */
-    {0xac, 0xa1, 0xec, 0x0a, 0x1a, 0x57, 0x5c, 0xdc, 0xcf, 0x1d,
-     0xc3, 0xd5, 0xd2, 0x96, 0x20, 0x2e, 0xb6, 0x06, 0x18, 0x88},
-    /* 1.5.0 SignMessageLib canonical */
-    {0x4f, 0xfe, 0xf8, 0x22, 0x26, 0x48, 0x87, 0x2b, 0x3d, 0xe2,
-     0x95, 0xba, 0x1e, 0x49, 0x11, 0x0e, 0x61, 0xf5, 0xb5, 0xaa},
     /* 1.4.1 SafeMigration canonical */
     {0x52, 0x66, 0x43, 0xf6, 0x9b, 0x81, 0xb0, 0x08, 0xf4, 0x6d,
      0x95, 0xcd, 0x5c, 0xed, 0x5e, 0xc0, 0xed, 0xff, 0xda, 0xc6},
@@ -1163,12 +1144,6 @@ static const uint16_t safe_contract_info[] = {
     SAFE_INFO(SAFE_LIB_MULTISEND, 0x040),
     SAFE_INFO(SAFE_LIB_MULTISEND, 0x7ff),
     SAFE_INFO(SAFE_LIB_MULTISEND, 0x7ff),
-    SAFE_INFO(SAFE_LIB_SIGN_MESSAGE, 0x7ff),
-    SAFE_INFO(SAFE_LIB_SIGN_MESSAGE, 0x7ff),
-    SAFE_INFO(SAFE_LIB_SIGN_MESSAGE, 0x040),
-    SAFE_INFO(SAFE_LIB_SIGN_MESSAGE, 0x7ff),
-    SAFE_INFO(SAFE_LIB_SIGN_MESSAGE, 0x040),
-    SAFE_INFO(SAFE_LIB_SIGN_MESSAGE, 0x7ff),
     SAFE_INFO(SAFE_LIB_MIGRATION, 0x7ff),
     SAFE_INFO(SAFE_LIB_MIGRATION, 0x040),
     SAFE_INFO(SAFE_LIB_MIGRATION, 0x7ff),
@@ -1189,6 +1164,9 @@ static const uint16_t safe_contract_info[] = {
     SAFE_INFO(SAFE_ARG_HANDLER, 0x7ff),
     SAFE_INFO(SAFE_ARG_HANDLER, 0x040),
 };
+_Static_assert(sizeof(safe_contracts) / sizeof(safe_contracts[0]) ==
+                   sizeof(safe_contract_info) / sizeof(safe_contract_info[0]),
+               "one safe_contract_info row per safe_contracts address");
 
 /* What `address` is on the domain's chain: SAFE_LIB_NONE unless pinned
  * there. */
@@ -1208,15 +1186,8 @@ static uint8_t safe_contract(const uint8_t* address) {
 /* A delegatecall to a Safe library the caller has cleared: say what it
  * does, calmly. False when declined, or when `lib` is no such library. */
 static bool confirm_safe_library(uint8_t lib, const char* who) {
-  const char* title = "Safe upgrade";
   const char* what;
   switch (lib) {
-    case SAFE_LIB_SIGN_MESSAGE:
-      title = "Safe message";
-      what =
-          "signs the message in its data for your Safe, with Safe's "
-          "SignMessageLib.";
-      break;
     case SAFE_LIB_MIGRATION:
       what =
           "moves your Safe to Safe's standard contracts, with Safe's "
@@ -1233,8 +1204,8 @@ static bool confirm_safe_library(uint8_t lib, const char* who) {
     default:
       return false;
   }
-  return confirm(ButtonRequestType_ButtonRequest_Other, title, "%s %s", who,
-                 what);
+  return confirm(ButtonRequestType_ButtonRequest_Other, "Safe upgrade", "%s %s",
+                 who, what);
 }
 
 /* ── Approves inside a MultiSend ──────────────────────────────────────
@@ -1351,7 +1322,7 @@ static MultisendScan multisend_byte(uint8_t b) {
          * library taking no address from its data is read here: the data
          * is not kept. */
         const uint8_t lib = safe_contract(ms->to);
-        if (lib == SAFE_LIB_SIGN_MESSAGE || lib == SAFE_LIB_MIGRATION) {
+        if (lib == SAFE_LIB_MIGRATION) {
           if (!confirm_safe_library(lib, who)) return MS_SCAN_CANCELLED;
         } else {
           ms->facts |= MS_FACT_DELEGATE;
@@ -1404,14 +1375,16 @@ static MultisendScan multisend_feed(const uint8_t* bytes, size_t len) {
  * operation 1 runs SafeTx.to's code as the Safe. Only Safe's own libraries,
  * at their deployed addresses on this chain, are read:
  *  - MultiSend: no screen when `data` is a multiSend the scan read to its
- *    end, with no delegatecall inside but to SignMessageLib or
- *    SafeMigration (each said in the batch);
- *  - SignMessageLib, SafeMigration: their code takes no address from
- *    `data`, so the screen says what it does;
+ *    end, with no delegatecall inside but to SafeMigration (said in the
+ *    batch);
+ *  - SafeMigration: its code takes no address from `data`, so the screen
+ *    says what it does;
  *  - SafeToL2Setup, SafeToL2Migration: take the singleton (and fallback
  *    handler) from `data`, so the screen says what it does only when
  *    `data` is exactly that call with Safe's own deployments as arguments.
- * Anything else gets the full-authority warning. Decided when the last of
+ * Anything else gets the full-authority warning, SignMessageLib too: the
+ * message it signs is an opaque digest, which the Safe then accepts as its
+ * EIP-1271 signature for any app. Decided when the last of
  * `to`, `operation` and `data` is read, in any order, or when the SafeTx
  * ends without one of them. */
 #define SAFE_DELEGATE 1    /* operation is 1 */
@@ -1456,7 +1429,7 @@ static bool safe_delegate_decide(uint8_t* facts, bool closing,
   if ((*facts & read) == read) {
     const uint8_t lib = safe_contract(to);
     if (lib == SAFE_LIB_MULTISEND && !(*facts & SAFE_UNCHECKED)) return true;
-    if (lib == SAFE_LIB_SIGN_MESSAGE || lib == SAFE_LIB_MIGRATION ||
+    if (lib == SAFE_LIB_MIGRATION ||
         (lib == SAFE_LIB_TO_L2_SETUP && (*facts & SAFE_SETUP_ARGS)) ||
         (lib == SAFE_LIB_TO_L2_MIGRATION && (*facts & SAFE_MIGRATE_ARGS)))
       return confirm_safe_library(lib, "SafeTx");

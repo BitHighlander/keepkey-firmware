@@ -3548,9 +3548,6 @@ Bytes signMessageCall() {
   return b;
 }
 
-const char* const kSignMessageText =
-    "signs the message in its data for your Safe, with Safe's "
-    "SignMessageLib.";
 const char* const kMigrationText =
     "moves your Safe to Safe's standard contracts, with Safe's "
     "SafeMigration.";
@@ -3661,9 +3658,9 @@ TEST(Eip712Stream, SafeTxDelegatecallToANonPinnedAddressOnBaseWarns) {
   }
 }
 
-// SignMessageLib and SafeMigration take no address from their data: a
-// delegatecall to either says what it does, on each chain it is listed for,
-// in any member order. Anywhere else, the full-authority warning.
+// SafeMigration takes no address from its data: a delegatecall to it says
+// what it does, on each chain it is listed for, in any member order.
+// Anywhere else, the full-authority warning.
 TEST(Eip712Stream, SafeTxSafeLibrariesSayWhatTheyDo) {
   struct Lib {
     const std::vector<SafeDeployment>* deployments;
@@ -3672,7 +3669,6 @@ TEST(Eip712Stream, SafeTxSafeLibrariesSayWhatTheyDo) {
     const char* text;
   };
   const std::vector<Lib> libs = {
-      {&kSignMessageLibs, signMessageCall(), "Safe message", kSignMessageText},
       {&kSafeMigrations, fromHex("07f464a4"), "Safe upgrade", kMigrationText},
       {&kSafeMigrations, fromHex("68cb3d94"), "Safe upgrade", kMigrationText},
   };
@@ -3812,7 +3808,6 @@ TEST(Eip712Stream, DecliningASafeLibraryScreenSignsNothing) {
     const char* title;
   };
   const std::vector<Case> cases = {
-      {kSignMessageLibs[3].address, signMessageCall(), "Safe message"},
       {kSafeMigrations[2].address, fromHex("68cb3d94"), "Safe upgrade"},
       {kSafeToL2Migrations[0].address,
        abiCall("ef2624ae", {kSafeL2Singletons[3].address}), "Safe upgrade"},
@@ -3842,12 +3837,9 @@ TEST(Eip712Stream, DecliningASafeLibraryScreenSignsNothing) {
 TEST(Eip712Stream, MultiSendDelegatecallToSafeMigrationIsSaid) {
   const char* const kSafeSelf = "5de41a160aeb1be70874a57fc5e22922cf4836f0";
   const char* const multisend = kSafeMultiSendDeployments[1].address;
-  for (const SafeDeployment* lib :
-       {&kSafeMigrations[0], &kSafeMigrations[2], &kSignMessageLibs[3]}) {
+  for (const SafeDeployment* lib : {&kSafeMigrations[0], &kSafeMigrations[2]}) {
     SCOPED_TRACE(lib->address);
-    const bool sign = lib == &kSignMessageLibs[3];
-    Bytes packed = packedCall(
-        lib->address, sign ? signMessageCall() : fromHex("07f464a4"), -1, 1);
+    Bytes packed = packedCall(lib->address, fromHex("07f464a4"), -1, 1);
     append(&packed, packedCall(kSafeSelf, abiCall("f08a0323", {kSafeSelf})));
     const MsRun r = signMultiSend(multiSendCall(packed), 400, 1, false,
                                   multisend, TO_FIRST, 100);
@@ -3855,16 +3847,14 @@ TEST(Eip712Stream, MultiSendDelegatecallToSafeMigrationIsSaid) {
     EXPECT_TRUE(
         screensTitled(r.titles, r.bodies, "Delegatecall in batch").empty());
     EXPECT_TRUE(r.safe_delegated.empty());
-    const std::vector<std::string> said = screensTitled(
-        r.titles, r.bodies, sign ? "Safe message" : "Safe upgrade");
+    const std::vector<std::string> said =
+        screensTitled(r.titles, r.bodies, "Safe upgrade");
     ASSERT_EQ(said.size(), 1u);
-    EXPECT_EQ(said[0], squeezed(std::string("Call #1 ") +
-                                (sign ? kSignMessageText : kMigrationText)));
+    EXPECT_EQ(said[0], squeezed(std::string("Call #1 ") + kMigrationText));
     // Declining it signs nothing.
     const auto at = std::find_if(
-        r.titles.begin(), r.titles.end(), [&](const std::string& t) {
-          return t.rfind(sign ? "Safe message" : "Safe upgrade", 0) == 0;
-        });
+        r.titles.begin(), r.titles.end(),
+        [&](const std::string& t) { return t.rfind("Safe upgrade", 0) == 0; });
     const int before = (int)(at - r.titles.begin());
     const MsRun declined = signMultiSend(multiSendCall(packed), before, 1,
                                          false, multisend, TO_FIRST, 100);
@@ -3880,6 +3870,37 @@ TEST(Eip712Stream, MultiSendDelegatecallToSafeMigrationIsSaid) {
             std::vector<std::string>{squeezed(
                 delegateText("Call #1", kSafeToL2Migrations[0].address))});
   EXPECT_EQ(r.safe_delegated.size(), 1u);
+}
+
+// SignMessageLib's signMessage(h) makes the Safe accept h as its EIP-1271
+// signature for any app. h is an opaque digest (a Permit2 permit, say), so
+// a delegatecall to it keeps the full-authority warning on every chain, for
+// the SafeTx and inside a batch, and never reads calm.
+TEST(Eip712Stream, SafeTxSignMessageLibWarns) {
+  const char* const multisend = kSafeMultiSendDeployments[1].address;
+  for (const SafeDeployment& d : kSignMessageLibs) {
+    for (uint32_t chain : kSafeChains) {
+      SCOPED_TRACE(d.address);
+      SCOPED_TRACE(chain);
+      const MsRun r = signMultiSend(signMessageCall(), 400, 1, false, d.address,
+                                    TO_FIRST, chain);
+      ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+      EXPECT_TRUE(screensTitled(r.titles, r.bodies, "Safe message").empty());
+      EXPECT_EQ(screensTitled(r.titles, r.bodies, "Delegatecall"),
+                std::vector<std::string>{
+                    squeezed(delegateText("SafeTx", d.address))});
+      const Bytes batch =
+          multiSendCall(packedCall(d.address, signMessageCall(), -1, 1));
+      const MsRun b =
+          signMultiSend(batch, 400, 1, false, multisend, TO_FIRST, chain);
+      ASSERT_EQ(b.kind, EIP712_REQ_DONE);
+      EXPECT_TRUE(screensTitled(b.titles, b.bodies, "Safe message").empty());
+      EXPECT_EQ(screensTitled(b.titles, b.bodies, "Delegatecall in batch"),
+                std::vector<std::string>{
+                    squeezed(delegateText("Call #1", d.address))});
+      EXPECT_EQ(b.safe_delegated.size(), 1u);
+    }
+  }
 }
 
 // ── Real Safe transactions ───────────────────────────────────────────
@@ -3945,10 +3966,6 @@ size_t countTitle(const SafeTxScreens& s, const char* title) {
 TEST(Eip712Stream, RealSafeTxsHashAsOnChainAndReadCalm) {
   // One canonical batch per chain (two on Base), then Safe's libraries.
   const std::map<std::string, std::vector<std::string>> library = {
-      {"gnosis-signmessagelib130",
-       {"Safe message", std::string("SafeTx ") + kSignMessageText}},
-      {"gnosis-signmessagelib141",
-       {"Safe message", std::string("SafeTx ") + kSignMessageText}},
       {"gnosis-safemigration150-l2",
        {"Safe upgrade", std::string("SafeTx ") + kMigrationText}},
       {"gnosis-safemigration150-l2-handler",
@@ -3982,6 +3999,16 @@ TEST(Eip712Stream, RealSafeTxsHashAsOnChainAndReadCalm) {
       EXPECT_EQ(squeezedAll(screensTitled(s.titles, s.bodies, "Delegatecall")),
                 std::vector<std::string>{squeezed(delegateText(
                     "SafeTx", "a238cbeb142c10ef7ad8442c6d1f9e89e07e7761"))});
+      continue;
+    }
+    if (id.rfind("gnosis-signmessagelib", 0) == 0) {
+      // SignMessageLib signs an opaque digest the Safe then accepts for any
+      // app: warned about, with no calm screen.
+      EXPECT_EQ(squeezedAll(screensTitled(s.titles, s.bodies, "Delegatecall")),
+                std::vector<std::string>{
+                    squeezed(delegateText("SafeTx", tx.doc.values[2].hex))});
+      EXPECT_EQ(countTitle(s, "Safe message"), 0u);
+      EXPECT_EQ(countTitle(s, "Safe upgrade"), 0u);
       continue;
     }
     EXPECT_EQ(countTitle(s, "Delegatecall"), 0u);
@@ -4063,7 +4090,7 @@ TEST(Eip712Stream, SafeTxValueIsShownInTheChainsCoin) {
       {10, "1500000000000000000", "1.5 ETH"},
       {56, "2000000000000000000", "2 BNB"},
       {100, "1000000000000000000", "1 xDAI"},
-      {137, "1500000000000000000", "1.5 MATIC"},
+      {137, "1500000000000000000", "1.5 POL"},
       {42161, "1", "1 Wei"},
       {43114, "1000000000000000000000", "1000 AVAX"},
       // No coin name here: the exact amount in wei.

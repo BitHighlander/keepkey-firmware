@@ -312,7 +312,7 @@ TEST(Ethereum, TransferAmountUsesTheRequestsSigningChain) {
 
   msg.chain_id = 137;
   ASSERT_TRUE(ethereumFormatTransferAmount(&msg, rendered, sizeof(rendered)));
-  EXPECT_STREQ("1.5 MATIC", rendered);
+  EXPECT_STREQ("1.5 POL", rendered);
 }
 
 TEST(Ethereum, Eip712AddressRequiresCanonicalTwentyByteHex) {
