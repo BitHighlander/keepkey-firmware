@@ -3000,27 +3000,79 @@ TEST_F(EmbeddedTest, SafeCreationShowsItsOwnersAndThreshold) {
 }
 
 // G14 as Safe{Wallet} creates a 1.4.1 Safe (tx 0x08c3fb8c...): setup()'s
-// module call DELEGATECALLs SafeToL2Setup.setupToL2, which runs as the new
-// Safe. A certified definition of the callee describes it as a plain call,
-// so it is never used: the DELEGATECALL is named and refused.
-TEST_F(EmbeddedTest, SafeCreationModuleIsADelegatecall) {
+// module call DELEGATECALLs SafeToL2Setup.setupToL2(SafeL2), which runs as
+// the new Safe. Both are Safe's own deployments, pinned on chain 1, so the
+// device says what it does, calmly, and signs: no DELEGATECALL warning, and
+// no definition of the callee is asked for or shown.
+TEST_F(EmbeddedTest, SafeCreationWithSafeToL2SetupSigns) {
   TestRoot root(catalog.fixture.root_pubkey);
   ScopedWallet wallet;
   for (const char* name :
        {"safe_factory", "safe_setup_141", "safe_to_l2_setup"})
     catalog.add(name);
-  const EmbeddedRun run =
-      signEmbedded(catalog, "safe_factory", realTx("safe_create_l2_setup"));
-  EXPECT_EQ(run.code, FailureType_Failure_Other) << dump(run);
-  EXPECT_EQ(run.message, "DELEGATECALL cannot be clear-signed");
-  EXPECT_FALSE(run.signature);
+  const auto& tx = realTx("safe_create_l2_setup");
+  const EmbeddedRun run = signEmbedded(catalog, "safe_factory", tx);
+  ASSERT_EQ(run.code, (FailureType)0) << dump(run);
+  EXPECT_TRUE(run.signature);
   EXPECT_TRUE(hasScreen(run, "Inner action", "Setup Safe"));
-  EXPECT_TRUE(hasScreen(run, "DELEGATECALL",
-                        "Runs the contract in 'to' as the Safe, with its full "
-                        "authority. Not checked."))
+  EXPECT_TRUE(hasScreen(
+      run, "Inner field",
+      "Module:\nTo 0xBD89A1CE4DDe368FFAB0eC35506eEcE0b1fFdc54\n"
+      "Safe's SafeToL2Setup: off Ethereum, your Safe runs Safe's SafeL2 "
+      "0x29fcB43b46531BcA003ddC8FCB67FFE91900C762"))
       << dump(run);
+  EXPECT_FALSE(run.shows("full authority")) << dump(run);
   EXPECT_FALSE(run.shows("Use L2 singleton"));
   EXPECT_EQ(run.depths, std::vector<uint32_t>{1});
+}
+
+// Controls on the same request, one byte each: anything but setupToL2(a
+// pinned SafeL2) on the pinned SafeToL2Setup keeps the DELEGATECALL screen
+// and the refusal. Byte offsets in the real calldata: `to`'s word 200..231,
+// `data` 584..619 (selector, then the SafeL2 word).
+TEST_F(EmbeddedTest, AnyOtherSetupModuleIsStillADelegatecall) {
+  TestRoot root(catalog.fixture.root_pubkey);
+  ScopedWallet wallet;
+  for (const char* name :
+       {"safe_factory", "safe_setup_141", "safe_to_l2_setup"})
+    catalog.add(name);
+  const auto& tx = realTx("safe_create_l2_setup");
+  const auto data = unhex(tx.data);
+  ASSERT_EQ(data.size(), 676u);
+  ASSERT_EQ(data[212], 0xbd);
+  ASSERT_EQ(data[584], 0xfe);
+  ASSERT_EQ(data[600], 0x29);
+  // SafeL2 1.4.1 -> Safe 1.4.1 (pinned, but not as an L2 singleton).
+  auto l1 = data;
+  const uint8_t safe141[20] = {0x41, 0x67, 0x5c, 0x09, 0x9f, 0x32, 0x34,
+                               0x1b, 0xf8, 0x4b, 0xfc, 0x53, 0x82, 0xaf,
+                               0x53, 0x4d, 0xf5, 0xc7, 0x46, 0x1a};
+  memcpy(l1.data() + 600, safe141, 20);
+  const std::vector<std::pair<const char*, std::vector<uint8_t>>> mutants = {
+      {"to not SafeToL2Setup", withByte(data, 231, data[231] ^ 1)},
+      {"selector not setupToL2", withByte(data, 584, 0xef)},
+      {"dirty address word", withByte(data, 588, 0x01)},
+      {"argument not a SafeL2", withByte(data, 619, data[619] ^ 1)},
+      {"argument is the L1 Safe", l1},
+  };
+  for (const auto& m : mutants) {
+    const EmbeddedRun run = signEmbedded(catalog, "safe_factory", tx, &m.second);
+    EXPECT_EQ(run.code, FailureType_Failure_Other) << m.first << dump(run);
+    EXPECT_EQ(run.message, "DELEGATECALL cannot be clear-signed") << m.first;
+    EXPECT_FALSE(run.signature) << m.first;
+    EXPECT_TRUE(hasScreen(run, "DELEGATECALL",
+                          "Runs the contract in 'to' as the Safe, with its "
+                          "full authority. Not checked."))
+        << m.first << dump(run);
+    EXPECT_FALSE(run.shows("SafeToL2Setup:")) << m.first;
+  }
+  // A dirty `to` word is no address at all: refused before any module screen.
+  const auto dirty = withByte(data, 200, 0x01);
+  const EmbeddedRun run = signEmbedded(catalog, "safe_factory", tx, &dirty);
+  EXPECT_EQ(run.message, "ERC-7730 calldata does not match definition")
+      << dump(run);
+  EXPECT_FALSE(run.signature);
+  EXPECT_FALSE(run.shows("SafeToL2Setup:"));
 }
 
 // G13: a real Safe execTransaction (tx 0x1084535e...) of an ERC-20 transfer,
