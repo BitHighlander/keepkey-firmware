@@ -383,6 +383,58 @@ static bool thorchain_parse_bps(const char* text, uint16_t* bps) {
   return true;
 }
 
+/* Render a swap memo's limit as what the swap must pay out at least. THORChain
+ * states every asset's amount in 1e8 units, so "6074" swapping to BTC.BTC is
+ * 0.00006074 BTC. Only a canonical decimal integer is rendered; anything else
+ * returns false and the caller shows the raw text. Outputs on the MAYA chain
+ * are never rendered: CACAO uses 1e10, and the BTC OP_RETURN caller cannot
+ * tell a Maya memo from a THORChain one. */
+static bool thorchain_formatLimit(const char* limit, const char* chain,
+                                  const char* asset, char* out,
+                                  size_t out_len) {
+  if (!limit || !chain || !asset || limit[0] == '\0') return false;
+  if (strlen(chain) == 4 && (chain[0] | 0x20) == 'm' &&
+      (chain[1] | 0x20) == 'a' && (chain[2] | 0x20) == 'y' &&
+      (chain[3] | 0x20) == 'a') {
+    return false;
+  }
+  if (limit[0] == '0' && limit[1] != '\0') return false;
+
+  uint64_t value = 0;
+  for (const char* p = limit; *p; p++) {
+    if (*p < '0' || *p > '9') return false;
+    const uint64_t digit = (uint64_t)(*p - '0');
+    if (value > (UINT64_MAX - digit) / 10u) return false;
+    value = value * 10u + digit;
+  }
+
+  int n;
+  if (value == 0) {
+    n = snprintf(out, out_len, "No minimum output (limit 0)");
+  } else {
+    /* CHAIN.SYMBOL, without a token's contract suffix: the asset screen just
+     * before this one already showed the full asset. */
+    const char* dash = strchr(asset, '-');
+    const size_t chain_len = strlen(chain);
+    const size_t sym_len = dash ? (size_t)(dash - asset) : strlen(asset);
+    char ticker[THORCHAIN_ASSET_SUFFIX_LEN + 1];
+    if (sym_len == 0 || chain_len + 1 + sym_len >= sizeof(ticker)) {
+      return false;
+    }
+    memcpy(ticker, chain, chain_len);
+    ticker[chain_len] = '.';
+    memcpy(ticker + chain_len + 1, asset, sym_len);
+    ticker[chain_len + 1 + sym_len] = '\0';
+
+    char amount[48];
+    if (!thorchain_formatAmount(value, ticker, amount, sizeof(amount))) {
+      return false;
+    }
+    n = snprintf(out, out_len, "Receive at least %s", amount);
+  }
+  return n > 0 && (size_t)n < out_len;
+}
+
 ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
                                                size_t size) {
   /*
@@ -532,8 +584,17 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
                  "Thorchain swap", "Confirm to %s", dest)) {
       return THORCHAIN_MEMO_CANCELLED;
     }
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 "Thorchain swap", "Confirm limit %s", limit)) {
+    /* A plain decimal limit is an amount of the output asset in THORChain's
+     * 1e8 units: show it as one. Anything else (streaming "LIM/INT/QTY",
+     * scientific notation, an empty field) is shown verbatim as before. */
+    char limit_str[64];
+    const bool ok =
+        thorchain_formatLimit(limit, chain, asset, limit_str, sizeof(limit_str))
+            ? confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                      "Thorchain swap", "%s", limit_str)
+            : confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                      "Thorchain swap", "Confirm limit %s", limit);
+    if (!ok) {
       return THORCHAIN_MEMO_CANCELLED;
     }
     /* Never hide the affiliate fee skim. Gated on EITHER field being present,
