@@ -69,6 +69,12 @@ uint32_t erc7730_cap_formatter_roles(uint8_t kind) {
   return roles;
 }
 
+uint8_t erc7730_cap_formatter_flags(uint8_t kind) {
+  return kind == 10  ? ERC7730_FORMATTER_FLAG_RECIPIENT
+         : kind == 2 ? ERC7730_FORMATTER_FLAG_TX_VALUE
+                     : 0u;
+}
+
 uint32_t erc7730_cap_formatter_required_roles(uint8_t kind) {
   size_t count;
   uint32_t required;
@@ -204,7 +210,8 @@ bool erc7730_cap_display(const Erc7730DisplayInstruction* instruction,
 }
 
 bool erc7730_cap_formatter(const Erc7730Formatter* formatter) {
-  if (!formatter || formatter->flags != 0 ||
+  if (!formatter ||
+      (formatter->flags & ~erc7730_cap_formatter_flags(formatter->kind)) != 0 ||
       formatter->argument_count > ERC7730_FORMATTER_MAX_ARGUMENTS)
     return false;
   uint32_t roles = 0;

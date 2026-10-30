@@ -761,9 +761,15 @@ static bool consume_formatter_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
     v->formatter_kind = v->sibling[0];
     v->formatter_arg_count = v->sibling[2];
     v->field_received = 0;
-    if (v->formatter_kind < 1 || v->formatter_kind > 14 || v->sibling[1] != 0 ||
+    if (v->formatter_kind < 1 || v->formatter_kind > 14 ||
+        (v->sibling[1] & ~erc7730_cap_formatter_flags(v->formatter_kind)) !=
+            0 ||
+        ((v->sibling[1] & ERC7730_FORMATTER_FLAG_TX_VALUE) != 0 &&
+         v->header[7] != ERC7730_DEFINITION_CALLDATA) ||
         v->formatter_arg_count == 0 || v->formatter_arg_count > 23)
       return false;
+    /* A field checked against @.value reads it, as a path to it does. */
+    if (v->sibling[1] & ERC7730_FORMATTER_FLAG_TX_VALUE) v->reads_value = true;
     return true;
   }
 
@@ -816,9 +822,12 @@ static bool consume_formatter_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
   if (source == 1) {
     const uint8_t argument_array = v->path_arrays[index];
     if (argument_array != 0xff) v->formatter_any_array = true;
+    /* 7.17: an embedded call in an iteration (a multicall's bytes[]) may
+     * name one callee, value or authority for every element. */
     if (role == 1)
       v->formatter_value_array = argument_array;
-    else if (argument_array != v->formatter_value_array)
+    else if (argument_array != v->formatter_value_array &&
+             !(v->formatter_kind == 13 && argument_array == 0xff))
       v->formatter_mixed_arrays = true;
   }
   v->formatter_last_role = role;

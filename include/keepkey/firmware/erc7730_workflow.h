@@ -98,6 +98,7 @@ typedef struct {
   bool unlimited_approve;
   bool has_inner;
   bool has_spender;
+  uint8_t flags; /* the formatter's ERC7730_FORMATTER_FLAG_* */
   uint8_t list_count;
   uint8_t list_next;
   uint8_t value_class;
@@ -108,6 +109,38 @@ typedef struct {
   bool token_native;
   bool threshold_reached;
 } Erc7730Field;
+
+/* An embedded call nests at most this many levels below the transaction
+ * (7.17): a Safe or a factory calling a contract that makes a call of its
+ * own. A field that embeds a call at the deepest level is refused. */
+#define ERC7730_EMBED_MAX_DEPTH 2u
+
+/* What a level keeps while a deeper embedded call is reviewed, to resume
+ * after it: its definition (fetched again by id), the instruction that held
+ * the call and the iteration it was in. */
+typedef struct {
+  uint8_t definition_id[32];
+  uint16_t resume;
+  uint16_t iteration_begin;
+  uint16_t iteration_end;
+  uint8_t iteration_index;
+  uint8_t iteration_count;
+  uint8_t tier; /* the lowest tier of this level and every level above it */
+  bool iterating;
+  bool identity_confirmed;
+  bool intent_confirmed;
+  bool safe_delegatecall;
+} Erc7730EmbedFrame;
+
+/* ... and a level below the transaction, its window into the outer
+ * arguments and its containers. */
+typedef struct {
+  uint32_t inner_offset;
+  uint32_t inner_length;
+  uint8_t to[20];
+  uint8_t value[32];
+  uint8_t from[20];
+} Erc7730EmbedContext;
 
 /* The workflow owns every pointer-bearing interpreter object. No pointer into
  * a protobuf transport buffer survives a handler return. */
@@ -147,37 +180,39 @@ typedef struct {
   uint8_t iteration_index;
   uint8_t iteration_count;
   bool iterating;
-  /* Embedded call (Phase E2). One level: while depth is 1 the inner
-   * definition occupies the preload slot and the loader, and every calldata
-   * pass still replays the whole outer calldata against the reviewed digest,
-   * feeding only the inner call's bytes to the ABI stream. The outer program
-   * is restored afterwards from its definition id. */
-  uint32_t inner_offset; /* inner call payload within the outer arguments */
+  /* Embedded calls (Phase E2; 7.17: nested up to ERC7730_EMBED_MAX_DEPTH
+   * and inside iterations). While depth is d >= 1 the level-d definition
+   * occupies the preload slot and the loader, and every calldata pass still
+   * replays the whole outer calldata against the reviewed digest, feeding
+   * only the level-d call's bytes to the ABI stream. frames[d - 1] keeps the
+   * level above, restored afterwards from its definition id. */
+  uint32_t inner_offset; /* level-d call payload within the outer arguments */
   uint32_t inner_length;
   uint32_t outer_total;    /* outer argument bytes per pass */
   uint32_t outer_received; /* ... received so far in this pass */
   uint32_t fetch_offset;
   uint32_t fetch_total;
-  uint8_t outer_definition_id[32];
-  /* The inner call's own containers: @.to (callee), @.value, @.from. Typed
-   * data has no inner call; its @.to, the domain's verifyingContract the
-   * definition is bound to, is kept in inner_to. */
+  Erc7730EmbedFrame frames[ERC7730_EMBED_MAX_DEPTH];
+  Erc7730EmbedContext contexts[ERC7730_EMBED_MAX_DEPTH - 1u]; /* levels 1.. */
+  /* The level-d call's own containers: @.to (callee), @.value, @.from.
+   * Typed data has no inner call; its @.to, the domain's verifyingContract
+   * the definition is bound to, is kept in inner_to. */
   uint8_t inner_to[20];
   uint8_t inner_value[32];
   uint8_t inner_from[20];
-  uint16_t outer_resume; /* the outer instruction that held the inner call */
   uint8_t depth;
-  uint8_t fetch_depth; /* 1 fetching the inner definition, 0 the outer */
-  uint8_t outer_tier;  /* the outer definition's tier while depth is 1 */
+  uint8_t fetch_depth; /* the level whose definition is being fetched */
   uint8_t review_tier; /* the lowest tier of every definition loaded */
-  bool outer_identity_confirmed;
-  bool outer_intent_confirmed;
-  bool resuming; /* the outer program restarts after its inner call */
+  bool resuming;       /* a level restarts after its inner call */
   /* Inner definition refused: the embedded field is refused. */
   bool inner_refused;
-  /* The outer call is a Safe exec whose operation word is not 0 (CALL): its
-   * embedded call is a delegatecall, run as the Safe. */
+  /* The level-d call is a Safe exec whose operation word is not 0 (CALL):
+   * its embedded call is a delegatecall, run as the Safe. */
   bool safe_delegatecall;
+  /* A field whose value the definition states equals the transaction's
+   * native value (ERC7730_FORMATTER_FLAG_TX_VALUE) matched it and was shown,
+   * at the top level of a certified review. */
+  bool value_bound;
   uint8_t selection_kind : 4;
   uint8_t display_stage : 4;
   bool typed_data;
@@ -303,9 +338,26 @@ bool erc7730_workflow_captured(const Erc7730Workflow* workflow,
  * refused them. */
 bool erc7730_workflow_field_value(Erc7730Workflow* workflow, uint8_t cls,
                                   const uint8_t* value, size_t value_len);
-/* Phase E2. Begin fetching the inner definition of the located embedded
- * call (depth 1), or the outer definition again after it (depth 0). */
+/* Phase E2. Begin fetching the definition of the located embedded call
+ * (depth + 1), or the level above again after it (depth - 1). */
 bool erc7730_workflow_begin_fetch(Erc7730Workflow* workflow, uint8_t depth);
+/* Whether the field's located inner call may be fetched and clear-signed:
+ * a whole-word call with a selector, a callee, and a level left below. */
+bool erc7730_workflow_inner_fetchable(const Erc7730Workflow* workflow);
+/* An embedded call with no data that the device describes completely
+ * without a definition: no callee at all (the zero address, as a Safe's
+ * setup() with no module), or a Safe exec that CALLs (operation 0) and so
+ * only sends the native value. The value is part of the description: the
+ * field must show it (amountPath), except for setup(), which moves none. */
+bool erc7730_workflow_inner_empty_call(const Erc7730Workflow* workflow);
+/* A TX_VALUE field: true when the value word equals this level's @.value.
+ * At the top level of a review this binds the transaction's value to the
+ * field (see erc7730_workflow_value_bound()). */
+bool erc7730_workflow_field_matches_tx_value(Erc7730Workflow* workflow);
+/* The signing pass of a KeepKey-certified calldata review that showed the
+ * transaction's native value as a field it matched: the amount screen may
+ * be skipped, the fee screen still states the value. */
+bool erc7730_workflow_value_bound(const Erc7730Workflow* workflow);
 /* Feed one fetched chunk. `none` is the host's "no such definition" reply. */
 Erc7730CatalogResult erc7730_workflow_fetch_feed(
     Erc7730Workflow* workflow, const EthereumClearSignDefinitionChunk* chunk,

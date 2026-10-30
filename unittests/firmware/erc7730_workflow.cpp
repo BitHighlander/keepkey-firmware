@@ -82,8 +82,9 @@ TEST(Erc7730Workflow, RefusesDataOutsideAuthenticatedLifecycle) {
 TEST(Erc7730Workflow, StateIsBoundedIndependentlyOfDescriptorSize) {
   // Host (64-bit) layout. Phase E2 added the inner call's context (184 B on
   // ARM, where tools/check_sram_budget.py is the real gate); 7.17 B5c the
-  // suffix tail the review shows (ERC7730_SUFFIX_SHOWN_MAX, 128 B).
-  EXPECT_LE(sizeof(Erc7730Workflow), 4352u + ERC7730_SUFFIX_SHOWN_MAX);
+  // suffix tail the review shows (ERC7730_SUFFIX_SHOWN_MAX, 128 B); 7.17 the
+  // resume state of a second embedded level (136 B on the host).
+  EXPECT_LE(sizeof(Erc7730Workflow), 4352u + ERC7730_SUFFIX_SHOWN_MAX + 136u);
 }
 
 TEST(Erc7730Workflow, ReportsOnlyUnvalidatedCalldataAsWaiting) {
@@ -276,9 +277,11 @@ TEST(Erc7730Workflow, InnerDefinitionIsNeverShownAboveItsOuterTier) {
     Erc7730Workflow workflow{};
     workflow.phase = ERC7730_WORKFLOW_READY;
     workflow.identity.tier = c.outer;
+    workflow.field.kind = 13;
     workflow.field.has_inner = true;
     workflow.field.has_address = true;
     workflow.field.inner_selector_length = 4;
+    workflow.field.inner_length = 4;
     EXPECT_EQ(erc7730_workflow_tier(&workflow), c.outer);
     ASSERT_TRUE(erc7730_workflow_begin_fetch(&workflow, 1));
     // What erc7730_workflow_fetch_complete installs for a bound inner

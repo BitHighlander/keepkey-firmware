@@ -42,3 +42,11 @@ docs/release/audit-units/715-12-resume-evidence-20260927.json:generic-api-key:11
 240271f2c205e4f510b3a0a8687c860e032ef543:scripts/tron_vectors.py:generic-api-key:36
 240271f2c205e4f510b3a0a8687c860e032ef543:unittests/firmware/tron_vectors.h:generic-api-key:26
 240271f2c205e4f510b3a0a8687c860e032ef543:unittests/firmware/tron_vectors.h:generic-api-key:27
+
+# 7.17 ERC-7730 embedded-call vectors: a public ERC-20 contract address
+# (0x8292bb45...17ed, the token of mainnet tx 0x1084535e...) next to the
+# word "token". Not a credential.
+8ea25a5528298298e42a6ca33be4668c97e72427:scripts/erc7730/gen_embedded_vectors.py:generic-api-key:31
+8ea25a5528298298e42a6ca33be4668c97e72427:unittests/firmware/erc7730_embedded_vectors.h:generic-api-key:18
+scripts/erc7730/gen_embedded_vectors.py:generic-api-key:32
+unittests/firmware/erc7730_embedded_vectors.h:generic-api-key:22

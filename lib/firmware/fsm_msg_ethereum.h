@@ -150,8 +150,8 @@ static void send_erc7730_definition_request(void) {
 }
 
 /* Phase E2: ask for the inner definition by what the signed calldata says
- * (chain, callee, selector, depth 1), or for the outer definition again by
- * its id. The host answers with chunks, or with an empty chunk for "none". */
+ * (chain, callee, selector, depth), or for the level above again by its id.
+ * The host answers with chunks, or with an empty chunk for "none". */
 static void send_erc7730_fetch_request(void) {
   Erc7730Workflow* workflow = erc7730_workflow_state();
   if (workflow->phase != ERC7730_WORKFLOW_FETCH ||
@@ -164,7 +164,7 @@ static void send_erc7730_fetch_request(void) {
   RESP_INIT(EthereumClearSignDefinitionRequest);
   resp->kind = EthereumClearSignDefinitionKind_ERC7730_CALLDATA;
   resp->chain_id = workflow->identity.chain_id;
-  if (workflow->fetch_depth == 1) {
+  if (workflow->fetch_depth > workflow->depth) {
     resp->has_contract_address = true;
     resp->contract_address.size = 20;
     memcpy(resp->contract_address.bytes, workflow->field.address, 20);
@@ -173,11 +173,12 @@ static void send_erc7730_fetch_request(void) {
     memcpy(resp->selector_or_type_hash.bytes, workflow->field.inner_selector,
            4);
     resp->has_recursion_depth = true;
-    resp->recursion_depth = 1;
+    resp->recursion_depth = workflow->fetch_depth;
   } else {
     resp->has_definition_id = true;
     resp->definition_id.size = 32;
-    memcpy(resp->definition_id.bytes, workflow->outer_definition_id, 32);
+    memcpy(resp->definition_id.bytes,
+           workflow->frames[workflow->fetch_depth].definition_id, 32);
   }
   resp->offset = workflow->fetch_offset;
   const uint32_t remaining =
@@ -341,8 +342,8 @@ static Erc7730UiResult confirm_erc7730_source_and_intent(
       return ERC7730_UI_CANCELLED;
     workflow->intent_confirmed = true;
     /* A Safe delegatecall, read from the signed calldata: said before any
-     * field, whatever the definition shows. */
-    if (!inner && workflow->safe_delegatecall &&
+     * field, whatever the definition shows, at whatever level. */
+    if (workflow->safe_delegatecall &&
         !confirm(ButtonRequestType_ButtonRequest_Other, "DELEGATECALL",
                  "Runs the contract in 'to' as the Safe, with its full "
                  "authority. Not checked."))
@@ -423,6 +424,21 @@ static Erc7730SignerResult erc7730_signer_address(
   return derived ? ERC7730_SIGNER_OK : ERC7730_SIGNER_FAILED;
 }
 
+/* The device-owned title of a field: whose program it belongs to, and in an
+ * iteration which element it shows. */
+static void erc7730_field_title(const Erc7730Workflow* workflow, char* title,
+                                size_t title_size) {
+  if (workflow->iterating) {
+    snprintf(title, title_size,
+             workflow->depth ? "Inner field %u of %u" : "Signer field %u of %u",
+             (unsigned)workflow->iteration_index + 1u,
+             (unsigned)workflow->iteration_count);
+  } else {
+    strlcpy(title, workflow->depth ? "Inner field" : "Signer field",
+            title_size);
+  }
+}
+
 /* Show one fully resolved field, then move to the next display instruction.
  * `formatted` is already escaped. */
 static void show_erc7730_field(Erc7730Workflow* workflow,
@@ -450,18 +466,11 @@ static void show_erc7730_field(Erc7730Workflow* workflow,
              workflow->intent_value ? " value" : " text",
              (unsigned)workflow->intent_part, (unsigned)workflow->intent_parts);
     confirmed = confirm_erc7730_text(title, NULL, formatted);
-  } else if (workflow->iterating) {
-    /* One screen per element of the array, numbered by the device. */
-    char title[TITLE_CHAR_MAX];
-    snprintf(title, sizeof(title),
-             workflow->depth ? "Inner field %u of %u" : "Signer field %u of %u",
-             (unsigned)workflow->iteration_index + 1u,
-             (unsigned)workflow->iteration_count);
-    confirmed = confirm_erc7730_field(title, workflow->label, formatted);
   } else {
-    confirmed =
-        confirm_erc7730_field(workflow->depth ? "Inner field" : "Signer field",
-                              workflow->label, formatted);
+    /* In an iteration, one screen per element, numbered by the device. */
+    char title[TITLE_CHAR_MAX];
+    erc7730_field_title(workflow, title, sizeof(title));
+    confirmed = confirm_erc7730_field(title, workflow->label, formatted);
   }
   if (!confirmed) {
     fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
@@ -499,8 +508,11 @@ static void show_erc7730_address(Erc7730Workflow* workflow,
     memzero(signer, sizeof(signer));
   }
   char formatted[64];
-  if (!erc7730_format_address(address, this_wallet, formatted,
-                              sizeof(formatted))) {
+  if (!((workflow->field.flags & ERC7730_FORMATTER_FLAG_RECIPIENT)
+            ? erc7730_format_recipient(address, this_wallet, formatted,
+                                       sizeof(formatted))
+            : erc7730_format_address(address, this_wallet, formatted,
+                                     sizeof(formatted)))) {
     fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
                        _("Unable to format ERC-7730 field"));
     return;
@@ -538,6 +550,13 @@ static void show_erc7730_value(Erc7730Workflow* workflow, const char* text) {
   if (ok) {
     switch (field->kind) {
       case 2:
+        if ((field->flags & ERC7730_FORMATTER_FLAG_TX_VALUE) &&
+            !erc7730_workflow_field_matches_tx_value(workflow)) {
+          memzero(escaped, sizeof(escaped));
+          fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                             _("ERC-7730 value does not match the call"));
+          return;
+        }
         ok = erc7730_format_native_amount(field->value, chain_id, formatted,
                                           sizeof(formatted));
         break;
@@ -795,14 +814,26 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
         return;
       }
     }
-    /* Clear-sign the inner call at depth 1, outside iterations, for whole ABI
-     * words; otherwise it is refused. */
-    const bool fetchable = workflow->depth == 0 && !workflow->iterating &&
-                           !workflow->inner_refused && field->has_address &&
-                           field->inner_selector_length == 4 &&
-                           field->inner_length >= 4 &&
-                           (field->inner_length - 4u) % 32u == 0;
-    if (!fetchable) {
+    /* No data and nothing a definition could describe: the call's
+     * context is all of it. */
+    if (erc7730_workflow_inner_empty_call(workflow)) {
+      char formatted[ERC7730_FORMATTED_VALUE_MAX + 1u];
+      if (!erc7730_format_embedded(field->address, NULL, 0, 0,
+                                   field->has_value ? field->value : NULL,
+                                   workflow->identity.chain_id,
+                                   field->has_spender ? field->spender : NULL,
+                                   formatted, sizeof(formatted))) {
+        fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                           _("Invalid ERC-7730 embedded call"));
+      } else {
+        show_erc7730_field(workflow, formatted);
+      }
+      memzero(formatted, sizeof(formatted));
+      return;
+    }
+    /* Clear-sign the inner call (7.17: nested up to ERC7730_EMBED_MAX_DEPTH,
+     * also inside iterations) for whole ABI words; otherwise it is refused. */
+    if (!erc7730_workflow_inner_fetchable(workflow)) {
       show_erc7730_embedded(workflow);
       return;
     }
@@ -818,7 +849,8 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
                                    : _("Signing cancelled by user"));
       return;
     }
-    if (!erc7730_workflow_begin_fetch(workflow, 1)) {
+    if (!erc7730_workflow_begin_fetch(workflow,
+                                      (uint8_t)(workflow->depth + 1u))) {
       fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
                          _("Invalid ERC-7730 embedded call"));
       return;
@@ -902,7 +934,7 @@ static void follow_erc7730_path(Erc7730Workflow* workflow,
       }
       memcpy(value, workflow->inner_to, 20);
       length = 20;
-    } else if (workflow->depth == 1) {
+    } else if (workflow->depth != 0) {
       /* Inside an inner call its own context stands in for the transaction.
        */
       if (path->source_index == 3) {
@@ -1147,10 +1179,11 @@ static void confirm_erc7730_intent_and_continue(EthereumSignTx* tx) {
  * against the digest every earlier pass matched. */
 static void finish_erc7730_calldata(Erc7730Workflow* workflow) {
   const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
-  if (ui == ERC7730_UI_OK && workflow->depth == 1) {
-    /* The inner program ended: restore the outer definition by its id and
+  if (ui == ERC7730_UI_OK && workflow->depth != 0) {
+    /* The inner program ended: restore the level above by its id and
      * continue after the instruction that held the inner call. */
-    if (!erc7730_workflow_begin_fetch(workflow, 0)) {
+    if (!erc7730_workflow_begin_fetch(workflow,
+                                      (uint8_t)(workflow->depth - 1u))) {
       fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
                          _("Invalid ERC-7730 embedded call"));
       return;
@@ -1434,7 +1467,7 @@ void fsm_msgEthereumClearSignDefinitionChunk(
   bool complete = false;
   if (workflow->phase == ERC7730_WORKFLOW_FETCH) {
     bool none = false;
-    const uint8_t fetch_depth = workflow->fetch_depth;
+    const bool descend = workflow->fetch_depth > workflow->depth;
     const Erc7730CatalogResult fetched =
         erc7730_workflow_fetch_feed(workflow, msg, &complete, &none);
     if (fetched != ERC7730_CATALOG_MORE &&
@@ -1443,15 +1476,16 @@ void fsm_msgEthereumClearSignDefinitionChunk(
                          _("Invalid certified ERC-7730 definition"));
       return;
     }
-    if (none) {
-      show_erc7730_embedded(workflow); /* no inner definition: refused */
+    /* No inner definition, or one the device cannot run: refused. */
+    if (none || workflow->inner_refused) {
+      show_erc7730_embedded(workflow);
       return;
     }
     if (!complete) {
       send_erc7730_fetch_request();
       return;
     }
-    if (fetch_depth == 1 && !storage_isPolicyEnabled("AdvancedMode")) {
+    if (descend && !storage_isPolicyEnabled("AdvancedMode")) {
       /* A certified outer call does not lift AdvancedMode for its inner one. */
       Erc7730CatalogIdentity inner;
       const bool certified = erc7730_catalog_preloaded(&inner) &&
@@ -1463,10 +1497,12 @@ void fsm_msgEthereumClearSignDefinitionChunk(
         return;
       }
     }
-    if (fetch_depth == 1) {
+    if (descend) {
       /* Bound before any inner screen; then the call's context, which the
        * inner program does not show. */
       char formatted[ERC7730_FORMATTED_VALUE_MAX + 1u];
+      char title[TITLE_CHAR_MAX];
+      erc7730_field_title(workflow, title, sizeof(title));
       const Erc7730Field* field = &workflow->field;
       Erc7730CatalogIdentity inner;
       const bool shown =
@@ -1488,7 +1524,7 @@ void fsm_msgEthereumClearSignDefinitionChunk(
         return;
       }
       const bool confirmed =
-          confirm_erc7730_field("Signer field", workflow->label, formatted);
+          confirm_erc7730_field(title, workflow->label, formatted);
       memzero(formatted, sizeof(formatted));
       if (!confirmed) {
         fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
