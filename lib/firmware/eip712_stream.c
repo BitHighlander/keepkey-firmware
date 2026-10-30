@@ -980,7 +980,7 @@ static Eip712LeafResult confirm_embedded_unlimited(const uint8_t* value) {
   const bool safe_tx = in_safe_tx();
   const uint8_t* to = safe_tx_to();
   if (to)
-    return ethereum_confirmUnlimitedApproval(cid, value + 16, to, NULL)
+    return ethereum_confirmUnlimitedApproval(cid, value + 16, to)
                ? EIP712_LEAF_OK
                : EIP712_LEAF_CANCELLED;
   char spender[43] = "0x";
@@ -1143,7 +1143,7 @@ static MultisendScan multisend_byte(uint8_t b) {
         if (ms->seen & MS_SEEN_DIRTY) return MS_SCAN_DIRTY;
         if (!(ms->seen & MS_SEEN_FINITE) &&
             !ethereum_confirmUnlimitedApproval(domain_chain_id(), ms->spender,
-                                               ms->to, NULL))
+                                               ms->to))
           result = MS_SCAN_CANCELLED;
       }
       if (--ms->need == 0) multisend_phase(MS_HEADER);

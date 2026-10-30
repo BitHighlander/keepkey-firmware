@@ -53,13 +53,9 @@ bool ethereum_isAllowanceSelector(const uint8_t* data, size_t len);
  * device reads, top-level or embedded: an amount word of 2^255 or more is
  * UNLIMITED. */
 bool ethereum_allowanceAmountIsUnlimited(const uint8_t amount[32]);
-/* "<name> (0x<address>)": a vouched name (<= 24) plus the full address. */
-#define ETHEREUM_PARTY_TEXT_LEN 70
-/* spender_name: a KeepKey-certified name for the spender, or NULL. */
 bool ethereum_confirmUnlimitedApproval(uint32_t cid,
                                        const uint8_t* spender_address,
-                                       const uint8_t* token_address,
-                                       const char* spender_name);
+                                       const uint8_t* token_address);
 bool ethereum_chainIdIsValid(const EthereumSignTx* msg);
 bool ethereumFormatTransferAmount(const EthereumSignTx* msg, char* buf,
                                   int buflen)
