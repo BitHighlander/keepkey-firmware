@@ -4634,6 +4634,10 @@ namespace {
 
 Bytes text(const char* s) { return Bytes(s, s + strlen(s)); }
 
+// The message values the definition's fields capture: the runtime tells the
+// stream so (eip712_stream_leaf_covered) as each is read.
+std::set<std::vector<uint32_t>> g_covered;
+
 // Answer every request until the walk pauses or ends. False on a failure or
 // a cancel.
 bool pumpWalk(const std::map<std::string, Struct>& types,
@@ -4650,6 +4654,7 @@ bool pumpWalk(const std::map<std::string, Struct>& types,
                                  next->member_path + next->member_path_len);
       EthereumTypedDataValueAck ack = valueAck(value(path), next);
       if (!eip712_stream_on_value(&ack)) return false;
+      if (g_covered.count(path)) eip712_stream_leaf_covered();
     } else {
       return next->kind == EIP712_REQ_DEFINITION ||
              next->kind == EIP712_REQ_DONE;
@@ -4960,5 +4965,179 @@ TEST(Eip712Stream, CertifiedMessageWithoutFieldWalksIsStreamed) {
   EXPECT_GE(titles.size(), 12u);
   for (const std::string& title : titles)
     EXPECT_EQ(title.rfind("EIP-712 Message", 0), 0u) << title;
+  eip712_stream_abort();
+}
+
+// ── Certified typed data: every value shown once (7.17) ────────────────
+// A value a definition field captures is shown by that field. Every other
+// message value is shown raw once, in one last walk after the fields, in
+// message order; a value the first field walk already showed (a warning, or
+// one too long to capture) is not shown again. The last walk must hash what
+// the field walks hashed, and declining any of its screens cancels.
+namespace {
+
+std::map<std::string, Struct> mailTypes() {
+  std::map<std::string, Struct> types;
+  addMember(types["EIP712Domain"], "chainId",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  const Field u256 =
+      mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32);
+  addMember(types["Mail"], "first", u256);
+  addMember(types["Mail"], "second", u256);
+  return types;
+}
+
+Bytes mailValue(const std::vector<uint32_t>& path) {
+  if (path[0] == 0) return word(1);
+  return word(path[1] == 0 ? 42 : 7);
+}
+
+Bytes mailValueChanged(const std::vector<uint32_t>& path) {
+  if (path[0] == 1 && path[1] == 1) return word(8);
+  return mailValue(path);
+}
+
+std::string plainHash(const char* primary,
+                      const std::map<std::string, Struct>& types,
+                      Bytes (*value)(const std::vector<uint32_t>&)) {
+  kkconfirm_capture_start();
+  EXPECT_GT(walk(primary, types, value, 60), 0);
+  kkconfirm_capture_finish();
+  EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  const std::string hash = hexOf(eip712_stream_next()->message_hash, 32);
+  eip712_stream_abort();
+  return hash;
+}
+
+struct Rest {
+  bool walked;
+  std::vector<std::string> titles;
+  std::vector<std::string> bodies;
+};
+
+// After the definition's last field, as the runtime ends its display.
+// `accept` screens are accepted; the one after them is declined.
+Rest restWalk(const std::map<std::string, Struct>& types,
+              Bytes (*value)(const std::vector<uint32_t>&), int accept = 40) {
+  Rest rest{};
+  EXPECT_TRUE(kkconfirm_preload(accept, 0));
+  kkconfirm_capture_start();
+  EXPECT_TRUE(eip712_stream_show_rest());
+  rest.walked = eip712_stream_next()->kind != EIP712_REQ_DONE;
+  pumpWalk(types, value);
+  rest.titles = kkconfirm_captured_titles();
+  rest.bodies = kkconfirm_capture_finish();
+  kkconfirm_drain();
+  return rest;
+}
+
+}  // namespace
+
+TEST(Eip712Stream, CertifiedRestWalkShowsAValueNoFieldShowsOnce) {
+  const std::map<std::string, Struct> types = mailTypes();
+  const std::string message = plainHash("Mail", types, mailValue);
+  g_covered = {{1, 0}};  // the definition shows `first` only
+  const std::vector<Phase> phases = certifiedWalk("Mail", types, mailValue, 1);
+  ASSERT_EQ(phases.size(), 2u);
+  EXPECT_EQ(phases[1].titles, std::vector<std::string>());
+  const Rest rest = restWalk(types, mailValue);
+  g_covered.clear();
+  EXPECT_TRUE(rest.walked);
+  EXPECT_EQ(rest.titles, std::vector<std::string>{"EIP-712 Message"});
+  EXPECT_EQ(rest.bodies, std::vector<std::string>{"second\nuint256: 7"});
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  // What is signed is what plain streaming signs.
+  EXPECT_EQ(hexOf(eip712_stream_next()->message_hash, 32), message);
+  eip712_stream_abort();
+}
+
+TEST(Eip712Stream, CertifiedRestWalkIsSkippedWhenFieldsShowEveryValue) {
+  const std::map<std::string, Struct> types = mailTypes();
+  const std::string message = plainHash("Mail", types, mailValue);
+  g_covered = {{1, 0}, {1, 1}};
+  const std::vector<Phase> phases = certifiedWalk("Mail", types, mailValue, 2);
+  ASSERT_EQ(phases.size(), 3u);
+  const Rest rest = restWalk(types, mailValue);
+  g_covered.clear();
+  EXPECT_FALSE(rest.walked);
+  EXPECT_EQ(rest.bodies, std::vector<std::string>());
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  EXPECT_EQ(hexOf(eip712_stream_next()->message_hash, 32), message);
+  eip712_stream_abort();
+}
+
+TEST(Eip712Stream, CertifiedRestWalkDeclinedCancels) {
+  const std::map<std::string, Struct> types = mailTypes();
+  g_covered = {{1, 0}};
+  certifiedWalk("Mail", types, mailValue, 1);
+  const Rest rest = restWalk(types, mailValue, 0);
+  g_covered.clear();
+  EXPECT_EQ(rest.bodies, std::vector<std::string>{"second\nuint256: 7"});
+  EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_CANCELLED);
+  eip712_stream_abort();
+}
+
+TEST(Eip712Stream, CertifiedRestWalkMustHashWhatTheFieldsHashed) {
+  const std::map<std::string, Struct> types = mailTypes();
+  g_covered = {{1, 0}};
+  certifiedWalk("Mail", types, mailValue, 1);
+  restWalk(types, mailValueChanged);
+  g_covered.clear();
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_FAIL);
+  EXPECT_STREQ(eip712_stream_next()->error,
+               "Certified EIP-712 value was not found");
+  eip712_stream_abort();
+}
+
+// The CoW order's definition shows its amounts, tokens, receiver, expiry and
+// fee; the other five values are shown raw, once each, in message order.
+TEST(Eip712Stream, CertifiedCowOrderRestWalkShowsTheUnlabelledValues) {
+  const std::map<std::string, Struct> types = cowTypes();
+  const std::string message = plainHash("Order", types, cowValue);
+  g_covered = {{1, 0}, {1, 1}, {1, 2}, {1, 3}, {1, 4}, {1, 5}, {1, 7}};
+  certifiedWalk("Order", types, cowValue, 8);
+  const Rest rest = restWalk(types, cowValue);
+  g_covered.clear();
+  std::vector<std::string> paths;  // a continuation page names no path
+  for (const std::string& body : rest.bodies)
+    if (body.find('\n') != std::string::npos)
+      paths.push_back(body.substr(0, body.find('\n')));
+  EXPECT_EQ(paths, (std::vector<std::string>{"appData", "kind",
+                                             "partiallyFillable",
+                                             "sellTokenBalance",
+                                             "buyTokenBalance"}));
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  EXPECT_EQ(hexOf(eip712_stream_next()->message_hash, 32), message);
+  eip712_stream_abort();
+}
+
+// A warning and a long value were shown by the first field walk: the last
+// walk shows only what is left, here the approve's bytes, never the warning
+// or the blob again.
+TEST(Eip712Stream, CertifiedRestWalkRepeatsNothingTheFirstWalkShowed) {
+  std::map<std::string, Struct> types;
+  addMember(types["EIP712Domain"], "chainId",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  const Field bytes = mk(EthereumTypedDataStructAck_EthereumDataType_BYTES);
+  addMember(types["Call"], "data", bytes);
+  addMember(types["Call"], "blob", bytes);
+  const std::vector<Phase> phases =
+      certifiedWalk("Call", types, warnedValue, 1);
+  ASSERT_EQ(phases.size(), 2u);
+  ASSERT_FALSE(phases[1].titles.empty());
+  EXPECT_EQ(phases[1].titles[0], "UNLIMITED approval");
+  const Rest rest = restWalk(types, warnedValue);
+  ASSERT_FALSE(rest.bodies.empty());
+  EXPECT_EQ(rest.bodies[0].rfind("data", 0), 0u) << rest.bodies[0];
+  std::string shown;
+  for (size_t i = 0; i < rest.bodies.size(); i++) {
+    EXPECT_EQ(rest.titles[i].rfind("EIP-712 Message", 0), 0u);
+    shown += rest.bodies[i];
+  }
+  EXPECT_NE(shown.find("0x095ea7b3"), std::string::npos) << shown;
+  EXPECT_EQ(shown.find("blob"), std::string::npos) << shown;
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  EXPECT_EQ(hexOf(eip712_stream_next()->message_hash, 32),
+            phases[1].message_hash);
   eip712_stream_abort();
 }

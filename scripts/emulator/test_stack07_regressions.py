@@ -31,10 +31,16 @@ BITCOIN_ONLY_SKIP = "Stack 07 EVM contracts are intentionally absent from bitcoi
 # message leaves ("Mail"), then the final "Sign Typed Data" screen, whose
 # "from <address>?" body pages once (SignTx, then one continuation page).
 MAIL_UNCERTIFIED_BUTTONS = 10
-# Certified order: domain (1-6), message pass one (7-8), runtime signer (9),
-# unverified-data warning (10), contract action (11), first field (12),
-# replayed message leaves (13-14), second field (15), final screen (16-17).
-MAIL_CERTIFIED_DECLINABLE = (9, 10, 11, 12, 15)
+MAIL_DOMAIN_BUTTONS = 6
+MAIL_FINAL_BUTTONS = 2
+# Certified order (7.17, each message leaf shown once): domain (1-6), runtime
+# signer (7), unverified-data warning (8), contract action (9), first field
+# (10), second field (11), final screen (12-13). The definition's fields show
+# both leaves, so none is shown raw. Through 7.16 every field walk showed
+# every leaf again: message pass one (7-8) before the signer, and the replayed
+# leaves (13-14) before the second field, 17 requests in all.
+MAIL_CERTIFIED_REVIEW = 3  # runtime signer, unverified-data warning, intent
+MAIL_CERTIFIED_DECLINABLE = (7, 8, 9, 10, 11)
 # Empty Mail: six domain requests, then the final screen (two requests).
 EMPTY_MAIL_FINAL_SCREEN = 7
 EMPTY_MAIL_BUTTONS = 8
@@ -131,7 +137,15 @@ class TestStack07Regressions(Erc7730Harness, common.KeepKeyTest):
         self.assertEqual(result.signature, baseline.signature)
         self.assertEqual(passes, 2)
         self.assertEqual(baseline_buttons, MAIL_UNCERTIFIED_BUTTONS)
-        self.assertEqual(buttons, baseline_buttons + 7)  # identity/warning/intent, two fields, two replayed leaves
+        # Every leaf reviewed exactly once: two by their fields, none raw.
+        covered_fields, uncovered_leaves = 2, 0
+        self.assertEqual(buttons, MAIL_DOMAIN_BUTTONS + MAIL_CERTIFIED_REVIEW +
+                         covered_fields + uncovered_leaves + MAIL_FINAL_BUTTONS)
+        self.assertEqual(
+            [screen for screen in self.screens
+             if screen[0] in ("Signer field", "EIP-712 Message")],
+            [("Signer field", "First value:\n42"),
+             ("Signer field", "Second value:\n7")])
         assert_single_final_sign_screen(self)
 
     def test_typed_replay_change_is_refused(self):

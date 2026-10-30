@@ -58,6 +58,10 @@
  * slot per element. */
 #define EIP712_MAX_SLOTS 24
 
+/* Message values whose screen a certified definition's walks track (see
+ * eip712_stream_show_rest); any later one is shown by the first field walk. */
+#define EIP712_SHOWN_LEAVES 256
+
 /* Widest value one EthereumTypedDataValueAck carries, and the chunk size of a
  * longer one. */
 #define EIP712_MAX_LEAF 1024
@@ -269,10 +273,17 @@ bool eip712_stream_begin(const EthereumSignTypedData* msg,
 bool eip712_stream_definition_accepted(void);
 /* Resume the first certified field or replay message values for the next.
  * The reviewed domain and signing path remain fixed across these passes.
- * Each pass hashes every leaf but shows none: the definition's fields are
- * the review. The first also shows its warnings and any value longer than
+ * Each pass hashes every leaf but shows none: the definition's fields show
+ * them. The first also shows its warnings and any value longer than
  * ERC7730_ABI_CAPTURE_MAX. */
 bool eip712_stream_resume_for_field(void);
+/* A definition field captured the message value just read: it shows it. */
+void eip712_stream_leaf_covered(void);
+/* After the definition's last field: walk the message once more, showing raw
+ * each value neither a field nor the first walk showed, in message order; the
+ * walk must hash what the field walks hashed. True with nothing to walk when
+ * every value was shown; false if no field walk has finished. */
+bool eip712_stream_show_rest(void);
 
 /* False = session torn down and EIP712_REQ_FAIL or EIP712_REQ_CANCELLED
  * staged; the caller must still pump it to send the terminal response. */

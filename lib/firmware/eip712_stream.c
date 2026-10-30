@@ -642,24 +642,60 @@ static struct {
 
   /* SHOW_*: what this walk of the message shows. */
   uint8_t show_once;
+  /* This walk's message values so far, leaves and array lengths in walk
+   * order; the one being read is number leaf - 1. */
+  uint16_t leaf;
+  /* Bit i: message value i has been shown, by the first field walk or by a
+   * definition field. The last walk shows every other one. */
+  uint8_t leaf_shown[EIP712_SHOWN_LEAVES / 8];
+  /* What the field walks hashed: the last walk must hash it too. */
+  uint8_t reviewed_hash[32];
 } e712;
 
 /* A certified definition's walks of the message (one per field value, see
- * eip712_stream_resume_for_field) hash every leaf, but the definition's
- * fields are the review: each is shown once, in its own format. Through 7.16
- * every walk showed every leaf again (4.2x the screens of plain streaming).
- * The first field walk still shows the walk's warnings, and any value too
- * long for a field to capture, which a raw field then points back to. */
+ * eip712_stream_resume_for_field) hash every leaf, but each message value is
+ * shown once: a value a definition field shows, in that field's format; any
+ * other, raw, in one last walk after the fields. Through 7.16 every walk
+ * showed every leaf again (4.2x the screens of plain streaming). The first
+ * field walk shows the walk's warnings, and any value too long for a field to
+ * capture, which a raw field then points back to. */
 #define SHOW_ALL 0   /* plain streaming, the domain, or no field walk */
 #define SHOW_FIRST 1 /* the first field walk */
 #define SHOW_NONE 2  /* every later field walk */
+#define SHOW_REST 3  /* the last walk: the values no field showed */
 
-static bool value_shown(size_t len) {
-  return e712.show_once == SHOW_ALL ||
-         (e712.show_once == SHOW_FIRST && len > ERC7730_ABI_CAPTURE_MAX);
+static bool leaf_bit(uint16_t i) {
+  return e712.leaf_shown[i / 8] & (1u << (i % 8));
 }
 
-static bool warning_shown(void) { return e712.show_once != SHOW_NONE; }
+/* Whether this walk shows the message value being read. `first`: the first
+ * field walk shows it (a warning, or a value too long to capture). Values
+ * past EIP712_SHOWN_LEAVES are not tracked: the first field walk shows them
+ * all, the last none. */
+static bool leaf_shown_now(bool first) {
+  const uint16_t i = (uint16_t)(e712.leaf - 1u);
+  const bool tracked = e712.leaf != 0 && i < EIP712_SHOWN_LEAVES;
+  switch (e712.show_once) {
+    case SHOW_ALL:
+      return true;
+    case SHOW_FIRST:
+      if (!tracked) return true;
+      if (first) e712.leaf_shown[i / 8] |= (uint8_t)(1u << (i % 8));
+      return first;
+    case SHOW_REST:
+      return tracked && !leaf_bit(i);
+    default:
+      return false;
+  }
+}
+
+static bool value_shown(size_t len) {
+  return leaf_shown_now(len > ERC7730_ABI_CAPTURE_MAX);
+}
+
+static bool warning_shown(void) {
+  return e712.show_once == SHOW_ALL || e712.show_once == SHOW_FIRST;
+}
 
 #define ERC20_PERMIT_EIP2612 1
 #define ERC20_PERMIT_DAI 2
@@ -1237,8 +1273,8 @@ static bool confirm_safe_library(uint8_t lib, const char* who) {
     default:
       return false;
   }
-  return confirm(ButtonRequestType_ButtonRequest_Other, "Safe upgrade", "%s %s",
-                 who, what);
+  return !warning_shown() || confirm(ButtonRequestType_ButtonRequest_Other,
+                                     "Safe upgrade", "%s %s", who, what);
 }
 
 /* ── Approves inside a MultiSend ──────────────────────────────────────
@@ -1537,8 +1573,8 @@ static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
   const char* title = leaf_title();
   const char* unlimited = unlimited_permit_text(field, value, len);
   if (unlimited) {
-    /* A warning, not a value: the first field walk shows it too. */
-    return confirm_parts_if(warning_shown(), "UNLIMITED approval", path,
+    /* A warning in place of the value: the first field walk shows it. */
+    return confirm_parts_if(leaf_shown_now(true), "UNLIMITED approval", path,
                             type_name, EIP712_RENDER_TEXT,
                             (const uint8_t*)unlimited, strlen(unlimited));
   }
@@ -1600,8 +1636,11 @@ static Eip712LeafResult eip712_confirm_struct(const Eip712FieldType* field) {
       !leaf_path(path, sizeof(path)))
     return EIP712_LEAF_INVALID;
   static const char structure[] = "struct";
-  return confirm_parts("EIP-712 type", path, type_name, EIP712_RENDER_TEXT,
-                       (const uint8_t*)structure, sizeof(structure) - 1);
+  /* A definition binds the primary type hash, which fixes every struct
+   * type: under one, the member paths of its values say enough. */
+  return confirm_parts_if(e712.show_once == SHOW_ALL, "EIP-712 type", path,
+                          type_name, EIP712_RENDER_TEXT,
+                          (const uint8_t*)structure, sizeof(structure) - 1);
 }
 
 /* The walk: each function emits one request and returns, or finishes; the
@@ -2147,6 +2186,12 @@ static void complete_frame(void) {
     return;
   }
 
+  if (e712.show_once == SHOW_REST &&
+      memcmp(digest, e712.reviewed_hash, 32) != 0) {
+    fail("Certified EIP-712 value was not found");
+    return;
+  }
+
   if (e712.erc20_unlimited && warning_shown() && !erc20_permit_warning()) {
     review_approved(EIP712_LEAF_CANCELLED);
     return;
@@ -2301,22 +2346,47 @@ bool eip712_stream_begin(const EthereumSignTypedData* msg,
   return begin_root("EIP712Domain");
 }
 
+/* Walk the message again from its root, under the same reviewed domain. */
+static bool rewalk(uint8_t show) {
+  if (e712.active || next_step.kind != EIP712_REQ_DONE ||
+      !e712.require_definition || !e712.definition_accepted ||
+      !e712.have_domain_separator)
+    return false;
+  e712.show_once = show;
+  e712.leaf = 0;
+  e712.active = true;
+  e712.root = 1;
+  memzero(e712.stack, sizeof(e712.stack));
+  memzero(e712.pool, sizeof(e712.pool));
+  return begin_root(e712.primary_type);
+}
+
 bool eip712_stream_resume_for_field(void) {
   if (next_step.kind == EIP712_REQ_DEFINITION) {
     if (!eip712_stream_definition_accepted()) return false;
     e712.show_once = SHOW_FIRST;
     return true;
   }
-  if (e712.active || next_step.kind != EIP712_REQ_DONE ||
-      !e712.require_definition || !e712.definition_accepted ||
-      !e712.have_domain_separator)
-    return false;
-  e712.show_once = SHOW_NONE;
-  e712.active = true;
-  e712.root = 1;
-  memzero(e712.stack, sizeof(e712.stack));
-  memzero(e712.pool, sizeof(e712.pool));
-  return begin_root(e712.primary_type);
+  return rewalk(SHOW_NONE);
+}
+
+void eip712_stream_leaf_covered(void) {
+  if ((e712.show_once == SHOW_FIRST || e712.show_once == SHOW_NONE) &&
+      e712.leaf != 0 && e712.leaf <= EIP712_SHOWN_LEAVES)
+    e712.leaf_shown[(e712.leaf - 1u) / 8] |=
+        (uint8_t)(1u << ((e712.leaf - 1u) % 8));
+}
+
+bool eip712_stream_show_rest(void) {
+  if (e712.show_once != SHOW_FIRST && e712.show_once != SHOW_NONE) return false;
+  if (next_step.kind != EIP712_REQ_DONE) return false;
+  const uint16_t n =
+      e712.leaf < EIP712_SHOWN_LEAVES ? e712.leaf : EIP712_SHOWN_LEAVES;
+  bool rest = false;
+  for (uint16_t i = 0; i < n && !rest; i++) rest = !leaf_bit(i);
+  if (!rest) return true;
+  memcpy(e712.reviewed_hash, next_step.message_hash, 32);
+  return rewalk(SHOW_REST);
 }
 
 /* Seaport's BulkOrder and LooksRare's BatchOrder sign a Merkle tree of 2^h
@@ -2861,6 +2931,7 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
     fail("EIP-712 value chunk out of order");
     return false;
   }
+  if (e712.root == 1 && e712.leaf != UINT16_MAX) e712.leaf++;
 
   if (e712.want_array_len) {
     /* Big-endian uint16. Anything else is a host not speaking this protocol. */
