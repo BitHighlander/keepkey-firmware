@@ -879,8 +879,16 @@ jobs:
           if [ "$BUILD_RC" -eq 0 ]; then
             docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} \
               up --exit-code-from firmware-unit firmware-unit || FW_RC=$?
+            # --no-deps: python-keepkey depends on firmware-unit completing,
+            # and without it this `up` starts that exited container again --
+            # a second full unit build and run (~11 minutes on full) that
+            # nobody reads. The first `up` already ran it and published the
+            # emulator binary to the shared volume; FW_RC gates its result.
+            # kkemu is named so it still starts; only the tests' log is shown,
+            # as before.
             docker compose "${COMPOSE_ARGS[@]}" -p ${{ matrix.project }} \
-              up --exit-code-from python-keepkey python-keepkey || PY_RC=$?
+              up --no-deps --attach python-keepkey \
+              --exit-code-from python-keepkey kkemu python-keepkey || PY_RC=$?
           fi
           set -e
 
