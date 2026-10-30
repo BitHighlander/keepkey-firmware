@@ -1691,8 +1691,9 @@ void fsm_msgEthereumClearSignDefinitionChunk(
           return;
         }
         erc7730_workflow_abort(workflow);
-        if (eip712_stream_next()->kind != EIP712_REQ_DONE &&
-            !eip712_stream_definition_accepted()) {
+        if (eip712_stream_next()->kind == EIP712_REQ_DONE
+                ? !eip712_stream_show_rest()
+                : !eip712_stream_definition_accepted()) {
           eip712_stream_abort();
           fsm_sendFailure(FailureType_Failure_SyntaxError,
                           _("Unable to resume certified EIP-712"));
@@ -2628,6 +2629,7 @@ void fsm_msgEthereumTypedDataValueAck(const EthereumTypedDataValueAck* msg) {
     return;
   }
   Erc7730Workflow* workflow = erc7730_workflow_state();
+  const bool captured = workflow->calldata.capture_found;
   /* The stream accepted this ack, so an offset marks a later chunk of a long
    * value and a total length marks its first. */
   if (workflow->phase == ERC7730_WORKFLOW_TYPED_DATA &&
@@ -2645,6 +2647,10 @@ void fsm_msgEthereumTypedDataValueAck(const EthereumTypedDataValueAck* msg) {
     layoutHome();
     return;
   }
+  /* This value is the field's: the field shows it, the last walk does not. */
+  if (workflow->phase == ERC7730_WORKFLOW_TYPED_DATA && !captured &&
+      workflow->calldata.capture_found)
+    eip712_stream_leaf_covered();
   memzero(member_path, sizeof(member_path));
   eip712_pump();
 }
