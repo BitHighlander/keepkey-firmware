@@ -14,8 +14,9 @@
 #include <stdint.h>
 
 /* Plan steps per call (a V4 swap with a fee is two). 997 of the 1,000 calls
- * in the D-021 sample need at most 6. */
-#define UR_MAX_STEPS 6
+ * in the D-021 sample need at most 6; a real two-leg V3+V4 split with a
+ * permit, an unwrap and a clean-up sweep needs 7. */
+#define UR_MAX_STEPS 8
 /* Distinct non-zero V4 hook contracts per call; each is shown. */
 #define UR_MAX_HOOKS 3
 /* PathKeys per V4 swap. */
@@ -168,7 +169,10 @@ typedef struct {
   uint8_t permit_amount[32];
   uint64_t permit_expiration;
   bool has_fee;
+  /* PAY_PORTION / TAKE_PORTION: a share of the output. 0 for a TRANSFER
+   * fee, which is fee_amount of the output token. */
   uint16_t fee_bips;
+  uint8_t fee_amount[32];
   uint8_t fee_recipient[20];
   /* V4 pool hooks the swap runs through; each is shown. */
   uint8_t n_hooks;
@@ -185,7 +189,9 @@ typedef struct {
  * multi-hop through V2/V3/V4 pools) are free to the user. amount_in is the
  * sum the user pays (msg.value with ETH), amount_out the sum of the
  * minimums every delivery enforces; all swaps exact-in, or all exact-out.
- * At most one fee (PAY_PORTION, or a V4 swap's TAKE_PORTION). V4 swaps only
+ * At most one fee: PAY_PORTION, a V4 swap's TAKE_PORTION, or a TRANSFER of
+ * a fixed amount of the output token before the SWEEP that delivers it
+ * (the app's fee on an exact-output swap). V4 swaps only
  * on a router whose V4Router layout is known, and exact-output V4 swaps only
  * where that router reverts unless the output is delivered in full (UR
  * 2.1.2). `router` is the contract being called, the one the plan was

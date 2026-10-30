@@ -845,6 +845,12 @@ static bool is_router(const uint8_t r[20], const uint8_t router[20]) {
          memcmp(r, router, 20) == 0;
 }
 
+/* The MSG_SENDER placeholder: the router pays the signer. A fee to it
+ * would read as paid to 0x..01; apps never charge the payer a fee. */
+static bool is_payer(const uint8_t r[20]) {
+  return ur_recipient_is_constant(r, UR_RECIPIENT_MSG_SENDER);
+}
+
 /* a += b, big-endian; false on overflow. */
 static bool add32(uint8_t a[32], const uint8_t b[32]) {
   unsigned carry = 0;
@@ -971,9 +977,10 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
       case UR_SWEEP:
       case UR_PAY_PORTION:
       case UR_V4_TAKE_PORTION:
+      case UR_TRANSFER:
         break; /* pass 2 */
       default: {
-        if (!is_swap(s->kind)) return false; /* TRANSFER */
+        if (!is_swap(s->kind)) return false;
         if (!first_swap) {
           first_swap = s;
           exact_in = is_exact_in(s->kind);
@@ -1093,7 +1100,7 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
       case UR_V4_TAKE_PORTION: {
         uint16_t bips;
         if (fee || !fee_bips(s->amount, &bips) ||
-            is_router(s->recipient, router)) {
+            is_router(s->recipient, router) || is_payer(s->recipient)) {
           return false;
         }
         fee = s;
@@ -1102,6 +1109,19 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
         memcpy(out->fee_recipient, s->recipient, 20);
         break;
       }
+      case UR_TRANSFER:
+        /* A fixed amount of the delivered token, out of what the router
+         * holds, to someone else: the fee, shown as that amount. */
+        if (fee || z.eth || memcmp(s->token_in, z.token, 20) != 0 ||
+            is_zero(s->amount, 32) || is_balance_word(s->amount) ||
+            is_router(s->recipient, router) || is_payer(s->recipient)) {
+          return false;
+        }
+        fee = s;
+        out->has_fee = true;
+        memcpy(out->fee_amount, s->amount, 32);
+        memcpy(out->fee_recipient, s->recipient, 20);
+        break;
       default:
         if (!is_swap(s->kind)) break;
         memcpy(g, exact_in ? s->limit : s->amount, 32);
@@ -1141,6 +1161,15 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
                    memcmp(s->token_out, fee->token_in, 20) == 0;
       }
       if (!held_fee || !from_router_step) return false;
+    } else if (fee->kind == UR_TRANSFER) {
+      /* Paid before the SWEEP that delivers the token: that SWEEP's
+       * minimum is what the user receives, after the fee. */
+      bool swept_after = false;
+      for (const UrStep* s = fee + 1; s < plan->steps + plan->n; s++) {
+        swept_after = swept_after || (s->kind == UR_SWEEP &&
+                                      memcmp(s->token_in, z.token, 20) == 0);
+      }
+      if (!swept_after) return false;
     } else {
       const UrStep* swap = fee - 1;
       if (fee == plan->steps || swap->kind != UR_V4_SWAP_EXACT_IN ||
@@ -1150,13 +1179,13 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
     }
   }
   /* What the router holds for the user: its SWEEP / UNWRAP minimums, or,
-   * with no fee taken from it and nothing spending it again, the larger
-   * of those and the minimums of the swaps that filled it (apps put the
-   * floor on one or the other). An unwrap's WETH is not identifiable, so
-   * only its own minimum counts. */
+   * with no fee taken from it (PAY_PORTION, TRANSFER) and nothing spending
+   * it again, the larger of those and the minimums of the swaps that
+   * filled it (apps put the floor on one or the other). An unwrap's WETH is
+   * not identifiable, so only its own minimum counts. */
   uint8_t from_router[32];
   memcpy(from_router, swept, 32);
-  if ((!fee || fee->kind != UR_PAY_PORTION) && !consumed && !z.eth &&
+  if ((!fee || fee->kind == UR_V4_TAKE_PORTION) && !consumed && !z.eth &&
       memcmp(held, swept, 32) > 0) {
     memcpy(from_router, held, 32);
   }
