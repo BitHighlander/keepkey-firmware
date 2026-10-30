@@ -596,12 +596,17 @@ static int parse_instruction_section(const uint8_t* raw, size_t raw_len,
         copy_account(pi->authority, tx, acct_indices, num_acct_indices, 2);
         copy_account(pi->mint, tx, acct_indices, num_acct_indices, 3);
         pi->has_mint = (num_acct_indices >= 4);
-        /* Only the canonical six-account legacy-token form is verified. */
+        /* Only the canonical six-account form is verified. The token program
+         * is SPL Token or Token-2022: the ATA program derives the account from
+         * (owner, token program, mint) and creates it under that program, so
+         * the effect shown (an account for this owner and mint) is the same. */
         if (num_acct_indices < 6 ||
             memcmp(tx->accounts[acct_indices[4]], SOL_SYSTEM_PROGRAM,
                    SOL_PUBKEY_SIZE) != 0 ||
-            memcmp(tx->accounts[acct_indices[5]], SOL_TOKEN_PROGRAM,
-                   SOL_PUBKEY_SIZE) != 0) {
+            (memcmp(tx->accounts[acct_indices[5]], SOL_TOKEN_PROGRAM,
+                    SOL_PUBKEY_SIZE) != 0 &&
+             memcmp(tx->accounts[acct_indices[5]], SOL_TOKEN_2022_PROGRAM,
+                    SOL_PUBKEY_SIZE) != 0)) {
           *force_opaque = true;
         }
       } else {
@@ -741,10 +746,12 @@ static SolanaTxReview solana_parseLegacyTx(const uint8_t* raw, size_t raw_len,
   return SOL_TX_REVIEW_VERIFIED;
 }
 
+/* lut_keys: lut_count keys, lut_stride bytes apart. Attested (certified proof)
+ * unless host_resolved; a host-resolved list only needs to fit accounts[]. */
 static SolanaTxReview solana_parseVersionedTx(
-    const uint8_t* raw, size_t raw_len,
-    const uint8_t (*trusted_lut_accounts)[SOL_PUBKEY_SIZE],
-    size_t trusted_lut_count, SolanaParsedTx* tx) {
+    const uint8_t* raw, size_t raw_len, const uint8_t* lut_keys,
+    size_t lut_stride, size_t trusted_lut_count, bool host_resolved,
+    SolanaParsedTx* tx) {
   memset(tx, 0, sizeof(*tx));
   size_t pos = 0;
   bool has_unknown = false;
@@ -770,16 +777,18 @@ static SolanaTxReview solana_parseVersionedTx(
   pos += n;
   if (!solana_header_ok(tx, num_accounts)) return SOL_TX_REVIEW_MALFORMED;
 
-  /* Host-supplied certified lookup material that does not fit: refused. An
-   * oversized static list alone is opaque, see solana_parseLegacyTx. */
-  if (trusted_lut_count > SOL_MAX_LUT_ACCOUNTS ||
+  /* Host-supplied lookup material that does not fit: refused. An oversized
+   * static list alone is opaque, see solana_parseLegacyTx. */
+  const size_t lut_max =
+      host_resolved ? SOL_MAX_ACCOUNTS : SOL_MAX_LUT_ACCOUNTS;
+  if (trusted_lut_count > lut_max ||
       (trusted_lut_count > 0 &&
        num_accounts + trusted_lut_count > SOL_MAX_ACCOUNTS)) {
     return SOL_TX_REVIEW_MALFORMED;
   }
   if (num_accounts > SOL_MAX_ACCOUNTS)
     return solana_oversizedKeyListIsOpaque(raw, raw_len, pos, num_accounts, tx);
-  const bool has_trusted_lut = trusted_lut_accounts && trusted_lut_count > 0;
+  const bool has_trusted_lut = lut_keys && trusted_lut_count > 0;
   tx->num_accounts = (uint8_t)(num_accounts + trusted_lut_count);
   tx->num_static_accounts = (uint8_t)num_accounts;
 
@@ -790,9 +799,21 @@ static SolanaTxReview solana_parseVersionedTx(
   }
   if (has_trusted_lut) {
     for (size_t i = 0; i < trusted_lut_count; i++) {
-      memcpy(tx->accounts[num_accounts + i], trusted_lut_accounts[i],
+      memcpy(tx->accounts[num_accounts + i], lut_keys + i * lut_stride,
              SOL_PUBKEY_SIZE);
     }
+  }
+  /* The runtime refuses a message that loads an account twice, so a real
+   * host-resolved key never repeats a static or another resolved key. Holding
+   * the host to that is what lets the review mark a key by value. */
+  if (host_resolved) {
+    for (size_t i = num_accounts; i < num_accounts + trusted_lut_count; i++) {
+      for (size_t j = 0; j < i; j++) {
+        if (memcmp(tx->accounts[i], tx->accounts[j], SOL_PUBKEY_SIZE) == 0)
+          return SOL_TX_REVIEW_MALFORMED;
+      }
+    }
+    tx->lut_unverified = true;
   }
 
   if (pos + SOL_PUBKEY_SIZE > raw_len) return SOL_TX_REVIEW_MALFORMED;
@@ -811,7 +832,7 @@ static SolanaTxReview solana_parseVersionedTx(
   if (n < 0) return SOL_TX_REVIEW_MALFORMED;
   pos += n;
   tx->has_address_lookups = lookup_table_count != 0;
-  if (!has_trusted_lut && lookup_table_count != 0) {
+  if ((!has_trusted_lut || host_resolved) && lookup_table_count != 0) {
     /* Any ALT section needs unresolved chain state: opaque. */
     force_opaque = true;
     tx->has_lookup_tables = true;
@@ -838,7 +859,7 @@ static SolanaTxReview solana_parseVersionedTx(
     serialized_lut_count += readonly_count;
     tx->num_loaded_accounts += (uint32_t)writable_count + readonly_count;
     /* Untrusted: keep parsing so a malformed tail is still refused. */
-    if (serialized_lut_count > SOL_MAX_LUT_ACCOUNTS && has_trusted_lut) {
+    if (serialized_lut_count > lut_max && has_trusted_lut) {
       return SOL_TX_REVIEW_MALFORMED;
     }
   }
@@ -889,7 +910,7 @@ SolanaTxReview solana_inspectTx(const uint8_t* raw, size_t raw_len,
    * payloads fail closed; a v0 message with no lookup tables verifies like
    * legacy, and a lookup table or any later version keeps it opaque. */
   if (msg[0] & SOL_VERSION_FLAG) {
-    return solana_parseVersionedTx(msg, msg_len, NULL, 0, tx);
+    return solana_parseVersionedTx(msg, msg_len, NULL, 0, 0, false, tx);
   }
 
   return solana_parseLegacyTx(msg, msg_len, tx);
@@ -910,8 +931,41 @@ SolanaTxReview solana_inspectTxWithTrustedLut(
     memset(tx, 0, sizeof(*tx));
     return SOL_TX_REVIEW_MALFORMED;
   }
-  return solana_parseVersionedTx(msg, msg_len, lut_accounts, num_lut_accounts,
-                                 tx);
+  return solana_parseVersionedTx(msg, msg_len, (const uint8_t*)lut_accounts,
+                                 SOL_PUBKEY_SIZE, num_lut_accounts, false, tx);
+}
+
+SolanaTxReview solana_inspectTxWithHostLut(const uint8_t* raw, size_t raw_len,
+                                           const uint8_t* keys, size_t stride,
+                                           size_t num_keys,
+                                           SolanaParsedTx* tx) {
+  if (!raw || raw_len == 0 || !keys || stride < SOL_PUBKEY_SIZE ||
+      num_keys == 0 || !tx) {
+    if (tx) memset(tx, 0, sizeof(*tx));
+    return SOL_TX_REVIEW_MALFORMED;
+  }
+  const uint8_t* msg;
+  size_t msg_len;
+  solana_message_slice(raw, raw_len, &msg, &msg_len);
+  /* Version 0 only: a later version is not parsed, so nothing would bind the
+   * host's keys to its indexes. */
+  if (msg_len == 0 || msg[0] != SOL_VERSION_FLAG) {
+    memset(tx, 0, sizeof(*tx));
+    return SOL_TX_REVIEW_MALFORMED;
+  }
+  const SolanaTxReview r =
+      solana_parseVersionedTx(msg, msg_len, keys, stride, num_keys, true, tx);
+  /* Decoded for the review, never verified: the keys are the host's word. */
+  return r == SOL_TX_REVIEW_MALFORMED ? r : SOL_TX_REVIEW_OPAQUE;
+}
+
+bool solana_isHostLutKey(const SolanaParsedTx* tx,
+                         const uint8_t key[SOL_PUBKEY_SIZE]) {
+  if (!tx || !tx->lut_unverified) return false;
+  for (size_t i = tx->num_static_accounts; i < tx->num_accounts; i++) {
+    if (memcmp(tx->accounts[i], key, SOL_PUBKEY_SIZE) == 0) return true;
+  }
+  return false;
 }
 
 /* ------------------------------------------------------------------ */

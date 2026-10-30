@@ -32,6 +32,7 @@ extern "C" {
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha2.h"
+#include "trezor/crypto/base58.h"
 #include "keepkey/firmware/clearsign_root.h"
 #include "keepkey/firmware/ethereum.h"
 
@@ -39,6 +40,7 @@ void setup(void);
 }
 
 #include "clearsign_test_cert.h"
+#include "solana_real_vectors.h"
 #include "gtest/gtest.h"
 #include "kkconfirm_driver.h"
 #include "test_board.h"
@@ -2816,6 +2818,375 @@ TEST_F(SolanaSchemaSignTest,
       EXPECT_EQ(blind_bodies, bodies);
     }
   }
+}
+
+/* ---- 7.17: real mainnet messages through the handler ---------------------
+ * The fee payer (static key 0, also the token authority) is swapped for this
+ * seed's key so the device is a signer; every other byte is as on chain. */
+std::vector<uint8_t> sol_unhex(const char* hex) {
+  std::vector<uint8_t> out;
+  for (size_t i = 0; hex[i] && hex[i + 1]; i += 2) {
+    unsigned v = 0;
+    sscanf(hex + i, "%2x", &v);
+    out.push_back((uint8_t)v);
+  }
+  return out;
+}
+
+std::string sol_b58(const uint8_t* key) {
+  char out[64];
+  size_t len = sizeof(out);
+  return b58enc(out, &len, key, 32) ? std::string(out) : std::string();
+}
+
+SolanaSignTx real_solana_request(const char* hex, size_t payer_offset,
+                                 std::string* payer_b58) {
+  const uint32_t path[4] = {0x80000000u | 44, 0x80000000u | 501, 0x80000000u,
+                            0x80000000u};
+  uint8_t seed[64];
+  mnemonic_to_seed("all all all all all all all all all all all all", "", seed,
+                   NULL);
+  HDNode node;
+  hdnode_from_seed(seed, sizeof(seed), ED25519_NAME, &node);
+  for (uint32_t i : path) hdnode_private_ckd(&node, i);
+  hdnode_fill_public_key(&node);
+  std::vector<uint8_t> raw = sol_unhex(hex);
+  memcpy(raw.data() + payer_offset, node.public_key + 1, 32);
+  *payer_b58 = sol_b58(node.public_key + 1);
+  SolanaSignTx msg = {};
+  msg.address_n_count = 4;
+  memcpy(msg.address_n, path, sizeof(path));
+  msg.has_raw_tx = true;
+  msg.raw_tx.size = raw.size();
+  memcpy(msg.raw_tx.bytes, raw.data(), raw.size());
+  return msg;
+}
+
+void add_jupiter_lookup_accounts(SolanaSignTx* msg) {
+  msg->lut_account_count = 0;
+  for (const char* hex : kJupiterSolUsdcLoaded) {
+    const std::vector<uint8_t> k = sol_unhex(hex);
+    msg->lut_account[msg->lut_account_count].size = 32;
+    memcpy(msg->lut_account[msg->lut_account_count++].bytes, k.data(), 32);
+  }
+}
+
+const char kLutMark[] = "[from lookup table, not verified by KeepKey]\n";
+
+/* Pages split a body by characters, so a host-resolved key can run onto the
+ * next page. The mark comes first: wherever the key starts, the mark sits
+ * right above it on that page, and the pages read mark, then key. */
+void expect_marked_first(const std::vector<std::string>& bodies,
+                         const std::string& key) {
+  std::string all;
+  for (const std::string& b : bodies) all += b;
+  EXPECT_NE(std::string::npos, all.find(kLutMark + key)) << all;
+  const std::string head = key.substr(0, 8);
+  bool seen = false;
+  for (const std::string& b : bodies) {
+    for (size_t p = b.find(head); p != std::string::npos;
+         p = b.find(head, p + 1)) {
+      seen = true;
+      EXPECT_TRUE(p >= strlen(kLutMark) &&
+                  b.compare(p - strlen(kLutMark), strlen(kLutMark),
+                            kLutMark) == 0)
+          << "unmarked on its page:\n" << b;
+    }
+  }
+  EXPECT_TRUE(seen) << key;
+}
+
+/* Real Jupiter v0 swap with the host's lookup keys: decoded, table keys marked,
+ * then the blind-sign warning. Without them it is the bare blind sign. */
+TEST_F(SolanaSchemaSignTest, RealJupiterSwapShowsHostLookupAccountsMarked) {
+  std::string me;
+  /* v0 prefix + 3-byte header + 1-byte key count, then key 0. */
+  const SolanaSignTx base = real_solana_request(kJupiterSolUsdcV0Hex, 5, &me);
+  const std::string wsol = "So11111111111111111111111111111111111111112";
+  const std::string usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const std::string wsol_acct = "8z4aRG7g8AhKwEGgq2gXznpdqTk9q4uQe8PL8X6KzcCU";
+
+  SolanaSignTx msg = base;
+  add_jupiter_lookup_accounts(&msg);
+  ASSERT_EQ(41u, msg.lut_account_count);
+  /* Heading, 15 instruction screens (the marked USDC mint takes two pages),
+   * fee payer, max fee, blind sign, final. */
+  ASSERT_TRUE(kkconfirm_preload(20, 0));
+  kkconfirm_capture_start();
+  fsm_test_clearLastFailure();
+  fsm_msgSolanaSignTx(&msg);
+  const std::vector<std::string> bodies = kkconfirm_capture_finish();
+  const std::vector<std::string> titles = kkconfirm_captured_titles();
+  EXPECT_EQ(0, fsm_test_lastFailureCode()) << fsm_test_lastFailureMessage();
+  SolanaSignedTx response = {};
+  ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_SolanaSignedTx,
+                                     SolanaSignedTx_fields, &response));
+  EXPECT_EQ(64u, response.signature.size);
+  EXPECT_EQ(0, kkconfirm_drain());
+  std::string shown;
+  for (size_t i = 0; i < bodies.size(); i++) {
+    shown += titles[i] + "|" + bodies[i] + "\n";
+  }
+  ASSERT_FALSE(titles.empty());
+  EXPECT_EQ("Lookup Accounts", titles.front());
+  EXPECT_EQ("Host supplied 41 lookup table account(s). NOT verified by KeepKey.",
+            bodies.front());
+  EXPECT_EQ("Blind Sign", titles[titles.size() - 2]);
+  EXPECT_EQ("Solana", titles.back());
+  /* Both mints come from the tables: shown, each marked before the key. */
+  expect_marked_first(bodies, wsol);
+  /* The 44-char USDC mint pages: its first page opens with the mark. */
+  expect_marked_first(bodies, usdc);
+  bool usdc_paged = false;
+  for (size_t i = 0; i + 1 < bodies.size(); i++) {
+    if (titles[i] == "Instr 6/8 1/2") {
+      EXPECT_EQ(0u, bodies[i].find(std::string("Token mint\n") + kLutMark +
+                                   usdc.substr(0, 8)))
+          << bodies[i];
+      EXPECT_EQ("Instr 6/8 2/2", titles[i + 1]);
+      usdc_paged = true;
+    }
+  }
+  EXPECT_TRUE(usdc_paged) << shown;
+  std::string all;
+  for (const std::string& b : bodies) all += b;
+  EXPECT_EQ(std::string::npos, all.find(kLutMark + wsol_acct)) << shown;
+  EXPECT_EQ(std::string::npos, all.find(kLutMark + me)) << shown;
+  EXPECT_EQ(20u, titles.size()) << shown;
+  EXPECT_NE(std::string::npos, shown.find("Send 0.039272743 SOL to " + wsol_acct))
+      << shown;
+  EXPECT_NE(std::string::npos,
+            shown.find("Unknown instruction to program "
+                       "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"))
+      << shown;
+  EXPECT_NE(std::string::npos, shown.find("send balance to\n" + me)) << shown;
+
+  /* Control: the same message with no keys is today's bare blind sign. */
+  ASSERT_TRUE(kkconfirm_preload(2, 0));
+  kkconfirm_capture_start();
+  fsm_test_clearLastFailure();
+  SolanaSignTx bare = base;
+  fsm_msgSolanaSignTx(&bare);
+  (void)kkconfirm_capture_finish();
+  EXPECT_EQ((std::vector<std::string>{"Blind Sign", "Solana"}),
+            kkconfirm_captured_titles());
+  EXPECT_EQ(0, fsm_test_lastFailureCode());
+  ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_SolanaSignedTx,
+                                     SolanaSignedTx_fields, &response));
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
+/* The host's keys never lift the AdvancedMode gate, and a list that does not
+ * match the signed indexes (or rides beside a schema) is refused unsigned. */
+TEST_F(SolanaSchemaSignTest, HostLookupAccountsAreRefusedNotTrusted) {
+  std::string me;
+  SolanaSignTx good = real_solana_request(kJupiterSolUsdcV0Hex, 5, &me);
+  add_jupiter_lookup_accounts(&good);
+  struct Leg {
+    const char* name;
+    bool advanced;
+    int mutate;
+    FailureType want;
+    const char* text;
+  };
+  const Leg legs[] = {
+      {"AdvancedMode off", false, 0, FailureType_Failure_Other,
+       "Enable AdvancedMode to blind-sign"},
+      {"one key short", true, 1, FailureType_Failure_SyntaxError,
+       "Lookup accounts do not match transaction"},
+      {"short key", true, 2, FailureType_Failure_SyntaxError,
+       "Lookup accounts do not match transaction"},
+      {"beside a runtime schema", true, 3, FailureType_Failure_SyntaxError,
+       "Unverified lookup accounts cannot back a schema"},
+      /* Refused before the non-standard path warning, like malformed bytes. */
+      {"one key short, non-standard path", true, 4,
+       FailureType_Failure_SyntaxError,
+       "Lookup accounts do not match transaction"},
+  };
+  for (const Leg& leg : legs) {
+    SCOPED_TRACE(leg.name);
+    ASSERT_TRUE(storage_setPolicy("AdvancedMode", leg.advanced));
+    SolanaSignTx msg = good;
+    if (leg.mutate == 1 || leg.mutate == 4) msg.lut_account_count--;
+    if (leg.mutate == 4) {
+      msg.address_n_count = 5; /* m/44'/501'/0'/0'/0' */
+      msg.address_n[4] = 0x80000000u;
+    }
+    if (leg.mutate == 2) msg.lut_account[7].size = 31;
+    if (leg.mutate == 3) {
+      msg.has_schema_payload = true;
+      msg.schema_payload.size = 1;
+    }
+    ASSERT_TRUE(kkconfirm_preload(0, 1));
+    kkconfirm_capture_start();
+    fsm_test_clearLastFailure();
+    fsm_msgSolanaSignTx(&msg);
+    EXPECT_TRUE(kkconfirm_capture_finish().empty()) << "a screen ran";
+    EXPECT_EQ(leg.want, fsm_test_lastFailureCode());
+    EXPECT_STREQ(leg.text, fsm_test_lastFailureMessage());
+    EXPECT_EQ(2, kkconfirm_drain()) << "a screen ran before the refusal";
+  }
+}
+
+/* A mint the host resolved is not the signed one: even USDC's address gets no
+ * symbol, and the amount is shown in plain tokens beside the marked mint. */
+TEST_F(SolanaSchemaSignTest, HostResolvedMintGetsNoSymbol) {
+  std::string me;
+  /* v0: [device, source, destination, SPL Token]; TransferChecked with the
+   * mint at loaded index 4 (one readonly lookup entry). */
+  std::vector<uint8_t> raw = {0x80, 1, 0, 1, 4};
+  raw.insert(raw.end(), 32, 0x00); /* replaced by the device key below */
+  raw.insert(raw.end(), 32, 0x31);
+  raw.insert(raw.end(), 32, 0x32);
+  raw.insert(raw.end(), SOL_TOKEN_PROGRAM, SOL_TOKEN_PROGRAM + 32);
+  raw.insert(raw.end(), 32, 0xBB);
+  raw.insert(raw.end(), {1, 3, 4, 1, 4, 2, 0, 10, 12});
+  raw.insert(raw.end(), {0x40, 0x42, 0x0F, 0, 0, 0, 0, 0, 6});
+  raw.insert(raw.end(), {1});
+  raw.insert(raw.end(), 32, 0x55);
+  raw.insert(raw.end(), {0, 1, 0});
+  std::string hex;
+  for (uint8_t b : raw) {
+    char h[3];
+    snprintf(h, sizeof(h), "%02x", b);
+    hex += h;
+  }
+  SolanaSignTx msg = real_solana_request(hex.c_str(), 5, &me);
+  const std::string usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const std::vector<uint8_t> usdc_key = sol_unhex(
+      "c6fa7af3bedbad3a3d65f36aabc97431b1bbe4c2d2f6e0e47ca60203452f5d61");
+  msg.lut_account_count = 1;
+  msg.lut_account[0].size = 32;
+  memcpy(msg.lut_account[0].bytes, usdc_key.data(), 32);
+
+  ASSERT_TRUE(kkconfirm_preload(7, 0));
+  kkconfirm_capture_start();
+  fsm_test_clearLastFailure();
+  fsm_msgSolanaSignTx(&msg);
+  const std::vector<std::string> bodies = kkconfirm_capture_finish();
+  const std::vector<std::string> titles = kkconfirm_captured_titles();
+  EXPECT_EQ(0, fsm_test_lastFailureCode()) << fsm_test_lastFailureMessage();
+  SolanaSignedTx response = {};
+  ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_SolanaSignedTx,
+                                     SolanaSignedTx_fields, &response));
+  EXPECT_EQ(0, kkconfirm_drain());
+  std::string shown;
+  for (size_t i = 0; i < bodies.size(); i++)
+    shown += titles[i] + "|" + bodies[i] + "\n";
+  EXPECT_EQ(7u, titles.size()) << shown;
+  EXPECT_EQ(std::string::npos, shown.find("Known token")) << shown;
+  EXPECT_EQ(std::string::npos, shown.find("USDC")) << shown;
+  expect_marked_first(bodies, usdc);
+  EXPECT_EQ(std::string::npos, shown.find("Verified recipient owner")) << shown;
+  EXPECT_NE(std::string::npos, shown.find("Send 1 tokens to ")) << shown;
+  EXPECT_EQ("Blind Sign", titles[titles.size() - 2]);
+}
+
+/* A destination the host resolved is not the signed one: an owner whose
+ * associated account it is gets no "Verified recipient owner", and the
+ * destination is shown marked. */
+TEST_F(SolanaSchemaSignTest, HostResolvedDestinationGetsNoRecipientOwner) {
+  std::string me;
+  const std::vector<uint8_t> usdc_key = sol_unhex(
+      "c6fa7af3bedbad3a3d65f36aabc97431b1bbe4c2d2f6e0e47ca60203452f5d61");
+  uint8_t owner[32];
+  memset(owner, 0x77, sizeof(owner));
+  uint8_t ata[32];
+  ASSERT_TRUE(solana_deriveAssociatedTokenAddress(owner, SOL_TOKEN_PROGRAM,
+                                                  usdc_key.data(), ata));
+  /* v0: [device, source, USDC mint, SPL Token]; TransferChecked of 1 USDC to
+   * loaded index 4 (one writable lookup entry). */
+  std::vector<uint8_t> raw = {0x80, 1, 0, 2, 4};
+  raw.insert(raw.end(), 32, 0x00); /* replaced by the device key below */
+  raw.insert(raw.end(), 32, 0x31);
+  raw.insert(raw.end(), usdc_key.begin(), usdc_key.end());
+  raw.insert(raw.end(), SOL_TOKEN_PROGRAM, SOL_TOKEN_PROGRAM + 32);
+  raw.insert(raw.end(), 32, 0xBB);
+  raw.insert(raw.end(), {1, 3, 4, 1, 2, 4, 0, 10, 12});
+  raw.insert(raw.end(), {0x40, 0x42, 0x0F, 0, 0, 0, 0, 0, 6});
+  raw.insert(raw.end(), {1});
+  raw.insert(raw.end(), 32, 0x55);
+  raw.insert(raw.end(), {1, 0, 0});
+  std::string hex;
+  for (uint8_t b : raw) {
+    char h[3];
+    snprintf(h, sizeof(h), "%02x", b);
+    hex += h;
+  }
+  SolanaSignTx msg = real_solana_request(hex.c_str(), 5, &me);
+  msg.lut_account_count = 1;
+  msg.lut_account[0].size = 32;
+  memcpy(msg.lut_account[0].bytes, ata, 32);
+  msg.token_recipient_owner_count = 1;
+  msg.token_recipient_owner[0].size = 32;
+  memcpy(msg.token_recipient_owner[0].bytes, owner, 32);
+
+  /* Heading, from, known mint, owner warning, send (2 pages), blind, final. */
+  const size_t SCREENS = 8;
+  ASSERT_TRUE(kkconfirm_preload(SCREENS, 0));
+  kkconfirm_capture_start();
+  fsm_test_clearLastFailure();
+  fsm_msgSolanaSignTx(&msg);
+  const std::vector<std::string> bodies = kkconfirm_capture_finish();
+  const std::vector<std::string> titles = kkconfirm_captured_titles();
+  EXPECT_EQ(0, fsm_test_lastFailureCode()) << fsm_test_lastFailureMessage();
+  SolanaSignedTx response = {};
+  ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_SolanaSignedTx,
+                                     SolanaSignedTx_fields, &response));
+  EXPECT_EQ(0, kkconfirm_drain());
+  std::string shown;
+  for (size_t i = 0; i < bodies.size(); i++)
+    shown += titles[i] + "|" + bodies[i] + "\n";
+  EXPECT_EQ(SCREENS, titles.size()) << shown;
+  EXPECT_EQ(std::string::npos, shown.find("Verified recipient owner"))
+      << shown;
+  EXPECT_EQ(std::string::npos, shown.find(sol_b58(owner))) << shown;
+  EXPECT_NE(std::string::npos,
+            shown.find("Recipient owner does not match signed token account."))
+      << shown;
+  expect_marked_first(bodies, sol_b58(ata));
+  EXPECT_EQ("Blind Sign", titles[titles.size() - 2]);
+}
+
+/* Real PYUSD transfer: verified, no AdvancedMode needed. */
+TEST_F(SolanaSchemaSignTest, RealPyusdTransferIsClearSigned) {
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+  std::string me;
+  /* Legacy: 3-byte header + 1-byte key count, then key 0. */
+  SolanaSignTx msg = real_solana_request(kPyusdTransferHex, 4, &me);
+  /* 2 compute budget, 3 account create, 3 transfer, 2 fee, final. */
+  ASSERT_TRUE(kkconfirm_preload(11, 0));
+  kkconfirm_capture_start();
+  fsm_test_clearLastFailure();
+  fsm_msgSolanaSignTx(&msg);
+  const std::vector<std::string> bodies = kkconfirm_capture_finish();
+  const std::vector<std::string> titles = kkconfirm_captured_titles();
+  EXPECT_EQ(0, fsm_test_lastFailureCode()) << fsm_test_lastFailureMessage();
+  SolanaSignedTx response = {};
+  ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_SolanaSignedTx,
+                                     SolanaSignedTx_fields, &response));
+  EXPECT_EQ(0, kkconfirm_drain());
+  std::string shown;
+  for (size_t i = 0; i < bodies.size(); i++)
+    shown += titles[i] + "|" + bodies[i] + "\n";
+  EXPECT_EQ(std::string::npos, shown.find("Blind Sign")) << shown;
+  EXPECT_NE(std::string::npos,
+            shown.find("Token mint\n2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo"))
+      << shown;
+  EXPECT_NE(std::string::npos,
+            shown.find("Transfer from Token-2022 account\n"
+                       "8b3GTFQQAVdz1r949JZPG1eVMfaAULCHnbkAmw1wv12f"))
+      << shown;
+  EXPECT_NE(std::string::npos,
+            shown.find("Send 605446.589474 tokens to "
+                       "D3g4DtwKPKSq4dab4w2DBDWLRabKXf47W8cZvwdGjWzA?"))
+      << shown;
+  EXPECT_NE(std::string::npos,
+            shown.find("Create token account\n"
+                       "D3g4DtwKPKSq4dab4w2DBDWLRabKXf47W8cZvwdGjWzA"))
+      << shown;
+  EXPECT_EQ("Solana", titles.back());
+  EXPECT_EQ(11u, titles.size()) << shown;
 }
 
 }  // namespace

@@ -12,6 +12,8 @@ extern "C" {
 }
 
 #include "clearsign_test_cert.h"
+#include "solana_real_vectors.h"
+#include "pb_decode.h"
 #include "gtest/gtest.h"
 #include <algorithm>
 #include <cstring>
@@ -584,8 +586,8 @@ TEST(Solana, RejectsAccountCountsAboveTheLimitOrWrapping) {
  * Legacy and v0, including counts that would wrap a uint8_t. */
 TEST(Solana, OversizedAccountListsAreOpaqueWithTheSignersLoaded) {
   const std::vector<std::vector<uint8_t>> counts = {
-      {33}, {0x80, 0x02}, {0x80, 0x04}};
-  const size_t num_keys[] = {33, 256, 512};
+      {SOL_MAX_ACCOUNTS + 1}, {0x80, 0x02}, {0x80, 0x04}};
+  const size_t num_keys[] = {SOL_MAX_ACCOUNTS + 1, 256, 512};
   for (bool v0 : {false, true}) {
     for (size_t c = 0; c < counts.size(); c++) {
       SCOPED_TRACE(testing::Message() << "v0=" << v0 << " keys=" << num_keys[c]);
@@ -659,8 +661,8 @@ TEST(Solana, OffchainEnvelopeIsMalformedLaterVersionsOpaque) {
 /* Certified lookup material that cannot fit stays refused when the static
  * list alone is oversized (SRS R-1.4: honoured fully or refused). */
 TEST(Solana, OversizedStaticListWithTrustedLutIsMalformed) {
-  std::vector<uint8_t> raw = {0x80, 1, 0, 1, 33};
-  raw.insert(raw.end(), 33 * 32, 0x11);
+  std::vector<uint8_t> raw = {0x80, 1, 0, 1, SOL_MAX_ACCOUNTS + 1};
+  raw.insert(raw.end(), (SOL_MAX_ACCOUNTS + 1) * 32, 0x11);
   raw.insert(raw.end(), 32, 0xBB); /* blockhash */
   raw.insert(raw.end(), {0, 1});   /* 0 instructions, 1 lookup table */
   raw.insert(raw.end(), 32, 0x55);
@@ -2266,11 +2268,11 @@ TEST(Solana, OversizedAccountCountsFailClosedBeforeAccountArrayAccess) {
   /* These messages end immediately after the count. A key list that is not
    * all there is MALFORMED (F-715-1: only a complete oversized list is opaque,
    * with its signers loaded), and the count is never recorded: a parser that
-   * stored it either put 33 into an 8-bit loop bound (OOB past accounts[31])
-   * or wrapped 256 to zero. */
-  const uint8_t legacy_33[] = {1, 0, 0, 33};
+   * stored it either put SOL_MAX_ACCOUNTS + 1 into an 8-bit loop bound (OOB
+   * past accounts[]) or wrapped 256 to zero. */
+  const uint8_t legacy_33[] = {1, 0, 0, SOL_MAX_ACCOUNTS + 1};
   const uint8_t legacy_256[] = {1, 0, 0, 0x80, 0x02};
-  const uint8_t versioned_33[] = {0x80, 1, 0, 0, 33};
+  const uint8_t versioned_33[] = {0x80, 1, 0, 0, SOL_MAX_ACCOUNTS + 1};
   const uint8_t versioned_256[] = {0x80, 1, 0, 0, 0x80, 0x02};
 
   const struct {
@@ -5083,4 +5085,290 @@ TEST(Solana, SignedLookupProofLetsTheSchemaShowALookupAccount) {
             SOL_TX_REVIEW_OPAQUE);
   EXPECT_TRUE(solana_certifiedLutShapeMatches(&tx, 0));
   EXPECT_FALSE(solana_schemaAppliesCertified(&s, &tx, tx.accounts[0], &idx));
+}
+
+/* ---- 7.17: real mainnet bytes (solana_real_vectors.h) -------------------- */
+
+static std::string sol_b58(const uint8_t key[SOL_PUBKEY_SIZE]) {
+  char out[64];
+  size_t len = sizeof(out);
+  if (!b58enc(out, &len, key, SOL_PUBKEY_SIZE)) return "";
+  return out;
+}
+
+/* The Jupiter swap's loaded keys, flat, in runtime order. */
+static std::vector<uint8_t> jupiter_loaded() {
+  std::vector<uint8_t> flat;
+  for (const char* hex : kJupiterSolUsdcLoaded) {
+    const std::vector<uint8_t> k = solana_unhex(hex);
+    flat.insert(flat.end(), k.begin(), k.end());
+  }
+  return flat;
+}
+
+static const char kWsolMint[] = "So11111111111111111111111111111111111111112";
+static const char kUsdcMint[] = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+/* Without the lookup keys the device cannot read a Jupiter swap at all: the
+ * first instruction that names a table key is undecoded and the whole message
+ * is a blind sign. */
+TEST(Solana, RealJupiterV0SwapWithoutLookupAccountsIsOpaque) {
+  const std::vector<uint8_t> raw = solana_unhex(kJupiterSolUsdcV0Hex);
+  ASSERT_EQ(raw.size(), 963u);
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  EXPECT_TRUE(tx.has_lookup_tables);
+  EXPECT_FALSE(tx.lut_unverified);
+  EXPECT_EQ(tx.num_static_accounts, 17);
+  EXPECT_EQ(tx.num_loaded_accounts, 41u);
+  ASSERT_EQ(tx.num_instructions, 8);
+  EXPECT_EQ(tx.instructions[2].type, SOL_INSTR_UNKNOWN); /* ATA, mint in a table */
+  EXPECT_TRUE(tx.instructions[2].external);
+}
+
+/* 7.17: the host's resolution of the tables lets every native instruction
+ * decode (the table keys are the real ones here, from the chain), but the
+ * message never verifies and the table keys stay marked. */
+TEST(Solana, RealJupiterV0SwapDecodesHostLookupAccountsButStaysOpaque) {
+  const std::vector<uint8_t> raw = solana_unhex(kJupiterSolUsdcV0Hex);
+  const std::vector<uint8_t> loaded = jupiter_loaded();
+  ASSERT_EQ(loaded.size(), 41u * SOL_PUBKEY_SIZE);
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTxWithHostLut(raw.data(), raw.size(), loaded.data(),
+                                        SOL_PUBKEY_SIZE, 41, &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  EXPECT_TRUE(tx.lut_unverified);
+  EXPECT_TRUE(tx.has_lookup_tables);
+  EXPECT_EQ(tx.num_static_accounts, 17);
+  EXPECT_EQ(tx.num_accounts, 58);
+  ASSERT_EQ(tx.num_instructions, 8);
+  const SolanaInstrType want[8] = {
+      SOL_INSTR_COMPUTE_BUDGET_UNIT_LIMIT, SOL_INSTR_COMPUTE_BUDGET_UNIT_PRICE,
+      SOL_INSTR_ATA_CREATE,                SOL_INSTR_SYSTEM_TRANSFER,
+      SOL_INSTR_TOKEN_SYNC_NATIVE,         SOL_INSTR_ATA_CREATE,
+      SOL_INSTR_UNKNOWN,                   SOL_INSTR_TOKEN_CLOSE_ACCOUNT};
+  for (int i = 0; i < 8; i++) {
+    SCOPED_TRACE(i);
+    EXPECT_EQ(tx.instructions[i].type, want[i]);
+    EXPECT_FALSE(tx.instructions[i].external);
+  }
+  EXPECT_EQ(tx.instructions[0].extra_value, 316553u);
+  EXPECT_EQ(tx.instructions[1].extra_value, 7766u);
+  EXPECT_EQ(tx.instructions[3].lamports, 39272743u);
+
+  /* Both mints come from a table: shown, marked. */
+  EXPECT_EQ(sol_b58(tx.instructions[2].mint), kWsolMint);
+  EXPECT_EQ(sol_b58(tx.instructions[5].mint), kUsdcMint);
+  EXPECT_TRUE(solana_isHostLutKey(&tx, tx.instructions[2].mint));
+  EXPECT_TRUE(solana_isHostLutKey(&tx, tx.instructions[5].mint));
+  /* The signed (static) keys are not. */
+  const std::string payer = "5ZD62kXBui2sZ9WmKxruxMqrMu4K9jXYtDjwfQk9uU6s";
+  EXPECT_EQ(sol_b58(tx.instructions[2].authority), payer);
+  EXPECT_FALSE(solana_isHostLutKey(&tx, tx.instructions[2].authority));
+  EXPECT_EQ(sol_b58(tx.instructions[2].to),
+            "8z4aRG7g8AhKwEGgq2gXznpdqTk9q4uQe8PL8X6KzcCU");
+  EXPECT_FALSE(solana_isHostLutKey(&tx, tx.instructions[2].to));
+  EXPECT_EQ(sol_b58(tx.instructions[7].to), payer);
+  for (uint8_t i = 0; i < tx.num_static_accounts; i++)
+    EXPECT_FALSE(solana_isHostLutKey(&tx, tx.accounts[i])) << (int)i;
+
+  /* Same keys at the stride of the request's repeated bytes field. */
+  struct Field {
+    uint16_t size;
+    uint8_t bytes[32];
+  };
+  std::vector<Field> fields(41);
+  for (size_t i = 0; i < 41; i++)
+    memcpy(fields[i].bytes, loaded.data() + i * 32, 32);
+  SolanaParsedTx strided;
+  ASSERT_EQ(solana_inspectTxWithHostLut(raw.data(), raw.size(),
+                                        fields[0].bytes, sizeof(Field), 41,
+                                        &strided),
+            SOL_TX_REVIEW_OPAQUE);
+  EXPECT_EQ(0, memcmp(strided.accounts, tx.accounts, sizeof(tx.accounts)));
+
+  /* An ordinary parse marks nothing. */
+  SolanaParsedTx plain;
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &plain),
+            SOL_TX_REVIEW_OPAQUE);
+  EXPECT_FALSE(solana_isHostLutKey(&plain, tx.instructions[2].mint));
+}
+
+/* The device binds the host's list to the signed indexes: one key each, no
+ * key loaded twice or repeating a static key. Anything else is refused. */
+TEST(Solana, HostLookupAccountsMustMatchTheSignedIndexes) {
+  const std::vector<uint8_t> raw = solana_unhex(kJupiterSolUsdcV0Hex);
+  const std::vector<uint8_t> loaded = jupiter_loaded();
+  SolanaParsedTx tx;
+  struct Leg {
+    const char* name;
+    std::vector<uint8_t> keys;
+    size_t count;
+    SolanaTxReview want;
+  };
+  std::vector<uint8_t> dup_static = loaded;
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  memcpy(dup_static.data() + 40 * 32, tx.accounts[3], 32);
+  std::vector<uint8_t> dup_loaded = loaded;
+  memcpy(dup_loaded.data() + 40 * 32, loaded.data(), 32);
+  std::vector<uint8_t> one_more = loaded;
+  one_more.insert(one_more.end(), 32, 0x5A);
+  const Leg legs[] = {
+      {"exact list (control)", loaded, 41, SOL_TX_REVIEW_OPAQUE},
+      {"one key short", loaded, 40, SOL_TX_REVIEW_MALFORMED},
+      {"one key extra", one_more, 42, SOL_TX_REVIEW_MALFORMED},
+      {"repeats a static key", dup_static, 41, SOL_TX_REVIEW_MALFORMED},
+      {"loads a key twice", dup_loaded, 41, SOL_TX_REVIEW_MALFORMED},
+  };
+  for (const Leg& leg : legs) {
+    SCOPED_TRACE(leg.name);
+    EXPECT_EQ(solana_inspectTxWithHostLut(raw.data(), raw.size(),
+                                          leg.keys.data(), SOL_PUBKEY_SIZE,
+                                          leg.count, &tx),
+              leg.want);
+  }
+
+  /* A legacy message has no tables to resolve. */
+  const std::vector<uint8_t> legacy = solana_unhex(kPyusdTransferHex);
+  EXPECT_EQ(solana_inspectTxWithHostLut(legacy.data(), legacy.size(),
+                                        loaded.data(), SOL_PUBKEY_SIZE, 1, &tx),
+            SOL_TX_REVIEW_MALFORMED);
+
+  /* A later version is not parsed, so nothing binds the keys: refused, not a
+   * blind sign that claims the host sent 0 accounts. */
+  for (uint8_t prefix : {0x81, 0xFE}) {
+    SCOPED_TRACE(prefix);
+    std::vector<uint8_t> later = raw;
+    later[0] = prefix;
+    EXPECT_EQ(solana_inspectTx(later.data(), later.size(), &tx),
+              SOL_TX_REVIEW_OPAQUE);
+    EXPECT_EQ(solana_inspectTxWithHostLut(later.data(), later.size(),
+                                          loaded.data(), SOL_PUBKEY_SIZE, 41,
+                                          &tx),
+              SOL_TX_REVIEW_MALFORMED);
+  }
+}
+
+/* A PYUSD transfer as wallets build it: the recipient's Token-2022 account is
+ * created first. It verifies like SPL Token: mint, amount in the signed
+ * decimals, destination. */
+TEST(Solana, RealPyusdToken2022TransferWithAccountCreateIsVerified) {
+  const std::vector<uint8_t> raw = solana_unhex(kPyusdTransferHex);
+  ASSERT_EQ(raw.size(), 404u);
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
+            SOL_TX_REVIEW_VERIFIED);
+  ASSERT_EQ(tx.num_instructions, 4);
+  const std::string pyusd = "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo";
+  const std::string dest = "D3g4DtwKPKSq4dab4w2DBDWLRabKXf47W8cZvwdGjWzA";
+
+  const SolanaParsedInstruction& ata = tx.instructions[2];
+  EXPECT_EQ(ata.type, SOL_INSTR_ATA_CREATE);
+  EXPECT_EQ(sol_b58(ata.to), dest);
+  EXPECT_EQ(sol_b58(ata.authority),
+            "D23A7PKfGJYH6oMnW7wMUSmktW9TPWR5e14NwsECXGXe");
+  EXPECT_EQ(sol_b58(ata.mint), pyusd);
+
+  const SolanaParsedInstruction& xfer = tx.instructions[3];
+  EXPECT_EQ(xfer.type, SOL_INSTR_TOKEN_TRANSFER_CHECKED);
+  EXPECT_EQ(0, memcmp(xfer.program_id, SOL_TOKEN_2022_PROGRAM, 32));
+  EXPECT_EQ(xfer.amount, 605446589474ULL);
+  EXPECT_EQ(xfer.extra_u8, 6);
+  EXPECT_EQ(sol_b58(xfer.mint), pyusd);
+  EXPECT_EQ(sol_b58(xfer.to), dest);
+  EXPECT_EQ(sol_b58(xfer.from), "8b3GTFQQAVdz1r949JZPG1eVMfaAULCHnbkAmw1wv12f");
+  char amount[64];
+  solana_formatTokenAmount(amount, sizeof(amount), xfer.amount, "tokens",
+                           xfer.extra_u8);
+  EXPECT_STREQ(amount, "605446.589474 tokens");
+
+  /* The account is created under the signed token program only: any other
+   * sixth account keeps the message opaque. */
+  std::vector<uint8_t> other = raw;
+  const size_t t22 = 4 + 6 * 32; /* static key 6, after the 4-byte header */
+  ASSERT_EQ(0, memcmp(other.data() + t22, SOL_TOKEN_2022_PROGRAM, 32));
+  other[t22 + 31] ^= 1;
+  EXPECT_EQ(solana_inspectTx(other.data(), other.size(), &tx),
+            SOL_TX_REVIEW_OPAQUE);
+}
+
+/* 16 instructions are retained and reviewed; a 17th makes the message opaque
+ * (still signable under AdvancedMode). */
+TEST(Solana, SixteenInstructionsAreReviewed) {
+  for (int n : {SOL_MAX_INSTRUCTIONS, SOL_MAX_INSTRUCTIONS + 1}) {
+    SCOPED_TRACE(n);
+    std::vector<uint8_t> raw = {1, 0, 1, 3};
+    raw.insert(raw.end(), 32, 0x11); /* payer */
+    raw.insert(raw.end(), 32, 0x22); /* recipient */
+    raw.insert(raw.end(), 32, 0x00); /* system program */
+    raw.insert(raw.end(), 32, 0xBB); /* blockhash */
+    raw.push_back((uint8_t)n);
+    for (int i = 0; i < n; i++) {
+      raw.insert(raw.end(), {2, 2, 0, 1, 12, 2, 0, 0, 0});
+      raw.insert(raw.end(), {(uint8_t)(i + 1), 0, 0, 0, 0, 0, 0, 0});
+    }
+    SolanaParsedTx tx;
+    const SolanaTxReview r = solana_inspectTx(raw.data(), raw.size(), &tx);
+    if (n == 16) {
+      ASSERT_EQ(r, SOL_TX_REVIEW_VERIFIED);
+      ASSERT_EQ(tx.num_instructions, 16);
+      EXPECT_EQ(tx.instructions[15].lamports, 16u);
+    } else {
+      EXPECT_EQ(r, SOL_TX_REVIEW_OPAQUE);
+      EXPECT_EQ(tx.num_instructions, 0);
+    }
+  }
+}
+
+/* A host-resolved key is never verified, even when every instruction decodes:
+ * a transfer to a lookup-table key stays a blind sign, its destination
+ * marked. */
+TEST(Solana, HostResolvedDestinationNeverVerifies) {
+  const std::vector<uint8_t> raw = v0_transfer(2, 3, 1);
+  uint8_t key[SOL_PUBKEY_SIZE];
+  memset(key, 0x66, sizeof(key));
+  SolanaParsedTx tx;
+  ASSERT_EQ(solana_inspectTxWithHostLut(raw.data(), raw.size(), key,
+                                        SOL_PUBKEY_SIZE, 1, &tx),
+            SOL_TX_REVIEW_OPAQUE);
+  ASSERT_EQ(tx.num_instructions, 1);
+  EXPECT_EQ(tx.instructions[0].type, SOL_INSTR_SYSTEM_TRANSFER);
+  EXPECT_EQ(tx.instructions[0].lamports, 1000000000ULL);
+  EXPECT_EQ(0, memcmp(tx.instructions[0].to, key, sizeof(key)));
+  EXPECT_TRUE(solana_isHostLutKey(&tx, tx.instructions[0].to));
+  EXPECT_FALSE(solana_isHostLutKey(&tx, tx.instructions[0].from));
+}
+
+/* The wire request carries every key a real swap loads: 41 here, up to
+ * SOL_MAX_ACCOUNTS; one more fails to decode. */
+TEST(Solana, SignTxDecodesAJupiterSwapsLookupAccounts) {
+  const std::vector<uint8_t> raw = solana_unhex(kJupiterSolUsdcV0Hex);
+  const std::vector<uint8_t> loaded = jupiter_loaded();
+  for (size_t count : {(size_t)41, (size_t)SOL_MAX_ACCOUNTS,
+                       (size_t)SOL_MAX_ACCOUNTS + 1}) {
+    SCOPED_TRACE(count);
+    std::vector<uint8_t> wire = {0x1a, (uint8_t)(0x80 | (raw.size() & 0x7f)),
+                                 (uint8_t)(raw.size() >> 7)};
+    wire.insert(wire.end(), raw.begin(), raw.end());
+    for (size_t i = 0; i < count; i++) {
+      wire.insert(wire.end(), {0x2a, 0x20}); /* field 5, 32 bytes */
+      const uint8_t* k = loaded.data() + (i % 41) * SOL_PUBKEY_SIZE;
+      wire.insert(wire.end(), k, k + SOL_PUBKEY_SIZE);
+    }
+    static SolanaSignTx msg;
+    memset(&msg, 0, sizeof(msg));
+    pb_istream_t stream = pb_istream_from_buffer(wire.data(), wire.size());
+    const bool ok = pb_decode(&stream, SolanaSignTx_fields, &msg);
+    if (count <= SOL_MAX_ACCOUNTS) {
+      ASSERT_TRUE(ok) << PB_GET_ERROR(&stream);
+      EXPECT_EQ(msg.raw_tx.size, raw.size());
+      EXPECT_EQ(msg.lut_account_count, count);
+      EXPECT_EQ(0, memcmp(msg.lut_account[40].bytes,
+                          loaded.data() + 40 * SOL_PUBKEY_SIZE, 32));
+    } else {
+      EXPECT_FALSE(ok);
+    }
+  }
 }
