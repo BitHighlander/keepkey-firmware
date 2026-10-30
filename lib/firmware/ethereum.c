@@ -842,7 +842,7 @@ static void formatEthereumFeeEIP1559(bignum256* fee,
 }
 
 static bool layoutEthereumFee(const EthereumSignTx* msg, bool is_token,
-                              char* out_str, size_t out_str_len) {
+                              bool name_to, char* out_str, size_t out_str_len) {
   bignum256 val, gas;
   /* Sized like the Send screen's amount: a value that screen showed and the
    * user approved must not be refused here for being long. */
@@ -879,10 +879,17 @@ static bool layoutEthereumFee(const EthereumSignTx* msg, bool is_token,
       return false;
   }
 
+  /* The Send screen was skipped: its destination is named here. */
+  char to[48] = "";
+  if (name_to && msg->to.size == 20) {
+    strcpy(to, " to 0x");
+    ethereum_address_checksum(msg->to.bytes, to + 6, false, chain_id);
+  }
+
   if ((uint32_t)snprintf(
           out_str, out_str_len,
-          _("Send %s from your wallet, paying up to %s for gas?"), tx_value,
-          gas_value) >= out_str_len) {
+          _("Send %s%s from your wallet, paying up to %s for gas?"), tx_value,
+          to, gas_value) >= out_str_len) {
     /*error detected.  Clear the buffer */
     memset(out_str, 0, out_str_len);
     return false;
@@ -936,6 +943,28 @@ static bool ethereum_warnUnlimitedOrAbort(const EthereumSignTx* msg) {
   if (ethereum_confirmUnlimitedApproval(msg->has_chain_id ? msg->chain_id : 0,
                                         msg->data_initial_chunk.bytes + 16,
                                         msg->to.bytes)) {
+    return true;
+  }
+  fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                  "Signing cancelled by user");
+  ethereum_signing_abort();
+  return false;
+}
+
+/* Once, right after the first screen that showed the full address: its
+ * vouched name and who vouched for it. The address screens stay as in 7.16,
+ * so a name can never push part of the address onto another page. */
+_Static_assert(sizeof("Recipient: \nnamed by \ncertified by KeepKey") +
+                       METADATA_NAME_MAX + METADATA_NAME_BY_LEN - 1 <=
+                   BODY_CHAR_MAX,
+               "A vouched name and who vouched for it must fit one body");
+static bool ethereum_vouchedOrAbort(bool* due, bool spender, const char* name,
+                                    const char* by) {
+  if (!*due) return true;
+  *due = false;
+  if (confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+              "KeepKey ClearSign", "%s: %s\nnamed by %s\ncertified by KeepKey",
+              spender ? "Spender" : "Recipient", name, by)) {
     return true;
   }
   fsm_sendFailure(FailureType_Failure_ActionCancelled,
@@ -1101,6 +1130,30 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     return;
   }
 
+  /* 7.17: a KeepKey-certified 0x06 name for exactly this approval's spender,
+   * or this transfer's recipient, on this chain is shown on one screen of its
+   * own after the first screen with the full address. It changes nothing that
+   * is signed; anything else reads as before. */
+  char party_name[METADATA_NAME_MAX + 1] = "";
+  char named_by[METADATA_NAME_BY_LEN] = "";
+  const uint8_t* party = NULL;
+  if (wanchain_tx_type == 0 && msg->to.size == 20 &&
+      erc7730_workflow_state()->phase == ERC7730_WORKFLOW_IDLE) {
+    if (data_total == 0) {
+      party = msg->to.bytes;
+    } else if (msg->data_initial_chunk.size >= 68 &&
+               (ethereum_isAllowanceSelector(msg->data_initial_chunk.bytes,
+                                             4) ||
+                ethereum_isStandardERC20Transfer(msg))) {
+      party = msg->data_initial_chunk.bytes + 16;
+    }
+  }
+  if (!party ||
+      !signed_metadata_name_for(chain_id, party, party_name, named_by)) {
+    party = NULL;
+  }
+  bool vouch_due = party != NULL;
+
   // Keep the selector and both ABI words available to the allowance policy.
   // Otherwise a host could split an approval prefix across streamed chunks.
   // A certified ERC-7730 review streams them instead: it ran this policy on
@@ -1139,7 +1192,11 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     if (ethereum_allowanceIsUnlimited(msg)) {
       unlimited_deferred =
           signed_metadata_certified_states_allowance(msg, chain_id);
-      if (!unlimited_deferred && !ethereum_warnUnlimitedOrAbort(msg)) return;
+      if (!unlimited_deferred &&
+          (!ethereum_warnUnlimitedOrAbort(msg) ||
+           !ethereum_vouchedOrAbort(&vouch_due, true, party_name, named_by))) {
+        return;
+      }
     }
   }
 
@@ -1153,6 +1210,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   }
 
   bool data_needs_confirm = true;
+  bool fee_names_to = false;
   if (ethereum_contractHandled(data_total, msg, node)) {
     if (!ethereum_contractConfirmed(data_total, msg, node)) {
       fsm_sendFailure(FailureType_Failure_ActionCancelled,
@@ -1173,6 +1231,14 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       certified->phase == ERC7730_WORKFLOW_CALLDATA &&
       erc7730_workflow_certified(certified)) {
     data_needs_confirm = false;
+    /* 7.17 (D-020, value == arg): the review showed the native value as a
+     * field it matched against this transaction's value, so the amount
+     * screen would only repeat it as a payment to the contract. The fee
+     * screen below still states the value, and names the contract. */
+    if (erc7730_workflow_value_bound(certified)) {
+      needs_confirm = false;
+      fee_names_to = true;
+    }
   }
 
   /* SRS R-1.4: a certified claim is honoured completely or refused, never
@@ -1312,6 +1378,11 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
         return;
       }
     }
+    if (party && party == recipient &&
+        !ethereum_vouchedOrAbort(&vouch_due, is_approve, party_name,
+                                 named_by)) {
+      return;
+    }
   }
   /* A proof labels exactly one signing request. */
   contact_book_clear();
@@ -1358,7 +1429,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   }
 
   memset(confirm_body_message, 0, sizeof(confirm_body_message));
-  if (!layoutEthereumFee(msg, token != NULL, confirm_body_message,
+  if (!layoutEthereumFee(msg, token != NULL, fee_names_to, confirm_body_message,
                          sizeof(confirm_body_message))) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Ethereum fee too large"));

@@ -32,16 +32,20 @@ extern "C" {
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/secp256k1.h"
 #include "trezor/crypto/sha2.h"
+#include "trezor/crypto/base58.h"
 #include "keepkey/firmware/clearsign_root.h"
+#include "keepkey/firmware/ethereum.h"
 
 void setup(void);
 }
 
 #include "clearsign_test_cert.h"
+#include "solana_real_vectors.h"
 #include "gtest/gtest.h"
 #include "kkconfirm_driver.h"
 #include "test_board.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <cstdint>
@@ -2816,6 +2820,375 @@ TEST_F(SolanaSchemaSignTest,
   }
 }
 
+/* ---- 7.17: real mainnet messages through the handler ---------------------
+ * The fee payer (static key 0, also the token authority) is swapped for this
+ * seed's key so the device is a signer; every other byte is as on chain. */
+std::vector<uint8_t> sol_unhex(const char* hex) {
+  std::vector<uint8_t> out;
+  for (size_t i = 0; hex[i] && hex[i + 1]; i += 2) {
+    unsigned v = 0;
+    sscanf(hex + i, "%2x", &v);
+    out.push_back((uint8_t)v);
+  }
+  return out;
+}
+
+std::string sol_b58(const uint8_t* key) {
+  char out[64];
+  size_t len = sizeof(out);
+  return b58enc(out, &len, key, 32) ? std::string(out) : std::string();
+}
+
+SolanaSignTx real_solana_request(const char* hex, size_t payer_offset,
+                                 std::string* payer_b58) {
+  const uint32_t path[4] = {0x80000000u | 44, 0x80000000u | 501, 0x80000000u,
+                            0x80000000u};
+  uint8_t seed[64];
+  mnemonic_to_seed("all all all all all all all all all all all all", "", seed,
+                   NULL);
+  HDNode node;
+  hdnode_from_seed(seed, sizeof(seed), ED25519_NAME, &node);
+  for (uint32_t i : path) hdnode_private_ckd(&node, i);
+  hdnode_fill_public_key(&node);
+  std::vector<uint8_t> raw = sol_unhex(hex);
+  memcpy(raw.data() + payer_offset, node.public_key + 1, 32);
+  *payer_b58 = sol_b58(node.public_key + 1);
+  SolanaSignTx msg = {};
+  msg.address_n_count = 4;
+  memcpy(msg.address_n, path, sizeof(path));
+  msg.has_raw_tx = true;
+  msg.raw_tx.size = raw.size();
+  memcpy(msg.raw_tx.bytes, raw.data(), raw.size());
+  return msg;
+}
+
+void add_jupiter_lookup_accounts(SolanaSignTx* msg) {
+  msg->lut_account_count = 0;
+  for (const char* hex : kJupiterSolUsdcLoaded) {
+    const std::vector<uint8_t> k = sol_unhex(hex);
+    msg->lut_account[msg->lut_account_count].size = 32;
+    memcpy(msg->lut_account[msg->lut_account_count++].bytes, k.data(), 32);
+  }
+}
+
+const char kLutMark[] = "[from lookup table, not verified by KeepKey]\n";
+
+/* Pages split a body by characters, so a host-resolved key can run onto the
+ * next page. The mark comes first: wherever the key starts, the mark sits
+ * right above it on that page, and the pages read mark, then key. */
+void expect_marked_first(const std::vector<std::string>& bodies,
+                         const std::string& key) {
+  std::string all;
+  for (const std::string& b : bodies) all += b;
+  EXPECT_NE(std::string::npos, all.find(kLutMark + key)) << all;
+  const std::string head = key.substr(0, 8);
+  bool seen = false;
+  for (const std::string& b : bodies) {
+    for (size_t p = b.find(head); p != std::string::npos;
+         p = b.find(head, p + 1)) {
+      seen = true;
+      EXPECT_TRUE(p >= strlen(kLutMark) &&
+                  b.compare(p - strlen(kLutMark), strlen(kLutMark),
+                            kLutMark) == 0)
+          << "unmarked on its page:\n" << b;
+    }
+  }
+  EXPECT_TRUE(seen) << key;
+}
+
+/* Real Jupiter v0 swap with the host's lookup keys: decoded, table keys marked,
+ * then the blind-sign warning. Without them it is the bare blind sign. */
+TEST_F(SolanaSchemaSignTest, RealJupiterSwapShowsHostLookupAccountsMarked) {
+  std::string me;
+  /* v0 prefix + 3-byte header + 1-byte key count, then key 0. */
+  const SolanaSignTx base = real_solana_request(kJupiterSolUsdcV0Hex, 5, &me);
+  const std::string wsol = "So11111111111111111111111111111111111111112";
+  const std::string usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const std::string wsol_acct = "8z4aRG7g8AhKwEGgq2gXznpdqTk9q4uQe8PL8X6KzcCU";
+
+  SolanaSignTx msg = base;
+  add_jupiter_lookup_accounts(&msg);
+  ASSERT_EQ(41u, msg.lut_account_count);
+  /* Heading, 15 instruction screens (the marked USDC mint takes two pages),
+   * fee payer, max fee, blind sign, final. */
+  ASSERT_TRUE(kkconfirm_preload(20, 0));
+  kkconfirm_capture_start();
+  fsm_test_clearLastFailure();
+  fsm_msgSolanaSignTx(&msg);
+  const std::vector<std::string> bodies = kkconfirm_capture_finish();
+  const std::vector<std::string> titles = kkconfirm_captured_titles();
+  EXPECT_EQ(0, fsm_test_lastFailureCode()) << fsm_test_lastFailureMessage();
+  SolanaSignedTx response = {};
+  ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_SolanaSignedTx,
+                                     SolanaSignedTx_fields, &response));
+  EXPECT_EQ(64u, response.signature.size);
+  EXPECT_EQ(0, kkconfirm_drain());
+  std::string shown;
+  for (size_t i = 0; i < bodies.size(); i++) {
+    shown += titles[i] + "|" + bodies[i] + "\n";
+  }
+  ASSERT_FALSE(titles.empty());
+  EXPECT_EQ("Lookup Accounts", titles.front());
+  EXPECT_EQ("Host supplied 41 lookup table account(s). NOT verified by KeepKey.",
+            bodies.front());
+  EXPECT_EQ("Blind Sign", titles[titles.size() - 2]);
+  EXPECT_EQ("Solana", titles.back());
+  /* Both mints come from the tables: shown, each marked before the key. */
+  expect_marked_first(bodies, wsol);
+  /* The 44-char USDC mint pages: its first page opens with the mark. */
+  expect_marked_first(bodies, usdc);
+  bool usdc_paged = false;
+  for (size_t i = 0; i + 1 < bodies.size(); i++) {
+    if (titles[i] == "Instr 6/8 1/2") {
+      EXPECT_EQ(0u, bodies[i].find(std::string("Token mint\n") + kLutMark +
+                                   usdc.substr(0, 8)))
+          << bodies[i];
+      EXPECT_EQ("Instr 6/8 2/2", titles[i + 1]);
+      usdc_paged = true;
+    }
+  }
+  EXPECT_TRUE(usdc_paged) << shown;
+  std::string all;
+  for (const std::string& b : bodies) all += b;
+  EXPECT_EQ(std::string::npos, all.find(kLutMark + wsol_acct)) << shown;
+  EXPECT_EQ(std::string::npos, all.find(kLutMark + me)) << shown;
+  EXPECT_EQ(20u, titles.size()) << shown;
+  EXPECT_NE(std::string::npos, shown.find("Send 0.039272743 SOL to " + wsol_acct))
+      << shown;
+  EXPECT_NE(std::string::npos,
+            shown.find("Unknown instruction to program "
+                       "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"))
+      << shown;
+  EXPECT_NE(std::string::npos, shown.find("send balance to\n" + me)) << shown;
+
+  /* Control: the same message with no keys is today's bare blind sign. */
+  ASSERT_TRUE(kkconfirm_preload(2, 0));
+  kkconfirm_capture_start();
+  fsm_test_clearLastFailure();
+  SolanaSignTx bare = base;
+  fsm_msgSolanaSignTx(&bare);
+  (void)kkconfirm_capture_finish();
+  EXPECT_EQ((std::vector<std::string>{"Blind Sign", "Solana"}),
+            kkconfirm_captured_titles());
+  EXPECT_EQ(0, fsm_test_lastFailureCode());
+  ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_SolanaSignedTx,
+                                     SolanaSignedTx_fields, &response));
+  EXPECT_EQ(0, kkconfirm_drain());
+}
+
+/* The host's keys never lift the AdvancedMode gate, and a list that does not
+ * match the signed indexes (or rides beside a schema) is refused unsigned. */
+TEST_F(SolanaSchemaSignTest, HostLookupAccountsAreRefusedNotTrusted) {
+  std::string me;
+  SolanaSignTx good = real_solana_request(kJupiterSolUsdcV0Hex, 5, &me);
+  add_jupiter_lookup_accounts(&good);
+  struct Leg {
+    const char* name;
+    bool advanced;
+    int mutate;
+    FailureType want;
+    const char* text;
+  };
+  const Leg legs[] = {
+      {"AdvancedMode off", false, 0, FailureType_Failure_Other,
+       "Enable AdvancedMode to blind-sign"},
+      {"one key short", true, 1, FailureType_Failure_SyntaxError,
+       "Lookup accounts do not match transaction"},
+      {"short key", true, 2, FailureType_Failure_SyntaxError,
+       "Lookup accounts do not match transaction"},
+      {"beside a runtime schema", true, 3, FailureType_Failure_SyntaxError,
+       "Unverified lookup accounts cannot back a schema"},
+      /* Refused before the non-standard path warning, like malformed bytes. */
+      {"one key short, non-standard path", true, 4,
+       FailureType_Failure_SyntaxError,
+       "Lookup accounts do not match transaction"},
+  };
+  for (const Leg& leg : legs) {
+    SCOPED_TRACE(leg.name);
+    ASSERT_TRUE(storage_setPolicy("AdvancedMode", leg.advanced));
+    SolanaSignTx msg = good;
+    if (leg.mutate == 1 || leg.mutate == 4) msg.lut_account_count--;
+    if (leg.mutate == 4) {
+      msg.address_n_count = 5; /* m/44'/501'/0'/0'/0' */
+      msg.address_n[4] = 0x80000000u;
+    }
+    if (leg.mutate == 2) msg.lut_account[7].size = 31;
+    if (leg.mutate == 3) {
+      msg.has_schema_payload = true;
+      msg.schema_payload.size = 1;
+    }
+    ASSERT_TRUE(kkconfirm_preload(0, 1));
+    kkconfirm_capture_start();
+    fsm_test_clearLastFailure();
+    fsm_msgSolanaSignTx(&msg);
+    EXPECT_TRUE(kkconfirm_capture_finish().empty()) << "a screen ran";
+    EXPECT_EQ(leg.want, fsm_test_lastFailureCode());
+    EXPECT_STREQ(leg.text, fsm_test_lastFailureMessage());
+    EXPECT_EQ(2, kkconfirm_drain()) << "a screen ran before the refusal";
+  }
+}
+
+/* A mint the host resolved is not the signed one: even USDC's address gets no
+ * symbol, and the amount is shown in plain tokens beside the marked mint. */
+TEST_F(SolanaSchemaSignTest, HostResolvedMintGetsNoSymbol) {
+  std::string me;
+  /* v0: [device, source, destination, SPL Token]; TransferChecked with the
+   * mint at loaded index 4 (one readonly lookup entry). */
+  std::vector<uint8_t> raw = {0x80, 1, 0, 1, 4};
+  raw.insert(raw.end(), 32, 0x00); /* replaced by the device key below */
+  raw.insert(raw.end(), 32, 0x31);
+  raw.insert(raw.end(), 32, 0x32);
+  raw.insert(raw.end(), SOL_TOKEN_PROGRAM, SOL_TOKEN_PROGRAM + 32);
+  raw.insert(raw.end(), 32, 0xBB);
+  raw.insert(raw.end(), {1, 3, 4, 1, 4, 2, 0, 10, 12});
+  raw.insert(raw.end(), {0x40, 0x42, 0x0F, 0, 0, 0, 0, 0, 6});
+  raw.insert(raw.end(), {1});
+  raw.insert(raw.end(), 32, 0x55);
+  raw.insert(raw.end(), {0, 1, 0});
+  std::string hex;
+  for (uint8_t b : raw) {
+    char h[3];
+    snprintf(h, sizeof(h), "%02x", b);
+    hex += h;
+  }
+  SolanaSignTx msg = real_solana_request(hex.c_str(), 5, &me);
+  const std::string usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+  const std::vector<uint8_t> usdc_key = sol_unhex(
+      "c6fa7af3bedbad3a3d65f36aabc97431b1bbe4c2d2f6e0e47ca60203452f5d61");
+  msg.lut_account_count = 1;
+  msg.lut_account[0].size = 32;
+  memcpy(msg.lut_account[0].bytes, usdc_key.data(), 32);
+
+  ASSERT_TRUE(kkconfirm_preload(7, 0));
+  kkconfirm_capture_start();
+  fsm_test_clearLastFailure();
+  fsm_msgSolanaSignTx(&msg);
+  const std::vector<std::string> bodies = kkconfirm_capture_finish();
+  const std::vector<std::string> titles = kkconfirm_captured_titles();
+  EXPECT_EQ(0, fsm_test_lastFailureCode()) << fsm_test_lastFailureMessage();
+  SolanaSignedTx response = {};
+  ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_SolanaSignedTx,
+                                     SolanaSignedTx_fields, &response));
+  EXPECT_EQ(0, kkconfirm_drain());
+  std::string shown;
+  for (size_t i = 0; i < bodies.size(); i++)
+    shown += titles[i] + "|" + bodies[i] + "\n";
+  EXPECT_EQ(7u, titles.size()) << shown;
+  EXPECT_EQ(std::string::npos, shown.find("Known token")) << shown;
+  EXPECT_EQ(std::string::npos, shown.find("USDC")) << shown;
+  expect_marked_first(bodies, usdc);
+  EXPECT_EQ(std::string::npos, shown.find("Verified recipient owner")) << shown;
+  EXPECT_NE(std::string::npos, shown.find("Send 1 tokens to ")) << shown;
+  EXPECT_EQ("Blind Sign", titles[titles.size() - 2]);
+}
+
+/* A destination the host resolved is not the signed one: an owner whose
+ * associated account it is gets no "Verified recipient owner", and the
+ * destination is shown marked. */
+TEST_F(SolanaSchemaSignTest, HostResolvedDestinationGetsNoRecipientOwner) {
+  std::string me;
+  const std::vector<uint8_t> usdc_key = sol_unhex(
+      "c6fa7af3bedbad3a3d65f36aabc97431b1bbe4c2d2f6e0e47ca60203452f5d61");
+  uint8_t owner[32];
+  memset(owner, 0x77, sizeof(owner));
+  uint8_t ata[32];
+  ASSERT_TRUE(solana_deriveAssociatedTokenAddress(owner, SOL_TOKEN_PROGRAM,
+                                                  usdc_key.data(), ata));
+  /* v0: [device, source, USDC mint, SPL Token]; TransferChecked of 1 USDC to
+   * loaded index 4 (one writable lookup entry). */
+  std::vector<uint8_t> raw = {0x80, 1, 0, 2, 4};
+  raw.insert(raw.end(), 32, 0x00); /* replaced by the device key below */
+  raw.insert(raw.end(), 32, 0x31);
+  raw.insert(raw.end(), usdc_key.begin(), usdc_key.end());
+  raw.insert(raw.end(), SOL_TOKEN_PROGRAM, SOL_TOKEN_PROGRAM + 32);
+  raw.insert(raw.end(), 32, 0xBB);
+  raw.insert(raw.end(), {1, 3, 4, 1, 2, 4, 0, 10, 12});
+  raw.insert(raw.end(), {0x40, 0x42, 0x0F, 0, 0, 0, 0, 0, 6});
+  raw.insert(raw.end(), {1});
+  raw.insert(raw.end(), 32, 0x55);
+  raw.insert(raw.end(), {1, 0, 0});
+  std::string hex;
+  for (uint8_t b : raw) {
+    char h[3];
+    snprintf(h, sizeof(h), "%02x", b);
+    hex += h;
+  }
+  SolanaSignTx msg = real_solana_request(hex.c_str(), 5, &me);
+  msg.lut_account_count = 1;
+  msg.lut_account[0].size = 32;
+  memcpy(msg.lut_account[0].bytes, ata, 32);
+  msg.token_recipient_owner_count = 1;
+  msg.token_recipient_owner[0].size = 32;
+  memcpy(msg.token_recipient_owner[0].bytes, owner, 32);
+
+  /* Heading, from, known mint, owner warning, send (2 pages), blind, final. */
+  const size_t SCREENS = 8;
+  ASSERT_TRUE(kkconfirm_preload(SCREENS, 0));
+  kkconfirm_capture_start();
+  fsm_test_clearLastFailure();
+  fsm_msgSolanaSignTx(&msg);
+  const std::vector<std::string> bodies = kkconfirm_capture_finish();
+  const std::vector<std::string> titles = kkconfirm_captured_titles();
+  EXPECT_EQ(0, fsm_test_lastFailureCode()) << fsm_test_lastFailureMessage();
+  SolanaSignedTx response = {};
+  ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_SolanaSignedTx,
+                                     SolanaSignedTx_fields, &response));
+  EXPECT_EQ(0, kkconfirm_drain());
+  std::string shown;
+  for (size_t i = 0; i < bodies.size(); i++)
+    shown += titles[i] + "|" + bodies[i] + "\n";
+  EXPECT_EQ(SCREENS, titles.size()) << shown;
+  EXPECT_EQ(std::string::npos, shown.find("Verified recipient owner"))
+      << shown;
+  EXPECT_EQ(std::string::npos, shown.find(sol_b58(owner))) << shown;
+  EXPECT_NE(std::string::npos,
+            shown.find("Recipient owner does not match signed token account."))
+      << shown;
+  expect_marked_first(bodies, sol_b58(ata));
+  EXPECT_EQ("Blind Sign", titles[titles.size() - 2]);
+}
+
+/* Real PYUSD transfer: verified, no AdvancedMode needed. */
+TEST_F(SolanaSchemaSignTest, RealPyusdTransferIsClearSigned) {
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+  std::string me;
+  /* Legacy: 3-byte header + 1-byte key count, then key 0. */
+  SolanaSignTx msg = real_solana_request(kPyusdTransferHex, 4, &me);
+  /* 2 compute budget, 3 account create, 3 transfer, 2 fee, final. */
+  ASSERT_TRUE(kkconfirm_preload(11, 0));
+  kkconfirm_capture_start();
+  fsm_test_clearLastFailure();
+  fsm_msgSolanaSignTx(&msg);
+  const std::vector<std::string> bodies = kkconfirm_capture_finish();
+  const std::vector<std::string> titles = kkconfirm_captured_titles();
+  EXPECT_EQ(0, fsm_test_lastFailureCode()) << fsm_test_lastFailureMessage();
+  SolanaSignedTx response = {};
+  ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_SolanaSignedTx,
+                                     SolanaSignedTx_fields, &response));
+  EXPECT_EQ(0, kkconfirm_drain());
+  std::string shown;
+  for (size_t i = 0; i < bodies.size(); i++)
+    shown += titles[i] + "|" + bodies[i] + "\n";
+  EXPECT_EQ(std::string::npos, shown.find("Blind Sign")) << shown;
+  EXPECT_NE(std::string::npos,
+            shown.find("Token mint\n2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo"))
+      << shown;
+  EXPECT_NE(std::string::npos,
+            shown.find("Transfer from Token-2022 account\n"
+                       "8b3GTFQQAVdz1r949JZPG1eVMfaAULCHnbkAmw1wv12f"))
+      << shown;
+  EXPECT_NE(std::string::npos,
+            shown.find("Send 605446.589474 tokens to "
+                       "D3g4DtwKPKSq4dab4w2DBDWLRabKXf47W8cZvwdGjWzA?"))
+      << shown;
+  EXPECT_NE(std::string::npos,
+            shown.find("Create token account\n"
+                       "D3g4DtwKPKSq4dab4w2DBDWLRabKXf47W8cZvwdGjWzA"))
+      << shown;
+  EXPECT_EQ("Solana", titles.back());
+  EXPECT_EQ(11u, titles.size()) << shown;
+}
+
 }  // namespace
 
 /* ---- 7.16 certified (v3) envelopes: fail closed (SRS R-1.2, R-1.4) -------
@@ -4112,4 +4485,383 @@ TEST(ClearsignRootCeremony20261003, RealCertificatesVerifyOnTheirChainOnly) {
     EXPECT_FALSE(clearsign_root_cert_delegate(c.data(), c.size(), scopes[i],
                                               pub, alias));
   }
+}
+
+/* ---- 7.17: a 0x06 name beside the native approve spender (G03) ----------
+ *
+ * Request bytes captured from swaps.pro through Desktop on 2026-10-29
+ * (docs/clearsign-case-studies/swapspro-20261029/requests): approve 25000
+ * USDC to CoW's GPv2VaultRelayer on Ethereum. Fees and nonce are from the
+ * same session's 0x approve capture (the CoW capture has no fee fields). */
+namespace {
+
+const char kCowApprove[] =
+    "095ea7b3000000000000000000000000c92e8bdf79f0507f65a392b0ab4667716bfe0110"
+    "00000000000000000000000000000000000000000000000000000005d21dba00";
+const uint8_t kMainnetUsdc[20] = {0xa0, 0xb8, 0x69, 0x91, 0xc6, 0x21, 0x8b,
+                                  0x36, 0xc1, 0xd1, 0x9d, 0x4a, 0x2e, 0x9e,
+                                  0xb0, 0xce, 0x36, 0x06, 0xeb, 0x48};
+const uint8_t kCowRelayer[20] = {0xc9, 0x2e, 0x8b, 0xdf, 0x79, 0xf0, 0x50,
+                                 0x7f, 0x65, 0xa3, 0x92, 0xb0, 0xab, 0x46,
+                                 0x67, 0x71, 0x6b, 0xfe, 0x01, 0x10};
+// 0x AllowanceHolder, the spender of the same session's 0x route.
+const uint8_t kZxAllowanceHolder[20] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f, 0xf3, 0x68, 0x4f,
+    0x28, 0xc6, 0x75, 0x38, 0xd4, 0xd0, 0x72, 0xc2, 0x27, 0x34};
+const char kCowRelayerText[] = "0xC92E8bdf79f0507f65a392b0ab4667716BFE0110";
+
+EthereumSignTx usdcTx(const std::string& data_hex) {
+  EthereumSignTx msg = {};
+  const uint32_t path[5] = {0x8000002c, 0x8000003c, 0x80000000, 0, 0};
+  memcpy(msg.address_n, path, sizeof(path));
+  msg.address_n_count = 5;
+  msg.has_chain_id = true;
+  msg.chain_id = 1;
+  msg.has_type = true;
+  msg.type = 2;
+  msg.has_nonce = true;
+  msg.nonce.size = 1;
+  msg.nonce.bytes[0] = 0x07;
+  msg.has_gas_limit = true;
+  msg.gas_limit.size = 2;
+  msg.gas_limit.bytes[0] = 0xea;
+  msg.gas_limit.bytes[1] = 0x60;
+  const uint8_t max_fee[5] = {0x0d, 0x52, 0xbe, 0xf1, 0x38};
+  msg.has_max_fee_per_gas = true;
+  msg.max_fee_per_gas.size = sizeof(max_fee);
+  memcpy(msg.max_fee_per_gas.bytes, max_fee, sizeof(max_fee));
+  const uint8_t tip[4] = {0x3b, 0x9a, 0xca, 0x00};
+  msg.has_max_priority_fee_per_gas = true;
+  msg.max_priority_fee_per_gas.size = sizeof(tip);
+  memcpy(msg.max_priority_fee_per_gas.bytes, tip, sizeof(tip));
+  msg.has_to = true;
+  msg.to.size = 20;
+  memcpy(msg.to.bytes, kMainnetUsdc, 20);
+  const std::vector<uint8_t> data = ur_unhex(data_hex);
+  msg.has_data_length = msg.has_data_initial_chunk = true;
+  msg.data_length = (uint32_t)data.size();
+  msg.data_initial_chunk.size = (pb_size_t)data.size();
+  memcpy(msg.data_initial_chunk.bytes, data.data(), data.size());
+  return msg;
+}
+
+struct NamedRun {
+  std::vector<std::string> titles, bodies;
+  int code = 0;
+  std::string message;
+  std::string signature;  // hex(v r s), empty unless signed
+};
+
+/* Loads `record` (if any) as Desktop would, then signs, approving `yes`
+ * screens and declining the next. */
+NamedRun signWithRecord(const std::vector<uint8_t>* record,
+                        MetadataClassification want, EthereumSignTx msg,
+                        int yes) {
+  NamedRun run;
+  kk_test_board_init();
+  fsm_init();
+  fsm_test_clearLastFailure();
+  kkconfirm_drain();
+  signed_metadata_clear();
+  if (record) {
+    EXPECT_EQ(want, signed_metadata_process(record->data(), record->size(),
+                                            METADATA_KEYID_DELEGATE));
+  }
+  EXPECT_TRUE(kkconfirm_preload(yes, 1));
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  EXPECT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+  kkconfirm_capture_start();
+  ethereum_signing_init(&msg, &node, /*needs_confirm=*/true);
+  run.bodies = kkconfirm_capture_finish();
+  run.titles = kkconfirm_captured_titles();
+  run.code = (int)fsm_test_lastFailureCode();
+  run.message = fsm_test_lastFailureMessage();
+  if (run.code == 0) {
+    EthereumTxRequest response{};
+    if (kkconfirm_readResponse(MessageType_MessageType_EthereumTxRequest,
+                               EthereumTxRequest_fields, &response) &&
+        response.has_signature_r && response.has_signature_s) {
+      run.signature = std::to_string(response.signature_v) + ":" +
+                      hex_of(response.signature_r.bytes, 32) +
+                      hex_of(response.signature_s.bytes, 32);
+    }
+  }
+  kkconfirm_drain();
+  ethereum_signing_abort();
+  return run;
+}
+
+std::string joined(const NamedRun& run, const std::string& title_prefix) {
+  std::string out;
+  for (size_t i = 0; i < run.titles.size() && i < run.bodies.size(); i++)
+    if (run.titles[i].rfind(title_prefix, 0) == 0) out += run.bodies[i];
+  return out;
+}
+
+/* Removes the one "KeepKey ClearSign" screen from `run` and returns its body;
+ * `*at` is where it was. What is left must be the unnamed review. */
+std::string takeVouch(NamedRun* run, size_t* at) {
+  EXPECT_EQ(1, std::count(run->titles.begin(), run->titles.end(),
+                          "KeepKey ClearSign"))
+      << ::testing::PrintToString(run->titles);
+  auto it = std::find(run->titles.begin(), run->titles.end(),
+                      "KeepKey ClearSign");
+  if (it == run->titles.end()) {
+    *at = 0;
+    return "";
+  }
+  *at = (size_t)(it - run->titles.begin());
+  std::string body = run->bodies.at(*at);
+  run->titles.erase(it);
+  run->bodies.erase(run->bodies.begin() + *at);
+  return body;
+}
+
+std::string testDelegateFp8() {
+  char fp[METADATA_FINGERPRINT_LEN];
+  signed_metadata_pubkey_fingerprint(EXPECTED_SLOT3_PUB, fp);
+  return std::string(fp, 8);
+}
+
+/* A plain 1 ETH send to `to`, same session fees as usdcTx(). */
+EthereumSignTx ethSendTx(const uint8_t to[20]) {
+  EthereumSignTx msg = usdcTx("");
+  memcpy(msg.to.bytes, to, 20);
+  msg.has_data_length = msg.has_data_initial_chunk = false;
+  msg.data_length = 0;
+  msg.data_initial_chunk.size = 0;
+  const uint8_t one_eth[8] = {0x0d, 0xe0, 0xb6, 0xb3, 0xa7, 0x64, 0x00, 0x00};
+  msg.has_value = true;
+  msg.value.size = sizeof(one_eth);
+  memcpy(msg.value.bytes, one_eth, sizeof(one_eth));
+  return msg;
+}
+
+class ApproveNameTest : public CertifiedMetadataTest {
+ protected:
+  void SetUp() override {
+    CertifiedMetadataTest::SetUp();
+    set_advanced_mode_for_test(false);  // a native approve never needs it
+  }
+  std::vector<uint8_t> Record(uint32_t chain, const uint8_t addr[20],
+                              const std::string& name) {
+    return envelope(
+        mint_cert(chain, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+        sign_body(name_body(chain, addr, name, METADATA_KEYID_DELEGATE)));
+  }
+  // Every screen approved: the unnamed reference run.
+  NamedRun Unnamed(const EthereumSignTx& msg) {
+    return signWithRecord(nullptr, METADATA_VERIFIED, msg, 16);
+  }
+};
+
+}  // namespace
+
+/* The name gets a screen of its own right after the approve screen, which
+ * stays exactly the 7.16 one: the full spender address on one page. */
+TEST_F(ApproveNameTest, VerifiedNameForTheSpenderIsShownAfterIt) {
+  const EthereumSignTx msg = usdcTx(kCowApprove);
+  const auto record = Record(1, kCowRelayer, "CoW Protocol");
+  NamedRun named = signWithRecord(&record, METADATA_VERIFIED, msg, 16);
+  ASSERT_EQ(0, named.code) << named.message;
+  NamedRun plain = Unnamed(msg);
+  ASSERT_EQ(0, plain.code) << plain.message;
+
+  size_t at = 0;
+  EXPECT_EQ("Spender: CoW Protocol\nnamed by Test Delegate " +
+                testDelegateFp8() + "\ncertified by KeepKey",
+            takeVouch(&named, &at));
+  EXPECT_EQ(plain.titles, named.titles);
+  EXPECT_EQ(plain.bodies, named.bodies);
+  ASSERT_GT(at, 0u);
+  EXPECT_EQ("Approve", named.titles[at - 1]);
+  EXPECT_EQ(std::string("Approve withdrawal of up to 25000 USDC by ") +
+                kCowRelayerText + "?",
+            named.bodies[at - 1]);
+  ASSERT_FALSE(plain.signature.empty());
+  EXPECT_EQ(plain.signature, named.signature);
+}
+
+TEST_F(ApproveNameTest, NameForAnotherSpenderIsIgnored) {
+  const EthereumSignTx msg = usdcTx(kCowApprove);
+  const auto record = Record(1, kZxAllowanceHolder, "0x AllowanceHolder");
+  NamedRun other = signWithRecord(&record, METADATA_VERIFIED, msg, 16);
+  NamedRun plain = Unnamed(msg);
+  ASSERT_EQ(0, other.code) << other.message;
+  ASSERT_FALSE(other.signature.empty());
+  EXPECT_EQ(plain.titles, other.titles);
+  EXPECT_EQ(plain.bodies, other.bodies);
+  EXPECT_EQ(plain.signature, other.signature);
+}
+
+TEST_F(ApproveNameTest, NameForTheSpenderOnAnotherChainIsIgnored) {
+  const EthereumSignTx msg = usdcTx(kCowApprove);
+  // A verified Base name for the same relayer address.
+  const auto record = Record(8453, kCowRelayer, "CoW Protocol");
+  NamedRun other = signWithRecord(&record, METADATA_VERIFIED, msg, 16);
+  NamedRun plain = Unnamed(msg);
+  ASSERT_EQ(0, other.code) << other.message;
+  ASSERT_FALSE(other.signature.empty());
+  EXPECT_EQ(plain.titles, other.titles);
+  EXPECT_EQ(plain.bodies, other.bodies);
+  EXPECT_EQ(plain.signature, other.signature);
+}
+
+TEST_F(ApproveNameTest, MalformedNameRecordRefusesTheApprove) {
+  auto record = Record(1, kCowRelayer, "CoW Protocol");
+  record[record.size() - 10] ^= 1;  // inside the delegate's signature
+  NamedRun run = signWithRecord(&record, METADATA_MALFORMED,
+                                usdcTx(kCowApprove), 16);
+  EXPECT_EQ(FailureType_Failure_Other, run.code);
+  EXPECT_EQ("Certified description invalid or not for this tx", run.message);
+  EXPECT_TRUE(run.titles.empty()) << ::testing::PrintToString(run.titles);
+  EXPECT_TRUE(run.signature.empty());
+}
+
+/* Unlimited: the name follows the warning, and the approve screen after it
+ * does not repeat it. Both address screens are the 7.16 ones. */
+TEST_F(ApproveNameTest, UnlimitedWarningIsFollowedByTheName) {
+  std::string hex = kCowApprove;
+  hex.replace(hex.size() - 64, 64, std::string(64, 'f'));
+  const EthereumSignTx msg = usdcTx(hex);
+  const auto record = Record(1, kCowRelayer, "CoW Protocol");
+  NamedRun named = signWithRecord(&record, METADATA_VERIFIED, msg, 16);
+  ASSERT_EQ(0, named.code) << named.message;
+  NamedRun plain = Unnamed(msg);
+  ASSERT_EQ(0, plain.code) << plain.message;
+  size_t at = 0;
+  const std::string vouch = takeVouch(&named, &at);
+  EXPECT_EQ(0u, vouch.find("Spender: CoW Protocol\n")) << vouch;
+  EXPECT_EQ(1u, at);
+  EXPECT_EQ(plain.titles, named.titles);
+  EXPECT_EQ(plain.bodies, named.bodies);
+  ASSERT_FALSE(named.titles.empty());
+  EXPECT_EQ("UNLIMITED approval", named.titles[0]);
+  EXPECT_EQ(std::string("Allow ") + kCowRelayerText + " to spend ALL your USDC",
+            named.bodies[0]);
+  ASSERT_FALSE(named.signature.empty());
+  EXPECT_EQ(plain.signature, named.signature);
+
+  // increaseAllowance gets the same named warning; declining the name screen
+  // signs nothing.
+  EthereumSignTx inc = msg;
+  memcpy(inc.data_initial_chunk.bytes, "\x39\x50\x93\x51", 4);
+  NamedRun declined = signWithRecord(&record, METADATA_VERIFIED, inc, 1);
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, declined.code);
+  EXPECT_EQ((std::vector<std::string>{"UNLIMITED approval",
+                                      "KeepKey ClearSign"}),
+            declined.titles);
+  EXPECT_EQ(named.bodies[0], declined.bodies[0]);
+  EXPECT_EQ(vouch, declined.bodies[1]);
+  EXPECT_TRUE(declined.signature.empty());
+}
+
+/* The same record names an ERC-20 transfer's recipient. */
+TEST_F(ApproveNameTest, VerifiedNameForATransferRecipientIsShown) {
+  std::string hex = kCowApprove;
+  hex.replace(0, 8, "a9059cbb");
+  const EthereumSignTx msg = usdcTx(hex);
+  const auto record = Record(1, kCowRelayer, "CoW Protocol");
+  NamedRun named = signWithRecord(&record, METADATA_VERIFIED, msg, 16);
+  ASSERT_EQ(0, named.code) << named.message;
+  NamedRun plain = Unnamed(msg);
+  size_t at = 0;
+  EXPECT_EQ(0u, takeVouch(&named, &at).find("Recipient: CoW Protocol\n"));
+  EXPECT_EQ(plain.titles, named.titles);
+  EXPECT_EQ(plain.bodies, named.bodies);
+  ASSERT_GT(at, 0u);
+  EXPECT_EQ(std::string("Send 25000 USDC to ") + kCowRelayerText,
+            named.bodies[at - 1]);
+  ASSERT_FALSE(named.signature.empty());
+  EXPECT_EQ(plain.signature, named.signature);
+}
+
+/* A plain ETH send (no calldata) names its recipient the same way, and a
+ * record for another address leaves the send exactly as it was. */
+TEST_F(ApproveNameTest, VerifiedNameForANativeSendRecipientIsShown) {
+  const EthereumSignTx msg = ethSendTx(kCowRelayer);
+  const auto record = Record(1, kCowRelayer, "CoW Protocol");
+  NamedRun named = signWithRecord(&record, METADATA_VERIFIED, msg, 16);
+  ASSERT_EQ(0, named.code) << named.message;
+  NamedRun plain = Unnamed(msg);
+  ASSERT_EQ(0, plain.code) << plain.message;
+  size_t at = 0;
+  EXPECT_EQ("Recipient: CoW Protocol\nnamed by Test Delegate " +
+                testDelegateFp8() + "\ncertified by KeepKey",
+            takeVouch(&named, &at));
+  EXPECT_EQ(plain.titles, named.titles);
+  EXPECT_EQ(plain.bodies, named.bodies);
+  ASSERT_GT(at, 0u);
+  EXPECT_EQ("Send", named.titles[at - 1]);
+  EXPECT_EQ(std::string("Send 1 ETH to ") + kCowRelayerText,
+            named.bodies[at - 1]);
+  ASSERT_FALSE(plain.signature.empty());
+  EXPECT_EQ(plain.signature, named.signature);
+
+  const auto other_record =
+      Record(1, kZxAllowanceHolder, "0x AllowanceHolder");
+  NamedRun other = signWithRecord(&other_record, METADATA_VERIFIED, msg, 16);
+  ASSERT_EQ(0, other.code) << other.message;
+  EXPECT_EQ(plain.titles, other.titles);
+  EXPECT_EQ(plain.bodies, other.bodies);
+  EXPECT_EQ(plain.signature, other.signature);
+}
+
+/* Production name records: batch 2 of the 2026-10-16 ClearSign ceremony
+ * (signed-catalog-batch2.json), verified under the compiled-in production
+ * root. Uniswap's Universal Router on Ethereum, and another router address
+ * named on BNB Chain only. A 24-character name and the production alias
+ * still leave the approve screen whole and the name on one screen. */
+TEST_F(ApproveNameTest, ProductionNameRecordsNameOnlyTheirSpenderOnTheirChain) {
+  const std::vector<uint8_t> eth_ur = ur_unhex(
+      "030101000000016cb3ad994b6565704b657920436c6561725369676e00000000"
+      "000000000000000000000003bb5314410309cc4e56b8140565106714e4dbf33f"
+      "6d75e2c89b78e0e6cb1cd1655c9f942208d3b4812e1a9434993f65d9c05990cb"
+      "e379faade132d14987cbfaeb387f0dd3e015210934fe1103770b89272e64a653"
+      "97d5d22a3501aa089ea13000060000000166a9893cc07d91d95644aedd05d03f"
+      "95e1dba8af18556e697377617020556e6976657273616c20526f757465720100"
+      "00000080362cd9a3aa09724ff3758120fc36f96c207a28f4290d7f7415976b75"
+      "d090f87d758ad594ec569c63736cc94f4bd63af4d66edd778f6472cd8e8f28e8"
+      "860c52be01");
+  const std::vector<uint8_t> bsc_ur = ur_unhex(
+      "030101000000386cb3ad994b6565704b657920436c6561725369676e00000000"
+      "00000000000000000000000250edcaf4c63b0922bd1d3171a1bf3ee3fb2dec5d"
+      "c8c316c8a0706a079f5ab8021950a0c858d54f27668aff057711a484582d3c56"
+      "30fe7246d452ba85fd57a053554d4d22ca57aa97443541bb2dd1b70ace1e24dd"
+      "6d48120fc9704cd363883a170600000038ec8b0f7ffe3ae75d7ffab09429e367"
+      "5bb63503e418556e697377617020556e6976657273616c20526f757465720100"
+      "0000008097d9e9c94f5e03c18e328c25fee813a9a58b95a1d62bceb9c3289b12"
+      "e228d208448dc499cc9f5b7b19dc2eee58c0b2e399b6203654176350e742cbec"
+      "fc12949f00");
+  clearsign_root_set_test_root(nullptr);  // the compiled-in production root
+  std::string hex = kCowApprove;
+  hex.replace(32, 40, "66a9893cc07d91d95644aedd05d03f95e1dba8af");
+  NamedRun named = signWithRecord(&eth_ur, METADATA_VERIFIED, usdcTx(hex), 16);
+  ASSERT_EQ(0, named.code) << named.message;
+  NamedRun plain = Unnamed(usdcTx(hex));
+  size_t at = 0;
+  EXPECT_EQ("Spender: Uniswap Universal Router\nnamed by KeepKey ClearSign "
+            "FDD258EC\ncertified by KeepKey",
+            takeVouch(&named, &at));
+  EXPECT_EQ(plain.titles, named.titles);
+  EXPECT_EQ(plain.bodies, named.bodies);
+  ASSERT_GT(at, 0u);
+  EXPECT_EQ("Approve", named.titles[at - 1]);
+  EXPECT_EQ("Approve withdrawal of up to 25000 USDC by "
+            "0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af?",
+            named.bodies[at - 1]);
+  ASSERT_FALSE(named.signature.empty());
+  EXPECT_EQ(plain.signature, named.signature);
+
+  // The BNB Chain record names its address there, not on Ethereum.
+  hex.replace(32, 40, "ec8b0f7ffe3ae75d7ffab09429e3675bb63503e4");
+  NamedRun other =
+      signWithRecord(&bsc_ur, METADATA_VERIFIED, usdcTx(hex), 16);
+  plain = Unnamed(usdcTx(hex));
+  ASSERT_EQ(0, other.code) << other.message;
+  ASSERT_FALSE(other.signature.empty());
+  EXPECT_EQ(plain.titles, other.titles);
+  EXPECT_EQ(plain.bodies, other.bodies);
+  EXPECT_EQ(plain.signature, other.signature);
 }
