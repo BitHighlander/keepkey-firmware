@@ -4035,14 +4035,14 @@ TEST_F(CertifiedMetadataTest, UniswapV4OnEveryListedRouterIsReviewedOnItsChain) 
   EXPECT_EQ(done, want);
 }
 
-/* A real exact-output swap on Ethereum UR 1.2 (0x3407a3f2...: 0.9 ETH for
- * 3,007.5 USDT, of which a TRANSFER pays 7.5 USDT to the app's fee address
- * and a SWEEP delivers the rest): the fee is shown as that amount, and
- * "You receive" is what the SWEEP guarantees after it. */
+/* A real exact-output swap on Ethereum UR 1.2 (0x0b11139a...: 0.59 ETH for
+ * 1,503.75 USDT, of which a TRANSFER pays 3.75 USDT to the app's fee
+ * address and a SWEEP delivers the rest): the fee is shown as that amount,
+ * and "You receive" is what the SWEEP guarantees after it. */
 TEST_F(CertifiedMetadataTest, UniswapTransferFeeIsShownAsAnAmount) {
   const urr::Call* x = nullptr;
   for (const auto& c : urr::calls())
-    if (c.tx.rfind("0x3407a3f2", 0) == 0) x = &c;
+    if (c.tx.rfind("0x0b11139a", 0) == 0) x = &c;
   ASSERT_NE(x, nullptr);
   const std::vector<uint8_t> router = ur_unhex(x->router);
   const std::vector<uint8_t> data = ur_unhex(x->calldata);
@@ -4071,10 +4071,10 @@ TEST_F(CertifiedMetadataTest, UniswapTransferFeeIsShownAsAnAmount) {
       signed_metadata_get(), "Test Delegate", "A9531B9D", collect_shown,
       &got));
   const std::vector<std::pair<std::string, std::string>> want = {
-      {"Uniswap", "Swap at most 0.911978350461416632 ETH for 3000 USDT"},
-      {"Limits", "You spend at most\n0.911978350461416632 ETH"},
-      {"Limits", "You receive\n3000 USDT"},
-      {"Fee", "7.5 USDT to\n0x000000fee13a103A10D593b9AE06b3e05F2E7E1c"},
+      {"Uniswap", "Swap at most 0.591976099483018075 ETH for 1500 USDT"},
+      {"Limits", "You spend at most\n0.591976099483018075 ETH"},
+      {"Limits", "You receive\n1500 USDT"},
+      {"Fee", "3.75 USDT to\n0x000000fee13a103A10D593b9AE06b3e05F2E7E1c"},
       {"Contract", "execute\n0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD"},
       {"KeepKey ClearSign",
        "Described by Test Delegate A9531B9D\ncertified by KeepKey"},

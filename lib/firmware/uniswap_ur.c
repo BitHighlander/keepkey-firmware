@@ -845,6 +845,12 @@ static bool is_router(const uint8_t r[20], const uint8_t router[20]) {
          memcmp(r, router, 20) == 0;
 }
 
+/* The MSG_SENDER placeholder: the router pays the signer. A fee to it
+ * would read as paid to 0x..01; apps never charge the payer a fee. */
+static bool is_payer(const uint8_t r[20]) {
+  return ur_recipient_is_constant(r, UR_RECIPIENT_MSG_SENDER);
+}
+
 /* a += b, big-endian; false on overflow. */
 static bool add32(uint8_t a[32], const uint8_t b[32]) {
   unsigned carry = 0;
@@ -1094,7 +1100,7 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
       case UR_V4_TAKE_PORTION: {
         uint16_t bips;
         if (fee || !fee_bips(s->amount, &bips) ||
-            is_router(s->recipient, router)) {
+            is_router(s->recipient, router) || is_payer(s->recipient)) {
           return false;
         }
         fee = s;
@@ -1108,7 +1114,7 @@ bool ur_summarize(const UrPlan* plan, const uint8_t router[20],
          * holds, to someone else: the fee, shown as that amount. */
         if (fee || z.eth || memcmp(s->token_in, z.token, 20) != 0 ||
             is_zero(s->amount, 32) || is_balance_word(s->amount) ||
-            is_router(s->recipient, router)) {
+            is_router(s->recipient, router) || is_payer(s->recipient)) {
           return false;
         }
         fee = s;

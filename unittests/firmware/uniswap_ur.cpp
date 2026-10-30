@@ -286,6 +286,43 @@ TEST(UniswapUr, AppShapedSwapsSummarize) {
   EXPECT_GE(cleanups, 1u);
 }
 
+/* A portion fee (PAY_PORTION, V4 TAKE_PORTION) to the MSG_SENDER
+ * placeholder goes back to the signer, but the Fee screen would show
+ * 0x..01: refused, not misdescribed. */
+TEST(UniswapUr, PortionFeeToThePayerIsRefused) {
+  std::vector<std::vector<uint8_t>> cds, routers, values;
+  for (const auto& v : urv::accepted()) {
+    cds.push_back(unhex(v.calldata));
+    routers.push_back(unhex(v.router));
+    values.push_back(unhex(v.value));
+  }
+  for (const auto& c : urs::calls()) {
+    cds.push_back(c.calldata);
+    routers.push_back(base_router());
+    values.push_back(c.value);
+  }
+  size_t pay = 0, take = 0;
+  for (size_t k = 0; k < cds.size(); k++) {
+    UrPlan plan;
+    UrSummary s;
+    const uint8_t *r = routers[k].data(), *value = values[k].data();
+    if (!ur_decode(cds[k].data(), cds[k].size(), r, &plan) ||
+        !ur_summarize(&plan, r, value, &s) || !s.has_fee)
+      continue;
+    for (size_t i = 0; i < plan.n; i++) {
+      const UrKind kind = plan.steps[i].kind;
+      if (kind != UR_PAY_PORTION && kind != UR_V4_TAKE_PORTION) continue;
+      UrPlan m = plan;
+      memset(m.steps[i].recipient, 0, 20);
+      m.steps[i].recipient[19] = UR_RECIPIENT_MSG_SENDER;
+      EXPECT_FALSE(ur_summarize(&m, r, value, &s)) << k;
+      (kind == UR_PAY_PORTION ? pay : take)++;
+    }
+  }
+  EXPECT_GE(pay, 1u);
+  EXPECT_GE(take, 1u);
+}
+
 /* The clean-up step returns ETH only to the recipient the review names. */
 TEST(UniswapUr, CleanupGoesOnlyToTheShownRecipient) {
   const urv::Vec* v = nullptr;
@@ -1315,15 +1352,20 @@ TEST(UniswapUrV4Routers, UnlistedRouterDoesNotDecodeV4) {
   EXPECT_TRUE(ur_decode(cd.data(), cd.size(), other.data(), &plan));
 }
 
-/* ---- One wallet's own calls (uniswap_ur_realworld.h) ----
- * Every Universal Router call in a real history (the 2026-10-16 replay),
- * reverted ones included. UniswapUrModel checks each, in every chunking,
- * against the Python model (rw lines). Every call that succeeded on-chain
- * is reviewed; the only refusals are calls that could not do what they
- * say, and reverted. */
-TEST(UniswapUrRealWorld, EverySuccessfulCallIsReviewed) {
+/* ---- Other wallets' public calls (uniswap_ur_realworld.h) ----
+ * Calls in the command shapes the Uniswap app sends, reverted ones
+ * included. UniswapUrModel checks each, in every chunking, against the
+ * Python model (rw lines). */
+
+#if __has_include("uniswap_ur_local.h")
+/* Opt-in, local only: a private wallet history in uniswap_ur_local.h
+ * (gitignored; gen_ur_vectors.py local FILE). Every call that succeeded
+ * on-chain is reviewed; the only refusals are calls that could not do what
+ * they say, and reverted. */
+#include "uniswap_ur_local.h"
+TEST(UniswapUrLocal, EverySuccessfulCallIsReviewed) {
   size_t reviewed = 0, succeeded = 0, permit_misses = 0, wrap_unpaid = 0;
-  for (const auto& c : urr::calls()) {
+  for (const auto& c : url::calls()) {
     std::vector<uint8_t> cd = unhex(c.calldata), r = unhex(c.router),
                          value = unhex(c.value);
     UrPlan plan;
@@ -1351,19 +1393,17 @@ TEST(UniswapUrRealWorld, EverySuccessfulCallIsReviewed) {
       ADD_FAILURE() << "refused for another reason: " << c.tx;
     }
   }
-  printf("real world: %zu calls, %zu succeeded, %zu reviewed; refused: %zu "
-         "permits that miss the swap, %zu wraps of unsent ETH\n",
-         urr::calls().size(), succeeded, reviewed, permit_misses, wrap_unpaid);
-  EXPECT_EQ(permit_misses, 7u);
-  EXPECT_EQ(wrap_unpaid, 4u);
-  EXPECT_GE(succeeded, 80u);
+  printf("local history: %zu calls, %zu succeeded, %zu reviewed; refused: "
+         "%zu permits that miss the swap, %zu wraps of unsent ETH\n",
+         url::calls().size(), succeeded, reviewed, permit_misses, wrap_unpaid);
 }
+#endif
 
 /* The app's fee on an exact-output swap: a TRANSFER of a fixed amount of
  * the output token, then the SWEEP that delivers the rest, then leftover
- * ETH back (real Ethereum calls, ETH -> USDT / USDC). The review states
- * the fee as that amount, and "You receive" is the SWEEP's minimum, after
- * the fee, not the swap's output. */
+ * ETH back (real Ethereum and Optimism calls, ETH -> token). The review
+ * states the fee as that amount, and "You receive" is the SWEEP's minimum,
+ * after the fee, not the swap's output. */
 TEST(UniswapUr, ExactOutputTransferFeeIsReviewed) {
   size_t n = 0;
   for (const auto& c : urr::calls()) {
@@ -1371,8 +1411,9 @@ TEST(UniswapUr, ExactOutputTransferFeeIsReviewed) {
                          value = unhex(c.value);
     UrPlan plan;
     UrSummary s;
-    ASSERT_TRUE(ur_decode(cd.data(), cd.size(), r.data(), &plan)) << c.tx;
-    if (plan.n != 5 || plan.steps[2].kind != UR_TRANSFER) continue;
+    if (!ur_decode(cd.data(), cd.size(), r.data(), &plan) || plan.n != 5 ||
+        plan.steps[2].kind != UR_TRANSFER)
+      continue;
     ASSERT_EQ(plan.steps[0].kind, UR_WRAP_ETH);
     ASSERT_EQ(plan.steps[1].kind, UR_V3_SWAP_EXACT_OUT);
     ASSERT_EQ(plan.steps[3].kind, UR_SWEEP);
@@ -1387,7 +1428,7 @@ TEST(UniswapUr, ExactOutputTransferFeeIsReviewed) {
     EXPECT_EQ(hex(s.token_out, 20), hex(swap.token_out, 20));
     EXPECT_EQ(hex(s.amount_out, 32), hex(sweep.amount, 32));
     EXPECT_NE(hex(s.amount_out, 32), hex(swap.amount, 32));
-    EXPECT_TRUE(s.recipient_is_sender);
+    EXPECT_EQ(hex(s.recipient, 20), hex(sweep.recipient, 20));
     EXPECT_TRUE(s.has_fee);
     EXPECT_EQ(s.fee_bips, 0);
     EXPECT_EQ(hex(s.fee_amount, 32), hex(fee.amount, 32));
@@ -1412,6 +1453,10 @@ TEST(UniswapUr, ExactOutputTransferFeeIsReviewed) {
     EXPECT_FALSE(ur_summarize(&m, r.data(), value.data(), &s)) << c.tx;
     memcpy(m.steps[2].recipient, r.data(), 20);
     EXPECT_FALSE(ur_summarize(&m, r.data(), value.data(), &s)) << c.tx;
+    m = plan;  // to the payer: the screen would read "to 0x..01"
+    memset(m.steps[2].recipient, 0, 20);
+    m.steps[2].recipient[19] = UR_RECIPIENT_MSG_SENDER;
+    EXPECT_FALSE(ur_summarize(&m, r.data(), value.data(), &s)) << c.tx;
     m = plan;  // a second fee
     m.steps[5] = m.steps[3];
     m.steps[3] = fee;
@@ -1428,7 +1473,7 @@ TEST(UniswapUr, ExactOutputTransferFeeIsReviewed) {
     EXPECT_FALSE(ur_summarize(&m, r.data(), value.data(), &s)) << c.tx;
     n++;
   }
-  EXPECT_EQ(n, 4u);
+  EXPECT_EQ(n, 6u);
 }
 
 namespace {
@@ -1468,23 +1513,23 @@ TEST(UniswapUr, StepLimitIsExact) {
   EXPECT_EQ(plan.n, 0);
 }
 
-/* A real Base UR 2.0 call of seven commands: permit, then two legs of a
- * V4 swap into the router and a V3 swap of all it holds, an unwrap to the
- * user and a clean-up sweep of leftover ETH. */
-TEST(UniswapUrV4Routers, SevenCommandSplitIsReviewed) {
-  const urx::Call* x = nullptr;
-  for (const auto& c : urx::calls())
-    if (c.tx.rfind("0x5e01baf0", 0) == 0) x = &c;
+/* A real Base call of seven commands (D-021 sample, 0xdb7e9fc6...): a wrap,
+ * three legs into one token (one V3, two V3 into USDC and on through V4),
+ * and the sweep that delivers it. */
+TEST(UniswapUr, SevenCommandSplitIsReviewed) {
+  const urs::Call* x = nullptr;
+  for (const auto& c : urs::calls())
+    if (c.tx.rfind("0xdb7e9fc6", 0) == 0) x = &c;
   ASSERT_NE(x, nullptr);
-  std::vector<uint8_t> cd = unhex(x->calldata), r = unhex(x->router),
-                       value = unhex(x->value);
+  const std::vector<uint8_t>& r = base_router();
   UrPlan plan;
   UrSummary s;
-  ASSERT_TRUE(ur_decode(cd.data(), cd.size(), r.data(), &plan));
+  ASSERT_TRUE(ur_decode(x->calldata.data(), x->calldata.size(), r.data(),
+                        &plan));
   EXPECT_EQ(plan.n, 7);
-  ASSERT_TRUE(ur_summarize(&plan, r.data(), value.data(), &s));
+  ASSERT_TRUE(ur_summarize(&plan, r.data(), x->value.data(), &s));
   EXPECT_TRUE(s.exact_in);
-  EXPECT_TRUE(s.out_is_eth);
-  EXPECT_TRUE(s.has_permit);
-  EXPECT_EQ(hex(s.amount_out, 32), hex(plan.steps[5].amount, 32));
+  EXPECT_TRUE(s.in_is_eth);
+  EXPECT_FALSE(s.out_is_eth);
+  EXPECT_EQ(hex(s.amount_out, 32), hex(plan.steps[6].amount, 32));
 }
