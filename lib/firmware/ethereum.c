@@ -944,6 +944,28 @@ static bool ethereum_warnUnlimitedOrAbort(const EthereumSignTx* msg) {
   return false;
 }
 
+/* Once, right after the first screen that showed the full address: its
+ * vouched name and who vouched for it. The address screens stay as in 7.16,
+ * so a name can never push part of the address onto another page. */
+_Static_assert(sizeof("Recipient: \nnamed by \ncertified by KeepKey") +
+                       METADATA_NAME_MAX + METADATA_NAME_BY_LEN - 1 <=
+                   BODY_CHAR_MAX,
+               "A vouched name and who vouched for it must fit one body");
+static bool ethereum_vouchedOrAbort(bool* due, bool spender, const char* name,
+                                    const char* by) {
+  if (!*due) return true;
+  *due = false;
+  if (confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+              "KeepKey ClearSign", "%s: %s\nnamed by %s\ncertified by KeepKey",
+              spender ? "Spender" : "Recipient", name, by)) {
+    return true;
+  }
+  fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                  "Signing cancelled by user");
+  ethereum_signing_abort();
+  return false;
+}
+
 void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
                            bool needs_confirm) {
   char confirm_body_message[ETHEREUM_CONFIRM_BODY_SIZE] = {0};
@@ -1101,6 +1123,30 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     return;
   }
 
+  /* 7.17: a KeepKey-certified 0x06 name for exactly this approval's spender,
+   * or this transfer's recipient, on this chain is shown on one screen of its
+   * own after the first screen with the full address. It changes nothing that
+   * is signed; anything else reads as before. */
+  char party_name[METADATA_NAME_MAX + 1] = "";
+  char named_by[METADATA_NAME_BY_LEN] = "";
+  const uint8_t* party = NULL;
+  if (wanchain_tx_type == 0 && msg->to.size == 20 &&
+      erc7730_workflow_state()->phase == ERC7730_WORKFLOW_IDLE) {
+    if (data_total == 0) {
+      party = msg->to.bytes;
+    } else if (msg->data_initial_chunk.size >= 68 &&
+               (ethereum_isAllowanceSelector(msg->data_initial_chunk.bytes,
+                                             4) ||
+                ethereum_isStandardERC20Transfer(msg))) {
+      party = msg->data_initial_chunk.bytes + 16;
+    }
+  }
+  if (!party ||
+      !signed_metadata_name_for(chain_id, party, party_name, named_by)) {
+    party = NULL;
+  }
+  bool vouch_due = party != NULL;
+
   // Keep the selector and both ABI words available to the allowance policy.
   // Otherwise a host could split an approval prefix across streamed chunks.
   // A certified ERC-7730 review streams them instead: it ran this policy on
@@ -1139,7 +1185,11 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     if (ethereum_allowanceIsUnlimited(msg)) {
       unlimited_deferred =
           signed_metadata_certified_states_allowance(msg, chain_id);
-      if (!unlimited_deferred && !ethereum_warnUnlimitedOrAbort(msg)) return;
+      if (!unlimited_deferred &&
+          (!ethereum_warnUnlimitedOrAbort(msg) ||
+           !ethereum_vouchedOrAbort(&vouch_due, true, party_name, named_by))) {
+        return;
+      }
     }
   }
 
@@ -1311,6 +1361,11 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
         ethereum_signing_abort();
         return;
       }
+    }
+    if (party && party == recipient &&
+        !ethereum_vouchedOrAbort(&vouch_due, is_approve, party_name,
+                                 named_by)) {
+      return;
     }
   }
   /* A proof labels exactly one signing request. */

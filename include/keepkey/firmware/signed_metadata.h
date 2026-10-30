@@ -205,6 +205,14 @@ typedef struct {
  * all metadata, so a record can only ever serve the one request that follows
  * it. */
 void signed_metadata_take_name(MetadataNameRecord* out);
+/* "<certificate alias> <fp8>" */
+#define METADATA_NAME_BY_LEN (METADATA_ALIAS_MAX_LEN + 1 + 1 + 8 + 1)
+/* 7.17, SignTx: copies the vouched name (and who vouched) only when the
+ * loaded record is a KeepKey-certified 0x06 name for exactly `address` on
+ * `chain_id`. Copies only; SignTx clears the record as before. */
+bool signed_metadata_name_for(uint32_t chain_id, const uint8_t address[20],
+                              char name[METADATA_NAME_MAX + 1],
+                              char by[METADATA_NAME_BY_LEN]);
 /* The record's identity for `token` on `chain_id`, or NULL: a record scoped
  * to another chain, or naming other tokens, names nothing here. */
 const MetadataToken* signed_metadata_record_token(const MetadataNameRecord* r,

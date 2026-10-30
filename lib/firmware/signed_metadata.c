@@ -1385,6 +1385,22 @@ void signed_metadata_take_name(MetadataNameRecord* out) {
   signed_metadata_clear();
 }
 
+bool signed_metadata_name_for(uint32_t chain_id, const uint8_t address[20],
+                              char name[METADATA_NAME_MAX + 1],
+                              char by[METADATA_NAME_BY_LEN]) {
+  name[0] = by[0] = '\0';
+  if (!metadata_available || metadata_tier != METADATA_TIER_KEEPKEY ||
+      stored_metadata.version != METADATA_VERSION_NAME ||
+      stored_metadata.classification != METADATA_VERIFIED ||
+      stored_metadata.chain_id != chain_id ||
+      memcmp(stored_metadata.contract_address, address, 20) != 0) {
+    return false;
+  }
+  strlcpy(name, stored_metadata.vouched_name, METADATA_NAME_MAX + 1);
+  snprintf(by, METADATA_NAME_BY_LEN, "%s %.8s", delegate_alias, delegate_fp);
+  return true;
+}
+
 const MetadataToken* signed_metadata_record_token(const MetadataNameRecord* r,
                                                   uint64_t chain_id,
                                                   const uint8_t token[20]) {
