@@ -220,7 +220,7 @@
   },
   {
    "_source": "POST https://api.trongrid.io/wallet/gettransactionbyid {\"value\": \"1812f01ce9100bcfa010b5cb83f0706539731dd23fd51a7a3e0d3091e0cc60c1\"}",
-   "name": "unknown_token_approve",
+   "name": "unlisted_contract_approve",
    "raw_data": {
     "contract": [
      {
@@ -251,7 +251,7 @@
   },
   {
    "_source": "POST https://api.trongrid.io/wallet/gettransactionbyid {\"value\": \"5900e81ab64f5207db9af54b06deecc78d48ef1cefb14a688ca90dd0d1667f72\"}",
-   "name": "unknown_token_approve_unlimited",
+   "name": "unlisted_contract_approve_unlimited",
    "raw_data": {
     "contract": [
      {

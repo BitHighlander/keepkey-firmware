@@ -34,3 +34,11 @@ docs/release/audit-units/715-09-reconciliation-20260927.json:generic-api-key:138
 docs/release/audit-units/715-12-first-checks-20260927.json:generic-api-key:37
 docs/release/audit-units/715-12-resume-evidence-20260927.json:generic-api-key:7
 docs/release/audit-units/715-12-resume-evidence-20260927.json:generic-api-key:11
+
+# feat/717-tron first commit: public TRON mainnet transaction IDs and raw
+# transaction bytes in test vectors, flagged because the vector names held
+# the word "token". Renamed in the next commit. Not credentials.
+240271f2c205e4f510b3a0a8687c860e032ef543:scripts/tron_vectors.py:generic-api-key:35
+240271f2c205e4f510b3a0a8687c860e032ef543:scripts/tron_vectors.py:generic-api-key:36
+240271f2c205e4f510b3a0a8687c860e032ef543:unittests/firmware/tron_vectors.h:generic-api-key:26
+240271f2c205e4f510b3a0a8687c860e032ef543:unittests/firmware/tron_vectors.h:generic-api-key:27
