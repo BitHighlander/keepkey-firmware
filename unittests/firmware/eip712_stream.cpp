@@ -15,6 +15,7 @@ extern "C" {
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <deque>
 #include <map>
 #include <set>
 #include <string>
@@ -3431,6 +3432,689 @@ TEST(Eip712Stream, DecliningADelegatecallWarningSignsNothing) {
     EXPECT_EQ(r.titles.back(), title);
     EXPECT_EQ(eip712_stream_waiting(), EIP712_IDLE);
   }
+}
+
+// ── Safe's own delegatecall targets, chain by chain ─────────────────
+// safe-global/safe-deployments 685f22be940739259cfc4148db3df7048f39a4e8,
+// src/assets/v1.x.x/<name>.json: each address variant and the chains, among
+// the EVM chains KeepKey supports (and zkSync Era), whose networkAddresses
+// list it. Elsewhere the address is not Safe's, and a delegatecall to it
+// keeps the full-authority warning.
+namespace {
+
+const std::vector<uint32_t> kSafeChains = {1,   10,   56,   100,   137,  143,
+                                           324, 4663, 8453, 42161, 43114};
+const std::vector<uint32_t> kEveryChain = kSafeChains;
+const std::vector<uint32_t> kZkSync = {324};
+
+struct SafeDeployment {
+  const char* address;
+  const char* what;
+  std::vector<uint32_t> chains;
+};
+
+const std::vector<SafeDeployment> kSafeMultiSendDeployments = {
+    {"8D29bE29923b68abfDD21e541b9374737B49cdAD", "1.1.1 MultiSend", {1, 100}},
+    {"A238CBeb142c10Ef7Ad8442C6D1f9E89e07e7761", "1.3.0 MultiSend",
+     kEveryChain},
+    {"998739BFdAAdde7C933B942a68053933098f9EDa", "1.3.0 MultiSend eip155",
+     kEveryChain},
+    {"0dFcccB95225ffB03c6FBB2559B530C2B7C8A912", "1.3.0 MultiSend zksync",
+     kZkSync},
+    {"40A2aCCbd92BCA938b02010E17A5b8929b49130D", "1.3.0 MultiSendCallOnly",
+     kEveryChain},
+    {"A1dabEF33b3B82c7814B6D82A79e50F4AC44102B",
+     "1.3.0 MultiSendCallOnly eip155", kEveryChain},
+    {"f220D3b4DFb23C4ade8C88E526C1353AbAcbC38F",
+     "1.3.0 MultiSendCallOnly zksync", kZkSync},
+    {"38869bf66a61cF6bDB996A6aE40D5853Fd43B526", "1.4.1 MultiSend",
+     kEveryChain},
+    {"309D0B190FeCCa8e1D5D8309a16F7e3CB133E885", "1.4.1 MultiSend zksync",
+     kZkSync},
+    {"9641d764fc13c8B624c04430C7356C1C7C8102e2", "1.4.1 MultiSendCallOnly",
+     kEveryChain},
+    {"0408EF011960d02349d50286D20531229BCef773",
+     "1.4.1 MultiSendCallOnly zksync", kZkSync},
+    {"218543288004CD07832472D464648173c77D7eB7", "1.5.0 MultiSend",
+     kEveryChain},
+    {"A83c336B20401Af773B6219BA5027174338D1836", "1.5.0 MultiSendCallOnly",
+     kEveryChain},
+};
+
+const std::vector<SafeDeployment> kSignMessageLibs = {
+    {"A65387F16B013cf2Af4605Ad8aA5ec25a2cbA3a2", "1.3.0", kEveryChain},
+    {"98FFBBF51bb33A056B08ddf711f289936AafF717", "1.3.0 eip155", kEveryChain},
+    {"357147caf9C0cCa67DfA0CF5369318d8193c8407", "1.3.0 zksync", kZkSync},
+    {"d53cd0aB83D845Ac265BE939c57F53AD838012c9", "1.4.1", kEveryChain},
+    {"Aca1ec0a1A575CDCCF1DC3d5d296202Eb6061888", "1.4.1 zksync", kZkSync},
+    {"4FfeF8222648872B3dE295Ba1e49110E61f5b5aa", "1.5.0", kEveryChain},
+};
+
+const std::vector<SafeDeployment> kSafeMigrations = {
+    {"526643F69b81B008F46d95CD5ced5eC0edFFDaC6", "1.4.1", kEveryChain},
+    {"817756C6c555A94BCEE39eB5a102AbC1678b09A7", "1.4.1 zksync", kZkSync},
+    {"6439e7ABD8Bb915A5263094784C5CF561c4172AC", "1.5.0", kEveryChain},
+};
+
+const std::vector<SafeDeployment> kSafeToL2Setups = {
+    {"BD89A1CE4DDe368FFAB0eC35506eEcE0b1fFdc54", "1.4.1", kEveryChain},
+    {"199A9df0224031c20Cc27083A4164c9c8F1Bcb39", "1.4.1 zksync", kZkSync},
+    {"900C7589200010D6C6eCaaE5B06EBe653bc2D82a", "1.5.0", kEveryChain},
+};
+
+const std::vector<SafeDeployment> kSafeToL2Migrations = {
+    {"fF83F6335d8930cBad1c0D439A841f01888D9f69", "1.4.1", kEveryChain},
+    {"a26620d1f8f1a2433F0D25027F141aaCAFB3E590", "1.4.1 zksync", kZkSync},
+};
+
+const std::vector<SafeDeployment> kSafeL2Singletons = {
+    {"3E5c63644E683549055b9Be8653de26E0B4CD36E", "1.3.0", kEveryChain},
+    {"fb1bffC9d739B8D520DaF37dF666da4C687191EA", "1.3.0 eip155", kEveryChain},
+    {"1727c2c531cf966f902E5927b98490fDFb3b2b70", "1.3.0 zksync", kZkSync},
+    {"29fcB43b46531BcA003ddC8FCB67FFE91900C762", "1.4.1", kEveryChain},
+    {"610fcA2e0279Fa1F8C00c8c2F71dF522AD469380", "1.4.1 zksync", kZkSync},
+    {"Edd160fEBBD92E350D4D398fb636302fccd67C7e", "1.5.0", kEveryChain},
+};
+
+const std::vector<SafeDeployment> kSafeFallbackHandlers = {
+    {"f48f2B2d2a534e402487b3ee7C18c33Aec0Fe5e4", "1.3.0", kEveryChain},
+    {"017062a1dE2FE6b99BE3d9d37841FeD19F573804", "1.3.0 eip155", kEveryChain},
+    {"2f870a80647BbC554F3a0EBD093f11B4d2a7492A", "1.3.0 zksync", kZkSync},
+    {"fd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99", "1.4.1", kEveryChain},
+    {"9301E98DD367135f21bdF66f342A249c9D5F9069", "1.4.1 zksync", kZkSync},
+};
+
+// The 1.4.1 Safe singleton (not SafeL2): Safe's, but not an L2 singleton.
+const char* const kSafe141 = "41675C099F32341bf84BFc5382aF534df5C7461a";
+
+bool deployedOn(const SafeDeployment& d, uint32_t chain) {
+  return std::find(d.chains.begin(), d.chains.end(), chain) != d.chains.end();
+}
+
+// selector, then each 20-byte address as a word.
+Bytes abiCall(const char* selector, std::vector<const char*> addresses) {
+  Bytes b = fromHex(selector);
+  for (const char* a : addresses) {
+    append(&b, Bytes(12, 0));
+    append(&b, fromHex(a));
+  }
+  return b;
+}
+
+// signMessage(bytes) of a 32-byte message, as Safe{Wallet} sends it.
+Bytes signMessageCall() {
+  Bytes b = fromHex("85a5affe");
+  append(&b, be32(0x20));
+  append(&b, be32(32));
+  for (int i = 0; i < 32; i++) b.push_back((uint8_t)(0xa0 + i));
+  return b;
+}
+
+const char* const kMigrationText =
+    "moves your Safe to Safe's standard contracts, with Safe's "
+    "SafeMigration.";
+const char* const kToL2SetupText =
+    "moves your Safe to Safe's SafeL2, with Safe's SafeToL2Setup.";
+const char* const kToL2MigrationText =
+    "moves your Safe to Safe's SafeL2, with Safe's SafeToL2Migration.";
+
+std::string squeezed(std::string s) {
+  s.erase(std::remove_if(s.begin(), s.end(),
+                         [](unsigned char c) { return std::isspace(c); }),
+          s.end());
+  return s;
+}
+
+// Every screen titled `title`, its pages ("title 1/2", ...) joined, spaces
+// dropped (the pager drops one at a page break).
+std::vector<std::string> screensTitled(const std::vector<std::string>& titles,
+                                       const std::vector<std::string>& bodies,
+                                       const std::string& title) {
+  std::vector<std::string> out;
+  for (size_t i = 0; i < titles.size(); i++) {
+    const std::string& t = titles[i];
+    if (t == title || t.rfind(title + " 1/", 0) == 0)
+      out.push_back(squeezed(bodies[i]));
+    else if (t.rfind(title + " ", 0) == 0 && t.size() > title.size() + 1 &&
+             std::isdigit(static_cast<unsigned char>(t[title.size() + 1])) &&
+             !out.empty())
+      out.back() += squeezed(bodies[i]);
+  }
+  return out;
+}
+
+std::vector<std::string> squeezedAll(std::vector<std::string> v) {
+  for (std::string& s : v) s = squeezed(s);
+  return v;
+}
+
+}  // namespace
+
+// A clean batch to every pinned MultiSend reads calm on each chain its
+// deployment is listed for, and warns on every other chain.
+TEST(Eip712Stream, SafeTxMultiSendExemptOnEveryChainItIsDeployedOn) {
+  Bytes clean = packedCall(kDai, approveCall(0, 0x01));
+  append(&clean, packedCall(kUsdc, swapCall(100)));
+  const Bytes data = multiSendCall(clean);
+  size_t exempt = 0, warned = 0;
+  for (const SafeDeployment& d : kSafeMultiSendDeployments) {
+    for (uint32_t chain : kSafeChains) {
+      SCOPED_TRACE(d.what);
+      SCOPED_TRACE(chain);
+      const MsRun r =
+          signMultiSend(data, 400, 1, false, d.address, TO_FIRST, chain);
+      ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+      EXPECT_TRUE(r.unchecked.empty());
+      EXPECT_TRUE(
+          screensTitled(r.titles, r.bodies, "Delegatecall in batch").empty());
+      if (deployedOn(d, chain)) {
+        exempt++;
+        EXPECT_TRUE(r.safe_delegated.empty());
+      } else {
+        warned++;
+        ASSERT_EQ(r.safe_delegated.size(), 1u);
+        EXPECT_EQ(screensTitled(r.titles, r.bodies, "Delegatecall"),
+                  std::vector<std::string>{
+                      squeezed(delegateText("SafeTx", d.address))});
+      }
+    }
+  }
+  // 8 deployments on all 11 chains, 4 zkSync-only, 1.1.1 on Ethereum and
+  // Gnosis.
+  EXPECT_EQ(exempt, 8u * 11 + 4 + 2);
+  EXPECT_EQ(warned, kSafeMultiSendDeployments.size() * 11 - exempt);
+}
+
+// On Base, the owner's main chain: an address that is not one of Safe's
+// MultiSends warns whatever the batch, and declining that warning signs
+// nothing.
+TEST(Eip712Stream, SafeTxDelegatecallToANonPinnedAddressOnBaseWarns) {
+  const Bytes harmless = multiSendCall(packedCall(kUsdc, swapCall(100)));
+  // An attacker's contract, and a zkSync-only MultiSend address, not Safe's
+  // on Base.
+  for (const char* to :
+       {kAttacker, "0dFcccB95225ffB03c6FBB2559B530C2B7C8A912"}) {
+    for (const Bytes& data : {multiSendCall(Bytes{}), harmless}) {
+      for (bool operation_first : {false, true}) {
+        for (ToPlace place : {TO_FIRST, TO_LAST}) {
+          SCOPED_TRACE(to);
+          SCOPED_TRACE(data.size());
+          SCOPED_TRACE(operation_first);
+          SCOPED_TRACE(place);
+          const MsRun r =
+              signMultiSend(data, 400, 1, operation_first, to, place, 8453);
+          ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+          ASSERT_EQ(r.safe_delegated.size(), 1u);
+          EXPECT_EQ(
+              screensTitled(r.titles, r.bodies, "Delegatecall"),
+              std::vector<std::string>{squeezed(delegateText("SafeTx", to))});
+          const MsRun declined =
+              signMultiSend(data, (int)r.safe_delegated[0], 1, operation_first,
+                            to, place, 8453);
+          EXPECT_EQ(declined.kind, EIP712_REQ_CANCELLED);
+          EXPECT_EQ(declined.titles.size(), r.safe_delegated[0] + 1);
+          EXPECT_EQ(eip712_stream_waiting(), EIP712_IDLE);
+        }
+      }
+    }
+  }
+}
+
+// SafeMigration takes no address from its data: a delegatecall to it says
+// what it does, on each chain it is listed for, in any member order.
+// Anywhere else, the full-authority warning.
+TEST(Eip712Stream, SafeTxSafeLibrariesSayWhatTheyDo) {
+  struct Lib {
+    const std::vector<SafeDeployment>* deployments;
+    Bytes data;
+    const char* title;
+    const char* text;
+  };
+  const std::vector<Lib> libs = {
+      {&kSafeMigrations, fromHex("07f464a4"), "Safe upgrade", kMigrationText},
+      {&kSafeMigrations, fromHex("68cb3d94"), "Safe upgrade", kMigrationText},
+  };
+  for (const Lib& lib : libs) {
+    for (const SafeDeployment& d : *lib.deployments) {
+      for (uint32_t chain : kSafeChains) {
+        // Member order is covered on Base; one order elsewhere.
+        for (bool operation_first : {false, true}) {
+          for (ToPlace place : {TO_FIRST, TO_LAST}) {
+            if (chain != 8453 && (operation_first || place != TO_FIRST))
+              continue;
+            SCOPED_TRACE(d.address);
+            SCOPED_TRACE(chain);
+            SCOPED_TRACE(operation_first);
+            SCOPED_TRACE(place);
+            const MsRun r = signMultiSend(lib.data, 400, 1, operation_first,
+                                          d.address, place, chain);
+            ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+            const std::vector<std::string> said =
+                screensTitled(r.titles, r.bodies, lib.title);
+            if (deployedOn(d, chain)) {
+              EXPECT_TRUE(r.safe_delegated.empty());
+              ASSERT_EQ(said.size(), 1u);
+              EXPECT_EQ(said[0], squeezed(std::string("SafeTx ") + lib.text));
+            } else {
+              EXPECT_TRUE(said.empty());
+              ASSERT_EQ(r.safe_delegated.size(), 1u);
+            }
+          }
+        }
+      }
+      // A plain call (operation 0) runs nothing as the Safe: no screen.
+      const MsRun call = signMultiSend(lib.data, 400, 0, false, d.address,
+                                       TO_FIRST, d.chains[0]);
+      EXPECT_TRUE(screensTitled(call.titles, call.bodies, lib.title).empty());
+      EXPECT_TRUE(call.safe_delegated.empty());
+    }
+  }
+}
+
+// SafeToL2Setup and SafeToL2Migration set the Safe's singleton (and
+// fallback handler) from their data: only that exact call, naming Safe's
+// own SafeL2 (and handler) on this chain, reads calm.
+TEST(Eip712Stream, SafeTxL2MigrationNeedsSafesOwnArguments) {
+  const char* base_l2 = kSafeL2Singletons[3].address;  // 1.4.1 SafeL2
+  const char* base_handler = kSafeFallbackHandlers[3].address;
+  Bytes dirty = abiCall("ef2624ae", {base_l2});
+  dirty[4] = 0x01;
+  Bytes longer = abiCall("ef2624ae", {base_l2});
+  longer.push_back(0);
+  struct Case {
+    const char* what;
+    const std::vector<SafeDeployment>* lib;
+    Bytes data;
+    const char* text;  // nullptr: warned about
+  };
+  const std::vector<Case> cases = {
+      {"setupToL2(SafeL2)", &kSafeToL2Setups, abiCall("fe51f643", {base_l2}),
+       kToL2SetupText},
+      {"migrateToL2(SafeL2)", &kSafeToL2Migrations,
+       abiCall("ef2624ae", {base_l2}), kToL2MigrationText},
+      {"migrateFromV111(SafeL2, handler)", &kSafeToL2Migrations,
+       abiCall("d9a20812", {base_l2, base_handler}), kToL2MigrationText},
+      {"setupToL2(attacker)", &kSafeToL2Setups,
+       abiCall("fe51f643", {kAttacker}), nullptr},
+      {"migrateToL2(attacker)", &kSafeToL2Migrations,
+       abiCall("ef2624ae", {kAttacker}), nullptr},
+      {"migrateToL2(Safe, not SafeL2)", &kSafeToL2Migrations,
+       abiCall("ef2624ae", {kSafe141}), nullptr},
+      {"migrateToL2(a handler)", &kSafeToL2Migrations,
+       abiCall("ef2624ae", {base_handler}), nullptr},
+      {"migrateToL2(zkSync SafeL2)", &kSafeToL2Migrations,
+       abiCall("ef2624ae", {kSafeL2Singletons[4].address}), nullptr},
+      {"migrateFromV111(SafeL2, attacker)", &kSafeToL2Migrations,
+       abiCall("d9a20812", {base_l2, kAttacker}), nullptr},
+      {"migrateFromV111(attacker, handler)", &kSafeToL2Migrations,
+       abiCall("d9a20812", {kAttacker, base_handler}), nullptr},
+      {"migrateToL2, dirty word", &kSafeToL2Migrations, dirty, nullptr},
+      {"migrateToL2, one byte more", &kSafeToL2Migrations, longer, nullptr},
+      {"setupToL2 sent to SafeToL2Migration", &kSafeToL2Migrations,
+       abiCall("fe51f643", {base_l2}), nullptr},
+      {"migrateToL2 sent to SafeToL2Setup", &kSafeToL2Setups,
+       abiCall("ef2624ae", {base_l2}), nullptr},
+      {"no data", &kSafeToL2Migrations, Bytes{}, nullptr},
+  };
+  for (const Case& c : cases) {
+    for (bool operation_first : {false, true}) {
+      for (ToPlace place : {TO_FIRST, TO_LAST}) {
+        SCOPED_TRACE(c.what);
+        SCOPED_TRACE(operation_first);
+        SCOPED_TRACE(place);
+        const char* to = (*c.lib)[0].address;  // canonical, Base listed
+        const MsRun r =
+            signMultiSend(c.data, 400, 1, operation_first, to, place, 8453);
+        ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+        const std::vector<std::string> said =
+            screensTitled(r.titles, r.bodies, "Safe upgrade");
+        if (c.text) {
+          EXPECT_TRUE(r.safe_delegated.empty());
+          ASSERT_EQ(said.size(), 1u);
+          EXPECT_EQ(said[0], squeezed(std::string("SafeTx ") + c.text));
+        } else {
+          EXPECT_TRUE(said.empty());
+          ASSERT_EQ(r.safe_delegated.size(), 1u);
+          EXPECT_EQ(
+              screensTitled(r.titles, r.bodies, "Delegatecall"),
+              std::vector<std::string>{squeezed(delegateText("SafeTx", to))});
+        }
+      }
+    }
+  }
+  // Each SafeL2 and handler counts only on the chains it is listed for.
+  for (const SafeDeployment& l2 : kSafeL2Singletons) {
+    for (const SafeDeployment& handler : kSafeFallbackHandlers) {
+      for (uint32_t chain : {8453u, 324u}) {
+        SCOPED_TRACE(l2.address);
+        SCOPED_TRACE(handler.address);
+        SCOPED_TRACE(chain);
+        const SafeDeployment& lib =
+            chain == 324 ? kSafeToL2Migrations[1] : kSafeToL2Migrations[0];
+        const MsRun r =
+            signMultiSend(abiCall("d9a20812", {l2.address, handler.address}),
+                          400, 1, false, lib.address, TO_FIRST, chain);
+        const bool calm = deployedOn(l2, chain) && deployedOn(handler, chain);
+        EXPECT_EQ(screensTitled(r.titles, r.bodies, "Safe upgrade").size(),
+                  calm ? 1u : 0u);
+        EXPECT_EQ(r.safe_delegated.size(), calm ? 0u : 1u);
+      }
+    }
+  }
+}
+
+TEST(Eip712Stream, DecliningASafeLibraryScreenSignsNothing) {
+  struct Case {
+    const char* to;
+    Bytes data;
+    const char* title;
+  };
+  const std::vector<Case> cases = {
+      {kSafeMigrations[2].address, fromHex("68cb3d94"), "Safe upgrade"},
+      {kSafeToL2Migrations[0].address,
+       abiCall("ef2624ae", {kSafeL2Singletons[3].address}), "Safe upgrade"},
+  };
+  for (const Case& c : cases) {
+    SCOPED_TRACE(c.to);
+    const MsRun all =
+        signMultiSend(c.data, 400, 1, false, c.to, TO_FIRST, 8453);
+    ASSERT_EQ(all.kind, EIP712_REQ_DONE);
+    const auto at = std::find_if(
+        all.titles.begin(), all.titles.end(),
+        [&](const std::string& t) { return t.rfind(c.title, 0) == 0; });
+    ASSERT_NE(at, all.titles.end());
+    const int before = (int)(at - all.titles.begin());
+    const MsRun r =
+        signMultiSend(c.data, before, 1, false, c.to, TO_FIRST, 8453);
+    EXPECT_EQ(r.kind, EIP712_REQ_CANCELLED);
+    EXPECT_EQ(r.titles.size(), (size_t)before + 1);
+    EXPECT_EQ(eip712_stream_waiting(), EIP712_IDLE);
+  }
+}
+
+// Safe{Wallet}'s upgrade batch delegatecalls SafeMigration from inside a
+// MultiSend: said calmly in the batch, and the batch stays clean. A
+// SafeToL2Migration call there is not read (its data is not kept), so it
+// keeps the warning, as any other address does.
+TEST(Eip712Stream, MultiSendDelegatecallToSafeMigrationIsSaid) {
+  const char* const kSafeSelf = "5de41a160aeb1be70874a57fc5e22922cf4836f0";
+  const char* const multisend = kSafeMultiSendDeployments[1].address;
+  for (const SafeDeployment* lib : {&kSafeMigrations[0], &kSafeMigrations[2]}) {
+    SCOPED_TRACE(lib->address);
+    Bytes packed = packedCall(lib->address, fromHex("07f464a4"), -1, 1);
+    append(&packed, packedCall(kSafeSelf, abiCall("f08a0323", {kSafeSelf})));
+    const MsRun r = signMultiSend(multiSendCall(packed), 400, 1, false,
+                                  multisend, TO_FIRST, 100);
+    ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+    EXPECT_TRUE(
+        screensTitled(r.titles, r.bodies, "Delegatecall in batch").empty());
+    EXPECT_TRUE(r.safe_delegated.empty());
+    const std::vector<std::string> said =
+        screensTitled(r.titles, r.bodies, "Safe upgrade");
+    ASSERT_EQ(said.size(), 1u);
+    EXPECT_EQ(said[0], squeezed(std::string("Call #1 ") + kMigrationText));
+    // Declining it signs nothing.
+    const auto at = std::find_if(
+        r.titles.begin(), r.titles.end(),
+        [&](const std::string& t) { return t.rfind("Safe upgrade", 0) == 0; });
+    const int before = (int)(at - r.titles.begin());
+    const MsRun declined = signMultiSend(multiSendCall(packed), before, 1,
+                                         false, multisend, TO_FIRST, 100);
+    EXPECT_EQ(declined.kind, EIP712_REQ_CANCELLED);
+    EXPECT_EQ(declined.titles.size(), (size_t)before + 1);
+  }
+  const Bytes l2 = multiSendCall(
+      packedCall(kSafeToL2Migrations[0].address,
+                 abiCall("ef2624ae", {kSafeL2Singletons[3].address}), -1, 1));
+  const MsRun r = signMultiSend(l2, 400, 1, false, multisend, TO_FIRST, 100);
+  ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+  EXPECT_EQ(screensTitled(r.titles, r.bodies, "Delegatecall in batch"),
+            std::vector<std::string>{squeezed(
+                delegateText("Call #1", kSafeToL2Migrations[0].address))});
+  EXPECT_EQ(r.safe_delegated.size(), 1u);
+}
+
+// SignMessageLib's signMessage(h) makes the Safe accept h as its EIP-1271
+// signature for any app. h is an opaque digest (a Permit2 permit, say), so
+// a delegatecall to it keeps the full-authority warning on every chain, for
+// the SafeTx and inside a batch, and never reads calm.
+TEST(Eip712Stream, SafeTxSignMessageLibWarns) {
+  const char* const multisend = kSafeMultiSendDeployments[1].address;
+  for (const SafeDeployment& d : kSignMessageLibs) {
+    for (uint32_t chain : kSafeChains) {
+      SCOPED_TRACE(d.address);
+      SCOPED_TRACE(chain);
+      const MsRun r = signMultiSend(signMessageCall(), 400, 1, false, d.address,
+                                    TO_FIRST, chain);
+      ASSERT_EQ(r.kind, EIP712_REQ_DONE);
+      EXPECT_TRUE(screensTitled(r.titles, r.bodies, "Safe message").empty());
+      EXPECT_EQ(screensTitled(r.titles, r.bodies, "Delegatecall"),
+                std::vector<std::string>{
+                    squeezed(delegateText("SafeTx", d.address))});
+      const Bytes batch =
+          multiSendCall(packedCall(d.address, signMessageCall(), -1, 1));
+      const MsRun b =
+          signMultiSend(batch, 400, 1, false, multisend, TO_FIRST, chain);
+      ASSERT_EQ(b.kind, EIP712_REQ_DONE);
+      EXPECT_TRUE(screensTitled(b.titles, b.bodies, "Safe message").empty());
+      EXPECT_EQ(screensTitled(b.titles, b.bodies, "Delegatecall in batch"),
+                std::vector<std::string>{
+                    squeezed(delegateText("Call #1", d.address))});
+      EXPECT_EQ(b.safe_delegated.size(), 1u);
+    }
+  }
+}
+
+// ── Real Safe transactions ───────────────────────────────────────────
+// Executed on chain (safe_chain_txs.inc links each): the device's digest is
+// the safeTxHash the Safe emitted, and each reads as expected.
+namespace {
+
+struct SafeChainTx {
+  CorpusDoc doc;
+  const char* safe_tx_hash;
+  const char* url;
+};
+
+const std::vector<SafeChainTx> kSafeChainTxs = {
+#include "safe_chain_txs.inc"
+};
+
+struct SafeTxScreens {
+  Eip712ReqKind kind;
+  std::string digest;
+  std::vector<std::string> titles, bodies;
+};
+
+SafeTxScreens walkDoc(const CorpusDoc& doc, int extra = 0) {
+  std::map<std::string, Struct> types;
+  for (const CorpusStruct& s : doc.types) {
+    Struct& ack = types[s.name];
+    for (const CorpusMember& m : s.members)
+      addMember(ack, m.name, corpusField(m.type));
+  }
+  g_doc = &doc;
+  g_missing_value = false;
+  g_bindable = -1;
+  size_t value_bytes = 0;
+  for (const CorpusValue& v : doc.values) value_bytes += strlen(v.hex) / 2;
+  SafeTxScreens out;
+  kkconfirm_capture_start();
+  walk(doc.primary, types, corpusValue,
+       4 * doc.leaves + 8 + (int)(value_bytes / 8) + extra);
+  out.bodies = kkconfirm_capture_finish();
+  out.titles = kkconfirm_captured_titles();
+  const Eip712Next* next = eip712_stream_next();
+  out.kind = next->kind;
+  if (next->kind == EIP712_REQ_DONE) {
+    uint8_t pre[66] = {0x19, 0x01};
+    memcpy(pre + 2, next->domain_separator, 32);
+    memcpy(pre + 34, next->message_hash, 32);
+    uint8_t digest[32];
+    keccak_256(pre, sizeof(pre), digest);
+    out.digest = hexOf(digest, 32);
+  }
+  EXPECT_FALSE(g_missing_value);
+  eip712_stream_abort();
+  return out;
+}
+
+size_t countTitle(const SafeTxScreens& s, const char* title) {
+  return screensTitled(s.titles, s.bodies, title).size();
+}
+
+}  // namespace
+
+TEST(Eip712Stream, RealSafeTxsHashAsOnChainAndReadCalm) {
+  // One canonical batch per chain (two on Base), then Safe's libraries.
+  const std::map<std::string, std::vector<std::string>> library = {
+      {"gnosis-safemigration150-l2",
+       {"Safe upgrade", std::string("SafeTx ") + kMigrationText}},
+      {"gnosis-safemigration150-l2-handler",
+       {"Safe upgrade", std::string("SafeTx ") + kMigrationText}},
+      {"polygon-safemigration150-l2-handler",
+       {"Safe upgrade", std::string("SafeTx ") + kMigrationText}},
+      {"gnosis-upgrade-batch",
+       {"Safe upgrade", std::string("Call #1 ") + kMigrationText}},
+  };
+  std::set<uint32_t> batch_chains;
+  EXPECT_EQ(kSafeChainTxs.size(), 17u);
+  for (const SafeChainTx& tx : kSafeChainTxs) {
+    SCOPED_TRACE(tx.doc.id);
+    SCOPED_TRACE(tx.url);
+    const SafeTxScreens s = walkDoc(tx.doc);
+    ASSERT_EQ(s.kind, EIP712_REQ_DONE);
+    EXPECT_EQ(s.digest, tx.safe_tx_hash);
+    EXPECT_EQ(countTitle(s, "Batch not checked"), 0u);
+    EXPECT_EQ(countTitle(s, "UNLIMITED approval"), 0u);
+    const std::string id = tx.doc.id;
+    if (id == "gnosis-upgrade-batch-unknown-delegatecall") {
+      // The same upgrade with a delegatecall to a contract that is not
+      // Safe's: warned about in the batch, and for the SafeTx.
+      EXPECT_EQ(squeezedAll(screensTitled(s.titles, s.bodies, "Safe upgrade")),
+                std::vector<std::string>{
+                    squeezed(std::string("Call #1 ") + kMigrationText)});
+      EXPECT_EQ(squeezedAll(
+                    screensTitled(s.titles, s.bodies, "Delegatecall in batch")),
+                std::vector<std::string>{squeezed(delegateText(
+                    "Call #4", "fd90fad33ee8b58f32c00aceead1358e4afc23f9"))});
+      EXPECT_EQ(squeezedAll(screensTitled(s.titles, s.bodies, "Delegatecall")),
+                std::vector<std::string>{squeezed(delegateText(
+                    "SafeTx", "a238cbeb142c10ef7ad8442c6d1f9e89e07e7761"))});
+      continue;
+    }
+    if (id.rfind("gnosis-signmessagelib", 0) == 0) {
+      // SignMessageLib signs an opaque digest the Safe then accepts for any
+      // app: warned about, with no calm screen.
+      EXPECT_EQ(squeezedAll(screensTitled(s.titles, s.bodies, "Delegatecall")),
+                std::vector<std::string>{
+                    squeezed(delegateText("SafeTx", tx.doc.values[2].hex))});
+      EXPECT_EQ(countTitle(s, "Safe message"), 0u);
+      EXPECT_EQ(countTitle(s, "Safe upgrade"), 0u);
+      continue;
+    }
+    EXPECT_EQ(countTitle(s, "Delegatecall"), 0u);
+    EXPECT_EQ(countTitle(s, "Delegatecall in batch"), 0u);
+    const auto lib = library.find(id);
+    if (lib != library.end()) {
+      EXPECT_EQ(screensTitled(s.titles, s.bodies, lib->second[0]),
+                std::vector<std::string>{squeezed(lib->second[1])});
+    } else {
+      EXPECT_EQ(countTitle(s, "Safe upgrade"), 0u);
+      EXPECT_EQ(countTitle(s, "Safe message"), 0u);
+    }
+    if (id.find("-ms") != std::string::npos) {
+      const std::string& chain = tx.doc.values[0].hex;
+      batch_chains.insert(
+          (uint32_t)strtoul(chain.substr(56).c_str(), nullptr, 16));
+    }
+  }
+  // A real batch on every chain with a public RPC; BNB Chain (56) and
+  // Robinhood Chain (4663) are covered by the tests above only.
+  EXPECT_EQ(batch_chains,
+            (std::set<uint32_t>{10, 100, 137, 143, 324, 8453, 42161, 43114}));
+}
+
+// ── SafeTx.value in the chain's coin ─────────────────────────────────
+// Safe's exact SafeTx type sends `value` of the chain's native coin.
+namespace {
+
+std::deque<std::string> g_hex_store;
+
+const char* keep(const std::string& s) {
+  g_hex_store.push_back(s);
+  return g_hex_store.back().c_str();
+}
+
+std::string word256(const char* decimal) {
+  // Big-endian 32 bytes of a decimal string.
+  uint8_t w[32] = {0};
+  for (const char* p = decimal; *p; p++) {
+    unsigned carry = (unsigned)(*p - '0');
+    for (int i = 31; i >= 0; i--) {
+      const unsigned v = w[i] * 10u + carry;
+      w[i] = (uint8_t)v;
+      carry = v >> 8;
+    }
+  }
+  return hexOf(w, 32);
+}
+
+// The real Base native send, on another chain and with another value.
+CorpusDoc safeSendOn(uint32_t chain, const char* value) {
+  const SafeChainTx& base = kSafeChainTxs.back();
+  EXPECT_STREQ(base.doc.id, "base-native-send");
+  CorpusDoc doc = base.doc;
+  char chain_hex[65];
+  snprintf(chain_hex, sizeof(chain_hex), "%064x", chain);
+  for (CorpusValue& v : doc.values) {
+    if (v.path == std::vector<uint32_t>{0, 0}) v.hex = keep(chain_hex);
+    if (v.path == std::vector<uint32_t>{1, 1}) v.hex = keep(word256(value));
+  }
+  return doc;
+}
+
+std::string valueScreen(const SafeTxScreens& s) {
+  for (const std::string& b : s.bodies)
+    if (b.rfind("value\n", 0) == 0) return b;
+  return "";
+}
+
+}  // namespace
+
+TEST(Eip712Stream, SafeTxValueIsShownInTheChainsCoin) {
+  // The real one: 0.85 ETH on Base.
+  const SafeChainTx& real = kSafeChainTxs.back();
+  ASSERT_STREQ(real.doc.id, "base-native-send");
+  EXPECT_EQ(valueScreen(walkDoc(real.doc)), "value\nuint256: 0.85 ETH");
+  const std::vector<std::tuple<uint32_t, const char*, const char*>> cases = {
+      {1, "1500000000000000000", "1.5 ETH"},
+      {10, "1500000000000000000", "1.5 ETH"},
+      {56, "2000000000000000000", "2 BNB"},
+      {100, "1000000000000000000", "1 xDAI"},
+      {137, "1500000000000000000", "1.5 POL"},
+      {42161, "1", "1 Wei"},
+      {43114, "1000000000000000000000", "1000 AVAX"},
+      // No coin name here: the exact amount in wei.
+      {4663, "1500000000000000000", "1500000000000000000 Wei"},
+      {8453, "0", "0 Wei"},
+  };
+  for (const auto& c : cases) {
+    SCOPED_TRACE(std::get<0>(c));
+    SCOPED_TRACE(std::get<1>(c));
+    const CorpusDoc doc = safeSendOn(std::get<0>(c), std::get<1>(c));
+    const SafeTxScreens s = walkDoc(doc);
+    ASSERT_EQ(s.kind, EIP712_REQ_DONE);
+    EXPECT_EQ(valueScreen(s), std::string("value\nuint256: ") + std::get<2>(c));
+  }
+  // Any other SafeTx shape keeps the integer: its `value` need not be
+  // Safe's.
+  std::vector<std::string> titles, bodies;
+  ASSERT_EQ(walkSafeTx(swapCall(100), false, 40, &titles, &bodies, 0, false,
+                       nullptr, TO_FIRST, 8453),
+            EIP712_REQ_DONE);
+  EXPECT_NE(std::find(bodies.begin(), bodies.end(), "value\nuint256: 0"),
+            bodies.end());
 }
 
 // Identical leaf values do not imply identical EIP-712 schemas. Review must

@@ -24,6 +24,7 @@
 #include "keepkey/firmware/ethereum.h"
 #include "keepkey/firmware/ethereum_tokens.h"
 #include "keepkey/firmware/fsm.h"
+#include "keepkey/firmware/mayachain.h"
 #include "keepkey/firmware/thorchain.h"
 #include "trezor/crypto/address.h"
 
@@ -186,6 +187,7 @@ static bool thor_confirm_deposit_tx(uint32_t data_total,
   /* ethereum.c refuses these with their reason before dispatching here; this
    * keeps the decoder from narrating a deposit its router can only revert. */
   if (thor_depositRefusal(msg)) return false;
+  const bool is_maya = !thor_thor_pin(msg) && thor_maya_pin(msg) != NULL;
 
   /* Minimum calldata to read the fixed head through the memo_length word:
    * selector(4) + vault(32) + asset(32) + amount(32) + memo_offset(32) +
@@ -438,10 +440,18 @@ static bool thor_confirm_deposit_tx(uint32_t data_total,
   /* Pass the memo's true ABI length, not a fixed 64. The structured pass is a
    * convenience; only a CANCELLED verdict is a refusal here, because the
    * complete raw memo is paged below as the authoritative disclosure -- an
-   * UNPARSED memo is therefore shown byte for byte, never signed unseen. */
-  const ThorchainMemoResult memo_result =
-      thorchain_parseConfirmMemo((const char*)thorchainData, memo_len);
-  if (memo_result == THORCHAIN_MEMO_CANCELLED) return false;
+   * UNPARSED memo is therefore shown byte for byte, never signed unseen.
+   * A Maya router's memo is MAYAChain's grammar and units, so it gets the
+   * Maya parser: the THORChain one titles it "Thorchain swap" and reads its
+   * limit in THORChain's 1e8 units. */
+  if (is_maya) {
+    if (mayachain_parseConfirmMemo((const char*)thorchainData, memo_len) ==
+        MAYACHAIN_MEMO_CANCELLED)
+      return false;
+  } else if (thorchain_parseConfirmMemo((const char*)thorchainData, memo_len) ==
+             THORCHAIN_MEMO_CANCELLED) {
+    return false;
+  }
 
   /* Page the complete raw memo as the authoritative disclosure: a long
    * structured field (dest/affiliate/aggregator) would otherwise truncate in

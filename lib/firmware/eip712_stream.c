@@ -1040,6 +1040,207 @@ static bool confirm_delegatecall(const char* title, const char* who,
                  code);
 }
 
+/* ── Safe's own libraries ─────────────────────────────────────────────
+ * The contracts Safe{Wallet} delegatecalls, at their deployed addresses on
+ * each chain. A delegatecall to any other address keeps the full-authority
+ * warning. */
+enum {
+  SAFE_LIB_NONE,
+  SAFE_LIB_MULTISEND, /* MultiSend and MultiSendCallOnly */
+  SAFE_LIB_MIGRATION,
+  SAFE_LIB_TO_L2_SETUP,
+  SAFE_LIB_TO_L2_MIGRATION,
+  SAFE_ARG_L2_SINGLETON, /* never a delegatecall target: arguments only */
+  SAFE_ARG_HANDLER,
+};
+
+/* The chains a deployment is bound to, one bit each, in this order. */
+static const uint32_t safe_chains[] = {1,   10,   56,   100,   137,  143,
+                                       324, 4663, 8453, 42161, 43114};
+#define SAFE_INFO(kind, chains) (uint16_t)((kind) << 12 | (chains))
+
+/* Every address variant of each release, from safe-global/safe-deployments
+ * 685f22be940739259cfc4148db3df7048f39a4e8, src/assets/v1.x.x/<name>.json,
+ * each bound to the chains above whose networkAddresses list that variant.
+ * MultiSend from 1.1.1 on (1.0.0 takes ABI words). Elsewhere, or for any
+ * other address, a delegatecall keeps the full-authority warning. */
+static const uint8_t safe_contracts[][20] = {
+    /* 1.1.1 MultiSend canonical */
+    {0x8d, 0x29, 0xbe, 0x29, 0x92, 0x3b, 0x68, 0xab, 0xfd, 0xd2,
+     0x1e, 0x54, 0x1b, 0x93, 0x74, 0x73, 0x7b, 0x49, 0xcd, 0xad},
+    /* 1.3.0 MultiSend canonical */
+    {0xa2, 0x38, 0xcb, 0xeb, 0x14, 0x2c, 0x10, 0xef, 0x7a, 0xd8,
+     0x44, 0x2c, 0x6d, 0x1f, 0x9e, 0x89, 0xe0, 0x7e, 0x77, 0x61},
+    /* 1.3.0 MultiSend eip155 */
+    {0x99, 0x87, 0x39, 0xbf, 0xda, 0xad, 0xde, 0x7c, 0x93, 0x3b,
+     0x94, 0x2a, 0x68, 0x05, 0x39, 0x33, 0x09, 0x8f, 0x9e, 0xda},
+    /* 1.3.0 MultiSend zksync */
+    {0x0d, 0xfc, 0xcc, 0xb9, 0x52, 0x25, 0xff, 0xb0, 0x3c, 0x6f,
+     0xbb, 0x25, 0x59, 0xb5, 0x30, 0xc2, 0xb7, 0xc8, 0xa9, 0x12},
+    /* 1.3.0 MultiSendCallOnly canonical */
+    {0x40, 0xa2, 0xac, 0xcb, 0xd9, 0x2b, 0xca, 0x93, 0x8b, 0x02,
+     0x01, 0x0e, 0x17, 0xa5, 0xb8, 0x92, 0x9b, 0x49, 0x13, 0x0d},
+    /* 1.3.0 MultiSendCallOnly eip155 */
+    {0xa1, 0xda, 0xbe, 0xf3, 0x3b, 0x3b, 0x82, 0xc7, 0x81, 0x4b,
+     0x6d, 0x82, 0xa7, 0x9e, 0x50, 0xf4, 0xac, 0x44, 0x10, 0x2b},
+    /* 1.3.0 MultiSendCallOnly zksync */
+    {0xf2, 0x20, 0xd3, 0xb4, 0xdf, 0xb2, 0x3c, 0x4a, 0xde, 0x8c,
+     0x88, 0xe5, 0x26, 0xc1, 0x35, 0x3a, 0xba, 0xcb, 0xc3, 0x8f},
+    /* 1.4.1 MultiSend canonical */
+    {0x38, 0x86, 0x9b, 0xf6, 0x6a, 0x61, 0xcf, 0x6b, 0xdb, 0x99,
+     0x6a, 0x6a, 0xe4, 0x0d, 0x58, 0x53, 0xfd, 0x43, 0xb5, 0x26},
+    /* 1.4.1 MultiSend zksync */
+    {0x30, 0x9d, 0x0b, 0x19, 0x0f, 0xec, 0xca, 0x8e, 0x1d, 0x5d,
+     0x83, 0x09, 0xa1, 0x6f, 0x7e, 0x3c, 0xb1, 0x33, 0xe8, 0x85},
+    /* 1.4.1 MultiSendCallOnly canonical */
+    {0x96, 0x41, 0xd7, 0x64, 0xfc, 0x13, 0xc8, 0xb6, 0x24, 0xc0,
+     0x44, 0x30, 0xc7, 0x35, 0x6c, 0x1c, 0x7c, 0x81, 0x02, 0xe2},
+    /* 1.4.1 MultiSendCallOnly zksync */
+    {0x04, 0x08, 0xef, 0x01, 0x19, 0x60, 0xd0, 0x23, 0x49, 0xd5,
+     0x02, 0x86, 0xd2, 0x05, 0x31, 0x22, 0x9b, 0xce, 0xf7, 0x73},
+    /* 1.5.0 MultiSend canonical */
+    {0x21, 0x85, 0x43, 0x28, 0x80, 0x04, 0xcd, 0x07, 0x83, 0x24,
+     0x72, 0xd4, 0x64, 0x64, 0x81, 0x73, 0xc7, 0x7d, 0x7e, 0xb7},
+    /* 1.5.0 MultiSendCallOnly canonical */
+    {0xa8, 0x3c, 0x33, 0x6b, 0x20, 0x40, 0x1a, 0xf7, 0x73, 0xb6,
+     0x21, 0x9b, 0xa5, 0x02, 0x71, 0x74, 0x33, 0x8d, 0x18, 0x36},
+    /* 1.4.1 SafeMigration canonical */
+    {0x52, 0x66, 0x43, 0xf6, 0x9b, 0x81, 0xb0, 0x08, 0xf4, 0x6d,
+     0x95, 0xcd, 0x5c, 0xed, 0x5e, 0xc0, 0xed, 0xff, 0xda, 0xc6},
+    /* 1.4.1 SafeMigration zksync */
+    {0x81, 0x77, 0x56, 0xc6, 0xc5, 0x55, 0xa9, 0x4b, 0xce, 0xe3,
+     0x9e, 0xb5, 0xa1, 0x02, 0xab, 0xc1, 0x67, 0x8b, 0x09, 0xa7},
+    /* 1.5.0 SafeMigration canonical */
+    {0x64, 0x39, 0xe7, 0xab, 0xd8, 0xbb, 0x91, 0x5a, 0x52, 0x63,
+     0x09, 0x47, 0x84, 0xc5, 0xcf, 0x56, 0x1c, 0x41, 0x72, 0xac},
+    /* 1.4.1 SafeToL2Setup canonical */
+    {0xbd, 0x89, 0xa1, 0xce, 0x4d, 0xde, 0x36, 0x8f, 0xfa, 0xb0,
+     0xec, 0x35, 0x50, 0x6e, 0xec, 0xe0, 0xb1, 0xff, 0xdc, 0x54},
+    /* 1.4.1 SafeToL2Setup zksync */
+    {0x19, 0x9a, 0x9d, 0xf0, 0x22, 0x40, 0x31, 0xc2, 0x0c, 0xc2,
+     0x70, 0x83, 0xa4, 0x16, 0x4c, 0x9c, 0x8f, 0x1b, 0xcb, 0x39},
+    /* 1.5.0 SafeToL2Setup canonical */
+    {0x90, 0x0c, 0x75, 0x89, 0x20, 0x00, 0x10, 0xd6, 0xc6, 0xec,
+     0xaa, 0xe5, 0xb0, 0x6e, 0xbe, 0x65, 0x3b, 0xc2, 0xd8, 0x2a},
+    /* 1.4.1 SafeToL2Migration canonical */
+    {0xff, 0x83, 0xf6, 0x33, 0x5d, 0x89, 0x30, 0xcb, 0xad, 0x1c,
+     0x0d, 0x43, 0x9a, 0x84, 0x1f, 0x01, 0x88, 0x8d, 0x9f, 0x69},
+    /* 1.4.1 SafeToL2Migration zksync */
+    {0xa2, 0x66, 0x20, 0xd1, 0xf8, 0xf1, 0xa2, 0x43, 0x3f, 0x0d,
+     0x25, 0x02, 0x7f, 0x14, 0x1a, 0xac, 0xaf, 0xb3, 0xe5, 0x90},
+    /* 1.3.0 GnosisSafeL2 canonical */
+    {0x3e, 0x5c, 0x63, 0x64, 0x4e, 0x68, 0x35, 0x49, 0x05, 0x5b,
+     0x9b, 0xe8, 0x65, 0x3d, 0xe2, 0x6e, 0x0b, 0x4c, 0xd3, 0x6e},
+    /* 1.3.0 GnosisSafeL2 eip155 */
+    {0xfb, 0x1b, 0xff, 0xc9, 0xd7, 0x39, 0xb8, 0xd5, 0x20, 0xda,
+     0xf3, 0x7d, 0xf6, 0x66, 0xda, 0x4c, 0x68, 0x71, 0x91, 0xea},
+    /* 1.3.0 GnosisSafeL2 zksync */
+    {0x17, 0x27, 0xc2, 0xc5, 0x31, 0xcf, 0x96, 0x6f, 0x90, 0x2e,
+     0x59, 0x27, 0xb9, 0x84, 0x90, 0xfd, 0xfb, 0x3b, 0x2b, 0x70},
+    /* 1.4.1 SafeL2 canonical */
+    {0x29, 0xfc, 0xb4, 0x3b, 0x46, 0x53, 0x1b, 0xca, 0x00, 0x3d,
+     0xdc, 0x8f, 0xcb, 0x67, 0xff, 0xe9, 0x19, 0x00, 0xc7, 0x62},
+    /* 1.4.1 SafeL2 zksync */
+    {0x61, 0x0f, 0xca, 0x2e, 0x02, 0x79, 0xfa, 0x1f, 0x8c, 0x00,
+     0xc8, 0xc2, 0xf7, 0x1d, 0xf5, 0x22, 0xad, 0x46, 0x93, 0x80},
+    /* 1.5.0 SafeL2 canonical */
+    {0xed, 0xd1, 0x60, 0xfe, 0xbb, 0xd9, 0x2e, 0x35, 0x0d, 0x4d,
+     0x39, 0x8f, 0xb6, 0x36, 0x30, 0x2f, 0xcc, 0xd6, 0x7c, 0x7e},
+    /* 1.3.0 CompatibilityFallbackHandler canonical */
+    {0xf4, 0x8f, 0x2b, 0x2d, 0x2a, 0x53, 0x4e, 0x40, 0x24, 0x87,
+     0xb3, 0xee, 0x7c, 0x18, 0xc3, 0x3a, 0xec, 0x0f, 0xe5, 0xe4},
+    /* 1.3.0 CompatibilityFallbackHandler eip155 */
+    {0x01, 0x70, 0x62, 0xa1, 0xde, 0x2f, 0xe6, 0xb9, 0x9b, 0xe3,
+     0xd9, 0xd3, 0x78, 0x41, 0xfe, 0xd1, 0x9f, 0x57, 0x38, 0x04},
+    /* 1.3.0 CompatibilityFallbackHandler zksync */
+    {0x2f, 0x87, 0x0a, 0x80, 0x64, 0x7b, 0xbc, 0x55, 0x4f, 0x3a,
+     0x0e, 0xbd, 0x09, 0x3f, 0x11, 0xb4, 0xd2, 0xa7, 0x49, 0x2a},
+    /* 1.4.1 CompatibilityFallbackHandler canonical */
+    {0xfd, 0x07, 0x32, 0xdc, 0x9e, 0x30, 0x3f, 0x09, 0xfc, 0xef,
+     0x3a, 0x73, 0x88, 0xad, 0x10, 0xa8, 0x34, 0x59, 0xec, 0x99},
+    /* 1.4.1 CompatibilityFallbackHandler zksync */
+    {0x93, 0x01, 0xe9, 0x8d, 0xd3, 0x67, 0x13, 0x5f, 0x21, 0xbd,
+     0xf6, 0x6f, 0x34, 0x2a, 0x24, 0x9c, 0x9d, 0x5f, 0x90, 0x69},
+};
+
+static const uint16_t safe_contract_info[] = {
+    SAFE_INFO(SAFE_LIB_MULTISEND, 0x009),
+    SAFE_INFO(SAFE_LIB_MULTISEND, 0x7ff),
+    SAFE_INFO(SAFE_LIB_MULTISEND, 0x7ff),
+    SAFE_INFO(SAFE_LIB_MULTISEND, 0x040),
+    SAFE_INFO(SAFE_LIB_MULTISEND, 0x7ff),
+    SAFE_INFO(SAFE_LIB_MULTISEND, 0x7ff),
+    SAFE_INFO(SAFE_LIB_MULTISEND, 0x040),
+    SAFE_INFO(SAFE_LIB_MULTISEND, 0x7ff),
+    SAFE_INFO(SAFE_LIB_MULTISEND, 0x040),
+    SAFE_INFO(SAFE_LIB_MULTISEND, 0x7ff),
+    SAFE_INFO(SAFE_LIB_MULTISEND, 0x040),
+    SAFE_INFO(SAFE_LIB_MULTISEND, 0x7ff),
+    SAFE_INFO(SAFE_LIB_MULTISEND, 0x7ff),
+    SAFE_INFO(SAFE_LIB_MIGRATION, 0x7ff),
+    SAFE_INFO(SAFE_LIB_MIGRATION, 0x040),
+    SAFE_INFO(SAFE_LIB_MIGRATION, 0x7ff),
+    SAFE_INFO(SAFE_LIB_TO_L2_SETUP, 0x7ff),
+    SAFE_INFO(SAFE_LIB_TO_L2_SETUP, 0x040),
+    SAFE_INFO(SAFE_LIB_TO_L2_SETUP, 0x7ff),
+    SAFE_INFO(SAFE_LIB_TO_L2_MIGRATION, 0x7ff),
+    SAFE_INFO(SAFE_LIB_TO_L2_MIGRATION, 0x040),
+    SAFE_INFO(SAFE_ARG_L2_SINGLETON, 0x7ff),
+    SAFE_INFO(SAFE_ARG_L2_SINGLETON, 0x7ff),
+    SAFE_INFO(SAFE_ARG_L2_SINGLETON, 0x040),
+    SAFE_INFO(SAFE_ARG_L2_SINGLETON, 0x7ff),
+    SAFE_INFO(SAFE_ARG_L2_SINGLETON, 0x040),
+    SAFE_INFO(SAFE_ARG_L2_SINGLETON, 0x7ff),
+    SAFE_INFO(SAFE_ARG_HANDLER, 0x7ff),
+    SAFE_INFO(SAFE_ARG_HANDLER, 0x7ff),
+    SAFE_INFO(SAFE_ARG_HANDLER, 0x040),
+    SAFE_INFO(SAFE_ARG_HANDLER, 0x7ff),
+    SAFE_INFO(SAFE_ARG_HANDLER, 0x040),
+};
+_Static_assert(sizeof(safe_contracts) / sizeof(safe_contracts[0]) ==
+                   sizeof(safe_contract_info) / sizeof(safe_contract_info[0]),
+               "one safe_contract_info row per safe_contracts address");
+
+/* What `address` is on the domain's chain: SAFE_LIB_NONE unless pinned
+ * there. */
+static uint8_t safe_contract(const uint8_t* address) {
+  const uint32_t chain = domain_chain_id();
+  uint16_t bit = 0;
+  for (size_t i = 0; i < sizeof(safe_chains) / sizeof(safe_chains[0]); i++)
+    if (safe_chains[i] == chain) bit = (uint16_t)(1u << i);
+  if (!bit || !address) return SAFE_LIB_NONE;
+  for (size_t i = 0; i < sizeof(safe_contracts) / 20; i++)
+    if ((safe_contract_info[i] & bit) &&
+        memcmp(address, safe_contracts[i], 20) == 0)
+      return (uint8_t)(safe_contract_info[i] >> 12);
+  return SAFE_LIB_NONE;
+}
+
+/* A delegatecall to a Safe library the caller has cleared: say what it
+ * does, calmly. False when declined, or when `lib` is no such library. */
+static bool confirm_safe_library(uint8_t lib, const char* who) {
+  const char* what;
+  switch (lib) {
+    case SAFE_LIB_MIGRATION:
+      what =
+          "moves your Safe to Safe's standard contracts, with Safe's "
+          "SafeMigration.";
+      break;
+    case SAFE_LIB_TO_L2_SETUP:
+      what = "moves your Safe to Safe's SafeL2, with Safe's SafeToL2Setup.";
+      break;
+    case SAFE_LIB_TO_L2_MIGRATION:
+      what =
+          "moves your Safe to Safe's SafeL2, with Safe's "
+          "SafeToL2Migration.";
+      break;
+    default:
+      return false;
+  }
+  return confirm(ButtonRequestType_ButtonRequest_Other, "Safe upgrade", "%s %s",
+                 who, what);
+}
+
 /* ── Approves inside a MultiSend ──────────────────────────────────────
  * Safe's MultiSend and MultiSendCallOnly take multiSend(bytes transactions),
  * each call packed as operation(1) | to(20) | value(32) | dataLength(32) |
@@ -1152,9 +1353,17 @@ static MultisendScan multisend_byte(uint8_t b) {
       if (ms->seen & MS_SEEN_DELEGATE) {
         char who[16];
         snprintf(who, sizeof(who), "Call #%u", (unsigned)ms->call);
-        ms->facts |= MS_FACT_DELEGATE;
-        if (!confirm_delegatecall("Delegatecall in batch", who, ms->to))
-          return MS_SCAN_CANCELLED;
+        /* Safe{Wallet}'s upgrade batch delegatecalls SafeMigration. Only a
+         * library taking no address from its data is read here: the data
+         * is not kept. */
+        const uint8_t lib = safe_contract(ms->to);
+        if (lib == SAFE_LIB_MIGRATION) {
+          if (!confirm_safe_library(lib, who)) return MS_SCAN_CANCELLED;
+        } else {
+          ms->facts |= MS_FACT_DELEGATE;
+          if (!confirm_delegatecall("Delegatecall in batch", who, ms->to))
+            return MS_SCAN_CANCELLED;
+        }
       }
       ms->seen = MS_SEEN_APPROVE | MS_SEEN_INCREASE;
       multisend_phase(ms->need ? MS_DATA : MS_HEADER);
@@ -1198,73 +1407,50 @@ static MultisendScan multisend_feed(const uint8_t* bytes, size_t len) {
 }
 
 /* ── A SafeTx delegatecall ────────────────────────────────────────────
- * operation 1 runs SafeTx.to's code as the Safe. A Safe app's batch is the
- * one case read in full: `to` a Safe MultiSend deployment and `data` a
- * multiSend the scan read to its end, with no delegatecall inside. Anything
- * else is warned about when the last of `to`, `operation` and `data` is
- * read, in any order, or when the SafeTx ends without one of them. */
-#define SAFE_DELEGATE 1   /* operation is 1 */
-#define SAFE_DATA 2       /* data has been read */
-#define SAFE_UNCHECKED 4  /* data is not such a batch */
-#define SAFE_TO 8         /* to has been read */
-#define SAFE_MULTISEND 16 /* to is a MultiSend deployment */
+ * operation 1 runs SafeTx.to's code as the Safe. Only Safe's own libraries,
+ * at their deployed addresses on this chain, are read:
+ *  - MultiSend: no screen when `data` is a multiSend the scan read to its
+ *    end, with no delegatecall inside but to SafeMigration (said in the
+ *    batch);
+ *  - SafeMigration: its code takes no address from `data`, so the screen
+ *    says what it does;
+ *  - SafeToL2Setup, SafeToL2Migration: take the singleton (and fallback
+ *    handler) from `data`, so the screen says what it does only when
+ *    `data` is exactly that call with Safe's own deployments as arguments.
+ * Anything else gets the full-authority warning, SignMessageLib too: the
+ * message it signs is an opaque digest, which the Safe then accepts as its
+ * EIP-1271 signature for any app. Decided when the last of
+ * `to`, `operation` and `data` is read, in any order, or when the SafeTx
+ * ends without one of them. */
+#define SAFE_DELEGATE 1    /* operation is 1 */
+#define SAFE_DATA 2        /* data has been read */
+#define SAFE_UNCHECKED 4   /* data is not such a batch */
+#define SAFE_TO 8          /* to has been read */
+#define SAFE_SETUP_ARGS 16 /* data is setupToL2(Safe's SafeL2) */
 #define SAFE_DECIDED 32
+#define SAFE_MIGRATE_ARGS 64 /* data is migrateToL2/migrateFromV111, pinned */
 
-/* MultiSend and MultiSendCallOnly, every address variant of each release
- * that packs its calls (1.1.1 on; 1.0.0 takes ABI words), from
- * safe-global/safe-deployments 7b1fb6d6, src/assets/v1.x.x/multi_send*.json.
- * The paired masks bind deployments to Ethereum (1) and zkSync Era (324)
- * using networkAddresses from those same pinned manifests. Other chains
- * retain the full-authority delegatecall warning. */
-static const uint8_t safe_multisend[][20] = {
-    /* 1.1.1 MultiSend */
-    {0x8d, 0x29, 0xbe, 0x29, 0x92, 0x3b, 0x68, 0xab, 0xfd, 0xd2,
-     0x1e, 0x54, 0x1b, 0x93, 0x74, 0x73, 0x7b, 0x49, 0xcd, 0xad},
-    /* 1.3.0 MultiSend: canonical, eip155, zksync */
-    {0xa2, 0x38, 0xcb, 0xeb, 0x14, 0x2c, 0x10, 0xef, 0x7a, 0xd8,
-     0x44, 0x2c, 0x6d, 0x1f, 0x9e, 0x89, 0xe0, 0x7e, 0x77, 0x61},
-    {0x99, 0x87, 0x39, 0xbf, 0xda, 0xad, 0xde, 0x7c, 0x93, 0x3b,
-     0x94, 0x2a, 0x68, 0x05, 0x39, 0x33, 0x09, 0x8f, 0x9e, 0xda},
-    {0x0d, 0xfc, 0xcc, 0xb9, 0x52, 0x25, 0xff, 0xb0, 0x3c, 0x6f,
-     0xbb, 0x25, 0x59, 0xb5, 0x30, 0xc2, 0xb7, 0xc8, 0xa9, 0x12},
-    /* 1.3.0 MultiSendCallOnly: canonical, eip155, zksync */
-    {0x40, 0xa2, 0xac, 0xcb, 0xd9, 0x2b, 0xca, 0x93, 0x8b, 0x02,
-     0x01, 0x0e, 0x17, 0xa5, 0xb8, 0x92, 0x9b, 0x49, 0x13, 0x0d},
-    {0xa1, 0xda, 0xbe, 0xf3, 0x3b, 0x3b, 0x82, 0xc7, 0x81, 0x4b,
-     0x6d, 0x82, 0xa7, 0x9e, 0x50, 0xf4, 0xac, 0x44, 0x10, 0x2b},
-    {0xf2, 0x20, 0xd3, 0xb4, 0xdf, 0xb2, 0x3c, 0x4a, 0xde, 0x8c,
-     0x88, 0xe5, 0x26, 0xc1, 0x35, 0x3a, 0xba, 0xcb, 0xc3, 0x8f},
-    /* 1.4.1 MultiSend: canonical, zksync */
-    {0x38, 0x86, 0x9b, 0xf6, 0x6a, 0x61, 0xcf, 0x6b, 0xdb, 0x99,
-     0x6a, 0x6a, 0xe4, 0x0d, 0x58, 0x53, 0xfd, 0x43, 0xb5, 0x26},
-    {0x30, 0x9d, 0x0b, 0x19, 0x0f, 0xec, 0xca, 0x8e, 0x1d, 0x5d,
-     0x83, 0x09, 0xa1, 0x6f, 0x7e, 0x3c, 0xb1, 0x33, 0xe8, 0x85},
-    /* 1.4.1 MultiSendCallOnly: canonical, zksync */
-    {0x96, 0x41, 0xd7, 0x64, 0xfc, 0x13, 0xc8, 0xb6, 0x24, 0xc0,
-     0x44, 0x30, 0xc7, 0x35, 0x6c, 0x1c, 0x7c, 0x81, 0x02, 0xe2},
-    {0x04, 0x08, 0xef, 0x01, 0x19, 0x60, 0xd0, 0x23, 0x49, 0xd5,
-     0x02, 0x86, 0xd2, 0x05, 0x31, 0x22, 0x9b, 0xce, 0xf7, 0x73},
-    /* 1.5.0 MultiSend, MultiSendCallOnly */
-    {0x21, 0x85, 0x43, 0x28, 0x80, 0x04, 0xcd, 0x07, 0x83, 0x24,
-     0x72, 0xd4, 0x64, 0x64, 0x81, 0x73, 0xc7, 0x7d, 0x7e, 0xb7},
-    {0xa8, 0x3c, 0x33, 0x6b, 0x20, 0x40, 0x1a, 0xf7, 0x73, 0xb6,
-     0x21, 0x9b, 0xa5, 0x02, 0x71, 0x74, 0x33, 0x8d, 0x18, 0x36},
-};
+/* ABI word `n` of `data` after the selector is a pinned `kind`. */
+static bool safe_arg_is(const uint8_t* data, size_t n, uint8_t kind) {
+  const uint8_t* w = data + 4 + 32 * n;
+  for (size_t i = 0; i < 12; i++)
+    if (w[i]) return false;
+  return safe_contract(w + 12) == kind;
+}
 
-static const uint8_t safe_multisend_chains[] = {1, 3, 3, 2, 3, 3, 2,
-                                                3, 2, 3, 2, 3, 3};
-
-static bool is_safe_multisend(const uint8_t* to) {
-  /* Only pinned deployment evidence on these chains permits the exemption.
-   * Unknown/absent chains still receive the full-authority warning. */
-  const uint32_t chain = domain_chain_id();
-  const uint8_t mask = chain == 1 ? 1 : (chain == 324 ? 2 : 0);
-  if (!mask) return false;
-  for (size_t i = 0; i < sizeof(safe_multisend) / 20; i++)
-    if ((safe_multisend_chains[i] & mask) &&
-        memcmp(to, safe_multisend[i], 20) == 0)
-      return true;
-  return false;
+/* SAFE_SETUP_ARGS or SAFE_MIGRATE_ARGS for the whole of `data`, else 0. */
+static uint8_t safe_l2_args(const uint8_t* data, size_t len) {
+  if (len == 36 && memcmp(data, "\xfe\x51\xf6\x43", 4) == 0 &&
+      safe_arg_is(data, 0, SAFE_ARG_L2_SINGLETON))
+    return SAFE_SETUP_ARGS; /* setupToL2(address) */
+  if (len == 36 && memcmp(data, "\xef\x26\x24\xae", 4) == 0 &&
+      safe_arg_is(data, 0, SAFE_ARG_L2_SINGLETON))
+    return SAFE_MIGRATE_ARGS; /* migrateToL2(address) */
+  if (len == 68 && memcmp(data, "\xd9\xa2\x08\x12", 4) == 0 &&
+      safe_arg_is(data, 0, SAFE_ARG_L2_SINGLETON) &&
+      safe_arg_is(data, 1, SAFE_ARG_HANDLER))
+    return SAFE_MIGRATE_ARGS; /* migrateFromV111(address,address) */
+  return 0;
 }
 
 /* Decide once all three are read, or, `closing`, once the SafeTx ends.
@@ -1275,15 +1461,22 @@ static bool safe_delegate_decide(uint8_t* facts, bool closing,
   if (!(*facts & SAFE_DELEGATE) || (*facts & SAFE_DECIDED)) return true;
   if ((*facts & read) != read && !closing) return true;
   *facts |= SAFE_DECIDED;
-  if ((*facts & (read | SAFE_MULTISEND | SAFE_UNCHECKED)) ==
-      (read | SAFE_MULTISEND))
-    return true;
+  if ((*facts & read) == read) {
+    const uint8_t lib = safe_contract(to);
+    if (lib == SAFE_LIB_MULTISEND && !(*facts & SAFE_UNCHECKED)) return true;
+    if (lib == SAFE_LIB_MIGRATION ||
+        (lib == SAFE_LIB_TO_L2_SETUP && (*facts & SAFE_SETUP_ARGS)) ||
+        (lib == SAFE_LIB_TO_L2_MIGRATION && (*facts & SAFE_MIGRATE_ARGS)))
+      return confirm_safe_library(lib, "SafeTx");
+  }
   return confirm_delegatecall("Delegatecall", "SafeTx", to);
 }
 
-/* After this SafeTx leaf's own checks, before its screen. False to stop. */
+/* After this SafeTx leaf's own checks, before its screen. `whole` is false
+ * for the last chunk of a longer value. False to stop. */
 static bool safe_delegate_approved(const Eip712FieldType* field,
-                                   const uint8_t* value, size_t len) {
+                                   const uint8_t* value, size_t len,
+                                   bool whole) {
   if (e712.root != 1 || !in_safe_tx()) return true;
   uint8_t* facts = &e712.stack[e712.depth - 1].u.s.safe_facts;
   const uint8_t* to = safe_tx_to();
@@ -1293,11 +1486,11 @@ static bool safe_delegate_approved(const Eip712FieldType* field,
     if ((e712.multisend.facts & (MS_FACT_CLEAN | MS_FACT_DELEGATE)) !=
         MS_FACT_CLEAN)
       *facts |= SAFE_UNCHECKED;
+    if (whole && !field->has_size) *facts |= safe_l2_args(value, len);
   } else if (field->data_type ==
                  EthereumTypedDataStructAck_EthereumDataType_ADDRESS &&
              strcmp(e712.pending_name, "to") == 0) {
     *facts |= SAFE_TO;
-    if (is_safe_multisend(value)) *facts |= SAFE_MULTISEND;
     to = value;
   } else if (field->data_type ==
                  EthereumTypedDataStructAck_EthereumDataType_UINT &&
@@ -1308,6 +1501,28 @@ static bool safe_delegate_approved(const Eip712FieldType* field,
     *facts |= SAFE_DELEGATE;
   }
   return safe_delegate_decide(facts, false, to);
+}
+
+static bool hash_is(const uint8_t hash[32], const char* text);
+
+/* Safe's own SafeTx (its exact type) sends `value` of the chain's coin: shown
+ * in that coin, or in wei where the chain's coin has no name here. */
+static bool safe_tx_native_value(const Eip712FieldType* field,
+                                 const uint8_t* value, uint16_t len, char* text,
+                                 size_t size) {
+  const Eip712Frame* f = &e712.stack[e712.depth - 1];
+  if (e712.root != 1 || !in_safe_tx() || !f->u.s.have_type_hash ||
+      field->data_type != EthereumTypedDataStructAck_EthereumDataType_UINT ||
+      len != 32 || strcmp(e712.pending_name, "value") != 0 ||
+      !hash_is(f->u.s.type_hash,
+               "SafeTx(address to,uint256 value,bytes data,uint8 operation,"
+               "uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,"
+               "address gasToken,address refundReceiver,uint256 nonce)"))
+    return false;
+  bignum256 amount;
+  bn_read_be(value, &amount);
+  return ethereumFormatNativeAmount(&amount, domain_chain_id(), text,
+                                    (int)size);
 }
 
 static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
@@ -1340,7 +1555,8 @@ static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
       return confirm_parts(title, path, type_name, EIP712_RENDER_HEX, value,
                            len);
     default:
-      if (!leaf_text(field, value, len, text, sizeof(text)))
+      if (!safe_tx_native_value(field, value, len, text, sizeof(text)) &&
+          !leaf_text(field, value, len, text, sizeof(text)))
         return EIP712_LEAF_INVALID;
       return confirm_parts(title, path, type_name, EIP712_RENDER_TEXT,
                            (const uint8_t*)text, strlen(text));
@@ -2501,7 +2717,8 @@ static bool chunk_absorb(const Eip712FieldType* field, const uint8_t* bytes,
   if (e712.chunk.showing) {
     const bool last = e712.chunk.offset + len == e712.chunk.total;
     if (!multisend_reviewed(bytes, len, last)) return false;
-    if (last && !review_approved(safe_delegate_approved(field, bytes, len)
+    if (last && !review_approved(safe_delegate_approved(field, bytes, len,
+                                                        e712.chunk.offset == 0)
                                      ? EIP712_LEAF_OK
                                      : EIP712_LEAF_CANCELLED))
       return false;
@@ -2720,7 +2937,7 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
 
   multisend_begin(field, bytes, len);
   if (!multisend_reviewed(bytes, len, true)) return false;
-  if (!review_approved(safe_delegate_approved(field, bytes, len)
+  if (!review_approved(safe_delegate_approved(field, bytes, len, true)
                            ? EIP712_LEAF_OK
                            : EIP712_LEAF_CANCELLED))
     return false;
