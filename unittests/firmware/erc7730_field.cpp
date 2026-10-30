@@ -97,6 +97,27 @@ TEST(Erc7730Field, NativeAliasDisclosesSignerMappingAndAddress) {
           "913129639935 Wei");
 }
 
+// The zero address and 0xEeee..EEeE are no token's contract. Aliased by the
+// signer, they read as the chain's coin (a Safe's "Gas price", a 0x ETH sell's
+// "Spend up to"); unaliased, the zero address stays an unknown token.
+TEST(Erc7730Field, NativePlaceholderAliasReadsAsTheNativeCoin) {
+  const char* zero = "0000000000000000000000000000000000000000";
+  const char* eeee = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+  EXPECT_EQ(amount(word(10000000000000000000ull), zero, true, 1), "10 ETH");
+  EXPECT_EQ(amount(word(0), zero, true, 1), "0 Wei");
+  EXPECT_EQ(amount(word(1767911835622416ull), eeee, true, 8453),
+            "0.001767911835622416 ETH");
+  EXPECT_EQ(amount(word(2000000000000000000ull), eeee, true, 100), "2 xDAI");
+  EXPECT_EQ(amount(word(42), zero, false, 1),
+            "42\nunknown token\n0x0000000000000000000000000000000000000000");
+  // An aliased address that is not a placeholder still shows the mapping.
+  const std::string near = amount(
+      word(1000), "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeef", true, 8453);
+  EXPECT_EQ(near.rfind("Signer native alias:\n0x", 0), 0u) << near;
+  EXPECT_EQ(near.size(), strlen("Signer native alias:\n0x") + 40 + 9) << near;
+  EXPECT_EQ(near.substr(near.size() - 9), "\n1000 Wei");
+}
+
 // The signer's threshold message is shown above the value, never instead.
 TEST(Erc7730Field, MessageNeverReplacesTheAmount) {
   EXPECT_EQ(amount(word(1500000), kUsdc, false, 1, "Unlimited"),

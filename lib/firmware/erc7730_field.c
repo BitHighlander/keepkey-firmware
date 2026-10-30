@@ -50,6 +50,14 @@ static bool format_integer(const uint8_t amount[32], char* output,
   return written != 0;
 }
 
+static bool is_native_placeholder(const uint8_t token[20]) {
+  static const uint8_t eeee[20] = {0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+                                   0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+                                   0xee, 0xee, 0xee, 0xee, 0xee, 0xee};
+  static const uint8_t zero[20] = {0};
+  return memcmp(token, zero, 20) == 0 || memcmp(token, eeee, 20) == 0;
+}
+
 bool erc7730_format_token_amount(const uint8_t amount[32],
                                  const uint8_t token[20], bool native,
                                  uint64_t chain_id, const char* message,
@@ -79,7 +87,10 @@ bool erc7730_format_token_amount(const uint8_t amount[32],
                  : ethereumFormatAmount(&amnt, known, (uint32_t)chain_id, value,
                                         sizeof(value)));
     memzero(&amnt, sizeof(amnt));
-    if (ok && native) {
+    /* 0x00..00 and 0xEeee..EEeE are no token's contract: they are the usual
+     * stand-ins for the chain's own coin, so aliased they read "10 ETH". Any
+     * other aliased address keeps the signer's mapping visible. */
+    if (ok && native && !is_native_placeholder(token)) {
       char checksummed[41], disclosed[160];
       ethereum_address_checksum(token, checksummed, false, 0);
       const int length =
