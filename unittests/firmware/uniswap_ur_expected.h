@@ -7,7 +7,7 @@
 //     H nh hook* S 0
 //   key [...] D 1 ... S 1 exact_in in_eth out_eth tin tout amount_in
 //     amount_out rcpt rcpt_is_sender has_permit ptoken pamount pexp
-//     has_fee bips fee_rcpt
+//     has_fee bips fee_amount fee_rcpt
 #include <cstdint>
 #include <fstream>
 #include <map>
