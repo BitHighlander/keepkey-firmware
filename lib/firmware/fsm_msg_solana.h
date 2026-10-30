@@ -28,7 +28,7 @@ static bool solana_base58_encode(const uint8_t* data, size_t data_len,
 /* Set only while fsm_msgSolanaSignTx shows a message whose lookup-table keys
  * the host resolved without proof; every such key is shown marked. */
 static const SolanaParsedTx* solana_review_host_lut = NULL;
-#define SOL_HOST_LUT_MARK "\n[from lookup table, not verified by KeepKey]"
+#define SOL_HOST_LUT_MARK "[from lookup table, not verified by KeepKey]\n"
 /* A full address (32-44 chars) plus the lookup-table mark. */
 #define SOL_ADDR_STR_LEN (45 + sizeof(SOL_HOST_LUT_MARK) - 1)
 
@@ -37,21 +37,23 @@ static const SolanaParsedTx* solana_review_host_lut = NULL;
  * Never truncate — truncation is a spoofing vector. */
 static void solana_pubkeyToStr(const uint8_t key[SOL_PUBKEY_SIZE], char* out,
                                size_t out_len) {
-  size_t enc_len = out_len;
-  /* b58enc null-terminates and sets enc_len including the NUL */
-  if (!solana_base58_encode(key, SOL_PUBKEY_SIZE, out, &enc_len)) {
-    /* Fallback to hex if base58 fails (middle-ellipsis OK for raw hex) */
-    snprintf(out, out_len, "%02x%02x...%02x%02x", key[0], key[1], key[30],
-             key[31]);
-  }
+  /* A host-resolved key follows its mark: a long body pages by characters,
+   * so no page can show any of the key before the mark. */
+  size_t mark = 0;
   if (solana_isHostLutKey(solana_review_host_lut, key)) {
-    const size_t used = strlen(out);
-    if (used + sizeof(SOL_HOST_LUT_MARK) <= out_len) {
-      memcpy(out + used, SOL_HOST_LUT_MARK, sizeof(SOL_HOST_LUT_MARK));
-    } else {
-      /* Never show a host-resolved key unmarked. */
+    mark = sizeof(SOL_HOST_LUT_MARK) - 1;
+    if (out_len < SOL_ADDR_STR_LEN) {
       snprintf(out, out_len, "lookup table key, not verified");
+      return;
     }
+    memcpy(out, SOL_HOST_LUT_MARK, mark);
+  }
+  size_t enc_len = out_len - mark;
+  /* b58enc null-terminates and sets enc_len including the NUL */
+  if (!solana_base58_encode(key, SOL_PUBKEY_SIZE, out + mark, &enc_len)) {
+    /* Fallback to hex if base58 fails (middle-ellipsis OK for raw hex) */
+    snprintf(out + mark, out_len - mark, "%02x%02x...%02x%02x", key[0], key[1],
+             key[30], key[31]);
   }
 }
 
@@ -777,6 +779,37 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
        msg->lut_signer_key_id == METADATA_KEYID_DELEGATE) ||
       (msg->has_schema_signer_key_id &&
        msg->schema_signer_key_id == METADATA_KEYID_DELEGATE);
+
+  /* 7.17: lookup accounts with no proof at all are the host's word (D-018: no
+   * online signer vouches for them). They let the review decode, and the
+   * message stays a blind sign. Present but not matching: refused, before any
+   * consent screen, like malformed bytes. */
+  const bool host_lut = !certified_request && msg->lut_account_count > 0 &&
+                        !msg->has_lut_signature && !msg->has_lut_signer_key_id;
+  if (host_lut) {
+    bool sized = true;
+    for (pb_size_t i = 0; i < msg->lut_account_count; i++) {
+      sized = sized && msg->lut_account[i].size == SOL_PUBKEY_SIZE;
+    }
+    const char* err = NULL;
+    if (msg->has_schema_payload || msg->has_schema_signature ||
+        msg->has_schema_signer_key_id) {
+      err = _("Unverified lookup accounts cannot back a schema");
+    } else if (!sized ||
+               (tx_review = solana_inspectTxWithHostLut(
+                    msg->raw_tx.bytes, msg->raw_tx.size,
+                    msg->lut_account[0].bytes, sizeof(msg->lut_account[0]),
+                    msg->lut_account_count, &parsed)) ==
+                   SOL_TX_REVIEW_MALFORMED) {
+      err = _("Lookup accounts do not match transaction");
+    }
+    if (err) {
+      fsm_sendFailure(FailureType_Failure_SyntaxError, err);
+      layoutHome();
+      return;
+    }
+  }
+
   /* Token definitions must come from the request's own tier. */
   for (pb_size_t t = 0; t < msg->token_info_count; t++) {
     const SolanaTokenInfo* ti = &msg->token_info[t];
@@ -883,36 +916,6 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     if (err) {
       memzero(node, sizeof(*node));
       memzero(&schema, sizeof(schema));
-      fsm_sendFailure(FailureType_Failure_SyntaxError, err);
-      layoutHome();
-      return;
-    }
-  }
-
-  /* 7.17: lookup accounts with no proof at all are the host's word (D-018: no
-   * online signer vouches for them). They let the review decode, and the
-   * message stays a blind sign. Present but not matching: refused. */
-  const bool host_lut = !certified_request && msg->lut_account_count > 0 &&
-                        !msg->has_lut_signature && !msg->has_lut_signer_key_id;
-  if (host_lut) {
-    bool sized = true;
-    for (pb_size_t i = 0; i < msg->lut_account_count; i++) {
-      sized = sized && msg->lut_account[i].size == SOL_PUBKEY_SIZE;
-    }
-    const char* err = NULL;
-    if (msg->has_schema_payload || msg->has_schema_signature ||
-        msg->has_schema_signer_key_id) {
-      err = _("Unverified lookup accounts cannot back a schema");
-    } else if (!sized ||
-               (tx_review = solana_inspectTxWithHostLut(
-                    msg->raw_tx.bytes, msg->raw_tx.size,
-                    msg->lut_account[0].bytes, sizeof(msg->lut_account[0]),
-                    msg->lut_account_count, &parsed)) ==
-                   SOL_TX_REVIEW_MALFORMED) {
-      err = _("Lookup accounts do not match transaction");
-    }
-    if (err) {
-      memzero(node, sizeof(*node));
       fsm_sendFailure(FailureType_Failure_SyntaxError, err);
       layoutHome();
       return;

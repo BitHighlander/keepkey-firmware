@@ -391,10 +391,11 @@ SolanaTxReview solana_inspectTxWithTrustedLut(
  * loaded key in runtime order (every table's writable indexes, then every
  * table's readonly ones). The device binds what it can: one key per signed
  * lookup index, no key repeated and none equal to a static key (the runtime
- * refuses a transaction that loads an account twice). It cannot check a key is
- * the table's entry, so the result is never VERIFIED: instructions decode for
- * the review, the transaction stays OPAQUE (AdvancedMode) and the caller marks
- * every host-resolved key it shows (solana_isHostLutKey). */
+ * refuses a transaction that loads an account twice), and only for a version
+ * 0 message. It cannot check a key is the table's entry, so the result is never
+ * VERIFIED: instructions decode for the review, the transaction stays OPAQUE
+ * (AdvancedMode) and the caller marks every host-resolved key it shows
+ * (solana_isHostLutKey). */
 SolanaTxReview solana_inspectTxWithHostLut(const uint8_t* raw, size_t raw_len,
                                            const uint8_t* keys, size_t stride,
                                            size_t num_keys, SolanaParsedTx* tx);

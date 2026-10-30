@@ -5235,6 +5235,20 @@ TEST(Solana, HostLookupAccountsMustMatchTheSignedIndexes) {
   EXPECT_EQ(solana_inspectTxWithHostLut(legacy.data(), legacy.size(),
                                         loaded.data(), SOL_PUBKEY_SIZE, 1, &tx),
             SOL_TX_REVIEW_MALFORMED);
+
+  /* A later version is not parsed, so nothing binds the keys: refused, not a
+   * blind sign that claims the host sent 0 accounts. */
+  for (uint8_t prefix : {0x81, 0xFE}) {
+    SCOPED_TRACE(prefix);
+    std::vector<uint8_t> later = raw;
+    later[0] = prefix;
+    EXPECT_EQ(solana_inspectTx(later.data(), later.size(), &tx),
+              SOL_TX_REVIEW_OPAQUE);
+    EXPECT_EQ(solana_inspectTxWithHostLut(later.data(), later.size(),
+                                          loaded.data(), SOL_PUBKEY_SIZE, 41,
+                                          &tx),
+              SOL_TX_REVIEW_MALFORMED);
+  }
 }
 
 /* A PYUSD transfer as wallets build it: the recipient's Token-2022 account is

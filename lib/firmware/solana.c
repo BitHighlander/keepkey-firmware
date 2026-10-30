@@ -947,7 +947,9 @@ SolanaTxReview solana_inspectTxWithHostLut(const uint8_t* raw, size_t raw_len,
   const uint8_t* msg;
   size_t msg_len;
   solana_message_slice(raw, raw_len, &msg, &msg_len);
-  if (msg_len == 0 || (msg[0] & SOL_VERSION_FLAG) == 0) {
+  /* Version 0 only: a later version is not parsed, so nothing would bind the
+   * host's keys to its indexes. */
+  if (msg_len == 0 || msg[0] != SOL_VERSION_FLAG) {
     memset(tx, 0, sizeof(*tx));
     return SOL_TX_REVIEW_MALFORMED;
   }

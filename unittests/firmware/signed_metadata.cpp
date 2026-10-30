@@ -2869,7 +2869,30 @@ void add_jupiter_lookup_accounts(SolanaSignTx* msg) {
   }
 }
 
-const char kLutMark[] = "\n[from lookup table, not verified by KeepKey]";
+const char kLutMark[] = "[from lookup table, not verified by KeepKey]\n";
+
+/* Pages split a body by characters, so a host-resolved key can run onto the
+ * next page. The mark comes first: wherever the key starts, the mark sits
+ * right above it on that page, and the pages read mark, then key. */
+void expect_marked_first(const std::vector<std::string>& bodies,
+                         const std::string& key) {
+  std::string all;
+  for (const std::string& b : bodies) all += b;
+  EXPECT_NE(std::string::npos, all.find(kLutMark + key)) << all;
+  const std::string head = key.substr(0, 8);
+  bool seen = false;
+  for (const std::string& b : bodies) {
+    for (size_t p = b.find(head); p != std::string::npos;
+         p = b.find(head, p + 1)) {
+      seen = true;
+      EXPECT_TRUE(p >= strlen(kLutMark) &&
+                  b.compare(p - strlen(kLutMark), strlen(kLutMark),
+                            kLutMark) == 0)
+          << "unmarked on its page:\n" << b;
+    }
+  }
+  EXPECT_TRUE(seen) << key;
+}
 
 /* Real Jupiter v0 swap with the host's lookup keys: decoded, table keys marked,
  * then the blind-sign warning. Without them it is the bare blind sign. */
@@ -2884,8 +2907,8 @@ TEST_F(SolanaSchemaSignTest, RealJupiterSwapShowsHostLookupAccountsMarked) {
   SolanaSignTx msg = base;
   add_jupiter_lookup_accounts(&msg);
   ASSERT_EQ(41u, msg.lut_account_count);
-  /* Heading, 15 instruction screens (the USDC mint pages its mark onto a
-   * second page), fee payer, max fee, blind sign, final. */
+  /* Heading, 15 instruction screens (the marked USDC mint takes two pages),
+   * fee payer, max fee, blind sign, final. */
   ASSERT_TRUE(kkconfirm_preload(20, 0));
   kkconfirm_capture_start();
   fsm_test_clearLastFailure();
@@ -2908,21 +2931,25 @@ TEST_F(SolanaSchemaSignTest, RealJupiterSwapShowsHostLookupAccountsMarked) {
             bodies.front());
   EXPECT_EQ("Blind Sign", titles[titles.size() - 2]);
   EXPECT_EQ("Solana", titles.back());
-  /* Both mints come from the tables: shown, each marked. */
-  EXPECT_NE(std::string::npos, shown.find(wsol + kLutMark)) << shown;
-  /* The USDC mint's mark does not fit its page: the next page carries it. */
-  bool usdc_marked = false;
+  /* Both mints come from the tables: shown, each marked before the key. */
+  expect_marked_first(bodies, wsol);
+  /* The 44-char USDC mint pages: its first page opens with the mark. */
+  expect_marked_first(bodies, usdc);
+  bool usdc_paged = false;
   for (size_t i = 0; i + 1 < bodies.size(); i++) {
-    if (bodies[i] == "Token mint\n" + usdc + "\n") {
-      EXPECT_EQ("Instr 6/8 1/2", titles[i]);
+    if (titles[i] == "Instr 6/8 1/2") {
+      EXPECT_EQ(0u, bodies[i].find(std::string("Token mint\n") + kLutMark +
+                                   usdc.substr(0, 8)))
+          << bodies[i];
       EXPECT_EQ("Instr 6/8 2/2", titles[i + 1]);
-      EXPECT_EQ(std::string(kLutMark + 1), bodies[i + 1]);
-      usdc_marked = true;
+      usdc_paged = true;
     }
   }
-  EXPECT_TRUE(usdc_marked) << shown;
-  EXPECT_EQ(std::string::npos, shown.find(wsol_acct + kLutMark)) << shown;
-  EXPECT_EQ(std::string::npos, shown.find(me + kLutMark)) << shown;
+  EXPECT_TRUE(usdc_paged) << shown;
+  std::string all;
+  for (const std::string& b : bodies) all += b;
+  EXPECT_EQ(std::string::npos, all.find(kLutMark + wsol_acct)) << shown;
+  EXPECT_EQ(std::string::npos, all.find(kLutMark + me)) << shown;
   EXPECT_EQ(20u, titles.size()) << shown;
   EXPECT_NE(std::string::npos, shown.find("Send 0.039272743 SOL to " + wsol_acct))
       << shown;
@@ -2969,12 +2996,20 @@ TEST_F(SolanaSchemaSignTest, HostLookupAccountsAreRefusedNotTrusted) {
        "Lookup accounts do not match transaction"},
       {"beside a runtime schema", true, 3, FailureType_Failure_SyntaxError,
        "Unverified lookup accounts cannot back a schema"},
+      /* Refused before the non-standard path warning, like malformed bytes. */
+      {"one key short, non-standard path", true, 4,
+       FailureType_Failure_SyntaxError,
+       "Lookup accounts do not match transaction"},
   };
   for (const Leg& leg : legs) {
     SCOPED_TRACE(leg.name);
     ASSERT_TRUE(storage_setPolicy("AdvancedMode", leg.advanced));
     SolanaSignTx msg = good;
-    if (leg.mutate == 1) msg.lut_account_count--;
+    if (leg.mutate == 1 || leg.mutate == 4) msg.lut_account_count--;
+    if (leg.mutate == 4) {
+      msg.address_n_count = 5; /* m/44'/501'/0'/0'/0' */
+      msg.address_n[4] = 0x80000000u;
+    }
     if (leg.mutate == 2) msg.lut_account[7].size = 31;
     if (leg.mutate == 3) {
       msg.has_schema_payload = true;
@@ -3039,9 +3074,75 @@ TEST_F(SolanaSchemaSignTest, HostResolvedMintGetsNoSymbol) {
   EXPECT_EQ(7u, titles.size()) << shown;
   EXPECT_EQ(std::string::npos, shown.find("Known token")) << shown;
   EXPECT_EQ(std::string::npos, shown.find("USDC")) << shown;
-  EXPECT_NE(std::string::npos, shown.find("Token mint\n" + usdc)) << shown;
-  EXPECT_NE(std::string::npos, shown.find(kLutMark + 1)) << shown;
+  expect_marked_first(bodies, usdc);
+  EXPECT_EQ(std::string::npos, shown.find("Verified recipient owner")) << shown;
   EXPECT_NE(std::string::npos, shown.find("Send 1 tokens to ")) << shown;
+  EXPECT_EQ("Blind Sign", titles[titles.size() - 2]);
+}
+
+/* A destination the host resolved is not the signed one: an owner whose
+ * associated account it is gets no "Verified recipient owner", and the
+ * destination is shown marked. */
+TEST_F(SolanaSchemaSignTest, HostResolvedDestinationGetsNoRecipientOwner) {
+  std::string me;
+  const std::vector<uint8_t> usdc_key = sol_unhex(
+      "c6fa7af3bedbad3a3d65f36aabc97431b1bbe4c2d2f6e0e47ca60203452f5d61");
+  uint8_t owner[32];
+  memset(owner, 0x77, sizeof(owner));
+  uint8_t ata[32];
+  ASSERT_TRUE(solana_deriveAssociatedTokenAddress(owner, SOL_TOKEN_PROGRAM,
+                                                  usdc_key.data(), ata));
+  /* v0: [device, source, USDC mint, SPL Token]; TransferChecked of 1 USDC to
+   * loaded index 4 (one writable lookup entry). */
+  std::vector<uint8_t> raw = {0x80, 1, 0, 2, 4};
+  raw.insert(raw.end(), 32, 0x00); /* replaced by the device key below */
+  raw.insert(raw.end(), 32, 0x31);
+  raw.insert(raw.end(), usdc_key.begin(), usdc_key.end());
+  raw.insert(raw.end(), SOL_TOKEN_PROGRAM, SOL_TOKEN_PROGRAM + 32);
+  raw.insert(raw.end(), 32, 0xBB);
+  raw.insert(raw.end(), {1, 3, 4, 1, 2, 4, 0, 10, 12});
+  raw.insert(raw.end(), {0x40, 0x42, 0x0F, 0, 0, 0, 0, 0, 6});
+  raw.insert(raw.end(), {1});
+  raw.insert(raw.end(), 32, 0x55);
+  raw.insert(raw.end(), {1, 0, 0});
+  std::string hex;
+  for (uint8_t b : raw) {
+    char h[3];
+    snprintf(h, sizeof(h), "%02x", b);
+    hex += h;
+  }
+  SolanaSignTx msg = real_solana_request(hex.c_str(), 5, &me);
+  msg.lut_account_count = 1;
+  msg.lut_account[0].size = 32;
+  memcpy(msg.lut_account[0].bytes, ata, 32);
+  msg.token_recipient_owner_count = 1;
+  msg.token_recipient_owner[0].size = 32;
+  memcpy(msg.token_recipient_owner[0].bytes, owner, 32);
+
+  /* Heading, from, known mint, owner warning, send (2 pages), blind, final. */
+  const size_t SCREENS = 8;
+  ASSERT_TRUE(kkconfirm_preload(SCREENS, 0));
+  kkconfirm_capture_start();
+  fsm_test_clearLastFailure();
+  fsm_msgSolanaSignTx(&msg);
+  const std::vector<std::string> bodies = kkconfirm_capture_finish();
+  const std::vector<std::string> titles = kkconfirm_captured_titles();
+  EXPECT_EQ(0, fsm_test_lastFailureCode()) << fsm_test_lastFailureMessage();
+  SolanaSignedTx response = {};
+  ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_SolanaSignedTx,
+                                     SolanaSignedTx_fields, &response));
+  EXPECT_EQ(0, kkconfirm_drain());
+  std::string shown;
+  for (size_t i = 0; i < bodies.size(); i++)
+    shown += titles[i] + "|" + bodies[i] + "\n";
+  EXPECT_EQ(SCREENS, titles.size()) << shown;
+  EXPECT_EQ(std::string::npos, shown.find("Verified recipient owner"))
+      << shown;
+  EXPECT_EQ(std::string::npos, shown.find(sol_b58(owner))) << shown;
+  EXPECT_NE(std::string::npos,
+            shown.find("Recipient owner does not match signed token account."))
+      << shown;
+  expect_marked_first(bodies, sol_b58(ata));
   EXPECT_EQ("Blind Sign", titles[titles.size() - 2]);
 }
 
