@@ -519,7 +519,11 @@ bool confirm_sign_identity(const IdentityType* identity, const char* challenge,
                  body);
 }
 
-static size_t confirm_byte_token(uint8_t byte, char token[5]) {
+static size_t confirm_byte_token(uint8_t byte, bool hex, char token[5]) {
+  if (hex) {
+    snprintf(token, 5, "%02x", byte);
+    return 2;
+  }
   if (byte >= 0x21 && byte <= 0x7e && byte != '\\') {
     token[0] = (char)byte;
     token[1] = '\0';
@@ -538,7 +542,7 @@ bool confirm_bytes_escape(const uint8_t* data, size_t size, char* out,
   size_t used = 0;
   for (size_t i = 0; i < size; i++) {
     char token[5];
-    const size_t token_len = confirm_byte_token(data[i], token);
+    const size_t token_len = confirm_byte_token(data[i], false, token);
     if (token_len > (out_len - 1) - used) {
       out[0] = '\0';
       return false;
@@ -549,16 +553,17 @@ bool confirm_bytes_escape(const uint8_t* data, size_t size, char* out,
   return true;
 }
 
-size_t confirm_bytes_format_page(const uint8_t* data, size_t size, char* out,
-                                 size_t out_len) {
-  if ((!data && size != 0) || !out || out_len == 0) return 0;
+/* `prefix` is drawn ahead of the first byte and counts against the page. */
+static size_t format_page(const uint8_t* data, size_t size, bool hex,
+                          const char* prefix, char* out, size_t out_len) {
+  if ((!data && size != 0) || !out || out_len <= strlen(prefix)) return 0;
 
-  out[0] = '\0';
-  size_t used = 0;
+  strcpy(out, prefix);
+  size_t used = strlen(prefix);
   size_t consumed = 0;
   while (consumed < size) {
     char token[5];
-    const size_t token_len = confirm_byte_token(data[consumed], token);
+    const size_t token_len = confirm_byte_token(data[consumed], hex, token);
     if (used >= out_len - 1 || token_len > (out_len - 1) - used) break;
 
     memcpy(out + used, token, token_len + 1);
@@ -574,8 +579,51 @@ size_t confirm_bytes_format_page(const uint8_t* data, size_t size, char* out,
   return consumed;
 }
 
-bool confirm_bytes(ButtonRequestType button_request, const char* title,
-                   const uint8_t* data, size_t size) {
+size_t confirm_bytes_format_page(const uint8_t* data, size_t size, char* out,
+                                 size_t out_len) {
+  return format_page(data, size, false, "", out, out_len);
+}
+
+bool confirm_is_text(const uint8_t* data, size_t size) {
+  if (!data && size != 0) return false;
+  size_t i = 0;
+  while (i < size) {
+    const uint8_t c = data[i];
+    if (c < 0x80) {
+      if ((c < 0x20 && c != '\t' && c != '\n' && c != '\r') || c == 0x7f)
+        return false;
+      i++;
+      continue;
+    }
+    size_t more = 3;
+    uint32_t cp = c & 0x07, min = 0x10000;
+    if ((c & 0xe0) == 0xc0) {
+      more = 1;
+      cp = c & 0x1f;
+      min = 0x80;
+    } else if ((c & 0xf0) == 0xe0) {
+      more = 2;
+      cp = c & 0x0f;
+      min = 0x800;
+    } else if ((c & 0xf8) != 0xf0) {
+      return false;
+    }
+    if (more >= size - i) return false;
+    for (size_t k = 1; k <= more; k++) {
+      if ((data[i + k] & 0xc0) != 0x80) return false;
+      cp = (cp << 6) | (data[i + k] & 0x3f);
+    }
+    /* Overlong, surrogate, out of range, or a C1 control. */
+    if (cp < min || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff) ||
+        cp < 0xa0)
+      return false;
+    i += more + 1;
+  }
+  return true;
+}
+
+static bool confirm_pages(ButtonRequestType button_request, const char* title,
+                          const uint8_t* data, size_t size, bool hex) {
   if (!title || (!data && size != 0)) return false;
   /* Holds a space, which no byte is drawn as (confirm_byte_token), so no
    * value can draw the screen that means "no value". */
@@ -588,8 +636,9 @@ bool confirm_bytes(ButtonRequestType button_request, const char* title,
   size_t pages = 0;
   size_t offset = 0;
   while (offset < size) {
-    const size_t take = confirm_bytes_format_page(data + offset, size - offset,
-                                                  page_body, sizeof(page_body));
+    const size_t take = format_page(data + offset, size - offset, hex,
+                                    hex && offset == 0 ? "0x" : "", page_body,
+                                    sizeof(page_body));
     if (take == 0) goto cleanup;
     offset += take;
     pages++;
@@ -597,8 +646,9 @@ bool confirm_bytes(ButtonRequestType button_request, const char* title,
 
   offset = 0;
   for (size_t page = 0; page < pages; page++) {
-    const size_t take = confirm_bytes_format_page(data + offset, size - offset,
-                                                  page_body, sizeof(page_body));
+    const size_t take = format_page(data + offset, size - offset, hex,
+                                    hex && offset == 0 ? "0x" : "", page_body,
+                                    sizeof(page_body));
     if (take == 0) goto cleanup;
 
     int title_len;
@@ -631,6 +681,16 @@ cleanup:
   memzero(page_body, sizeof(page_body));
   memzero(page_title, sizeof(page_title));
   return approved;
+}
+
+bool confirm_bytes(ButtonRequestType button_request, const char* title,
+                   const uint8_t* data, size_t size) {
+  return confirm_pages(button_request, title, data, size, false);
+}
+
+bool confirm_bytes_hex(ButtonRequestType button_request, const char* title,
+                       const uint8_t* data, size_t size) {
+  return confirm_pages(button_request, title, data, size, true);
 }
 
 bool confirm_omni(ButtonRequestType button_request, const char* title,

@@ -86,6 +86,15 @@ size_t confirm_bytes_format_page(const uint8_t* data, size_t size, char* out,
 /** Review every byte of a length-delimited payload over one or more screens. */
 bool confirm_bytes(ButtonRequestType button_request, const char* title,
                    const uint8_t* data, size_t size);
+
+/** As confirm_bytes(), but every byte is two lowercase hex digits and the
+ *  first page starts with "0x", the way wallets print a hash. */
+bool confirm_bytes_hex(ButtonRequestType button_request, const char* title,
+                       const uint8_t* data, size_t size);
+
+/** True iff `data` is valid UTF-8 with no control characters other than tab,
+ *  CR and LF: a message a person wrote, rather than bytes such as a hash. */
+bool confirm_is_text(const uint8_t* data, size_t size);
 bool confirm_cosmos_address(const char* desc, const char* address);
 bool confirm_osmosis_address(const char* desc, const char* address);
 bool confirm_ethereum_address(const char* desc, const char* address);
