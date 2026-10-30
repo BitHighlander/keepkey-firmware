@@ -83,8 +83,10 @@ TEST(Erc7730Workflow, StateIsBoundedIndependentlyOfDescriptorSize) {
   // Host (64-bit) layout. Phase E2 added the inner call's context (184 B on
   // ARM, where tools/check_sram_budget.py is the real gate); 7.17 B5c the
   // suffix tail the review shows (ERC7730_SUFFIX_SHOWN_MAX, 128 B); 7.17 the
-  // resume state of a second embedded level (136 B on the host).
-  EXPECT_LE(sizeof(Erc7730Workflow), 4352u + ERC7730_SUFFIX_SHOWN_MAX + 136u);
+  // resume state of a second embedded level (136 B on the host); 7.17 the
+  // setup() module call SafeToL2Setup is recognised from (64 B).
+  EXPECT_LE(sizeof(Erc7730Workflow),
+            4352u + ERC7730_SUFFIX_SHOWN_MAX + 136u + 64u);
 }
 
 TEST(Erc7730Workflow, ReportsOnlyUnvalidatedCalldataAsWaiting) {

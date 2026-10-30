@@ -706,6 +706,63 @@ static bool safe_setup_selector(const uint8_t selector[4]) {
   return memcmp(selector, setup, 4) == 0;
 }
 
+/* One more big-endian byte (`k` of 32) of a word read as a uint32_t:
+ * UINT32_MAX once a byte above the low four is nonzero. */
+static uint32_t word_u32(uint32_t value, uint32_t k, uint8_t byte) {
+  if (value == UINT32_MAX) return value;
+  if (k < 28) return byte ? UINT32_MAX : value;
+  return value << 8 | byte;
+}
+
+/* Byte `at` of a setup()'s arguments: `to` is word 2 and the offset of `data`
+ * word 3. `data` (length word, then bytes) is read only past the eight head
+ * words, as Solidity lays it out, and only when `to` is a clean address word;
+ * otherwise it is not read, and the module call stays unrecognised. */
+static void safe_module_feed(Erc7730Workflow* workflow, uint32_t at,
+                             uint8_t byte) {
+  if (at == 0) {
+    memzero(workflow->safe_module_to, sizeof(workflow->safe_module_to));
+    memzero(workflow->safe_module_call, sizeof(workflow->safe_module_call));
+    workflow->safe_module_at = 0;
+    workflow->safe_module_length = 0;
+  }
+  if (at >= 64 && at < 76) {
+    if (byte) workflow->safe_module_at = UINT32_MAX;
+  } else if (at >= 76 && at < 96) {
+    workflow->safe_module_to[at - 76] = byte;
+  } else if (at >= 96 && at < 128) {
+    workflow->safe_module_at =
+        word_u32(workflow->safe_module_at, at - 96, byte);
+  } else if (at >= 128 && workflow->safe_module_at >= 256 &&
+             workflow->safe_module_at != UINT32_MAX &&
+             at >= workflow->safe_module_at) {
+    const uint32_t k = at - workflow->safe_module_at;
+    if (k < 32)
+      workflow->safe_module_length =
+          word_u32(workflow->safe_module_length, k, byte);
+    else if (k - 32u < sizeof(workflow->safe_module_call))
+      workflow->safe_module_call[k - 32u] = byte;
+  }
+}
+
+bool erc7730_workflow_safe_setup_to_l2(const Erc7730Workflow* workflow,
+                                       const Erc7730Field* field) {
+  if (!workflow || workflow->typed_data ||
+      !safe_setup_selector(workflow->identity.selector_or_type_hash) ||
+      workflow->safe_module_length != sizeof(workflow->safe_module_call) ||
+      !eip712_safe_setup_to_l2(workflow->identity.chain_id,
+                               workflow->safe_module_to,
+                               workflow->safe_module_call))
+    return false;
+  if (!field) return true;
+  /* The field's located call is that `data`, called on that `to`. */
+  const uint32_t args = workflow->depth == 0 ? 0u : workflow->inner_offset + 4u;
+  return field->kind == 13 && field->has_inner && field->has_address &&
+         field->inner_length == sizeof(workflow->safe_module_call) &&
+         field->inner_offset == args + workflow->safe_module_at + 32u &&
+         memcmp(field->address, workflow->safe_module_to, 20) == 0;
+}
+
 Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
                                                 const uint8_t* data,
                                                 size_t data_len) {
@@ -764,6 +821,20 @@ Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
         const uint32_t at = workflow->outer_received + (uint32_t)i;
         if (at >= base && at < base + 32u && data[i] != 0)
           workflow->safe_delegatecall = true;
+      }
+    }
+    if (setup) {
+      /* setup()'s own arguments: the whole call at the top level, else the
+       * located payload after its selector. */
+      const uint32_t args =
+          workflow->depth == 0 ? 0u : workflow->inner_offset + 4u;
+      const uint32_t end = workflow->depth == 0 ? workflow->outer_total
+                                                : workflow->inner_offset +
+                                                      workflow->inner_length;
+      for (size_t i = 0; i < data_len; i++) {
+        const uint32_t at = workflow->outer_received + (uint32_t)i;
+        if (at >= args && at < end)
+          safe_module_feed(workflow, at - args, data[i]);
       }
     }
     sha256_Update(&workflow->calldata_hash, data, data_len);

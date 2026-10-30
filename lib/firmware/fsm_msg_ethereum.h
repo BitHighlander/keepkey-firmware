@@ -342,8 +342,10 @@ static Erc7730UiResult confirm_erc7730_source_and_intent(
       return ERC7730_UI_CANCELLED;
     workflow->intent_confirmed = true;
     /* A Safe delegatecall, read from the signed calldata: said before any
-     * field, whatever the definition shows, at whatever level. */
+     * field, whatever the definition shows, at whatever level. Safe{Wallet}'s
+     * own setup() module is said calmly at its field instead. */
     if (workflow->safe_delegatecall &&
+        !erc7730_workflow_safe_setup_to_l2(workflow, NULL) &&
         !confirm(ButtonRequestType_ButtonRequest_Other, "DELEGATECALL",
                  "Runs the contract in 'to' as the Safe, with its full "
                  "authority. Not checked."))
@@ -631,6 +633,24 @@ static void show_erc7730_delegatecall(Erc7730Workflow* workflow) {
                      _("DELEGATECALL cannot be clear-signed"));
 }
 
+/* setup()'s module call is Safe{Wallet}'s own SafeToL2Setup, with Safe's
+ * SafeL2 (erc7730_workflow_safe_setup_to_l2): the device knows what it does
+ * and says so, in place of the callee's definition. */
+static void show_erc7730_safe_to_l2(Erc7730Workflow* workflow) {
+  const uint64_t chain = workflow->identity.chain_id;
+  char to[43] = "0x";
+  char l2[43] = "0x";
+  char formatted[ERC7730_FORMATTED_VALUE_MAX + 1u];
+  ethereum_address_checksum(workflow->safe_module_to, to + 2, false, chain);
+  ethereum_address_checksum(workflow->safe_module_call + 16, l2 + 2, false,
+                            chain);
+  snprintf(formatted, sizeof(formatted),
+           "To %s\nSafe's SafeToL2Setup: off Ethereum, your Safe runs "
+           "Safe's SafeL2 %s",
+           to, l2);
+  show_erc7730_field(workflow, formatted);
+}
+
 /* A raw bytes/string value longer than the device captures: refused in
  * calldata; typed data has already shown it in full during its walk. */
 static void show_erc7730_long_value(Erc7730Workflow* workflow, size_t length) {
@@ -795,7 +815,10 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
   if (field->kind == 13) {
     /* A Safe delegatecall is never shown as the callee's own action. */
     if (workflow->safe_delegatecall) {
-      show_erc7730_delegatecall(workflow);
+      if (erc7730_workflow_safe_setup_to_l2(workflow, field))
+        show_erc7730_safe_to_l2(workflow);
+      else
+        show_erc7730_delegatecall(workflow);
       return;
     }
     /* An inner unlimited approve() signs only after the device's own

@@ -5140,3 +5140,62 @@ TEST(Eip712Stream, CertifiedRestWalkRepeatsNothingTheFirstWalkShowed) {
             phases[1].message_hash);
   eip712_stream_abort();
 }
+
+// setup()'s module call is recognised only as Safe's SafeToL2Setup calling
+// setupToL2 with Safe's SafeL2, each pinned on the transaction's chain
+// (safe-deployments 685f22be). zkSync's own deployments count only on 324.
+TEST(Eip712Stream, SafeToL2SetupIsPinnedPerChain) {
+  auto addr = [](const char* hex) {
+    std::vector<uint8_t> out(20);
+    for (size_t i = 0; i < 20; i++)
+      out[i] = (uint8_t)std::stoul(std::string(hex + 2 * i, 2), nullptr, 16);
+    return out;
+  };
+  auto call = [](const std::vector<uint8_t>& singleton) {
+    std::vector<uint8_t> out(36, 0);
+    const uint8_t selector[4] = {0xfe, 0x51, 0xf6, 0x43};
+    memcpy(out.data(), selector, 4);
+    memcpy(out.data() + 16, singleton.data(), 20);
+    return out;
+  };
+  const auto setup141 = addr("bd89a1ce4dde368ffab0ec35506eece0b1ffdc54");
+  const auto setup150 = addr("900c7589200010d6c6ecaae5b06ebe653bc2d82a");
+  const auto setup141zk = addr("199a9df0224031c20cc27083a4164c9c8f1bcb39");
+  const auto l2141 = addr("29fcb43b46531bca003ddc8fcb67ffe91900c762");
+  const auto l2150 = addr("edd160febbd92e350d4d398fb636302fccd67c7e");
+  const auto l2141zk = addr("610fca2e0279fa1f8c00c8c2f71df522ad469380");
+  const auto safe141 = addr("41675c099f32341bf84bfc5382af534df5c7461a");
+  for (uint64_t chain : {1ull, 10ull, 56ull, 100ull, 137ull, 8453ull, 42161ull}) {
+    EXPECT_TRUE(eip712_safe_setup_to_l2(chain, setup141.data(),
+                                        call(l2141).data()))
+        << chain;
+    EXPECT_TRUE(eip712_safe_setup_to_l2(chain, setup150.data(),
+                                        call(l2150).data()))
+        << chain;
+    EXPECT_FALSE(eip712_safe_setup_to_l2(chain, setup141zk.data(),
+                                         call(l2141).data()))
+        << chain;
+    EXPECT_FALSE(eip712_safe_setup_to_l2(chain, setup141.data(),
+                                         call(safe141).data()))
+        << chain;
+    EXPECT_FALSE(eip712_safe_setup_to_l2(chain, l2141.data(),
+                                         call(l2141).data()))
+        << chain;
+  }
+  EXPECT_TRUE(
+      eip712_safe_setup_to_l2(324, setup141zk.data(), call(l2141zk).data()));
+  EXPECT_FALSE(
+      eip712_safe_setup_to_l2(1, setup141zk.data(), call(l2141zk).data()));
+  // A chain with no pinned deployment, and one that only aliases chain 1.
+  EXPECT_FALSE(eip712_safe_setup_to_l2(5, setup141.data(), call(l2141).data()));
+  EXPECT_FALSE(eip712_safe_setup_to_l2((1ull << 32) | 1, setup141.data(),
+                                       call(l2141).data()));
+  auto dirty = call(l2141);
+  dirty[4] = 1;
+  EXPECT_FALSE(eip712_safe_setup_to_l2(1, setup141.data(), dirty.data()));
+  auto other = call(l2141);
+  other[0] = 0xef;  // migrateToL2
+  EXPECT_FALSE(eip712_safe_setup_to_l2(1, setup141.data(), other.data()));
+  EXPECT_FALSE(eip712_safe_setup_to_l2(1, nullptr, call(l2141).data()));
+  EXPECT_FALSE(eip712_safe_setup_to_l2(1, setup141.data(), nullptr));
+}

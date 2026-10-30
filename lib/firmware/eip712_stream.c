@@ -1237,10 +1237,8 @@ _Static_assert(sizeof(safe_contracts) / sizeof(safe_contracts[0]) ==
                    sizeof(safe_contract_info) / sizeof(safe_contract_info[0]),
                "one safe_contract_info row per safe_contracts address");
 
-/* What `address` is on the domain's chain: SAFE_LIB_NONE unless pinned
- * there. */
-static uint8_t safe_contract(const uint8_t* address) {
-  const uint32_t chain = domain_chain_id();
+/* What `address` is on `chain`: SAFE_LIB_NONE unless pinned there. */
+static uint8_t safe_contract_on(const uint8_t* address, uint64_t chain) {
   uint16_t bit = 0;
   for (size_t i = 0; i < sizeof(safe_chains) / sizeof(safe_chains[0]); i++)
     if (safe_chains[i] == chain) bit = (uint16_t)(1u << i);
@@ -1250,6 +1248,21 @@ static uint8_t safe_contract(const uint8_t* address) {
         memcmp(address, safe_contracts[i], 20) == 0)
       return (uint8_t)(safe_contract_info[i] >> 12);
   return SAFE_LIB_NONE;
+}
+
+/* ... on the domain's chain. */
+static uint8_t safe_contract(const uint8_t* address) {
+  return safe_contract_on(address, domain_chain_id());
+}
+
+bool eip712_safe_setup_to_l2(uint64_t chain_id, const uint8_t to[20],
+                             const uint8_t call[36]) {
+  if (!to || !call || safe_contract_on(to, chain_id) != SAFE_LIB_TO_L2_SETUP ||
+      memcmp(call, "\xfe\x51\xf6\x43", 4) != 0)
+    return false;
+  for (size_t i = 4; i < 16; i++)
+    if (call[i]) return false;
+  return safe_contract_on(call + 16, chain_id) == SAFE_ARG_L2_SINGLETON;
 }
 
 /* A delegatecall to a Safe library the caller has cleared: say what it
