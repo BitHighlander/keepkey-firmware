@@ -282,6 +282,11 @@ TEST(Ethereum, NativeAmountsUseTheSigningChainsTicker) {
                                    sizeof(rendered)));
   EXPECT_STREQ("1.5 ETH", rendered);
 
+  // Unichain: its fee once read "...000 Wei".
+  ASSERT_TRUE(
+      ethereumFormatAmount(&amount, nullptr, 130, rendered, sizeof(rendered)));
+  EXPECT_STREQ("1.5 ETH", rendered);
+
   /* An unmapped chain must never render a bare, unit-less number. Wei is the
      base unit of every EVM chain, so the amount stays exact while the device
      stops claiming to know an asset name it does not have. */
@@ -2011,13 +2016,14 @@ TEST(Ethereum, LastScreenTitleNamesTheChain) {
   EXPECT_EQ("Tx on Base", title(true, 8453));
   EXPECT_EQ("Tx on Arbitrum", title(true, 42161));
   EXPECT_EQ("Tx on Optimism", title(true, 10));
+  EXPECT_EQ("Tx on Unichain", title(true, 130));
   EXPECT_EQ("Tx on chain 59144", title(true, 59144));
   EXPECT_EQ("Tx on chain 11155111", title(true, 11155111));
   EXPECT_NE(title(true, 1), title(true, 8453));   // both "ETH" chains
   EXPECT_NE(title(true, 59144), title(true, 11155111));  // both "Wei" chains
   // A wrapped title draws over the body: every one fits a row.
   for (uint32_t chain :
-       {10u, 56u, 100u, 137u, 8453u, 42161u, 43114u, 2147483629u}) {
+       {10u, 56u, 100u, 130u, 137u, 8453u, 42161u, 43114u, 2147483629u}) {
     EXPECT_EQ(1u, calc_str_line(get_title_font(), title(true, chain).c_str(),
                                 TITLE_WIDTH))
         << title(true, chain);

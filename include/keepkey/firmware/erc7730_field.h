@@ -23,7 +23,9 @@ bool erc7730_format_recipient(const uint8_t address[20], bool this_wallet,
 /* A token amount. `native` means the signer's program named `token` as the
  * chain's native asset. When the firmware table does not know the token,
  * disclose that signer-supplied mapping and the original token address before
- * the native amount. A listed token always uses firmware ticker and decimals.
+ * the native amount, except for the 0x00..00 and 0xEeee..EEeE placeholders,
+ * which show the native amount alone. A listed token always uses firmware
+ * ticker and decimals.
  * Other unknown tokens show their exact integer and address.
  * `message`, already escaped, is shown above the amount, never instead of it.
  */

@@ -144,17 +144,18 @@ bool ethereum_isStandardERC20Transfer(const EthereumSignTx* msg) {
 }
 
 /* The chain id is signed, and the amount screens cannot tell chains apart:
- * Ethereum, Optimism, Base and Arbitrum all read "ETH", and every chain
- * without an entry reads "Wei". So the last screen's title names the chain.
+ * Ethereum, Optimism, Unichain, Base and Arbitrum all read "ETH", and every
+ * chain without an entry reads "Wei". So the last screen's title names the
+ * chain.
  * Mainnet, and a legacy transaction with no chain id, keep "Transaction". */
 void ethereum_transactionTitle(const EthereumSignTx* msg, char* title,
                                size_t title_len) {
   static const struct {
     uint32_t chain_id;
     const char* name;
-  } chains[] = {{10, "Optimism"},    {56, "BNB Chain"}, {100, "Gnosis"},
-                {137, "Polygon"},    {8453, "Base"},    {42161, "Arbitrum"},
-                {43114, "Avalanche"}};
+  } chains[] = {{10, "Optimism"},    {56, "BNB Chain"},   {100, "Gnosis"},
+                {130, "Unichain"},   {137, "Polygon"},    {8453, "Base"},
+                {42161, "Arbitrum"}, {43114, "Avalanche"}};
   if (!msg->has_chain_id || msg->chain_id == 0 || msg->chain_id == 1) {
     strlcpy(title, "Transaction", title_len);
     return;
@@ -656,6 +657,9 @@ bool ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
         case 100:
           suffix = " xDAI";
           break;  //  Gnosis Chain
+        case 130:
+          suffix = " ETH";
+          break;  // Unichain
         case 137:
           suffix = " POL";
           break;  //  Polygon Mainnet

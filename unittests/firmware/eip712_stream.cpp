@@ -1862,10 +1862,9 @@ TEST(Eip712Stream, RealWorldCorpusSignsWithIndependentDigests) {
        {"Allow 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45 to spend ALL your "
         "USDC"}},
       // A real MultiSend: approve(max) inside, then a CoW swap order.
-      // WETH is not in the priority-only token table: named by contract.
       {"safe-SafeTx-multisend-approve-unlimited",
        {"Allow 0xC92E8bdf79f0507f65a392b0ab4667716BFE0110 to spend ALL your "
-        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"}},
+        "WETH"}},
   };
   const std::set<std::string> unbindable = {"evmos-MsgSend",
                                             "injective-MsgSend-v2"};

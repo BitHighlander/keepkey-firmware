@@ -271,3 +271,29 @@ TEST(Coins, TokenByChainAddress) {
   EXPECT_FALSE(tokenByTicker(257, "ZRX", &by_ticker));
   EXPECT_EQ(nullptr, by_ticker);
 }
+
+// 7.17 must not name fewer tokens than 7.16.0 did. A priority-only Uniswap
+// list once dropped 103 of them (WETH, WBTC, LINK, UNI, ...), so a real Safe
+// "spend ALL your WETH" warning showed only the contract address.
+TEST(Coins, TokenTableNamesEveryToken7160Named) {
+  static const struct {
+    uint32_t chain_id;
+    const char *address;
+    const char *ticker;
+    uint8_t decimals;
+  } named[] = {
+#define T(CHAIN_ID, ADDRESS, TICKER, DECIMALS) \
+  {(CHAIN_ID), (ADDRESS), (TICKER), (DECIMALS)},
+#include "tokens_v7160.inc"
+#undef T
+  };
+  ASSERT_EQ(sizeof(named) / sizeof(named[0]), 153u);
+  for (const auto &row : named) {
+    const TokenType *token =
+        tokenByChainAddress(row.chain_id, (const uint8_t *)row.address);
+    ASSERT_NE(token, nullptr);
+    ASSERT_NE(token, UnknownToken) << row.ticker;
+    EXPECT_EQ(std::string(token->ticker), row.ticker);
+    EXPECT_EQ(token->decimals, row.decimals) << row.ticker;
+  }
+}

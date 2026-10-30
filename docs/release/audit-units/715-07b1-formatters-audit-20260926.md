@@ -95,6 +95,14 @@ validator.
 | Copilot round 2 NUL replay finding | The independent string replay reader rejects NUL; `Erc7730ProgramString.RejectsEmbeddedNulBeforeDisplay` passes. |
 | Copilot round 3 native alias finding | A signer native alias shows `Signer native alias` and the exact address before the native-unit amount; max uint256 and Wanchain boundaries pass. |
 
+Later change (2026-10-30, 7.17 alpha, BitHighlander/keepkey-firmware#1031):
+the round 3 disposition above no longer holds for `0x00..00` and
+`0xEeee..EEeE`. Aliased, those two addresses read as the chain's coin with
+no mark and no address, on every tokenAmount field. Rationale, risk and
+status are recorded in `docs/security/HANDOFF-ERC7730-715-FORMATTERS.md`
+(Phase A display rules); owner sign-off is pending. This 7.15 record is
+otherwise unchanged.
+
 The historical 102-agent report preserved clusters rather than all 42 raw
 finding rows. The top split receipt maps the surviving groups and records
 the absent raw manifest explicitly. No historical finding is relabeled as a
