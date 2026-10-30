@@ -435,7 +435,9 @@ TEST(Eip712Stream, CertifiedFieldReplayPreservesDomainAndSigningPath) {
   EthereumTypedDataValueAck value{};
   value.value.size = 32;
   value.value.bytes[31] = 42;
-  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  // A field walk hashes the leaf without a screen (7.17): only the
+  // rejection sentinel is queued, and it stays unused.
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
   ASSERT_TRUE(eip712_stream_on_value(&value));
   ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
   const auto first = *eip712_stream_next();
@@ -443,7 +445,7 @@ TEST(Eip712Stream, CertifiedFieldReplayPreservesDomainAndSigningPath) {
   ASSERT_TRUE(eip712_stream_resume_for_field());
   EXPECT_STREQ(eip712_stream_next()->struct_name, "Mail");
   for (int i = 0; i < 3; i++) ASSERT_TRUE(eip712_stream_on_struct(&schema));
-  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
   ASSERT_TRUE(eip712_stream_on_value(&value));
   ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
   EXPECT_EQ(memcmp(first.domain_separator,
@@ -3937,4 +3939,236 @@ TEST(Eip712Stream, Permit2ReviewNamesTokensFromCertifiedIdentities) {
                                     collect_review, NULL));
   ASSERT_EQ(g_review.size(), 8u);
   EXPECT_EQ(g_review[1].second, "Spender may take\n250 USDC");
+}
+
+// ── Certified typed data: each field shown once (7.17) ─────────────────
+// The ERC-7730 runtime walks the message once per field value it needs
+// (eip712_stream_resume_for_field). Through 7.16 every walk showed every leaf
+// again. Each walk now hashes every leaf and shows none of them; the first
+// still shows its warnings and any value too long for a field to capture.
+namespace {
+
+Bytes text(const char* s) { return Bytes(s, s + strlen(s)); }
+
+// Answer every request until the walk pauses or ends. False on a failure or
+// a cancel.
+bool pumpWalk(const std::map<std::string, Struct>& types,
+              Bytes (*value)(const std::vector<uint32_t>&)) {
+  for (;;) {
+    const Eip712Next* next = eip712_stream_next();
+    if (next->kind == EIP712_REQ_STRUCT) {
+      auto it = types.find(next->struct_name);
+      Struct empty{};
+      if (!eip712_stream_on_struct(it == types.end() ? &empty : &it->second))
+        return false;
+    } else if (next->kind == EIP712_REQ_VALUE) {
+      std::vector<uint32_t> path(next->member_path,
+                                 next->member_path + next->member_path_len);
+      EthereumTypedDataValueAck ack = valueAck(value(path), next);
+      if (!eip712_stream_on_value(&ack)) return false;
+    } else {
+      return next->kind == EIP712_REQ_DEFINITION ||
+             next->kind == EIP712_REQ_DONE;
+    }
+  }
+}
+
+struct Phase {
+  std::vector<std::string> titles;
+  std::vector<std::string> bodies;
+  std::string message_hash;  // a field walk's, once it is done
+};
+
+// The domain (phase 0), then `walks` field walks, as the runtime drives
+// them. Every screen is accepted.
+std::vector<Phase> certifiedWalk(const char* primary,
+                                 const std::map<std::string, Struct>& types,
+                                 Bytes (*value)(const std::vector<uint32_t>&),
+                                 int walks) {
+  std::vector<Phase> phases;
+  EthereumSignTypedData begin{};
+  strcpy(begin.primary_type, primary);
+  EXPECT_TRUE(kkconfirm_preload(200, 0));
+  for (int i = 0; i <= walks; i++) {
+    Phase phase;
+    kkconfirm_capture_start();
+    const bool started = i == 0 ? eip712_stream_begin(&begin, true)
+                                : eip712_stream_resume_for_field();
+    const bool paused = started && pumpWalk(types, value);
+    phase.titles = kkconfirm_captured_titles();
+    phase.bodies = kkconfirm_capture_finish();
+    EXPECT_TRUE(paused) << "phase " << i;
+    EXPECT_EQ(eip712_stream_next()->kind,
+              i == 0 ? EIP712_REQ_DEFINITION : EIP712_REQ_DONE);
+    if (i > 0)
+      phase.message_hash = hexOf(eip712_stream_next()->message_hash, 32);
+    phases.push_back(phase);
+    if (!paused) break;
+  }
+  EXPECT_GE(kkconfirm_drain(), 0) << "a screen was declined";
+  return phases;
+}
+
+// A CoW Protocol GPv2 Order exactly as swaps.pro asked KeepKey Desktop to
+// sign it on 2026-10-29 (25,000 USDC for ETH; keepkey-vault
+// docs/clearsign-case-studies/swapspro-20261029/requests/order-cow-usdc.json).
+std::map<std::string, Struct> cowTypes() {
+  const Field address = mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS);
+  const Field string = mk(EthereumTypedDataStructAck_EthereumDataType_STRING);
+  const Field u256 =
+      mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32);
+  std::map<std::string, Struct> types;
+  Struct& domain = types["EIP712Domain"];
+  addMember(domain, "name", string);
+  addMember(domain, "version", string);
+  addMember(domain, "chainId", u256);
+  addMember(domain, "verifyingContract", address);
+  Struct& order = types["Order"];
+  addMember(order, "sellToken", address);
+  addMember(order, "buyToken", address);
+  addMember(order, "receiver", address);
+  addMember(order, "sellAmount", u256);
+  addMember(order, "buyAmount", u256);
+  addMember(order, "validTo",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 4));
+  addMember(order, "appData",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_BYTES, 32));
+  addMember(order, "feeAmount", u256);
+  addMember(order, "kind", string);
+  addMember(order, "partiallyFillable",
+            mk(EthereumTypedDataStructAck_EthereumDataType_BOOL));
+  addMember(order, "sellTokenBalance", string);
+  addMember(order, "buyTokenBalance", string);
+  return types;
+}
+
+Bytes cowValue(const std::vector<uint32_t>& path) {
+  static const char* const domain[] = {
+      nullptr, nullptr,
+      "0000000000000000000000000000000000000000000000000000000000000001",
+      "9008d19f58aabd9ed0d60971565aa8510560ab41"};
+  static const char* const order[] = {
+      "a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "9858effd232b4033e47d90003d41ec34ecaeda94",
+      "00000000000000000000000000000000000000000000000000000005d21dba00",
+      "00000000000000000000000000000000000000000000000083a995f764012111",
+      "6ae3b754",
+      "048680e79dfa12d06c2362b19faa34b7c754a3ed153d204656c48f82e84d4e60",
+      "0000000000000000000000000000000000000000000000000000000000000000",
+      nullptr,
+      "00",
+      nullptr,
+      nullptr};
+  const uint32_t m = path[1];
+  if (path[0] == 0) {
+    if (m == 0) return text("Gnosis Protocol");
+    if (m == 1) return text("v2");
+    return fromHex(domain[m]);
+  }
+  if (m == 8) return text("sell");
+  if (m == 10 || m == 11) return text("erc20");
+  return fromHex(order[m]);
+}
+
+}  // namespace
+
+// Five fields of a CoW order take eight walks (two tokenAmounts read their
+// token too). The domain is shown as before; no walk shows a leaf, and every
+// walk hashes all twelve to the same digest the reference encoder gives.
+TEST(Eip712Stream, CertifiedCowOrderFieldWalksShowNoLeaf) {
+  const std::map<std::string, Struct> types = cowTypes();
+  const char* message =
+      "cbbead21fb30b68c4df989abc39812f18764cd9af35c8930992573650cd1cebb";
+
+  // Plain streaming: every leaf, once.
+  kkconfirm_capture_start();
+  ASSERT_GT(walk("Order", types, cowValue, 40), 12);
+  kkconfirm_capture_finish();
+  ASSERT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  EXPECT_EQ(hexOf(eip712_stream_next()->message_hash, 32), message);
+  eip712_stream_abort();
+
+  const std::vector<Phase> phases = certifiedWalk("Order", types, cowValue, 8);
+  ASSERT_EQ(phases.size(), 9u);
+  EXPECT_FALSE(phases[0].titles.empty());
+  for (const std::string& title : phases[0].titles)
+    EXPECT_EQ(title.rfind("EIP-712 Domain", 0), 0u) << title;
+  for (int i = 1; i <= 8; i++) {
+    SCOPED_TRACE(i);
+    EXPECT_EQ(phases[i].titles, std::vector<std::string>());
+    EXPECT_EQ(phases[i].message_hash, message);
+  }
+  EXPECT_EQ(hexOf(eip712_stream_next()->domain_separator, 32),
+            "c078f884a2676e1345748b1feace7b0abee5d00ecadb6e574dcdd109a63e8943");
+  eip712_stream_abort();
+}
+
+// What a field cannot show is still said, in the first walk only: an
+// embedded unlimited approve's warning, and a value longer than a field can
+// capture (a raw field then says it was shown above).
+namespace {
+Bytes warnedValue(const std::vector<uint32_t>& path) {
+  if (path[0] == 0)
+    return fromHex(
+        "0000000000000000000000000000000000000000000000000000000000000001");
+  if (path[1] == 0) {  // approve(0x1111...1111, 2^256 - 1)
+    Bytes approve = fromHex("095ea7b3");
+    approve.insert(approve.end(), 12, 0x00);
+    approve.insert(approve.end(), 20, 0x11);
+    approve.insert(approve.end(), 32, 0xff);
+    return approve;
+  }
+  Bytes blob(200);
+  for (size_t i = 0; i < blob.size(); i++) blob[i] = (uint8_t)i;
+  return blob;
+}
+}  // namespace
+
+TEST(Eip712Stream, CertifiedWalksWarnAndShowLongValuesOnce) {
+  std::map<std::string, Struct> types;
+  addMember(types["EIP712Domain"], "chainId",
+            mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  const Field bytes = mk(EthereumTypedDataStructAck_EthereumDataType_BYTES);
+  addMember(types["Call"], "data", bytes);
+  addMember(types["Call"], "blob", bytes);
+  const std::vector<Phase> phases =
+      certifiedWalk("Call", types, warnedValue, 3);
+  ASSERT_EQ(phases.size(), 4u);
+  ASSERT_GE(phases[1].titles.size(), 2u);
+  EXPECT_EQ(phases[1].titles[0], "UNLIMITED approval");
+  // The 68-byte approve fits a field; the 200-byte blob is shown in parts.
+  std::string shown;
+  for (size_t i = 1; i < phases[1].bodies.size(); i++) {
+    EXPECT_EQ(phases[1].titles[i].rfind("EIP-712 Message", 0), 0u);
+    shown += phases[1].bodies[i];
+  }
+  EXPECT_EQ(shown.rfind("blob (1/", 0), 0u) << shown;
+  EXPECT_EQ(shown.find("data"), std::string::npos) << shown;
+  EXPECT_EQ(phases[2].titles, std::vector<std::string>());
+  EXPECT_EQ(phases[3].titles, std::vector<std::string>());
+  EXPECT_EQ(phases[2].message_hash, phases[1].message_hash);
+  EXPECT_EQ(phases[3].message_hash, phases[1].message_hash);
+  eip712_stream_abort();
+}
+
+// A definition whose display reads no message value never starts a field
+// walk: the runtime resumes the message itself at the end of the program,
+// and every leaf is shown, as plain streaming shows it.
+TEST(Eip712Stream, CertifiedMessageWithoutFieldWalksIsStreamed) {
+  const std::map<std::string, Struct> types = cowTypes();
+  std::vector<Phase> phases = certifiedWalk("Order", types, cowValue, 0);
+  ASSERT_EQ(phases.size(), 1u);
+  EXPECT_TRUE(kkconfirm_preload(40, 0));
+  kkconfirm_capture_start();
+  ASSERT_TRUE(eip712_stream_definition_accepted());
+  ASSERT_TRUE(pumpWalk(types, cowValue));
+  const std::vector<std::string> titles = kkconfirm_captured_titles();
+  kkconfirm_capture_finish();
+  EXPECT_GE(kkconfirm_drain(), 0);
+  EXPECT_EQ(eip712_stream_next()->kind, EIP712_REQ_DONE);
+  EXPECT_GE(titles.size(), 12u);
+  for (const std::string& title : titles)
+    EXPECT_EQ(title.rfind("EIP-712 Message", 0), 0u) << title;
+  eip712_stream_abort();
 }

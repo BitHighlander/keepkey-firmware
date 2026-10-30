@@ -268,7 +268,10 @@ bool eip712_stream_begin(const EthereumSignTypedData* msg,
                          bool require_definition);
 bool eip712_stream_definition_accepted(void);
 /* Resume the first certified field or replay message values for the next.
- * The reviewed domain and signing path remain fixed across these passes. */
+ * The reviewed domain and signing path remain fixed across these passes.
+ * Each pass hashes every leaf but shows none: the definition's fields are
+ * the review. The first also shows its warnings and any value longer than
+ * ERC7730_ABI_CAPTURE_MAX. */
 bool eip712_stream_resume_for_field(void);
 
 /* False = session torn down and EIP712_REQ_FAIL or EIP712_REQ_CANCELLED
