@@ -282,6 +282,10 @@ bool erc7730_workflow_restore_and_start_length(Erc7730Workflow* workflow,
                                                const Erc7730Path* path);
 bool erc7730_workflow_start_eip712_capture(Erc7730Workflow* workflow,
                                            const Erc7730Path* path);
+/* Typed data: capture the element count of the array an iteration path walks,
+ * as erc7730_workflow_restore_and_start_length does for calldata. */
+bool erc7730_workflow_start_eip712_length(Erc7730Workflow* workflow,
+                                          const Erc7730Path* path);
 /* One typed-data value ack. A value too long for one ack arrives in chunks
  * under the same member path: whole_len is the whole value's length, and
  * continuation marks every ack after the first. */

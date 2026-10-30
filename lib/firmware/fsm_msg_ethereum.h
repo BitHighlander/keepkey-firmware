@@ -1112,6 +1112,35 @@ static bool erc7730_allowance_policy(Erc7730Workflow* workflow,
   return true;
 }
 
+/* A pass captured the element count of the array an iteration walks (from
+ * calldata or typed data): run the iteration's fields once per element. */
+static void begin_erc7730_iteration(Erc7730Workflow* workflow) {
+  Erc7730AbiCapture capture;
+  uint8_t cls = 0;
+  const bool counted = erc7730_workflow_captured(workflow, &capture, &cls) &&
+                       cls == ERC7730_ABI_ARRAY && capture.length == 32;
+  uint16_t count = 0;
+  if (counted) count = (uint16_t)((capture.data[30] << 8) | capture.data[31]);
+  memzero(&capture, sizeof(capture));
+  if (!counted || count > ERC7730_ABI_MAX_ARRAY_ELEMENTS ||
+      !erc7730_workflow_resume_field(workflow)) {
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("Invalid ERC-7730 iteration"));
+    return;
+  }
+  workflow->iteration_index = 0;
+  workflow->iteration_count = (uint8_t)count;
+  workflow->iterating = count != 0;
+  /* An empty array shows nothing: continue after the iteration's end. */
+  if (count == 0) workflow->display_index = workflow->iteration_end;
+  if (!erc7730_workflow_advance_display(workflow)) {
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("Invalid ERC-7730 display continuation"));
+    return;
+  }
+  send_erc7730_definition_request();
+}
+
 static void confirm_erc7730_intent_and_continue(EthereumSignTx* tx) {
   Erc7730Workflow* workflow = erc7730_workflow_state();
   if (!workflow->calldata_validated) {
@@ -1139,31 +1168,7 @@ static void confirm_erc7730_intent_and_continue(EthereumSignTx* tx) {
     return;
   }
   if (workflow->display_stage == ERC7730_DISPLAY_ITERATION) {
-    /* The pass captured the array's element count. */
-    Erc7730AbiCapture capture;
-    uint8_t cls = 0;
-    const bool counted = erc7730_workflow_captured(workflow, &capture, &cls) &&
-                         cls == ERC7730_ABI_ARRAY && capture.length == 32;
-    uint16_t count = 0;
-    if (counted) count = (uint16_t)((capture.data[30] << 8) | capture.data[31]);
-    memzero(&capture, sizeof(capture));
-    if (!counted || count > ERC7730_ABI_MAX_ARRAY_ELEMENTS ||
-        !erc7730_workflow_resume_field(workflow)) {
-      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
-                         _("Invalid ERC-7730 iteration"));
-      return;
-    }
-    workflow->iteration_index = 0;
-    workflow->iteration_count = (uint8_t)count;
-    workflow->iterating = count != 0;
-    /* An empty array shows nothing: continue after the iteration's end. */
-    if (count == 0) workflow->display_index = workflow->iteration_end;
-    if (!erc7730_workflow_advance_display(workflow)) {
-      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
-                         _("Invalid ERC-7730 display continuation"));
-      return;
-    }
-    send_erc7730_definition_request();
+    begin_erc7730_iteration(workflow);
     return;
   }
   /* A field or intent value in progress: this pass captured its argument. */
@@ -1869,13 +1874,22 @@ void fsm_msgEthereumClearSignDefinitionChunk(
                        _("Invalid ERC-7730 value path"));
     return;
   }
-  if (workflow->display_stage == ERC7730_DISPLAY_ITERATION) {
-    if (workflow->typed_data) { /* refused at preload */
-      memzero(&path, sizeof(path));
+  if (workflow->display_stage == ERC7730_DISPLAY_ITERATION &&
+      workflow->typed_data) {
+    /* Count the array in one more walk of the message. */
+    const bool started =
+        erc7730_workflow_start_eip712_length(workflow, &path) &&
+        eip712_stream_resume_for_field();
+    memzero(&path, sizeof(path));
+    if (!started) {
       fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
                          _("Invalid ERC-7730 iteration"));
       return;
     }
+    eip712_pump();
+    return;
+  }
+  if (workflow->display_stage == ERC7730_DISPLAY_ITERATION) {
     start_erc7730_calldata(workflow, &path);
   } else {
     follow_erc7730_path(workflow, &path);
@@ -2451,7 +2465,11 @@ static void eip712_pump(void) {
           layoutHome();
           return;
         }
-        deliver_erc7730_capture(workflow);
+        if (workflow->display_stage == ERC7730_DISPLAY_ITERATION) {
+          begin_erc7730_iteration(workflow);
+        } else {
+          deliver_erc7730_capture(workflow);
+        }
         return;
       }
       /* The walk has finished; keep only its result. */
@@ -2655,9 +2673,15 @@ void fsm_msgEthereumTypedDataValueAck(const EthereumTypedDataValueAck* msg) {
     layoutHome();
     return;
   }
-  /* This value is the field's: the field shows it, the last walk does not. */
+  /* This value is the field's: the field shows it, the last walk does not.
+   * An iteration's count is shown by its fields' "i of n" titles, so an
+   * empty array, which shows no field, is left for the last walk. */
+  const bool empty_count =
+      workflow->display_stage == ERC7730_DISPLAY_ITERATION &&
+      msg->value.size == 2 && msg->value.bytes[0] == 0 &&
+      msg->value.bytes[1] == 0;
   if (workflow->phase == ERC7730_WORKFLOW_TYPED_DATA && !captured &&
-      workflow->calldata.capture_found)
+      workflow->calldata.capture_found && !empty_count)
     eip712_stream_leaf_covered();
   memzero(member_path, sizeof(member_path));
   eip712_pump();
