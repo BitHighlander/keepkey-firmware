@@ -266,6 +266,144 @@ TEST_F(ReviewHandlers, RippleMemoReachesReviewBeforeSigning) {
   EXPECT_EQ("Memo\\x20review\\x20must\\x20be\\x20reached", screens[1]);
 }
 
+// A real Safe safeTxHash (Safe 0x849D...039d, nonce 2867), as Safe{Wallet}
+// asks an owner to sign it with eth_sign. Desktop emulator leg G12 showed it
+// on 7.16.0 as "\xA1]g\x0D\x17b...", which no one can compare with the hash
+// the Safe app prints. It must read exactly as the app prints it.
+static const char kSafeTxHash[] =
+    "a15d670d17621751bb88f493f8b305c5bde4eeaa7aa4f9875da4d9bd2fad39b0";
+static const uint32_t message_path[] = {0x8000002c, 0x8000003c, 0x80000000, 0,
+                                        0};
+
+static std::vector<uint8_t> from_hex(const char* hex) {
+  std::vector<uint8_t> out;
+  for (size_t i = 0; hex[i] && hex[i + 1]; i += 2) {
+    unsigned byte;
+    sscanf(hex + i, "%2x", &byte);
+    out.push_back((uint8_t)byte);
+  }
+  return out;
+}
+
+static std::string to_hex(const std::vector<uint8_t>& bytes) {
+  std::string out = "0x";
+  char pair[3];
+  for (uint8_t b : bytes) {
+    snprintf(pair, sizeof(pair), "%02x", b);
+    out += pair;
+  }
+  return out;
+}
+
+struct SignedMessage {
+  std::vector<std::string> titles, bodies;
+  EthereumMessageSignature response;
+};
+
+static SignedMessage sign_ethereum_message(const std::vector<uint8_t>& message,
+                                           int screens) {
+  SignedMessage out = {};
+  EthereumSignMessage msg = {};
+  msg.address_n_count = 5;
+  memcpy(msg.address_n, message_path, sizeof(message_path));
+  msg.message.size = message.size();
+  memcpy(msg.message.bytes, message.data(), message.size());
+  EXPECT_TRUE(kkconfirm_preload(screens, 0));
+  kkconfirm_capture_start();
+  fsm_msgEthereumSignMessage(&msg);
+  out.bodies = kkconfirm_capture_finish();
+  out.titles = kkconfirm_captured_titles();
+  EXPECT_EQ(0, fsm_test_lastFailureCode()) << fsm_test_lastFailureMessage();
+  EXPECT_TRUE(
+      kkconfirm_readResponse(MessageType_MessageType_EthereumMessageSignature,
+                             EthereumMessageSignature_fields, &out.response));
+  EXPECT_EQ(0, kkconfirm_drain());
+  return out;
+}
+
+// The signature is over EIP-191 personal_sign of the raw bytes, independently
+// hashed here, by the key at m/44'/60'/0'/0/0.
+static void expect_personal_sign(const std::vector<uint8_t>& message,
+                                 const EthereumMessageSignature& response) {
+  ASSERT_EQ(65u, response.signature.size);
+  std::string preimage = "\x19" "Ethereum Signed Message:\n" +
+                         std::to_string(message.size());
+  preimage.append(message.begin(), message.end());
+  uint8_t digest[32];
+  keccak_256(reinterpret_cast<const uint8_t*>(preimage.data()),
+             preimage.size(), digest);
+  HDNode expected = {};
+  ASSERT_TRUE(storage_getRootNode("secp256k1", true, &expected));
+  for (uint32_t index : message_path)
+    ASSERT_TRUE(hdnode_private_ckd(&expected, index));
+  hdnode_fill_public_key(&expected);
+  EXPECT_EQ(0, ecdsa_verify_digest(&secp256k1, expected.public_key,
+                                   response.signature.bytes, digest));
+}
+
+TEST_F(ReviewHandlers, EthereumMessageSafeTxHashIsShownAsTheSafeAppPrintsIt) {
+  const std::vector<uint8_t> hash = from_hex(kSafeTxHash);
+  ASSERT_EQ(32u, hash.size());
+  const SignedMessage signed_ = sign_ethereum_message(hash, 1);
+  ASSERT_EQ(1u, signed_.bodies.size());
+  EXPECT_EQ("Sign Binary Message", signed_.titles[0]);
+  EXPECT_EQ(std::string("0x") + kSafeTxHash, signed_.bodies[0]);
+  expect_personal_sign(hash, signed_.response);
+  // Same bytes signed as on 7.16.0 (leg G12): only the screen changed.
+  EXPECT_EQ(
+      "0xca19367d305525e055c68e8f4bfe6ee0c3cb39303ae5235a1315460aaaab7e1f"
+      "777a252a246ebcf1fa27e618b6c9c8492046964506521bc612b705b6515f89851c",
+      to_hex(std::vector<uint8_t>(signed_.response.signature.bytes,
+                                  signed_.response.signature.bytes + 65)));
+}
+
+TEST_F(ReviewHandlers, EthereumMessageLongBinaryIsPagedHexWithOnePrefix) {
+  std::vector<uint8_t> message(300);
+  for (size_t i = 0; i < message.size(); ++i) message[i] = (uint8_t)(i * 7);
+  // Decline the first page to learn the page count, then answer every page.
+  int pages = 0;
+  {
+    EthereumSignMessage msg = {};
+    msg.address_n_count = 5;
+    memcpy(msg.address_n, message_path, sizeof(message_path));
+    msg.message.size = message.size();
+    memcpy(msg.message.bytes, message.data(), message.size());
+    ASSERT_TRUE(kkconfirm_preload(0, 1));
+    kkconfirm_capture_start();
+    fsm_msgEthereumSignMessage(&msg);
+    kkconfirm_capture_finish();
+    ASSERT_EQ(0, kkconfirm_drain());
+    EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+    fsm_test_clearLastFailure();
+    const std::string first = kkconfirm_captured_titles()[0];
+    const size_t slash = first.rfind('/');
+    ASSERT_NE(std::string::npos, slash) << first;
+    pages = atoi(first.c_str() + slash + 1);
+  }
+  ASSERT_GT(pages, 1);
+  const SignedMessage signed_ = sign_ethereum_message(message, pages);
+  ASSERT_EQ((size_t)pages, signed_.bodies.size());
+  std::string joined;
+  for (int i = 0; i < pages; ++i) {
+    EXPECT_EQ("Sign Binary Message " + std::to_string(i + 1) + "/" +
+                  std::to_string(pages),
+              signed_.titles[i]);
+    joined += signed_.bodies[i];
+  }
+  EXPECT_EQ(to_hex(message), joined);
+  expect_personal_sign(message, signed_.response);
+}
+
+TEST_F(ReviewHandlers, EthereumMessageTextKeepsItsTitleAndText) {
+  const std::string text = "Hello, world!";
+  const std::vector<uint8_t> message(text.begin(), text.end());
+  const SignedMessage signed_ = sign_ethereum_message(message, 1);
+  ASSERT_EQ(1u, signed_.bodies.size());
+  EXPECT_EQ("Sign Ethereum Message", signed_.titles[0]);
+  EXPECT_EQ("Hello,\\x20world!", signed_.bodies[0]);
+  expect_personal_sign(message, signed_.response);
+}
+
 static const uint32_t ping_signing_path[] = {0x8000002c, 0x8000003c, 0x80000000,
                                              0, 0};
 

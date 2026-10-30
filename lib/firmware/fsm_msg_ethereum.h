@@ -2165,10 +2165,18 @@ void fsm_msgEthereumSignMessage(EthereumSignMessage* msg) {
    * confirm_bytes() paginates and displays EVERY signed byte, which is what
    * that gate was standing in for. Full disclosure is both the stronger
    * security property and the one that does not break default-configuration
-   * signing, so the gate is dropped here in favour of it. */
-  if (!confirm_bytes(ButtonRequestType_ButtonRequest_ProtectCall,
-                     _("Sign Ethereum Message"), msg->message.bytes,
-                     msg->message.size)) {
+   * signing, so the gate is dropped here in favour of it.
+   *
+   * Bytes that are not text (a Safe safeTxHash signed with eth_sign, say) are
+   * shown as 0x hex under their own title, the way Ledger and Trezor show a
+   * binary message and the way the dapp prints the hash, so the owner can
+   * compare the two. The title tells them apart from a text message that
+   * happens to read "0x...". */
+  const bool text = confirm_is_text(msg->message.bytes, msg->message.size);
+  if (!(text ? confirm_bytes : confirm_bytes_hex)(
+          ButtonRequestType_ButtonRequest_ProtectCall,
+          text ? _("Sign Ethereum Message") : _("Sign Binary Message"),
+          msg->message.bytes, msg->message.size)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
     layoutHome();
     return;
