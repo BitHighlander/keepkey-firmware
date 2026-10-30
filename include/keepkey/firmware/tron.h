@@ -50,15 +50,33 @@ typedef enum {
   TRON_TX_TRANSFER,        // single TransferContract (native TRX send)
   TRON_TX_TRC20_TRANSFER,  // single TriggerSmartContract:
                            // transfer(address,uint256)
+  TRON_TX_TRC20_APPROVE,   // single TriggerSmartContract:
+                           // approve(address,uint256)
+  TRON_TX_FREEZE_V2,       // FreezeBalanceV2Contract (stake TRX)
+  TRON_TX_UNFREEZE_V2,     // UnfreezeBalanceV2Contract (unstake TRX)
+  TRON_TX_VOTE_WITNESS,    // VoteWitnessContract
 } TronTxType;
+
+/* protocol.ResourceCode */
+#define TRON_RESOURCE_BANDWIDTH 0
+#define TRON_RESOURCE_ENERGY 1
+#define TRON_RESOURCE_TRON_POWER 2
+
+/* The chain accepts at most this many votes in one VoteWitnessContract. */
+#define TRON_MAX_VOTES 30
 
 typedef struct {
   TronTxType type;
   uint8_t owner[TRON_RAW_ADDRESS_SIZE];     // spending account
-  uint8_t to[TRON_RAW_ADDRESS_SIZE];        // TRX or token recipient
+  uint8_t to[TRON_RAW_ADDRESS_SIZE];        // TRX or token recipient, or the
+                                            // approve() spender
   uint8_t contract[TRON_RAW_ADDRESS_SIZE];  // TRC-20 token contract
-  uint64_t amount;                          // SUN, TransferContract only
+  uint64_t amount;   // SUN: TransferContract, (un)frozen balance
+  uint8_t resource;  // TRON_RESOURCE_*, FreezeBalanceV2/UnfreezeBalanceV2
   uint8_t trc20_amount[32];  // big-endian uint256 token base units
+  const uint8_t* votes;      // VoteWitnessContract bytes, points into raw
+  uint16_t votes_len;
+  uint8_t vote_count;  // 1..TRON_MAX_VOTES
   bool has_fee_limit;
   uint64_t fee_limit;   // SUN
   const uint8_t* memo;  // points into caller's raw_data
@@ -72,6 +90,10 @@ typedef struct {
  * out->memo points into raw — valid only while raw is alive.
  */
 TronTxType tron_parseRawTx(const uint8_t* raw, size_t len, TronParsedTx* out);
+
+/* Vote `index` (< tx->vote_count) of a parsed TRON_TX_VOTE_WITNESS. */
+bool tron_voteAt(const TronParsedTx* tx, uint8_t index,
+                 uint8_t address[TRON_RAW_ADDRESS_SIZE], uint64_t* count);
 
 /**
  * Base58Check-encode a raw 21-byte TRON address for display.

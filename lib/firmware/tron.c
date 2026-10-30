@@ -144,10 +144,14 @@ bool tron_formatTrc20Amount(const uint8_t amount_be[32], const TronToken* token,
 
 /* protocol.Transaction.Contract.ContractType enum values */
 #define TRON_CT_TRANSFER_CONTRACT 1
+#define TRON_CT_VOTE_WITNESS_CONTRACT 4
 #define TRON_CT_TRIGGER_SMART_CONTRACT 31
+#define TRON_CT_FREEZE_BALANCE_V2_CONTRACT 54
+#define TRON_CT_UNFREEZE_BALANCE_V2_CONTRACT 55
 
-/* TRC-20 transfer(address,uint256) selector */
+/* TRC-20 transfer(address,uint256) and approve(address,uint256) selectors */
 static const uint8_t TRC20_TRANSFER_SELECTOR[4] = {0xa9, 0x05, 0x9c, 0xbb};
+static const uint8_t TRC20_APPROVE_SELECTOR[4] = {0x09, 0x5e, 0xa7, 0xb3};
 
 static bool pb_read_varint(const uint8_t* buf, size_t len, size_t* pos,
                            uint64_t* out) {
@@ -257,17 +261,13 @@ static bool tron_parseTransferContract(const uint8_t* buf, size_t len,
   return has_owner && has_to && has_amount;
 }
 
-/* Parse protocol.TriggerSmartContract:
- *   owner_address=1, contract_address=2, call_value=3, data=4,
- *   call_token_value=5, token_id=6
- * Only a plain TRC-20 transfer(address,uint256) with zero call_value and
- * no TRC-10 tokens attached is considered verified. */
-static bool tron_parseTriggerSmartContract(const uint8_t* buf, size_t len,
-                                           TronParsedTx* out) {
+/* Parse protocol.FreezeBalanceV2Contract / UnfreezeBalanceV2Contract
+ * { owner_address=1, frozen_balance|unfreeze_balance=2, resource=3 }.
+ * proto3 omits resource when it is BANDWIDTH (0). */
+static bool tron_parseStakeContract(const uint8_t* buf, size_t len,
+                                    TronParsedTx* out) {
   size_t pos = 0;
-  bool has_owner = false, has_contract = false, has_data = false;
-  const uint8_t* data = NULL;
-  size_t data_len = 0;
+  bool has_owner = false, has_amount = false, has_resource = false;
   while (pos < len) {
     uint32_t field;
     uint8_t wire;
@@ -280,44 +280,171 @@ static bool tron_parseTriggerSmartContract(const uint8_t* buf, size_t len,
       if (!tron_isRawAddress(bp, bl) || has_owner) return false;
       memcpy(out->owner, bp, TRON_RAW_ADDRESS_SIZE);
       has_owner = true;
-    } else if (field == 2 && wire == 2) {
+    } else if (field == 2 && wire == 0) {
+      if (!pb_read_varint(buf, len, &pos, &v) || has_amount) return false;
+      if (v == 0 || v > INT64_MAX) return false;
+      out->amount = v;
+      has_amount = true;
+    } else if (field == 3 && wire == 0) {
+      if (!pb_read_varint(buf, len, &pos, &v) || has_resource) return false;
+      if (v > TRON_RESOURCE_TRON_POWER) return false;
+      out->resource = (uint8_t)v;
+      has_resource = true;
+    } else {
+      return false;
+    }
+  }
+  return has_owner && has_amount;
+}
+
+/* Parse VoteWitnessContract.Vote { vote_address=1, vote_count=2 }. */
+static bool tron_parseVote(const uint8_t* buf, size_t len,
+                           uint8_t address[TRON_RAW_ADDRESS_SIZE],
+                           uint64_t* count) {
+  size_t pos = 0;
+  bool has_address = false, has_count = false;
+  while (pos < len) {
+    uint32_t field;
+    uint8_t wire;
+    if (!pb_read_key(buf, len, &pos, &field, &wire)) return false;
+    const uint8_t* bp;
+    size_t bl;
+    if (field == 1 && wire == 2) {
       if (!pb_read_bytes(buf, len, &pos, &bp, &bl)) return false;
-      if (!tron_isRawAddress(bp, bl) || has_contract) return false;
+      if (!tron_isRawAddress(bp, bl) || has_address) return false;
+      memcpy(address, bp, TRON_RAW_ADDRESS_SIZE);
+      has_address = true;
+    } else if (field == 2 && wire == 0) {
+      if (!pb_read_varint(buf, len, &pos, count) || has_count) return false;
+      if (*count == 0 || *count > INT64_MAX) return false;
+      has_count = true;
+    } else {
+      return false;
+    }
+  }
+  return has_address && has_count;
+}
+
+/* Walk VoteWitnessContract { owner_address=1, votes=2 (repeated) }. With
+ * want < TRON_MAX_VOTES, stop at vote `want` and return it; otherwise
+ * check every field and record the owner and the vote count. The unused
+ * `support` field (3) is refused like any other. */
+static bool tron_walkVotes(const uint8_t* buf, size_t len, uint8_t want,
+                           TronParsedTx* out,
+                           uint8_t address[TRON_RAW_ADDRESS_SIZE],
+                           uint64_t* count) {
+  size_t pos = 0;
+  uint8_t votes = 0;
+  bool has_owner = false;
+  uint8_t vote_address[TRON_RAW_ADDRESS_SIZE];
+  uint64_t vote_count;
+  while (pos < len) {
+    uint32_t field;
+    uint8_t wire;
+    if (!pb_read_key(buf, len, &pos, &field, &wire)) return false;
+    const uint8_t* bp;
+    size_t bl;
+    if (wire != 2 || !pb_read_bytes(buf, len, &pos, &bp, &bl)) return false;
+    if (field == 1) {
+      if (!tron_isRawAddress(bp, bl) || has_owner) return false;
+      if (out) memcpy(out->owner, bp, TRON_RAW_ADDRESS_SIZE);
+      has_owner = true;
+    } else if (field == 2) {
+      if (votes == TRON_MAX_VOTES ||
+          !tron_parseVote(bp, bl, vote_address, &vote_count))
+        return false;
+      if (votes++ == want) {
+        memcpy(address, vote_address, TRON_RAW_ADDRESS_SIZE);
+        *count = vote_count;
+        return true;
+      }
+    } else {
+      return false;
+    }
+  }
+  if (!out || !has_owner || votes == 0) return false;
+  out->votes = buf;
+  out->votes_len = (uint16_t)len;
+  out->vote_count = votes;
+  return true;
+}
+
+bool tron_voteAt(const TronParsedTx* tx, uint8_t index,
+                 uint8_t address[TRON_RAW_ADDRESS_SIZE], uint64_t* count) {
+  return tx->type == TRON_TX_VOTE_WITNESS && index < tx->vote_count &&
+         tron_walkVotes(tx->votes, tx->votes_len, index, NULL, address, count);
+}
+
+/* Parse protocol.TriggerSmartContract:
+ *   owner_address=1, contract_address=2, call_value=3, data=4,
+ *   call_token_value=5, token_id=6
+ * Only a plain TRC-20 transfer(address,uint256) or approve(address,uint256)
+ * with zero call_value and no TRC-10 tokens attached is considered
+ * verified. */
+static TronTxType tron_parseTriggerSmartContract(const uint8_t* buf, size_t len,
+                                                 TronParsedTx* out) {
+  size_t pos = 0;
+  bool has_owner = false, has_contract = false, has_data = false;
+  const uint8_t* data = NULL;
+  size_t data_len = 0;
+  while (pos < len) {
+    uint32_t field;
+    uint8_t wire;
+    if (!pb_read_key(buf, len, &pos, &field, &wire)) return TRON_TX_UNVERIFIED;
+    const uint8_t* bp;
+    size_t bl;
+    uint64_t v;
+    if (field == 1 && wire == 2) {
+      if (!pb_read_bytes(buf, len, &pos, &bp, &bl)) return TRON_TX_UNVERIFIED;
+      if (!tron_isRawAddress(bp, bl) || has_owner) return TRON_TX_UNVERIFIED;
+      memcpy(out->owner, bp, TRON_RAW_ADDRESS_SIZE);
+      has_owner = true;
+    } else if (field == 2 && wire == 2) {
+      if (!pb_read_bytes(buf, len, &pos, &bp, &bl)) return TRON_TX_UNVERIFIED;
+      if (!tron_isRawAddress(bp, bl) || has_contract) return TRON_TX_UNVERIFIED;
       memcpy(out->contract, bp, TRON_RAW_ADDRESS_SIZE);
       has_contract = true;
     } else if (field == 3 && wire == 0) {
       /* call_value: transfer(address,uint256) is non-payable — any TRX
        * attached to the call is something we can't explain to the user. */
-      if (!pb_read_varint(buf, len, &pos, &v)) return false;
-      if (v != 0) return false;
+      if (!pb_read_varint(buf, len, &pos, &v)) return TRON_TX_UNVERIFIED;
+      if (v != 0) return TRON_TX_UNVERIFIED;
     } else if (field == 4 && wire == 2) {
       if (!pb_read_bytes(buf, len, &pos, &data, &data_len) || has_data)
-        return false;
+        return TRON_TX_UNVERIFIED;
       has_data = true;
     } else {
       /* token_id / call_token_value / anything else: refuse. */
-      return false;
+      return TRON_TX_UNVERIFIED;
     }
   }
-  if (!has_owner || !has_contract || !has_data) return false;
+  if (!has_owner || !has_contract || !has_data) return TRON_TX_UNVERIFIED;
 
   /* data must be exactly selector + address word + amount word */
-  if (data_len != 4 + 32 + 32) return false;
-  if (memcmp(data, TRC20_TRANSFER_SELECTOR, 4) != 0) return false;
+  if (data_len != 4 + 32 + 32) return TRON_TX_UNVERIFIED;
+  TronTxType type;
+  if (memcmp(data, TRC20_TRANSFER_SELECTOR, 4) == 0) {
+    type = TRON_TX_TRC20_TRANSFER;
+  } else if (memcmp(data, TRC20_APPROVE_SELECTOR, 4) == 0) {
+    type = TRON_TX_TRC20_APPROVE;
+  } else {
+    return TRON_TX_UNVERIFIED;
+  }
 
   /* Address word: 12 zero bytes then the 20-byte address. TRON tooling
    * sometimes writes the 0x41 network prefix at byte 11; the TVM decodes
    * only the low 160 bits, so accept 0x41 there and nothing else. */
   const uint8_t* word = data + 4;
   for (int i = 0; i < 11; i++) {
-    if (word[i] != 0) return false;
+    if (word[i] != 0) return TRON_TX_UNVERIFIED;
   }
-  if (word[11] != 0 && word[11] != TRON_ADDRESS_PREFIX) return false;
+  if (word[11] != 0 && word[11] != TRON_ADDRESS_PREFIX)
+    return TRON_TX_UNVERIFIED;
 
   out->to[0] = TRON_ADDRESS_PREFIX;
   memcpy(out->to + 1, word + 12, 20);
   memcpy(out->trc20_amount, data + 4 + 32, 32);
-  return true;
+  return type;
 }
 
 /* Parse Contract { type=1, parameter=2 (Any) }; enum type and the Any
@@ -372,12 +499,24 @@ static TronTxType tron_parseContract(const uint8_t* buf, size_t len,
 
   /* type_url ends with "/protocol.<Name>"; require agreement with enum */
   const char* expect_suffix;
-  if (ctype == TRON_CT_TRANSFER_CONTRACT) {
-    expect_suffix = "/protocol.TransferContract";
-  } else if (ctype == TRON_CT_TRIGGER_SMART_CONTRACT) {
-    expect_suffix = "/protocol.TriggerSmartContract";
-  } else {
-    return TRON_TX_UNVERIFIED;
+  switch (ctype) {
+    case TRON_CT_TRANSFER_CONTRACT:
+      expect_suffix = "/protocol.TransferContract";
+      break;
+    case TRON_CT_VOTE_WITNESS_CONTRACT:
+      expect_suffix = "/protocol.VoteWitnessContract";
+      break;
+    case TRON_CT_TRIGGER_SMART_CONTRACT:
+      expect_suffix = "/protocol.TriggerSmartContract";
+      break;
+    case TRON_CT_FREEZE_BALANCE_V2_CONTRACT:
+      expect_suffix = "/protocol.FreezeBalanceV2Contract";
+      break;
+    case TRON_CT_UNFREEZE_BALANCE_V2_CONTRACT:
+      expect_suffix = "/protocol.UnfreezeBalanceV2Contract";
+      break;
+    default:
+      return TRON_TX_UNVERIFIED;
   }
   size_t suffix_len = strlen(expect_suffix);
   if (type_url_len < suffix_len || memcmp(type_url + type_url_len - suffix_len,
@@ -385,14 +524,26 @@ static TronTxType tron_parseContract(const uint8_t* buf, size_t len,
     return TRON_TX_UNVERIFIED;
   }
 
-  if (ctype == TRON_CT_TRANSFER_CONTRACT) {
-    return tron_parseTransferContract(value, value_len, out)
-               ? TRON_TX_TRANSFER
-               : TRON_TX_UNVERIFIED;
+  switch (ctype) {
+    case TRON_CT_TRANSFER_CONTRACT:
+      return tron_parseTransferContract(value, value_len, out)
+                 ? TRON_TX_TRANSFER
+                 : TRON_TX_UNVERIFIED;
+    case TRON_CT_VOTE_WITNESS_CONTRACT:
+      return tron_walkVotes(value, value_len, TRON_MAX_VOTES, out, NULL, NULL)
+                 ? TRON_TX_VOTE_WITNESS
+                 : TRON_TX_UNVERIFIED;
+    case TRON_CT_FREEZE_BALANCE_V2_CONTRACT:
+      return tron_parseStakeContract(value, value_len, out)
+                 ? TRON_TX_FREEZE_V2
+                 : TRON_TX_UNVERIFIED;
+    case TRON_CT_UNFREEZE_BALANCE_V2_CONTRACT:
+      return tron_parseStakeContract(value, value_len, out)
+                 ? TRON_TX_UNFREEZE_V2
+                 : TRON_TX_UNVERIFIED;
+    default:
+      return tron_parseTriggerSmartContract(value, value_len, out);
   }
-  return tron_parseTriggerSmartContract(value, value_len, out)
-             ? TRON_TX_TRC20_TRANSFER
-             : TRON_TX_UNVERIFIED;
 }
 
 TronTxType tron_parseRawTx(const uint8_t* raw, size_t len, TronParsedTx* out) {
