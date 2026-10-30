@@ -2648,3 +2648,615 @@ TEST(Erc7730Certified, CertifiedDefinitionStillBindsChainAndCalldata) {
   EXPECT_EQ(swapped.message, "ERC-7730 calldata does not match definition");
   EXPECT_FALSE(swapped.signature);
 }
+
+// 7.17 (D-020): embedded calls nested up to ERC7730_EMBED_MAX_DEPTH and inside
+// iterations, an embedded call with no data, and descriptor-level constraints
+// (RECIPIENT, TX_VALUE), each run through the FSM over REAL calldata: mainnet
+// transactions and Desktop request captures (erc7730_embedded_vectors.h,
+// scripts/erc7730/gen_embedded_vectors.py). Every definition is certified by
+// a test root, so the review needs no AdvancedMode.
+#include <functional>
+
+#include "erc7730_embedded_vectors.h"
+
+void kk_test_set_message_hook(std::function<void(MessageType, const void*)>);
+std::vector<std::string> kkconfirm_captured_titles(void);
+
+namespace {
+
+std::vector<uint8_t> unhex(const char* hex) {
+  std::vector<uint8_t> out;
+  for (size_t i = 0; hex[i] && hex[i + 1]; i += 2) {
+    char byte[3] = {hex[i], hex[i + 1], 0};
+    out.push_back((uint8_t)strtoul(byte, nullptr, 16));
+  }
+  return out;
+}
+
+const e7730v::Tx& realTx(const char* name) {
+  for (const auto& tx : e7730v::kTxs)
+    if (strcmp(tx.name, name) == 0) return tx;
+  ADD_FAILURE() << name;
+  return e7730v::kTxs[0];
+}
+
+struct EmbeddedEntry {
+  std::vector<uint8_t> envelope;
+  std::vector<uint8_t> id;
+  std::vector<uint8_t> contract;
+  std::vector<uint8_t> selector;
+};
+
+struct EmbeddedCatalog {
+  CertifiedFixture fixture;
+  bool certified = true;
+  std::vector<EmbeddedEntry> entries;
+
+  void add(const char* name) {
+    for (const auto& p : e7730v::kPrograms) {
+      if (strcmp(p.name, name) != 0) continue;
+      const auto program = unhex(p.hex);
+      EmbeddedEntry entry;
+      entry.envelope =
+          certified ? certifiedEnvelope(
+                          fixture, program,
+                          rootCert(fixture.root_key, fixture.delegate.pubkey))
+                    : signedEnvelope(fixture.delegate, program);
+      entry.id = digest(entry.envelope);
+      entry.contract.assign(program.begin() + 18, program.begin() + 38);
+      entry.selector.assign(program.begin() + 38, program.begin() + 42);
+      entries.push_back(entry);
+      return;
+    }
+    ADD_FAILURE() << name;
+  }
+  const EmbeddedEntry* byId(const uint8_t* id) const {
+    for (const auto& e : entries)
+      if (memcmp(e.id.data(), id, 32) == 0) return &e;
+    return nullptr;
+  }
+  const EmbeddedEntry* byLookup(const uint8_t* contract,
+                                const uint8_t* selector) const {
+    for (const auto& e : entries)
+      if (memcmp(e.contract.data(), contract, 20) == 0 &&
+          memcmp(e.selector.data(), selector, 4) == 0)
+        return &e;
+    return nullptr;
+  }
+};
+
+struct EmbeddedRun {
+  FailureType code = (FailureType)0;
+  std::string message;
+  bool signature = false;
+  std::vector<std::string> titles;
+  std::vector<std::string> bodies;
+  std::vector<uint32_t> depths;  // recursion_depth of each inner lookup
+
+  // The body of the first screen titled `title`, or "".
+  std::string body(const std::string& title, size_t nth = 0) const {
+    for (size_t i = 0; i < titles.size(); i++)
+      if (titles[i] == title && nth-- == 0) return bodies[i];
+    return "";
+  }
+  bool shows(const std::string& text) const {
+    for (const auto& b : bodies)
+      if (b.find(text) != std::string::npos) return true;
+    return false;
+  }
+};
+
+void chunkFrom(const EmbeddedEntry& entry, uint32_t offset, uint32_t length,
+               EthereumClearSignDefinitionChunk* chunk) {
+  *chunk = {};
+  chunk->definition_id.size = 32;
+  memcpy(chunk->definition_id.bytes, entry.id.data(), 32);
+  chunk->offset = offset;
+  chunk->total_length = (uint32_t)entry.envelope.size();
+  const size_t left = entry.envelope.size() - offset;
+  chunk->data.size = (pb_size_t)std::min<size_t>(
+      std::min<size_t>(length, ERC7730_TRANSPORT_CHUNK_MAX), left);
+  memcpy(chunk->data.bytes, entry.envelope.data() + offset, chunk->data.size);
+}
+
+// Preloads `outer`, signs `tx` (its calldata replaced by `data` when given),
+// and answers every definition the device asks for from `catalog`: by id, or
+// by (callee, selector) for an inner call, with "none" when it has none.
+EmbeddedRun signEmbedded(const EmbeddedCatalog& catalog, const char* outer,
+                         const e7730v::Tx& tx,
+                         const std::vector<uint8_t>* data = nullptr,
+                         const char* value = nullptr) {
+  EmbeddedRun run;
+  const auto calldata = data ? *data : unhex(tx.data);
+  const std::vector<uint8_t> args(calldata.begin() + 4, calldata.end());
+  bool pending = false;
+  EthereumClearSignDefinitionRequest request{};
+  kk_test_set_message_hook([&](MessageType id, const void* msg) {
+    if (id == MessageType_MessageType_EthereumClearSignDefinitionRequest) {
+      request = *(const EthereumClearSignDefinitionRequest*)msg;
+      pending = true;
+      if (request.has_recursion_depth)
+        run.depths.push_back(request.recursion_depth);
+    } else if (id == MessageType_MessageType_EthereumTxRequest) {
+      const auto* r = (const EthereumTxRequest*)msg;
+      if (r->has_signature_r && r->has_signature_s) run.signature = true;
+    }
+  });
+  fsm_test_clearLastFailure();
+  EXPECT_TRUE(kkconfirm_preload(96, 0));
+  kkconfirm_capture_start();
+
+  const EmbeddedEntry* first = nullptr;
+  for (const auto& p : e7730v::kPrograms)
+    if (strcmp(p.name, outer) == 0)
+      first =
+          catalog.byLookup(unhex(p.contract).data(), unhex(p.hex).data() + 38);
+  EXPECT_NE(first, nullptr) << outer;
+  for (uint32_t offset = 0; first && offset < first->envelope.size();) {
+    EthereumClearSignDefinitionChunk part;
+    chunkFrom(*first, offset, ERC7730_TRANSPORT_CHUNK_MAX, &part);
+    EthereumClearSignDefinition chunk{};
+    chunk.definition_id.size = 32;
+    memcpy(chunk.definition_id.bytes, part.definition_id.bytes, 32);
+    chunk.offset = part.offset;
+    chunk.total_length = part.total_length;
+    chunk.data.size = part.data.size;
+    memcpy(chunk.data.bytes, part.data.bytes, part.data.size);
+    fsm_msgEthereumClearSignDefinition(&chunk);
+    if (fsm_test_lastFailureCode() != 0) break;
+    offset += part.data.size;
+  }
+
+  if (fsm_test_lastFailureCode() == 0) {
+    EthereumSignTx sign{};
+    const uint32_t path[5] = {0x8000002c, 0x8000003c, 0x80000000, 0, 0};
+    memcpy(sign.address_n, path, sizeof(path));
+    sign.address_n_count = 5;
+    sign.has_chain_id = true;
+    sign.chain_id = (uint32_t)tx.chain;
+    sign.has_nonce = sign.has_gas_price = sign.has_gas_limit = true;
+    sign.nonce.size = sign.gas_price.size = sign.gas_limit.size = 1;
+    sign.nonce.bytes[0] = 0;
+    sign.gas_price.bytes[0] = 1;
+    sign.gas_limit.bytes[0] = 0x80;
+    sign.has_to = true;
+    sign.to.size = 20;
+    memcpy(sign.to.bytes, unhex(tx.to).data(), 20);
+    std::string hex_value = value ? value : tx.value;
+    hex_value = hex_value.substr(2);
+    if (hex_value.size() % 2) hex_value = "0" + hex_value;
+    auto amount = unhex(hex_value.c_str());
+    while (!amount.empty() && amount[0] == 0) amount.erase(amount.begin());
+    sign.has_value = true;
+    sign.value.size = (pb_size_t)amount.size();
+    if (!amount.empty()) memcpy(sign.value.bytes, amount.data(), amount.size());
+    sign.has_data_length = sign.has_data_initial_chunk = true;
+    sign.data_length = (uint32_t)calldata.size();
+    sign.data_initial_chunk.size = 4;
+    memcpy(sign.data_initial_chunk.bytes, calldata.data(), 4);
+    fsm_msgEthereumSignTx(&sign);
+  }
+
+  Erc7730Workflow* workflow = erc7730_workflow_state();
+  for (int guard = 0; guard < 4096 && fsm_test_lastFailureCode() == 0;
+       guard++) {
+    uint8_t id_wanted[32];
+    uint32_t offset = 0, total = 0;
+    size_t remaining = 0;
+    if (workflow->phase == ERC7730_WORKFLOW_FETCH && pending) {
+      pending = false;
+      const EmbeddedEntry* entry =
+          request.has_definition_id
+              ? catalog.byId(request.definition_id.bytes)
+              : catalog.byLookup(request.contract_address.bytes,
+                                 request.selector_or_type_hash.bytes);
+      EthereumClearSignDefinitionChunk chunk{};
+      if (entry) {
+        chunkFrom(*entry, request.offset, request.length, &chunk);
+      } else {
+        chunk.definition_id.size = 32;  // none: an empty chunk
+      }
+      fsm_msgEthereumClearSignDefinitionChunk(&chunk);
+    } else if (erc7730_workflow_waiting(workflow, id_wanted, &offset, &total)) {
+      pending = false;
+      const EmbeddedEntry* entry = catalog.byId(id_wanted);
+      if (!entry) break;
+      EthereumClearSignDefinitionChunk chunk;
+      chunkFrom(*entry, offset, ERC7730_TRANSPORT_CHUNK_MAX, &chunk);
+      fsm_msgEthereumClearSignDefinitionChunk(&chunk);
+    } else if (erc7730_workflow_calldata_waiting(workflow, &remaining)) {
+      const size_t at = workflow->outer_received;
+      EthereumTxAck ack{};
+      ack.has_data_chunk = true;
+      ack.data_chunk.size = (pb_size_t)std::min<size_t>(remaining, 1024);
+      memcpy(ack.data_chunk.bytes, args.data() + at, ack.data_chunk.size);
+      fsm_msgEthereumTxAck(&ack);
+    } else {
+      break;
+    }
+  }
+  run.code = fsm_test_lastFailureCode();
+  run.message = fsm_test_lastFailureMessage();
+  run.bodies = kkconfirm_capture_finish();
+  run.titles = kkconfirm_captured_titles();
+  kk_test_set_message_hook({});
+  fsm_abort_workflows();
+  erc7730_catalog_clear_preload();
+  kkconfirm_drain();
+  return run;
+}
+
+std::string dump(const EmbeddedRun& run) {
+  std::string out = run.message + "\n";
+  for (size_t i = 0; i < run.bodies.size(); i++)
+    out += "[" + (i < run.titles.size() ? run.titles[i] : "?") + "] " +
+           run.bodies[i] + "\n";
+  return out;
+}
+
+// Each confirmation as (title, text): the pages the board pager split one
+// confirmation into ("Title 1/3" ...) are joined back.
+std::vector<std::pair<std::string, std::string>> screens(
+    const EmbeddedRun& run) {
+  std::vector<std::pair<std::string, std::string>> out;
+  bool joining = false;
+  for (size_t i = 0; i < run.bodies.size() && i < run.titles.size(); i++) {
+    std::string title = run.titles[i];
+    unsigned page = 0, pages = 0;
+    const size_t space = title.rfind(' ');
+    if (space != std::string::npos &&
+        sscanf(title.c_str() + space + 1, "%u/%u", &page, &pages) == 2 &&
+        page >= 1 && page <= pages) {
+      title.resize(space);
+    } else {
+      page = pages = 0;
+    }
+    if (joining && page > 1)
+      out.back().second += run.bodies[i];
+    else
+      out.emplace_back(title, run.bodies[i]);
+    joining = page != 0 && page < pages;
+  }
+  return out;
+}
+
+std::vector<std::string> titlesOf(const EmbeddedRun& run) {
+  std::vector<std::string> out;
+  for (const auto& s : screens(run)) out.push_back(s.first);
+  return out;
+}
+
+bool hasScreen(const EmbeddedRun& run, const std::string& title,
+               const std::string& text) {
+  for (const auto& s : screens(run))
+    if (s.first == title && s.second == text) return true;
+  return false;
+}
+
+std::vector<uint8_t> withByte(const std::vector<uint8_t>& data, size_t at,
+                              uint8_t value) {
+  auto out = data;
+  out[at] = value;
+  return out;
+}
+
+struct EmbeddedTest : public ::testing::Test {
+  EmbeddedCatalog catalog;
+  void SetUp() override {
+    makeCertifiedFixture(&catalog.fixture);
+    ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+  }
+  void TearDown() override { clearsign_root_set_test_root(nullptr); }
+};
+
+}  // namespace
+
+// G14: the real Safe creation (tx 0x8f5df072...), with the registry's
+// SafeProxyFactory and Safe setup() formats. setup() embeds the module call
+// (to, data) = (0, empty): nothing is called, which the device states without
+// any definition (7.17), instead of refusing the whole creation.
+TEST_F(EmbeddedTest, SafeCreationShowsItsOwnersAndThreshold) {
+  TestRoot root(catalog.fixture.root_pubkey);
+  ScopedWallet wallet;
+  catalog.add("safe_factory");
+  catalog.add("safe_setup");
+  const auto& tx = realTx("safe_create");
+  const EmbeddedRun run = signEmbedded(catalog, "safe_factory", tx);
+  ASSERT_EQ(run.code, (FailureType)0) << dump(run);
+  EXPECT_TRUE(run.signature);
+  EXPECT_EQ(titlesOf(run),
+            (std::vector<std::string>{
+                "Verified by KeepKey", "Contract action", "Signer field",
+                "Signer field", "Verified by KeepKey", "Inner action",
+                "Inner field 1 of 2", "Inner field 2 of 2", "Inner field",
+                "Inner field", "Inner field", "Inner field", "Inner field",
+                "Send", "Transaction"}))
+      << dump(run);
+  EXPECT_TRUE(hasScreen(run, "Contract action", "Create Safe"));
+  EXPECT_TRUE(hasScreen(run, "Signer field",
+                        "Account setup:\nTo "
+                        "0x29fcB43b46531BcA003ddC8FCB67FFE91900C762\n"
+                        "Function 0xb63e800d\nData 388 bytes"));
+  EXPECT_TRUE(hasScreen(run, "Inner action", "Setup Safe"));
+  EXPECT_TRUE(hasScreen(run, "Inner field 1 of 2",
+                        "Signer:\n0xe4f420A0786451a10bf2Fd4702E9b76632c08109"));
+  EXPECT_TRUE(hasScreen(run, "Inner field 2 of 2",
+                        "Signer:\n0x3Ef438C34cE51A697a24247fe033C4562C94F0Fd"));
+  EXPECT_TRUE(hasScreen(run, "Inner field", "Threshold:\n1"));
+  EXPECT_TRUE(hasScreen(
+      run, "Inner field",
+      "Module:\nTo 0x0000000000000000000000000000000000000000\nNo data"));
+  EXPECT_EQ(run.depths, std::vector<uint32_t>{1});
+
+  // A module call to a contract, with no data, is not "nothing": setup()
+  // DELEGATECALLs it. Refused (`to` is argument word 2 of setup(), whose
+  // arguments start at byte 4 + 128 + 4 of the calldata).
+  const auto module = withByte(unhex(tx.data), 4 + 132 + 95, 0x01);
+  const EmbeddedRun refused =
+      signEmbedded(catalog, "safe_factory", tx, &module);
+  EXPECT_EQ(refused.code, FailureType_Failure_Other) << dump(refused);
+  EXPECT_EQ(refused.message, "Inner call cannot be clear-signed");
+  EXPECT_FALSE(refused.signature);
+}
+
+// G13: a real Safe execTransaction (tx 0x1084535e...) of an ERC-20 transfer,
+// with the registry's execTransaction format bound to that Safe.
+TEST_F(EmbeddedTest, SafeExecOfATokenTransferNamesTheRecipient) {
+  TestRoot root(catalog.fixture.root_pubkey);
+  ScopedWallet wallet;
+  catalog.add("safe_exec_a");
+  catalog.add("token_transfer");
+  const EmbeddedRun run =
+      signEmbedded(catalog, "safe_exec_a", realTx("safe_exec_transfer"));
+  ASSERT_EQ(run.code, (FailureType)0) << dump(run);
+  EXPECT_TRUE(run.signature);
+  EXPECT_TRUE(hasScreen(run, "Signer field",
+                        "Transaction:\nTo "
+                        "0x8292Bb45bf1Ee4d140127049757C2E0fF06317eD\n"
+                        "Function 0xa9059cbb\nData 68 bytes\nValue 0 Wei\nAs "
+                        "0xE9619c0450Fd890E28a5baA09Ab2e83e6A02C3fD"))
+      << dump(run);
+  EXPECT_TRUE(hasScreen(run, "Inner action", "Send"));
+  // RECIPIENT: the token goes to someone other than the signing account.
+  EXPECT_TRUE(hasScreen(run, "Inner field",
+                        "To:\n0xbd757963C857c884153d24B4589A94F45762e7D5\n"
+                        "NOT this wallet"))
+      << dump(run);
+  EXPECT_TRUE(hasScreen(run, "Inner field",
+                        "Amount:\n894300000000000000\nunknown token\n"
+                        "0x8292Bb45bf1Ee4d140127049757C2E0fF06317eD"));
+  // The addressName without the flag only marks the signer.
+  EXPECT_TRUE(hasScreen(run, "Signer field",
+                        "Execution signer:\n"
+                        "0x73d0385F4d8E00C5e6504C6030F47BF6212736A8\n"
+                        "(this wallet)"));
+}
+
+// G13: a real Safe execTransaction sending ETH with no data (tx
+// 0xeae0a9cc...): a CALL with no data only moves the value, all of which the
+// device shows without an inner definition. A DELEGATECALL is still refused.
+TEST_F(EmbeddedTest, SafeSendOfEthNeedsNoInnerDefinition) {
+  TestRoot root(catalog.fixture.root_pubkey);
+  ScopedWallet wallet;
+  catalog.add("safe_exec_b");
+  const auto& tx = realTx("safe_exec_native");
+  const EmbeddedRun run = signEmbedded(catalog, "safe_exec_b", tx);
+  ASSERT_EQ(run.code, (FailureType)0) << dump(run);
+  EXPECT_TRUE(run.signature);
+  EXPECT_TRUE(hasScreen(run, "Signer field",
+                        "Transaction:\nTo "
+                        "0xb47CFCf8181D36117142b83D31BBBF63B1b250fE\nNo data\n"
+                        "Value 1.765246451935994706 ETH\nAs "
+                        "0x0DA96062099823ae487aeb33DA6331B8B5001c48"))
+      << dump(run);
+  EXPECT_TRUE(run.depths.empty());
+
+  // operation = 1 (argument word 3): the empty call runs `to`'s code as the
+  // Safe.
+  const auto delegate = withByte(unhex(tx.data), 4 + 127, 1);
+  const EmbeddedRun refused =
+      signEmbedded(catalog, "safe_exec_b", tx, &delegate);
+  EXPECT_EQ(refused.message, "DELEGATECALL cannot be clear-signed")
+      << dump(refused);
+  EXPECT_FALSE(refused.signature);
+}
+
+// An empty inner call is described only where the device knows what it does:
+// no callee at all, or a Safe's CALL. The real 0x request with its route
+// emptied names a callee and is refused.
+TEST_F(EmbeddedTest, AnEmptyCallElsewhereIsRefused) {
+  TestRoot root(catalog.fixture.root_pubkey);
+  ScopedWallet wallet;
+  catalog.add("zeroex_exec");
+  const auto& tx = realTx("zeroex_allowance_holder");
+  auto empty = unhex(tx.data);
+  empty.resize(4 + 6 * 32);  // the head, then a zero-length route
+  std::fill(empty.end() - 32, empty.end(), 0);
+  const EmbeddedRun run = signEmbedded(catalog, "zeroex_exec", tx, &empty);
+  EXPECT_EQ(run.code, FailureType_Failure_Other) << dump(run);
+  EXPECT_EQ(run.message, "Inner call cannot be clear-signed");
+  EXPECT_FALSE(run.signature);
+}
+
+// G02: the real SwapRouter02 multicall (tx 0x27ee4abb...): each element of
+// bytes[] is a call to the router, clear-signed with its own definition,
+// numbered by the device.
+TEST_F(EmbeddedTest, EveryMulticallStepIsClearSigned) {
+  TestRoot root(catalog.fixture.root_pubkey);
+  ScopedWallet wallet;
+  catalog.add("router02_multicall");
+  catalog.add("router02_exact_input");
+  catalog.add("router02_unwrap");
+  const EmbeddedRun run =
+      signEmbedded(catalog, "router02_multicall", realTx("router02_multicall"));
+  ASSERT_EQ(run.code, (FailureType)0) << dump(run);
+  EXPECT_TRUE(run.signature);
+  EXPECT_EQ(titlesOf(run),
+            (std::vector<std::string>{
+                "Verified by KeepKey", "Contract action", "Signer field",
+                "Signer field 1 of 2", "Verified by KeepKey", "Inner action",
+                "Inner field", "Inner field", "Inner field", "Inner field",
+                "Signer field 2 of 2", "Verified by KeepKey", "Inner action",
+                "Inner field", "Inner field", "Send", "Transaction"}))
+      << dump(run);
+  EXPECT_TRUE(hasScreen(run, "Signer field",
+                        "Deadline:\n2026-10-29 23:35:24 UTC\n(1793316924)"));
+  EXPECT_TRUE(hasScreen(run, "Signer field 1 of 2",
+                        "Step:\nTo 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45\n"
+                        "Function 0xb858183f\nData 292 bytes\nValue 0 Wei\nAs "
+                        "0x73d0385F4d8E00C5e6504C6030F47BF6212736A8"));
+  EXPECT_TRUE(
+      hasScreen(run, "Inner field", "Amount in:\n9021218118690331531673"));
+  EXPECT_TRUE(
+      hasScreen(run, "Inner field", "Minimum out:\n3750489828061637096"));
+  EXPECT_TRUE(hasScreen(run, "Signer field 2 of 2",
+                        "Step:\nTo 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45\n"
+                        "Function 0x49404b7c\nData 68 bytes\nValue 0 Wei\nAs "
+                        "0x73d0385F4d8E00C5e6504C6030F47BF6212736A8"));
+  EXPECT_TRUE(
+      hasScreen(run, "Inner field", "Minimum:\n3.750489828061637096 ETH"));
+  EXPECT_TRUE(
+      hasScreen(run, "Inner field",
+                "Recipient:\n0xB3ddeC0cCC5C3ba733FCdf5a15f98c95Ec5a5FdB\n"
+                "NOT this wallet"));
+  EXPECT_EQ(run.depths, (std::vector<uint32_t>{1, 1}));
+}
+
+// Calls nest two levels below the transaction (a Safe executing the real
+// multicall, whose steps are level 2) and no deeper: a third level is
+// refused before anything is signed and is never asked for.
+TEST_F(EmbeddedTest, CallsNestTwoLevelsAndNoDeeper) {
+  TestRoot root(catalog.fixture.root_pubkey);
+  ScopedWallet wallet;
+  for (const char* name : {"safe_exec_a", "safe_exec_b", "router02_multicall",
+                           "router02_exact_input", "router02_unwrap"})
+    catalog.add(name);
+  const EmbeddedRun run =
+      signEmbedded(catalog, "safe_exec_a", realTx("safe_exec_multicall"));
+  ASSERT_EQ(run.code, (FailureType)0) << dump(run);
+  EXPECT_TRUE(run.signature);
+  EXPECT_EQ(run.depths, (std::vector<uint32_t>{1, 2, 2}));
+  EXPECT_TRUE(hasScreen(run, "Inner field 2 of 2",
+                        "Step:\nTo 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45\n"
+                        "Function 0x49404b7c\nData 68 bytes\nValue 0 Wei\nAs "
+                        "0xE9619c0450Fd890E28a5baA09Ab2e83e6A02C3fD"))
+      << dump(run);
+  EXPECT_TRUE(
+      hasScreen(run, "Inner field",
+                "Recipient:\n0xB3ddeC0cCC5C3ba733FCdf5a15f98c95Ec5a5FdB\n"
+                "NOT this wallet"));
+  // After both levels the outer program resumes at its next field.
+  EXPECT_TRUE(hasScreen(run, "Signer field", "Gas amount:\n0"));
+
+  const EmbeddedRun deeper =
+      signEmbedded(catalog, "safe_exec_a", realTx("safe_exec_safe_multicall"));
+  EXPECT_EQ(deeper.code, FailureType_Failure_Other) << dump(deeper);
+  EXPECT_EQ(deeper.message, "Inner call cannot be clear-signed");
+  EXPECT_FALSE(deeper.signature);
+  EXPECT_EQ(deeper.depths, (std::vector<uint32_t>{1, 2}));
+}
+
+// A Safe below the transaction reads its own operation word: Safe A executing
+// Safe B's DELEGATECALL of the real transfer is named and refused at Safe B.
+TEST_F(EmbeddedTest, AnInnerSafeDelegatecallIsRefused) {
+  TestRoot root(catalog.fixture.root_pubkey);
+  ScopedWallet wallet;
+  for (const char* name : {"safe_exec_a", "safe_exec_b", "token_transfer"})
+    catalog.add(name);
+  const EmbeddedRun run = signEmbedded(catalog, "safe_exec_a",
+                                       realTx("safe_exec_safe_delegatecall"));
+  EXPECT_EQ(run.message, "DELEGATECALL cannot be clear-signed") << dump(run);
+  EXPECT_FALSE(run.signature);
+  EXPECT_TRUE(hasScreen(run, "DELEGATECALL",
+                        "Runs the contract in 'to' as the Safe, with its full "
+                        "authority. Not checked."));
+  EXPECT_EQ(run.depths, std::vector<uint32_t>{1});
+}
+
+// G06: the swaps.pro 0x request: AllowanceHolder.exec of Settler.execute,
+// whose slippage struct says what is bought and for whom.
+TEST_F(EmbeddedTest, ZeroExSwapNamesWhatIsBoughtAndForWhom) {
+  TestRoot root(catalog.fixture.root_pubkey);
+  ScopedWallet wallet;
+  catalog.add("zeroex_exec");
+  catalog.add("zeroex_settler");
+  const auto& tx = realTx("zeroex_allowance_holder");
+  const EmbeddedRun run = signEmbedded(catalog, "zeroex_exec", tx);
+  ASSERT_EQ(run.code, (FailureType)0) << dump(run);
+  EXPECT_TRUE(run.signature);
+  EXPECT_TRUE(hasScreen(run, "Inner field", "Sell:\n10 ETH")) << dump(run);
+  EXPECT_TRUE(
+      hasScreen(run, "Inner field", "Receive at least:\n22632.193356 USDC"));
+  // The capture's account is not this test wallet.
+  EXPECT_TRUE(hasScreen(run, "Inner field",
+                        "Recipient:\n0x9858EfFD232B4033E47d90003D41EC34EcaEda94"
+                        "\nNOT this wallet"));
+
+  // The same request paying out to the signing account.
+  static const uint8_t signer[20] = {0x73, 0xd0, 0x38, 0x5f, 0x4d, 0x8e, 0x00,
+                                     0xc5, 0xe6, 0x50, 0x4c, 0x60, 0x30, 0xf4,
+                                     0x7b, 0xf6, 0x21, 0x27, 0x36, 0xa8};
+  auto mine = unhex(tx.data);
+  memcpy(mine.data() + 4 + 196 + 12, signer, 20);
+  const EmbeddedRun own = signEmbedded(catalog, "zeroex_exec", tx, &mine);
+  ASSERT_EQ(own.code, (FailureType)0) << dump(own);
+  EXPECT_TRUE(hasScreen(own, "Inner field",
+                        "Recipient:\n0x73d0385F4d8E00C5e6504C6030F47BF6212736A8"
+                        "\n(this wallet)"));
+}
+
+// G07: the swaps.pro CoW EthFlow order. Its definition states the order
+// sells exactly the transaction's ETH (TX_VALUE): the device checks it, shows
+// the amount as the sale, and the certified review drops the "Send 10 ETH to
+// <contract>" screen; the fee screen still states the 10 ETH.
+TEST_F(EmbeddedTest, CowOrderSellsExactlyTheTransactionValue) {
+  TestRoot root(catalog.fixture.root_pubkey);
+  ScopedWallet wallet;
+  catalog.add("cow_ethflow");
+  const auto& tx = realTx("cow_ethflow");
+  const EmbeddedRun run = signEmbedded(catalog, "cow_ethflow", tx);
+  ASSERT_EQ(run.code, (FailureType)0) << dump(run);
+  EXPECT_TRUE(run.signature);
+  EXPECT_EQ(titlesOf(run), (std::vector<std::string>{
+                               "Verified by KeepKey", "Contract action",
+                               "Signer field", "Signer field", "Signer field",
+                               "Signer field", "Signer field", "Transaction"}))
+      << dump(run);
+  EXPECT_TRUE(hasScreen(run, "Signer field", "Sell:\n10 ETH"));
+  EXPECT_TRUE(
+      hasScreen(run, "Signer field", "Receive at least:\n23072.465013 USDC"));
+  EXPECT_TRUE(hasScreen(run, "Signer field",
+                        "Valid until:\n2026-10-29 22:00:00 UTC\n(1793311200)"));
+  EXPECT_TRUE(hasScreen(run, "Signer field",
+                        "Receiver:\n0x9858EfFD232B4033E47d90003D41EC34EcaEda94"
+                        "\nNOT this wallet"));
+  EXPECT_TRUE(run.shows("Send 10 ETH from your wallet"));
+
+  // Any other value is refused when the field is reached.
+  const EmbeddedRun other =
+      signEmbedded(catalog, "cow_ethflow", tx, nullptr, "0x8ac7230489e80001");
+  EXPECT_EQ(other.code, FailureType_Failure_SyntaxError) << dump(other);
+  EXPECT_EQ(other.message, "ERC-7730 value does not match the call");
+  EXPECT_FALSE(other.signature);
+}
+
+// On the runtime tier the same definition annotates only: the amount screen
+// and the raw-data review stay (AdvancedMode).
+TEST_F(EmbeddedTest, ARuntimeSignerNeverDropsTheAmountScreen) {
+  ScopedWallet wallet;
+  catalog.certified = false;
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", true));
+  ASSERT_TRUE(signed_metadata_store_signer(3, catalog.fixture.delegate.pubkey,
+                                           "Approved signer", nullptr, 0, 0, 0,
+                                           false));
+  catalog.add("cow_ethflow");
+  const EmbeddedRun run =
+      signEmbedded(catalog, "cow_ethflow", realTx("cow_ethflow"));
+  ASSERT_EQ(run.code, (FailureType)0) << dump(run);
+  EXPECT_TRUE(run.signature);
+  EXPECT_TRUE(hasScreen(run, "Signer field", "Sell:\n10 ETH"));
+  EXPECT_TRUE(hasScreen(
+      run, "Send", "Send 10 ETH to 0xbA3cB449bD2B4ADddBc894D8697F5170800EAdeC"))
+      << dump(run);
+  ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
+}

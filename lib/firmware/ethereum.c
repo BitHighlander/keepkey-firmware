@@ -1173,6 +1173,11 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       certified->phase == ERC7730_WORKFLOW_CALLDATA &&
       erc7730_workflow_certified(certified)) {
     data_needs_confirm = false;
+    /* 7.17 (D-020, value == arg): the review showed the native value as a
+     * field it matched against this transaction's value, so the amount
+     * screen would only repeat it as a payment to the contract. The fee
+     * screen below still states the value. */
+    if (erc7730_workflow_value_bound(certified)) needs_confirm = false;
   }
 
   /* SRS R-1.4: a certified claim is honoured completely or refused, never

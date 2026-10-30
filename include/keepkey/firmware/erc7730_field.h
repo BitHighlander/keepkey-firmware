@@ -14,6 +14,12 @@
 bool erc7730_format_address(const uint8_t address[20], bool this_wallet,
                             char* output, size_t output_size);
 
+/* An address the call pays out to (ERC7730_FORMATTER_FLAG_RECIPIENT): as
+ * erc7730_format_address(), and when it is not the signing account a line
+ * "NOT this wallet". */
+bool erc7730_format_recipient(const uint8_t address[20], bool this_wallet,
+                              char* output, size_t output_size);
+
 /* A token amount. `native` means the signer's program named `token` as the
  * chain's native asset. When the firmware table does not know the token,
  * disclose that signer-supplied mapping and the original token address before

@@ -412,7 +412,7 @@ bool erc7730_workflow_restore_and_start_calldata(Erc7730Workflow* workflow,
   /* At depth 1 the stream decodes only the inner call's arguments, located
    * inside the outer arguments that are replayed and hashed in full. */
   const uint32_t outer = tx->data_length >= 4 ? tx->data_length - 4u : 0;
-  const bool inner = workflow->depth == 1;
+  const bool inner = workflow->depth != 0;
   /* Only the outer call may carry bytes after its arguments, and only when
    * its definition says so. */
   if (tx->data_length < 4 ||
@@ -743,15 +743,18 @@ Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
   if (result != ERC7730_ABI_OK) {
     fail(workflow);
   } else {
-    /* The operation word (argument bytes 96..127) is read from the signed
-     * calldata, whatever the definition shows: anything but 0 is not a
-     * plain call. */
-    if (workflow->depth == 0 &&
-        safe_exec_selector(workflow->identity.selector_or_type_hash))
-      for (size_t i = 0; i < data_len; i++)
-        if (workflow->outer_received + i >= 96u &&
-            workflow->outer_received + i < 128u && data[i] != 0)
+    /* The operation word (argument bytes 96..127 of this level's call) is
+     * read from the signed calldata, whatever the definition shows: anything
+     * but 0 is not a plain call. */
+    if (safe_exec_selector(workflow->identity.selector_or_type_hash)) {
+      const uint32_t base =
+          workflow->depth == 0 ? 0u : workflow->inner_offset + 4u;
+      for (size_t i = 0; i < data_len; i++) {
+        const uint32_t at = workflow->outer_received + (uint32_t)i;
+        if (at >= base + 96u && at < base + 128u && data[i] != 0)
           workflow->safe_delegatecall = true;
+      }
+    }
     sha256_Update(&workflow->calldata_hash, data, data_len);
     for (size_t i = 0; i < data_len; i++)
       workflow->suffix_tail[(workflow->outer_received + i) &
@@ -846,8 +849,9 @@ size_t erc7730_workflow_suffix(const Erc7730Workflow* workflow,
 uint8_t erc7730_workflow_tier(const Erc7730Workflow* workflow) {
   if (!workflow) return METADATA_TIER_NONE;
   const uint8_t own = workflow->identity.tier;
-  if (workflow->depth == 0 || own < workflow->outer_tier) return own;
-  return workflow->outer_tier;
+  if (workflow->depth == 0) return own;
+  const uint8_t above = workflow->frames[workflow->depth - 1u].tier;
+  return own < above ? own : above;
 }
 
 bool erc7730_workflow_certified(const Erc7730Workflow* workflow) {
@@ -910,6 +914,7 @@ bool erc7730_workflow_field_begin(Erc7730Workflow* workflow,
     return false;
   memzero(&workflow->field, sizeof(workflow->field));
   workflow->field.kind = formatter->kind;
+  workflow->field.flags = formatter->flags;
   workflow->field.argument_count = formatter->argument_count;
   memcpy(workflow->field.arguments, formatter->arguments,
          formatter->argument_count * sizeof(formatter->arguments[0]));
@@ -929,21 +934,56 @@ bool erc7730_workflow_captured(const Erc7730Workflow* workflow,
   return true;
 }
 
-bool erc7730_workflow_begin_fetch(Erc7730Workflow* workflow, uint8_t depth) {
-  if (!workflow || workflow->typed_data || depth > 1 ||
-      workflow->phase != ERC7730_WORKFLOW_READY ||
-      (depth == 1 && (workflow->depth != 0 || !workflow->field.has_inner ||
-                      !workflow->field.has_address ||
-                      workflow->field.inner_selector_length != 4)) ||
-      (depth == 0 && workflow->depth != 1))
+bool erc7730_workflow_inner_fetchable(const Erc7730Workflow* workflow) {
+  if (!workflow) return false;
+  const Erc7730Field* field = &workflow->field;
+  return workflow->depth < ERC7730_EMBED_MAX_DEPTH && !workflow->typed_data &&
+         !workflow->inner_refused && field->kind == 13 && field->has_inner &&
+         field->has_address && field->inner_selector_length == 4 &&
+         field->inner_length >= 4 && (field->inner_length - 4u) % 32u == 0;
+}
+
+bool erc7730_workflow_inner_empty_call(const Erc7730Workflow* workflow) {
+  static const uint8_t nobody[20] = {0};
+  if (!workflow) return false;
+  const Erc7730Field* field = &workflow->field;
+  if (workflow->typed_data || field->kind != 13 || !field->has_inner ||
+      !field->has_address || field->inner_length != 0)
     return false;
-  if (depth == 1) {
-    /* What restores the outer program, whichever way the inner call ends. */
-    memcpy(workflow->outer_definition_id, workflow->identity.definition_id, 32);
-    workflow->outer_resume = workflow->display_index;
-    workflow->outer_identity_confirmed = workflow->identity_confirmed;
-    workflow->outer_intent_confirmed = workflow->intent_confirmed;
-    workflow->outer_tier = workflow->identity.tier;
+  return memcmp(field->address, nobody, 20) == 0 ||
+         (safe_exec_selector(workflow->identity.selector_or_type_hash) &&
+          !workflow->safe_delegatecall);
+}
+
+bool erc7730_workflow_begin_fetch(Erc7730Workflow* workflow, uint8_t depth) {
+  if (!workflow || workflow->typed_data ||
+      workflow->phase != ERC7730_WORKFLOW_READY)
+    return false;
+  if (depth == workflow->depth + 1u) {
+    if (!erc7730_workflow_inner_fetchable(workflow)) return false;
+    /* What restores this level, whichever way the inner call ends. */
+    Erc7730EmbedFrame* frame = &workflow->frames[workflow->depth];
+    memcpy(frame->definition_id, workflow->identity.definition_id, 32);
+    if (workflow->depth != 0) {
+      Erc7730EmbedContext* context = &workflow->contexts[workflow->depth - 1u];
+      context->inner_offset = workflow->inner_offset;
+      context->inner_length = workflow->inner_length;
+      memcpy(context->to, workflow->inner_to, 20);
+      memcpy(context->value, workflow->inner_value, 32);
+      memcpy(context->from, workflow->inner_from, 20);
+    }
+    frame->resume = workflow->display_index;
+    frame->iteration_begin = workflow->iteration_begin;
+    frame->iteration_end = workflow->iteration_end;
+    frame->iteration_index = workflow->iteration_index;
+    frame->iteration_count = workflow->iteration_count;
+    frame->iterating = workflow->iterating;
+    frame->identity_confirmed = workflow->identity_confirmed;
+    frame->intent_confirmed = workflow->intent_confirmed;
+    frame->safe_delegatecall = workflow->safe_delegatecall;
+    frame->tier = erc7730_workflow_tier(workflow);
+  } else if (workflow->depth == 0 || depth + 1u != workflow->depth) {
+    return false;
   }
   workflow->fetch_depth = depth;
   workflow->fetch_offset = 0;
@@ -965,19 +1005,20 @@ Erc7730CatalogResult erc7730_workflow_fetch_feed(
     fail(workflow);
     return ERC7730_CATALOG_BAD_SEQUENCE;
   }
+  const bool descend = workflow->fetch_depth > workflow->depth;
   if (chunk->offset == 0 && chunk->total_length == 0 && chunk->data.size == 0 &&
-      workflow->fetch_depth == 1) {
-    /* No inner definition. Nothing was streamed, so the outer definition is
-     * still the preloaded one. */
+      descend) {
+    /* No inner definition. Nothing was streamed, so this level's definition
+     * is still the preloaded one. */
     *none = true;
     workflow->phase = ERC7730_WORKFLOW_READY;
     return ERC7730_CATALOG_COMPLETE;
   }
-  /* The outer definition must come back byte for byte: same id. */
+  /* The level above must come back byte for byte: same id. */
   if (chunk->data.size == 0 ||
-      (workflow->fetch_depth == 0 &&
-       memcmp(chunk->definition_id.bytes, workflow->outer_definition_id, 32) !=
-           0) ||
+      (!descend && memcmp(chunk->definition_id.bytes,
+                          workflow->frames[workflow->fetch_depth].definition_id,
+                          32) != 0) ||
       (workflow->fetch_total != 0 &&
        chunk->total_length != workflow->fetch_total)) {
     fail(workflow);
@@ -992,17 +1033,13 @@ Erc7730CatalogResult erc7730_workflow_fetch_feed(
   const bool unsourced_value = result == ERC7730_CATALOG_COMPLETE &&
                                !workflow->field.has_value &&
                                erc7730_catalog_preloaded_reads_value();
-  if (workflow->fetch_depth == 1 &&
-      (result == ERC7730_CATALOG_BAD_PROGRAM ||
-       result == ERC7730_CATALOG_UNTRUSTED || unsourced_value)) {
-    /* The device cannot clear-sign this inner call: restore the outer
-     * definition (the slot now holds nothing) and refuse the call. */
+  if (descend && (result == ERC7730_CATALOG_BAD_PROGRAM ||
+                  result == ERC7730_CATALOG_UNTRUSTED || unsourced_value)) {
+    /* The device cannot clear-sign this inner call, and refuses it: the
+     * caller ends the review (the slot now holds nothing). */
     erc7730_catalog_clear_preload();
     if (complete) *complete = false;
     workflow->inner_refused = true;
-    workflow->fetch_depth = 0;
-    workflow->fetch_offset = 0;
-    workflow->fetch_total = 0;
     return ERC7730_CATALOG_MORE;
   }
   if (result != ERC7730_CATALOG_MORE && result != ERC7730_CATALOG_COMPLETE) {
@@ -1023,54 +1060,76 @@ bool erc7730_workflow_fetch_complete(Erc7730Workflow* workflow) {
     return false;
   }
   bool bound;
-  if (workflow->fetch_depth == 1) {
+  if (workflow->fetch_depth > workflow->depth) {
     /* H8: the inner definition is for this chain, this callee and this
      * selector, all read from the signed calldata. */
     bound = erc7730_catalog_matches_calldata(
         &identity, workflow->identity.chain_id, workflow->field.address,
         workflow->field.inner_selector);
     if (bound) {
-      workflow->inner_offset = workflow->field.inner_offset;
-      workflow->inner_length = workflow->field.inner_length;
       /* ERC-7730: inside the inner call @.to is the callee, @.value the value
        * it moves (without one, an inner definition that shows it was refused
        * in erc7730_workflow_fetch_feed) and @.from whose authority it runs
-       * with (none: the outer contract). */
+       * with (none: the contract making the call). */
+      const uint8_t* caller = workflow->identity.contract_address;
+      memcpy(workflow->inner_from,
+             workflow->field.has_spender ? workflow->field.spender : caller,
+             20);
+      workflow->inner_offset = workflow->field.inner_offset;
+      workflow->inner_length = workflow->field.inner_length;
       memcpy(workflow->inner_to, workflow->field.address, 20);
       memzero(workflow->inner_value, sizeof(workflow->inner_value));
       if (workflow->field.has_value)
         memcpy(workflow->inner_value, workflow->field.value, 32);
-      memcpy(workflow->inner_from,
-             workflow->field.has_spender ? workflow->field.spender
-                                         : workflow->identity.contract_address,
-             20);
-      workflow->depth = 1;
+      workflow->depth = workflow->fetch_depth;
       if (identity.tier < workflow->review_tier)
         workflow->review_tier = identity.tier;
       workflow->identity_confirmed = false;
       workflow->intent_confirmed = false;
       workflow->calldata_validated = false;
       workflow->resuming = false;
+      workflow->safe_delegatecall = false;
+      workflow->iterating = false;
+      workflow->iteration_begin = 0;
+      workflow->iteration_end = 0;
+      workflow->iteration_index = 0;
+      workflow->iteration_count = 0;
     }
   } else {
-    bound =
-        memcmp(identity.definition_id, workflow->outer_definition_id, 32) == 0;
+    Erc7730EmbedFrame* frame = &workflow->frames[workflow->fetch_depth];
+    bound = memcmp(identity.definition_id, frame->definition_id, 32) == 0;
     if (bound) {
-      /* Resume after the embedded field, or re-run it to refuse it when its
-       * inner definition was refused (outer_resume >= 1: never the intent). */
-      workflow->display_index = workflow->inner_refused
-                                    ? (uint16_t)(workflow->outer_resume - 1u)
-                                    : workflow->outer_resume;
-      workflow->depth = 0;
-      workflow->identity_confirmed = workflow->outer_identity_confirmed;
-      workflow->intent_confirmed = workflow->outer_intent_confirmed;
+      /* Resume after the field that held the inner call, in the iteration
+       * it was in. */
+      workflow->depth = workflow->fetch_depth;
+      workflow->display_index = frame->resume;
+      workflow->identity_confirmed = frame->identity_confirmed;
+      workflow->intent_confirmed = frame->intent_confirmed;
+      workflow->safe_delegatecall = frame->safe_delegatecall;
+      workflow->iterating = frame->iterating;
+      workflow->iteration_begin = frame->iteration_begin;
+      workflow->iteration_end = frame->iteration_end;
+      workflow->iteration_index = frame->iteration_index;
+      workflow->iteration_count = frame->iteration_count;
+      if (workflow->depth != 0) {
+        Erc7730EmbedContext* context =
+            &workflow->contexts[workflow->depth - 1u];
+        workflow->inner_offset = context->inner_offset;
+        workflow->inner_length = context->inner_length;
+        memcpy(workflow->inner_to, context->to, 20);
+        memcpy(workflow->inner_value, context->value, 32);
+        memcpy(workflow->inner_from, context->from, 20);
+        memzero(context, sizeof(*context));
+      } else {
+        workflow->inner_offset = 0;
+        workflow->inner_length = 0;
+        memzero(workflow->inner_to, sizeof(workflow->inner_to));
+        memzero(workflow->inner_value, sizeof(workflow->inner_value));
+        memzero(workflow->inner_from, sizeof(workflow->inner_from));
+      }
       workflow->calldata_validated = true;
       workflow->resuming = true;
-      workflow->inner_offset = 0;
-      workflow->inner_length = 0;
-      memzero(workflow->inner_to, sizeof(workflow->inner_to));
-      memzero(workflow->inner_value, sizeof(workflow->inner_value));
-      memzero(workflow->inner_from, sizeof(workflow->inner_from));
+      memzero(frame, sizeof(*frame));
     }
   }
   if (!bound) {
@@ -1122,8 +1181,15 @@ bool erc7730_workflow_field_embedded(Erc7730Workflow* workflow) {
   const size_t selector_length = capture.length < 4 ? capture.length : 4;
   memcpy(field->inner_selector, capture.data, selector_length);
   field->inner_selector_length = (uint8_t)selector_length;
+  /* The located payload's offset is within this level's arguments; keep it
+   * within the outer arguments, which every pass replays. */
+  const uint32_t base = workflow->depth == 0 ? 0u : workflow->inner_offset + 4u;
+  if (workflow->calldata.located_offset > UINT32_MAX - base) {
+    memzero(&capture, sizeof(capture));
+    return false;
+  }
   field->inner_length = (uint32_t)workflow->calldata.located_length;
-  field->inner_offset = (uint32_t)workflow->calldata.located_offset;
+  field->inner_offset = base + (uint32_t)workflow->calldata.located_offset;
   field->has_inner = true;
   memzero(&capture, sizeof(capture));
   return true;
@@ -1193,6 +1259,39 @@ bool erc7730_workflow_field_value(Erc7730Workflow* workflow, uint8_t cls,
     default:
       return false;
   }
+}
+
+bool erc7730_workflow_field_matches_tx_value(Erc7730Workflow* workflow) {
+  if (!workflow || workflow->typed_data) return false;
+  const Erc7730Field* field = &workflow->field;
+  if ((field->flags & ERC7730_FORMATTER_FLAG_TX_VALUE) == 0 ||
+      field->kind != 2 || !field->has_value)
+    return false;
+  uint8_t value[32];
+  bool known = true;
+  if (workflow->depth != 0) {
+    memcpy(value, workflow->inner_value, 32);
+  } else {
+    EthereumSignTx tx;
+    known = erc7730_tx_continuation_restore(&workflow->continuation, &tx) &&
+            tx.value.size <= 32;
+    if (known) {
+      memzero(value, sizeof(value));
+      memcpy(value + 32 - tx.value.size, tx.value.bytes, tx.value.size);
+    }
+    memzero(&tx, sizeof(tx));
+  }
+  const bool matches = known && memcmp(value, field->value, 32) == 0;
+  memzero(value, sizeof(value));
+  if (matches && workflow->depth == 0) workflow->value_bound = true;
+  return matches;
+}
+
+bool erc7730_workflow_value_bound(const Erc7730Workflow* workflow) {
+  return workflow && workflow->value_bound && workflow->signing_pass &&
+         !workflow->typed_data && workflow->depth == 0 &&
+         workflow->phase == ERC7730_WORKFLOW_CALLDATA &&
+         erc7730_workflow_certified(workflow);
 }
 
 uint16_t erc7730_workflow_intent_parts(const Erc7730Workflow* workflow) {

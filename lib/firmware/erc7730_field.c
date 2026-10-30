@@ -25,6 +25,20 @@ bool erc7730_format_address(const uint8_t address[20], bool this_wallet,
   return true;
 }
 
+bool erc7730_format_recipient(const uint8_t address[20], bool this_wallet,
+                              char* output, size_t output_size) {
+  if (this_wallet)
+    return erc7730_format_address(address, true, output, output_size);
+  static const char other[] = "\nNOT this wallet";
+  if (!erc7730_format_address(address, false, output, output_size) ||
+      output_size < 42u + sizeof(other)) {
+    if (output && output_size) output[0] = '\0';
+    return false;
+  }
+  memcpy(output + 42, other, sizeof(other));
+  return true;
+}
+
 /* The exact unsigned decimal of a 256-bit big-endian value. */
 static bool format_integer(const uint8_t amount[32], char* output,
                            size_t output_size) {

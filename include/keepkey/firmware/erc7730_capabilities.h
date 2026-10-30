@@ -37,6 +37,14 @@
    ERC7730_CAP_BIT(4) | ERC7730_CAP_BIT(5) | ERC7730_CAP_BIT(6) |  \
    ERC7730_CAP_BIT(7) | ERC7730_CAP_BIT(8) | ERC7730_CAP_BIT(10) | \
    ERC7730_CAP_BIT(13))
+/* Formatter flags (7.17), byte 1 of a formatter entry. Descriptor-level
+ * constraints the device checks against the signed bytes:
+ * RECIPIENT, addressName only: the address receives what the call pays out;
+ *   when it is not the signing account the device says so.
+ * TX_VALUE, amount only, calldata only: the value is the call's native value
+ *   (@.value of its level); a call where they differ is refused. */
+#define ERC7730_FORMATTER_FLAG_RECIPIENT 1u
+#define ERC7730_FORMATTER_FLAG_TX_VALUE 2u
 /* Path sources: 1 value, 2 container, 3 literal. Path step opcodes: 1 index.
  */
 #define ERC7730_CAP_PATH_SOURCES \
@@ -103,6 +111,8 @@ bool erc7730_cap_value(uint8_t kind, uint8_t role, uint8_t cls);
 /* Formatter argument roles `kind` may carry, and the sources each role may
  * use (a bitmask of ERC7730_CAP_BIT(source)). Role 1 is the value. */
 uint32_t erc7730_cap_formatter_roles(uint8_t kind);
+/* The ERC7730_FORMATTER_FLAG_* formatter `kind` may carry. */
+uint8_t erc7730_cap_formatter_flags(uint8_t kind);
 uint32_t erc7730_cap_formatter_required_roles(uint8_t kind);
 uint8_t erc7730_cap_argument_sources(uint8_t kind, uint8_t role);
 
