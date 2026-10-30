@@ -4865,3 +4865,155 @@ TEST_F(ApproveNameTest, ProductionNameRecordsNameOnlyTheirSpenderOnTheirChain) {
   EXPECT_EQ(plain.bodies, other.bodies);
   EXPECT_EQ(plain.signature, other.signature);
 }
+
+/* ---- 7.17: a certified Uniswap call past the first chunk ---------------
+ *
+ * Real Ethereum call 0xa8989a3f3106d88fe78eacbcb50ac7981df14092ab2d593253221be82938a34f
+ * (PERMIT2_PERMIT + 2x V3_SWAP_EXACT_IN + UNWRAP_WETH, 477 LINK -> ETH),
+ * 1,380 bytes, as Desktop sent it in the 2026-10-30 emulator run (leg U04).
+ * 7.16.0 showed the fee screen first and the swap after it. The swap is
+ * reviewed once its last byte is in and the fee screen is the final confirm;
+ * nothing is shown before the whole call is in. */
+namespace {
+
+const char kU04Calldata[] =
+    "3593564c00000000000000000000000000000000000000000000000000000000"
+    "0000006000000000000000000000000000000000000000000000000000000000"
+    "000000a000000000000000000000000000000000000000000000000000000000"
+    "6ab7b9d700000000000000000000000000000000000000000000000000000000"
+    "000000040a00000c000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000"
+    "0000000400000000000000000000000000000000000000000000000000000000"
+    "0000008000000000000000000000000000000000000000000000000000000000"
+    "0000020000000000000000000000000000000000000000000000000000000000"
+    "0000032000000000000000000000000000000000000000000000000000000000"
+    "0000044000000000000000000000000000000000000000000000000000000000"
+    "00000160000000000000000000000000514910771af9ca656af840dff83e8264"
+    "ecf986ca000000000000000000000000ffffffffffffffffffffffffffffffff"
+    "ffffffff00000000000000000000000000000000000000000000000000000000"
+    "6adf3fd700000000000000000000000000000000000000000000000000000000"
+    "00000001000000000000000000000000ef1c6e67703c7bd7107eed8303fbe6ec"
+    "2554bf6b00000000000000000000000000000000000000000000000000000000"
+    "6ab7b9df00000000000000000000000000000000000000000000000000000000"
+    "000000e000000000000000000000000000000000000000000000000000000000"
+    "000000418fee0667b99541613a943b924c95b9ea58be19eb4a44c1f94a981441"
+    "1c548f427d5eb772a71e9d1f6799d2fbb98b7cf396f310eb62c8084a2b31d6fd"
+    "e25e4db11b000000000000000000000000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000"
+    "0000010000000000000000000000000000000000000000000000000000000000"
+    "0000000200000000000000000000000000000000000000000000001890b8341b"
+    "c0430000000000000000000000000000000000000000000000000000212a4f68"
+    "7259c9a600000000000000000000000000000000000000000000000000000000"
+    "000000a000000000000000000000000000000000000000000000000000000000"
+    "0000000100000000000000000000000000000000000000000000000000000000"
+    "0000002b514910771af9ca656af840dff83e8264ecf986ca000bb8c02aaa39b2"
+    "23fe8d0a0e5c4f27ead9083c756cc20000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000"
+    "0000010000000000000000000000000000000000000000000000000000000000"
+    "000000020000000000000000000000000000000000000000000000014afc38a3"
+    "2511000000000000000000000000000000000000000000000000000001bee13e"
+    "bff62d8c00000000000000000000000000000000000000000000000000000000"
+    "000000a000000000000000000000000000000000000000000000000000000000"
+    "0000000100000000000000000000000000000000000000000000000000000000"
+    "0000002b514910771af9ca656af840dff83e8264ecf986ca0001f4c02aaa39b2"
+    "23fe8d0a0e5c4f27ead9083c756cc20000000000000000000000000000000000"
+    "0000000000000000000000000000000000000000000000000000000000000000"
+    "0000004000000000000000000000000000000000000000000000000000000000"
+    "0000000100000000000000000000000000000000000000000000000022e930a7"
+    "324ff733";
+const char kU04Router[] = "ef1c6e67703c7bd7107eed8303fbe6ec2554bf6b";
+const char kLink[] = "514910771af9ca656af840dff83e8264ecf986ca";
+
+struct ChunkedRun {
+  std::vector<std::string> before_tail;  // screens before the tail was asked
+  std::vector<std::string> titles;
+  uint32_t asked = 0;
+  int code = 0;
+  std::string message;
+  bool signed_ = false;
+};
+
+ChunkedRun signU04(int yes) {
+  ChunkedRun run;
+  kk_test_board_init();
+  fsm_init();
+  fsm_test_clearLastFailure();
+  // The emulator answers the last peer it heard. No screen precedes the
+  // first EthereumTxRequest, so let it hear this client before init.
+  EXPECT_TRUE(kkconfirm_preload(0, 0));
+  kkconfirm_drain();
+  signed_metadata_clear();
+  set_advanced_mode_for_test(false);
+  const std::vector<uint8_t> data = ur_unhex(kU04Calldata);
+  EXPECT_EQ(1380u, data.size());
+  auto e = envelope(
+      mint_cert(1, CLEARSIGN_USAGE_MAY_SUPPRESS_RAW, EXPECTED_SLOT3_PUB),
+      sign_body(build_decoder_body(ur_unhex(kU04Router), 1,
+                                   {{kLink, "LINK", 18}})));
+  EXPECT_EQ(METADATA_VERIFIED,
+            signed_metadata_process(e.data(), e.size(),
+                                    METADATA_KEYID_DELEGATE));
+  EthereumSignTx msg =
+      usdcTx(hex_of(data.data(), 1024));  // the first chunk, as hdwallet sends
+  memcpy(msg.to.bytes, ur_unhex(kU04Router).data(), 20);
+  msg.data_length = (uint32_t)data.size();
+
+  EXPECT_TRUE(kkconfirm_preload(yes, 1));
+  HDNode node = {};
+  const uint8_t seed[32] = {1};
+  EXPECT_TRUE(hdnode_from_seed(seed, sizeof(seed), "secp256k1", &node));
+  kkconfirm_capture_start();
+  ethereum_signing_init(&msg, &node, /*needs_confirm=*/true);
+  run.before_tail = kkconfirm_captured_titles();
+  EthereumTxRequest req{};
+  if (fsm_test_lastFailureCode() == 0 &&
+      kkconfirm_readResponse(MessageType_MessageType_EthereumTxRequest,
+                             EthereumTxRequest_fields, &req)) {
+    EXPECT_FALSE(req.has_signature_r) << "signed before the swap was shown";
+    run.asked = req.data_length;
+    EthereumTxAck ack{};
+    ack.has_data_chunk = true;
+    ack.data_chunk.size = (pb_size_t)(data.size() - 1024);
+    memcpy(ack.data_chunk.bytes, data.data() + 1024, ack.data_chunk.size);
+    ethereum_signing_txack(&ack);
+  }
+  kkconfirm_capture_finish();
+  run.titles = kkconfirm_captured_titles();
+  run.code = (int)fsm_test_lastFailureCode();
+  run.message = fsm_test_lastFailureMessage();
+  if (run.code == 0) {
+    EthereumTxRequest done{};
+    run.signed_ =
+        kkconfirm_readResponse(MessageType_MessageType_EthereumTxRequest,
+                               EthereumTxRequest_fields, &done) &&
+        done.has_signature_r && done.has_signature_s;
+  }
+  kkconfirm_drain();
+  ethereum_signing_abort();
+  return run;
+}
+
+}  // namespace
+
+TEST_F(CertifiedMetadataTest, UniswapPastTheFirstChunkIsReviewedBeforeTheFee) {
+  ChunkedRun run = signU04(7);
+  ASSERT_EQ(0, run.code) << run.message;
+  EXPECT_EQ(356u, run.asked);
+  EXPECT_TRUE(run.before_tail.empty())
+      << "shown before the whole call was in: "
+      << ::testing::PrintToString(run.before_tail);
+  ASSERT_EQ(7u, run.titles.size()) << ::testing::PrintToString(run.titles);
+  EXPECT_EQ("Uniswap", run.titles.front());
+  EXPECT_EQ("KeepKey ClearSign", run.titles[5]);
+  EXPECT_EQ("Transaction", run.titles.back());
+  EXPECT_EQ(1, std::count(run.titles.begin(), run.titles.end(), "Transaction"));
+  EXPECT_TRUE(run.signed_);
+}
+
+TEST_F(CertifiedMetadataTest, UniswapPastTheFirstChunkDeclinedAtTheFeeIsNotSigned) {
+  ChunkedRun run = signU04(6);  // the swap approved, the fee screen declined
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, run.code) << run.message;
+  ASSERT_EQ(7u, run.titles.size()) << ::testing::PrintToString(run.titles);
+  EXPECT_EQ("Transaction", run.titles.back());
+  EXPECT_FALSE(run.signed_);
+}

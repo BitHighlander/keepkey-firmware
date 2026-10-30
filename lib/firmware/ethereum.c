@@ -105,6 +105,11 @@ static uint32_t data_total, data_left;
  * itself. */
 static bool data_hash_pending = false;
 static struct SHA3_CTX data_keccak_ctx;
+/* A certified Uniswap call past the first chunk is reviewed at its last byte.
+ * The fee screen is the final confirm, so it waits here until then. */
+static bool fee_confirm_deferred = false;
+static char deferred_fee_title[24];
+static char deferred_fee_body[ETHEREUM_CONFIRM_BODY_SIZE];
 static EthereumTxRequest msg_tx_request;
 static CONFIDENTIAL uint8_t privkey[32];
 static uint32_t chain_id;
@@ -973,12 +978,28 @@ static bool ethereum_vouchedOrAbort(bool* due, bool spender, const char* name,
   return false;
 }
 
+/* Every byte is in. A fee screen held for a review is the final confirm. */
+static void confirm_deferred_fee_and_sign(void) {
+  if (fee_confirm_deferred) {
+    fee_confirm_deferred = false;
+    if (!confirm(ButtonRequestType_ButtonRequest_SignTx, deferred_fee_title,
+                 "%s", deferred_fee_body)) {
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      "Signing cancelled by user");
+      ethereum_signing_abort();
+      return;
+    }
+  }
+  finalize_eip1559_and_send_signature();
+}
+
 void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
                            bool needs_confirm) {
   char confirm_body_message[ETHEREUM_CONFIRM_BODY_SIZE] = {0};
 
   ethereum_signing = true;
   data_hash_pending = false;
+  fee_confirm_deferred = false;
   memzero(&data_keccak_ctx, sizeof(data_keccak_ctx));
   sha3_256_Init(&keccak_ctx);
 
@@ -1249,8 +1270,8 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       !(signed_metadata_available() && signed_metadata_matches_tx(msg) &&
         signed_metadata_may_suppress(chain_id))) {
     /* A certified Uniswap swap past the first chunk: nothing is shown from
-     * a prefix. Its review follows the fee screen, once every byte is in.
-     * Pending implies a KeepKey-certified entry for this chain. */
+     * a prefix. It is reviewed once every byte is in, and the fee screen
+     * follows it. Pending implies a KeepKey-certified entry for this chain. */
     if (!signed_metadata_ur_pending()) {
       fsm_sendFailure(FailureType_Failure_Other,
                       _("Certified description invalid or not for this tx"));
@@ -1436,10 +1457,15 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
     ethereum_signing_abort();
     return;
   }
-  char transaction_title[24];
+  char transaction_title[sizeof(deferred_fee_title)];
   ethereum_transactionTitle(msg, transaction_title, sizeof(transaction_title));
-  if (!confirm(ButtonRequestType_ButtonRequest_SignTx, transaction_title, "%s",
-               confirm_body_message)) {
+  if (signed_metadata_ur_pending()) {
+    /* The swap is not reviewed yet: confirm the fee after it, never before. */
+    memcpy(deferred_fee_title, transaction_title, sizeof(deferred_fee_title));
+    memcpy(deferred_fee_body, confirm_body_message, sizeof(deferred_fee_body));
+    fee_confirm_deferred = true;
+  } else if (!confirm(ButtonRequestType_ButtonRequest_SignTx, transaction_title,
+                      "%s", confirm_body_message)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     "Signing cancelled by user");
     ethereum_signing_abort();
@@ -1563,7 +1589,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
   if (data_left > 0) {
     send_request_chunk();
   } else {
-    finalize_eip1559_and_send_signature();
+    confirm_deferred_fee_and_sign();
   }
 }
 
@@ -1638,7 +1664,7 @@ void ethereum_signing_txack(EthereumTxAck* tx) {
   if (data_left > 0) {
     send_request_chunk();
   } else {
-    finalize_eip1559_and_send_signature();
+    confirm_deferred_fee_and_sign();
   }
 }
 
@@ -1647,6 +1673,7 @@ void ethereum_signing_abort(void) {
     memzero(privkey, sizeof(privkey));
     signed_metadata_clear();
     data_hash_pending = false;
+    fee_confirm_deferred = false;
     memzero(&data_keccak_ctx, sizeof(data_keccak_ctx));
     contact_book_clear();
     layoutHome();
