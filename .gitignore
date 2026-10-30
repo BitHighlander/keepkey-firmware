@@ -15,3 +15,6 @@ cppcheck_annotations.txt
 
 # Shared analyzer cache, retained between local invocations
 /.cppcheck-build/
+
+# A private wallet history for the opt-in UniswapUrLocal test: never commit
+/unittests/firmware/uniswap_ur_local.h

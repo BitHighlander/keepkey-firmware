@@ -1613,9 +1613,19 @@ bool signed_metadata_build_ur_review(const SignedMetadata* md,
     char fee_to[43] = "0x";
     ethereum_address_checksum(u->fee_recipient, fee_to + 2, false,
                               md->chain_id);
-    snprintf(body, sizeof(body), "%u.%02u%% of the output to\n%s",
-             (unsigned)(u->fee_bips / 100), (unsigned)(u->fee_bips % 100),
-             fee_to);
+    if (u->fee_bips == 0) {
+      /* TRANSFER: a fixed amount of the output token. */
+      char amt[100];
+      if (!ur_amount_text(md, false, u->token_out, u->fee_amount, 32, amt,
+                          sizeof(amt))) {
+        return false;
+      }
+      snprintf(body, sizeof(body), "%s to\n%s", amt, fee_to);
+    } else {
+      snprintf(body, sizeof(body), "%u.%02u%% of the output to\n%s",
+               (unsigned)(u->fee_bips / 100), (unsigned)(u->fee_bips % 100),
+               fee_to);
+    }
     if (!emit(ctx, "Fee", body, NULL, 0)) return false;
   }
   /* V4 pools whose hook contract runs during the swap: every one is shown.

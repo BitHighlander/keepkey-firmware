@@ -652,7 +652,7 @@ bool ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
           suffix = " xDAI";
           break;  //  Gnosis Chain
         case 137:
-          suffix = " MATIC";
+          suffix = " POL";
           break;  //  Polygon Mainnet
         case 8453:
           suffix = " ETH";
