@@ -31,12 +31,16 @@
 #define SOL_DECIMALS 9
 #define SOL_PUBKEY_SIZE 32
 #define SOL_SIG_SIZE 64
-#define SOL_MAX_ACCOUNTS 32
+/* 64: Solana's per-transaction account limit. Static keys plus host-resolved
+ * lookup-table keys (Jupiter v0 swaps load up to 58, sampled 2026-10-29). */
+#define SOL_MAX_ACCOUNTS 64
 /* KKSOLSW1: max attested lookup-table accounts per tx; more than this is not
    meaningfully reviewable. */
 #define SOL_MAX_LUT_ACCOUNTS 8
-/* 12: a DEX trade that wraps and unwraps SOL runs to 9 (PumpSwap buy). */
-#define SOL_MAX_INSTRUCTIONS 12
+/* 16: a DEX trade that wraps and unwraps SOL runs to 9 (PumpSwap buy, Jupiter
+ * swaps sampled 2026-10-29). Each slot costs sizeof(SolanaParsedInstruction)
+ * of stack in the sign handlers. */
+#define SOL_MAX_INSTRUCTIONS 16
 #define SOL_LAMPORTS_DIVISOR 1000000000ULL
 #define SOL_MAX_TOKEN_DECIMALS 18
 #define SOL_MAX_DISPLAY_DECIMALS 9
@@ -196,6 +200,10 @@ typedef struct {
   /* Addresses a v0 message's lookup tables load (writable + readonly); 0 for
    * legacy and zero-LUT messages. */
   uint32_t num_loaded_accounts;
+  /* accounts[num_static_accounts..num_accounts) are host-resolved lookup-table
+   * keys with no proof (solana_inspectTxWithHostLut): the review stays opaque
+   * and every such key is marked as not verified. */
+  bool lut_unverified;
 } SolanaParsedTx;
 
 /* Firmware review result for a Solana message */
@@ -377,6 +385,25 @@ SolanaTxReview solana_inspectTxWithTrustedLut(
     const uint8_t* raw, size_t raw_len,
     const uint8_t (*lut_accounts)[SOL_PUBKEY_SIZE], size_t num_lut_accounts,
     SolanaParsedTx* tx);
+
+/* 7.17: the lookup-table accounts as resolved by the HOST, with no proof
+ * (D-018: no online signer vouches for them). keys[i * stride] holds the i-th
+ * loaded key in runtime order (every table's writable indexes, then every
+ * table's readonly ones). The device binds what it can: one key per signed
+ * lookup index, no key repeated and none equal to a static key (the runtime
+ * refuses a transaction that loads an account twice). It cannot check a key is
+ * the table's entry, so the result is never VERIFIED: instructions decode for
+ * the review, the transaction stays OPAQUE (AdvancedMode) and the caller marks
+ * every host-resolved key it shows (solana_isHostLutKey). */
+SolanaTxReview solana_inspectTxWithHostLut(const uint8_t* raw, size_t raw_len,
+                                           const uint8_t* keys, size_t stride,
+                                           size_t num_keys, SolanaParsedTx* tx);
+
+/* `key` is one of tx's host-resolved (unverified) lookup-table keys. Keys are
+ * unique across the message, so a match means the screen shows a key KeepKey
+ * did not read from the signed bytes. */
+bool solana_isHostLutKey(const SolanaParsedTx* tx,
+                         const uint8_t key[SOL_PUBKEY_SIZE]);
 
 /* Plain text (printable ASCII or '\n') not containing `pubkey`, so it cannot
  * authorize a transaction. */

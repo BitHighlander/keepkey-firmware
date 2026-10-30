@@ -25,24 +25,39 @@ static bool solana_base58_encode(const uint8_t* data, size_t data_len,
   return b58enc(out, out_len, data, data_len);
 }
 
+/* Set only while fsm_msgSolanaSignTx shows a message whose lookup-table keys
+ * the host resolved without proof; every such key is shown marked. */
+static const SolanaParsedTx* solana_review_host_lut = NULL;
+#define SOL_HOST_LUT_MARK "\n[from lookup table, not verified by KeepKey]"
+/* A full address (32-44 chars) plus the lookup-table mark. */
+#define SOL_ADDR_STR_LEN (45 + sizeof(SOL_HOST_LUT_MARK) - 1)
+
 /* Helper: Base58-encode a 32-byte pubkey for display (full address).
- * Solana base58 addresses are 32-44 chars; out must be >= 45 bytes.
+ * Solana base58 addresses are 32-44 chars; out must be SOL_ADDR_STR_LEN.
  * Never truncate — truncation is a spoofing vector. */
 static void solana_pubkeyToStr(const uint8_t key[SOL_PUBKEY_SIZE], char* out,
                                size_t out_len) {
   size_t enc_len = out_len;
-  if (solana_base58_encode(key, SOL_PUBKEY_SIZE, out, &enc_len)) {
-    /* b58enc null-terminates and sets enc_len including the NUL */
-    return;
+  /* b58enc null-terminates and sets enc_len including the NUL */
+  if (!solana_base58_encode(key, SOL_PUBKEY_SIZE, out, &enc_len)) {
+    /* Fallback to hex if base58 fails (middle-ellipsis OK for raw hex) */
+    snprintf(out, out_len, "%02x%02x...%02x%02x", key[0], key[1], key[30],
+             key[31]);
   }
-  /* Fallback to hex if base58 fails (middle-ellipsis OK for raw hex) */
-  snprintf(out, out_len, "%02x%02x...%02x%02x", key[0], key[1], key[30],
-           key[31]);
+  if (solana_isHostLutKey(solana_review_host_lut, key)) {
+    const size_t used = strlen(out);
+    if (used + sizeof(SOL_HOST_LUT_MARK) <= out_len) {
+      memcpy(out + used, SOL_HOST_LUT_MARK, sizeof(SOL_HOST_LUT_MARK));
+    } else {
+      /* Never show a host-resolved key unmarked. */
+      snprintf(out, out_len, "lookup table key, not verified");
+    }
+  }
 }
 
 static bool solana_confirm_account(const char* title, const char* label,
                                    const uint8_t key[SOL_PUBKEY_SIZE]) {
-  char s[45];
+  char s[SOL_ADDR_STR_LEN];
   solana_pubkeyToStr(key, s, sizeof(s));
   return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title, "%s\n%s",
                  label, s);
@@ -83,7 +98,7 @@ static bool solana_confirm_priority_fee(const SolanaParsedTx* tx,
   char fee_str[40];
   solana_formatAmount(fee_str, sizeof(fee_str), lamports);
   if (fee_payer) {
-    char payer_str[45];
+    char payer_str[SOL_ADDR_STR_LEN];
     solana_pubkeyToStr(fee_payer, payer_str, sizeof(payer_str));
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Fee",
                  "Fee payer\n%s", payer_str)) {
@@ -107,7 +122,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       }
       char amount_str[32];
       solana_formatAmount(amount_str, sizeof(amount_str), pi->lamports);
-      char to_str[45];
+      char to_str[SOL_ADDR_STR_LEN];
       solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Send %s to %s?", amount_str, to_str);
@@ -117,13 +132,13 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       if (!solana_confirm_account(title, "Fund from", pi->from)) return false;
       char amount_str[32];
       solana_formatAmount(amount_str, sizeof(amount_str), pi->lamports);
-      char account_str[45];
+      char account_str[SOL_ADDR_STR_LEN];
       solana_pubkeyToStr(pi->to, account_str, sizeof(account_str));
       if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                    "Create %s with %s?", account_str, amount_str)) {
         return false;
       }
-      char owner_str[45];
+      char owner_str[SOL_ADDR_STR_LEN];
       solana_pubkeyToStr(pi->extra, owner_str, sizeof(owner_str));
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Owner %s\nSpace %llu bytes?", owner_str,
@@ -140,7 +155,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       }
       char amount_str[32];
       solana_formatAmount(amount_str, sizeof(amount_str), pi->lamports);
-      char to_str[45];
+      char to_str[SOL_ADDR_STR_LEN];
       solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Withdraw nonce %s to %s?", amount_str, to_str);
@@ -151,7 +166,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
                                   pi->from)) {
         return false;
       }
-      char auth_str[45];
+      char auth_str[SOL_ADDR_STR_LEN];
       solana_pubkeyToStr(pi->authority, auth_str, sizeof(auth_str));
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Nonce authority %s?", auth_str);
@@ -161,7 +176,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       if (!solana_confirm_account(title, "Nonce account", pi->from)) {
         return false;
       }
-      char auth_str[45];
+      char auth_str[SOL_ADDR_STR_LEN];
       solana_pubkeyToStr(pi->extra, auth_str, sizeof(auth_str));
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Authorize nonce to %s?", auth_str);
@@ -197,10 +212,14 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       /* Decimals come from the signed bytes (pi->extra_u8), never the host. */
       const SolanaTokenInfo* ti = NULL;
       const SolanaKnownToken* known = NULL;
-      if (pi->has_mint && msg) {
+      /* A host-resolved mint is not the signed one: no symbol for it. */
+      const bool mint_trusted =
+          pi->has_mint &&
+          !solana_isHostLutKey(solana_review_host_lut, pi->mint);
+      if (mint_trusted && msg) {
         ti = solana_findTokenInfo(msg, pi->mint);
       }
-      if (pi->has_mint) {
+      if (mint_trusted) {
         known = solana_findKnownToken(pi->mint);
       }
 
@@ -218,7 +237,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       const bool symbol_verified = symbol && !known;
 
       if (pi->has_mint) {
-        char mint_str[45];
+        char mint_str[SOL_ADDR_STR_LEN];
         solana_pubkeyToStr(pi->mint, mint_str, sizeof(mint_str));
         const bool mint_ok =
             known
@@ -235,7 +254,8 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
        * token_program, mint) and matches the signed destination. */
       uint8_t recipient_owner[SOL_PUBKEY_SIZE];
       const bool recipient_verified =
-          pi->has_mint &&
+          mint_trusted &&
+          !solana_isHostLutKey(solana_review_host_lut, pi->to) &&
           solana_findTokenRecipientOwner(msg, pi->program_id, pi->mint, pi->to,
                                          recipient_owner);
       if (recipient_verified) {
@@ -284,7 +304,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
           return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                          "Send %s?", amount_str);
         }
-        char to_str[45];
+        char to_str[SOL_ADDR_STR_LEN];
         solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
         return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                        "Send %s to %s?", amount_str, to_str);
@@ -296,7 +316,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
         return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                        "Send %s?", amount_str);
       }
-      char to_str[45];
+      char to_str[SOL_ADDR_STR_LEN];
       solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Send %s to %s?", amount_str, to_str);
@@ -347,7 +367,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       }
       char amount_str[32];
       solana_formatAmount(amount_str, sizeof(amount_str), pi->lamports);
-      char to_str[45];
+      char to_str[SOL_ADDR_STR_LEN];
       solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Withdraw %s to %s?", amount_str, to_str);
@@ -358,7 +378,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       if (!solana_confirm_account(title, "Stake account", pi->from)) {
         return false;
       }
-      char auth_str[45];
+      char auth_str[SOL_ADDR_STR_LEN];
       solana_pubkeyToStr(pi->extra, auth_str, sizeof(auth_str));
       const char* role = pi->extra_u8 == 0 ? "staker" : "withdrawer";
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
@@ -371,7 +391,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       }
       char amount_str[32];
       solana_formatAmount(amount_str, sizeof(amount_str), pi->lamports);
-      char to_str[45];
+      char to_str[SOL_ADDR_STR_LEN];
       solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Split %s to %s?", amount_str, to_str);
@@ -382,8 +402,8 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
                                     pi->from);
 
     case SOL_INSTR_STAKE_MERGE: {
-      char from_str[45];
-      char to_str[45];
+      char from_str[SOL_ADDR_STR_LEN];
+      char to_str[SOL_ADDR_STR_LEN];
       solana_pubkeyToStr(pi->from, from_str, sizeof(from_str));
       solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
       if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
@@ -399,7 +419,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       if (!solana_confirm_account(title, "Vote account", pi->from)) {
         return false;
       }
-      char auth_str[45];
+      char auth_str[SOL_ADDR_STR_LEN];
       solana_pubkeyToStr(pi->extra, auth_str, sizeof(auth_str));
       const char* role = pi->extra_u8 == 0 ? "voter" : "withdrawer";
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
@@ -412,7 +432,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       }
       char amount_str[32];
       solana_formatAmount(amount_str, sizeof(amount_str), pi->lamports);
-      char to_str[45];
+      char to_str[SOL_ADDR_STR_LEN];
       solana_pubkeyToStr(pi->to, to_str, sizeof(to_str));
       return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, title,
                      "Withdraw vote %s to %s?", amount_str, to_str);
@@ -469,7 +489,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
 
     case SOL_INSTR_UNKNOWN:
     default: {
-      char prog_str[45];
+      char prog_str[SOL_ADDR_STR_LEN];
       solana_pubkeyToStr(pi->program_id, prog_str, sizeof(prog_str));
       return confirm(ButtonRequestType_ButtonRequest_SignTx, title,
                      "Unknown instruction to program %s. "
@@ -650,6 +670,24 @@ static bool solana_confirm_verified_tx(const SolanaParsedTx* parsed,
   }
   return solana_confirm_priority_fee(
       parsed, parsed->num_accounts > 0 ? parsed->accounts[0] : NULL);
+}
+
+/* 7.17: the host resolved the lookup-table keys with no proof. Decode the
+ * instructions anyway, every host-resolved key marked; the caller's blind-sign
+ * warning follows, as for any opaque message. */
+static bool solana_confirm_host_lut_tx(const SolanaParsedTx* parsed,
+                                       const SolanaSignTx* msg) {
+  if (!confirm(
+          ButtonRequestType_ButtonRequest_ConfirmOutput, "Lookup Accounts",
+          "Host supplied %u lookup table account(s). "
+          "NOT verified by KeepKey.",
+          (unsigned)(parsed->num_accounts - parsed->num_static_accounts))) {
+    return false;
+  }
+  solana_review_host_lut = parsed;
+  const bool ok = solana_confirm_verified_tx(parsed, msg);
+  solana_review_host_lut = NULL;
+  return ok;
 }
 
 void fsm_msgSolanaGetAddress(const SolanaGetAddress* msg) {
@@ -851,6 +889,36 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
     }
   }
 
+  /* 7.17: lookup accounts with no proof at all are the host's word (D-018: no
+   * online signer vouches for them). They let the review decode, and the
+   * message stays a blind sign. Present but not matching: refused. */
+  const bool host_lut = !certified_request && msg->lut_account_count > 0 &&
+                        !msg->has_lut_signature && !msg->has_lut_signer_key_id;
+  if (host_lut) {
+    bool sized = true;
+    for (pb_size_t i = 0; i < msg->lut_account_count; i++) {
+      sized = sized && msg->lut_account[i].size == SOL_PUBKEY_SIZE;
+    }
+    const char* err = NULL;
+    if (msg->has_schema_payload || msg->has_schema_signature ||
+        msg->has_schema_signer_key_id) {
+      err = _("Unverified lookup accounts cannot back a schema");
+    } else if (!sized ||
+               (tx_review = solana_inspectTxWithHostLut(
+                    msg->raw_tx.bytes, msg->raw_tx.size,
+                    msg->lut_account[0].bytes, sizeof(msg->lut_account[0]),
+                    msg->lut_account_count, &parsed)) ==
+                   SOL_TX_REVIEW_MALFORMED) {
+      err = _("Lookup accounts do not match transaction");
+    }
+    if (err) {
+      memzero(node, sizeof(*node));
+      fsm_sendFailure(FailureType_Failure_SyntaxError, err);
+      layoutHome();
+      return;
+    }
+  }
+
   /* Signer verification: derived key must be a required signer. An opaque
    * later message version is not parsed (num_accounts == 0), but Solana only
    * checks signatures against keys the message carries, so the key must at
@@ -958,6 +1026,14 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg) {
       memzero(node, sizeof(*node));
       fsm_sendFailure(FailureType_Failure_Other,
                       _("Enable AdvancedMode to blind-sign"));
+      layoutHome();
+      return;
+    }
+
+    if (host_lut && !solana_confirm_host_lut_tx(&parsed, msg)) {
+      memzero(node, sizeof(*node));
+      fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                      _("Signing cancelled"));
       layoutHome();
       return;
     }
