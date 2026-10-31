@@ -84,9 +84,12 @@ TEST(Erc7730Workflow, StateIsBoundedIndependentlyOfDescriptorSize) {
   // ARM, where tools/check_sram_budget.py is the real gate); 7.17 B5c the
   // suffix tail the review shows (ERC7730_SUFFIX_SHOWN_MAX, 128 B); 7.17 the
   // resume state of a second embedded level (136 B on the host); 7.17 the
-  // setup() module call SafeToL2Setup is recognised from (64 B).
+  // setup() module call SafeToL2Setup is recognised from (64 B); 7.17 the
+  // settlement state, which shares the suffix tail's bytes (typed data has
+  // no suffix).
+  static_assert(sizeof(Erc7730Settle) > ERC7730_SUFFIX_SHOWN_MAX, "union");
   EXPECT_LE(sizeof(Erc7730Workflow),
-            4352u + ERC7730_SUFFIX_SHOWN_MAX + 136u + 64u);
+            4352u + sizeof(Erc7730Settle) + 136u + 64u);
 }
 
 TEST(Erc7730Workflow, ReportsOnlyUnvalidatedCalldataAsWaiting) {

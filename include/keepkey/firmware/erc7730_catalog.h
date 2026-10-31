@@ -18,6 +18,11 @@
  * bytes after the ABI-encoded arguments, which the review states exist. 7.16
  * and earlier accept the flag and ignore it, refusing any such bytes. */
 #define ERC7730_PROGRAM_FLAG_TRAILING_DATA 1u
+/* EIP-712 definitions only (7.17): the device shows what the order pays the
+ * signer after the last field, and may warn (erc7730_settle.h). Fields carry
+ * ERC7730_FORMATTER_FLAG_SETTLE_* only under this flag. Firmware without it
+ * refuses the definition. */
+#define ERC7730_PROGRAM_FLAG_SETTLEMENT 2u
 /* Delegate certificate record (139 bytes, the ClearSign certificate of
  * clearsign_root.h). Two tiers, tried in this order:
  *
@@ -99,6 +104,8 @@ typedef struct {
   /* Header flag ERC7730_PROGRAM_FLAG_TRAILING_DATA: the call may carry bytes
    * after its ABI-encoded arguments (a referral or integrator tag). */
   bool trailing_data;
+  /* Header flag ERC7730_PROGRAM_FLAG_SETTLEMENT. */
+  bool settlement;
   /* Argument 1, after a one-word argument 0, is shown only as an nftName
    * token id: approve(to, tokenId) of ERC-721, whose second word grants one
    * token, never an amount (fsm_msg_ethereum.h erc7730_allowance_policy). */

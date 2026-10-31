@@ -119,10 +119,13 @@ static bool verify_certified_delegate(
 static bool validate_header(const Erc7730CatalogVerifier* v) {
   const uint8_t* h = v->header;
   if (memcmp(h, "C773", 4) != 0 || h[4] != 1) return false;
-  if (h[5] != 2 || (h[6] & ~ERC7730_PROGRAM_FLAG_TRAILING_DATA) != 0)
-    return false;
-  if (h[7] < ERC7730_DEFINITION_CALLDATA || h[7] > ERC7730_DEFINITION_NETWORK ||
-      (h[6] != 0 && h[7] != ERC7730_DEFINITION_CALLDATA))
+  if (h[5] != 2 || h[7] < ERC7730_DEFINITION_CALLDATA ||
+      h[7] > ERC7730_DEFINITION_NETWORK ||
+      h[6] != (h[6] & (h[7] == ERC7730_DEFINITION_CALLDATA
+                           ? ERC7730_PROGRAM_FLAG_TRAILING_DATA
+                       : h[7] == ERC7730_DEFINITION_EIP712
+                           ? ERC7730_PROGRAM_FLAG_SETTLEMENT
+                           : 0u)))
     return false;
   const uint64_t chain_id = read_be64(h + 10);
   if (read_be16(h + 8) != 0 || chain_id == 0 || chain_id > UINT32_MAX)
@@ -743,6 +746,14 @@ static bool finish_formatter(Erc7730CatalogVerifier* v) {
   return true;
 }
 
+/* SETTLE_* flags: only under the header's SETTLEMENT flag, one at most. */
+static bool settle_flags_ok(uint8_t program_flags, uint8_t flags) {
+  const unsigned settle = flags & ERC7730_FORMATTER_FLAGS_SETTLE;
+  return settle == 0 ||
+         ((program_flags & ERC7730_PROGRAM_FLAG_SETTLEMENT) != 0 &&
+          (settle & (settle - 1u)) == 0);
+}
+
 static bool consume_formatter_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
   v->section_offset++;
   if (v->section_offset <= 2) {
@@ -766,6 +777,7 @@ static bool consume_formatter_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
             0 ||
         ((v->sibling[1] & ERC7730_FORMATTER_FLAG_TX_VALUE) != 0 &&
          v->header[7] != ERC7730_DEFINITION_CALLDATA) ||
+        !settle_flags_ok(v->header[6], v->sibling[1]) ||
         v->formatter_arg_count == 0 || v->formatter_arg_count > 23)
       return false;
     /* A field checked against @.value reads it, as a path to it does. */
@@ -1251,6 +1263,26 @@ static bool finish_program(const Erc7730CatalogVerifier* v) {
   return (v->section_mask & external_metadata) == external_metadata;
 }
 
+/* Seaport's OrderComponents type hash (Seaport 1.1 to 1.6, every chain):
+ * keccak256 of "OrderComponents(address offerer,...,uint256 counter)" with
+ * its ConsiderationItem and OfferItem types. */
+static const uint8_t kSeaportOrderComponents[32] = {
+    0xfa, 0x44, 0x56, 0x60, 0xb7, 0xe2, 0x15, 0x15, 0xa5, 0x96, 0x17,
+    0xfc, 0xd6, 0x89, 0x10, 0xb4, 0x87, 0xaa, 0x58, 0x08, 0xb8, 0xab,
+    0xda, 0x3d, 0x78, 0xbc, 0x85, 0xdf, 0x36, 0x4b, 0x2c, 0x2f};
+
+/* A certified Seaport order definition must carry the settlement review
+ * (7.17): without it a drainer order reads as calm as a real listing under
+ * "Verified by KeepKey". A runtime definition is the host's own and is
+ * shown as not verified, so it is not bound. */
+static bool certified_seaport_without_settlement(
+    const Erc7730CatalogVerifier* v, uint8_t tier) {
+  return tier == METADATA_TIER_KEEPKEY &&
+         v->header[7] == ERC7730_DEFINITION_EIP712 &&
+         !(v->header[6] & ERC7730_PROGRAM_FLAG_SETTLEMENT) &&
+         memcmp(v->header + 38, kSeaportOrderComponents, 32) == 0;
+}
+
 static Erc7730CatalogResult finish(Erc7730CatalogVerifier* v,
                                    Erc7730CatalogIdentity* identity) {
   uint8_t actual_id[32];
@@ -1273,6 +1305,11 @@ static Erc7730CatalogResult finish(Erc7730CatalogVerifier* v,
     v->failed = true;
     return ERC7730_CATALOG_UNTRUSTED;
   }
+  if (certified_seaport_without_settlement(v, tier)) {
+    memzero(actual_id, sizeof(actual_id));
+    v->failed = true;
+    return ERC7730_CATALOG_BAD_PROGRAM;
+  }
   identity->tier = tier;
   memcpy(identity->definition_id, actual_id, sizeof(actual_id));
   identity->kind = v->header[7];
@@ -1287,6 +1324,7 @@ static Erc7730CatalogResult finish(Erc7730CatalogVerifier* v,
   identity->reads_value = v->reads_value;
   identity->trailing_data =
       (v->header[6] & ERC7730_PROGRAM_FLAG_TRAILING_DATA) != 0;
+  identity->settlement = (v->header[6] & ERC7730_PROGRAM_FLAG_SETTLEMENT) != 0;
   identity->second_word_token_id = v->second_word_nft && !v->second_word_other;
   memzero(actual_id, sizeof(actual_id));
   v->state = STREAM_DONE;

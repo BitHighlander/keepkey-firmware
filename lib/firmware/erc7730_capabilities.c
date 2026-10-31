@@ -70,9 +70,22 @@ uint32_t erc7730_cap_formatter_roles(uint8_t kind) {
 }
 
 uint8_t erc7730_cap_formatter_flags(uint8_t kind) {
-  return kind == 10  ? ERC7730_FORMATTER_FLAG_RECIPIENT
-         : kind == 2 ? ERC7730_FORMATTER_FLAG_TX_VALUE
-                     : 0u;
+  switch (kind) {
+    case 1:
+      return ERC7730_FORMATTER_FLAG_SETTLE_TYPE |
+             ERC7730_FORMATTER_FLAG_SETTLE_ID;
+    case 2:
+      return ERC7730_FORMATTER_FLAG_TX_VALUE;
+    case 3:
+      return ERC7730_FORMATTER_FLAG_SETTLE_AMOUNT;
+    case 8:
+      return ERC7730_FORMATTER_FLAG_SETTLE_TYPE;
+    case 10:
+      return ERC7730_FORMATTER_FLAG_RECIPIENT |
+             ERC7730_FORMATTER_FLAG_SETTLE_TO;
+    default:
+      return 0u;
+  }
 }
 
 uint32_t erc7730_cap_formatter_required_roles(uint8_t kind) {

@@ -9,6 +9,7 @@
 #include "keepkey/firmware/erc7730_capabilities.h"
 #include "keepkey/firmware/erc7730_format.h"
 #include "keepkey/firmware/erc7730_program.h"
+#include "keepkey/firmware/erc7730_settle.h"
 #include "keepkey/firmware/erc7730_tx.h"
 #include "trezor/crypto/sha2.h"
 
@@ -235,8 +236,14 @@ typedef struct {
   /* Bytes after the outer call's arguments, which its definition allows
    * (identity.trailing_data); the same in every pass. */
   uint32_t suffix_length;
-  /* The outer call's last bytes, which hold a suffix the review shows. */
-  uint8_t suffix_tail[ERC7730_SUFFIX_SHOWN_MAX];
+  union {
+    /* Calldata: the outer call's last bytes, which hold a suffix the review
+     * shows. */
+    uint8_t suffix_tail[ERC7730_SUFFIX_SHOWN_MAX];
+    /* Typed data under ERC7730_PROGRAM_FLAG_SETTLEMENT: what the order pays
+     * the signer, kept as its fields are shown. */
+    Erc7730Settle settle;
+  };
 } Erc7730Workflow;
 
 /* One Ethereum workflow exists at a time. Keeping ownership here ensures FSM
