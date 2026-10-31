@@ -47,11 +47,12 @@ const char* kNft = "387c41b0b2f1128de44db1bcf8baad085f26392c";
 
 struct Order {
   Erc7730Settle settle{};
+  uint64_t chain = 1;
 
   // offer[]: the definition marks one field of each item GIVE.
   Order& give() {
     erc7730_settle_give(&settle);
-    erc7730_settle_end_item(&settle);
+    erc7730_settle_end_item(&settle, chain);
     return *this;
   }
   // consideration[]: itemType, identifierOrCriteria, startAmount, endAmount,
@@ -66,7 +67,7 @@ struct Order {
     erc7730_settle_amount(&settle, word(start).data(), t.data(), native);
     erc7730_settle_amount(&settle, word(end).data(), t.data(), native);
     erc7730_settle_to(&settle, to_signer);
-    erc7730_settle_end_item(&settle);
+    erc7730_settle_end_item(&settle, chain);
     return *this;
   }
   Order& pay(unsigned type, const char* token, const char* amount,
@@ -124,8 +125,10 @@ TEST(Erc7730Settle, RealListingShowsWhatTheSellerReceives) {
 TEST(Erc7730Settle, NothingPaidToThisWalletWarns) {
   const char* nothing = "Nothing in this order is paid to this wallet.";
   // 1 wei to a stranger.
-  EXPECT_EQ(Order().give().pay(0, kZero, "1", false).review(
-                1, ERC7730_SETTLE_NOTHING),
+  EXPECT_EQ(Order()
+                .give()
+                .pay(0, kZero, "1", false)
+                .review(1, ERC7730_SETTLE_NOTHING),
             nothing);
   // The real creator-fee listing with the seller's payment redirected.
   EXPECT_EQ(Order()
@@ -141,8 +144,10 @@ TEST(Erc7730Settle, NothingPaidToThisWalletWarns) {
 
 // A payment that makes a phishing order look paid: dust or a worthless token.
 TEST(Erc7730Settle, OnlyDustOrUnknownTokensForWhatIsGivenWarns) {
-  EXPECT_EQ(Order().give().pay(0, kZero, "1", true).review(
-                1, ERC7730_SETTLE_UNVALUED),
+  EXPECT_EQ(Order()
+                .give()
+                .pay(0, kZero, "1", true)
+                .review(1, ERC7730_SETTLE_UNVALUED),
             std::string(kDust) + "1 Wei");
   // A worthless token the attacker made.
   EXPECT_EQ(Order()
@@ -159,8 +164,10 @@ TEST(Erc7730Settle, OnlyDustOrUnknownTokensForWhatIsGivenWarns) {
                 .review(1, ERC7730_SETTLE_UNVALUED),
             std::string(kDust) + "0.000000999999999999 WETH");
   // A millionth of one is no longer dust.
-  Order().give().pay(1, kWeth, "1000000000000", true).review(
-      1, ERC7730_SETTLE_CALM);
+  Order()
+      .give()
+      .pay(1, kWeth, "1000000000000", true)
+      .review(1, ERC7730_SETTLE_CALM);
   // Dust from two payments stays dust.
   Order()
       .give()
@@ -168,13 +175,12 @@ TEST(Erc7730Settle, OnlyDustOrUnknownTokensForWhatIsGivenWarns) {
       .pay(0, kZero, "1", true)
       .review(1, ERC7730_SETTLE_UNVALUED);
   // The device has no NFT prices: an NFT for an NFT warns.
-  EXPECT_EQ(
-      Order()
-          .give()
-          .pay(2, kNft, "1", "1", true, "5318")
-          .review(1, ERC7730_SETTLE_UNVALUED),
-      std::string(kDust) +
-          "NFT ID 5318\n0x387C41B0B2F1128dE44dB1Bcf8baad085f26392C");
+  EXPECT_EQ(Order()
+                .give()
+                .pay(2, kNft, "1", "1", true, "5318")
+                .review(1, ERC7730_SETTLE_UNVALUED),
+            std::string(kDust) +
+                "NFT ID 5318\n0x387C41B0B2F1128dE44dB1Bcf8baad085f26392C");
   // Without anything given, the same receipt is not a warning.
   Order().pay(1, kWorthless, "5", true).review(1, ERC7730_SETTLE_CALM);
 }
@@ -223,7 +229,7 @@ TEST(Erc7730Settle, ItemTypeDecidesWhatIsReceived) {
   erc7730_settle_amount(&order.settle, word("1000000000000000000").data(),
                         address(kWeth).data(), false);
   erc7730_settle_to(&order.settle, true);
-  erc7730_settle_end_item(&order.settle);
+  erc7730_settle_end_item(&order.settle, order.chain);
   order.review(1, ERC7730_SETTLE_UNVALUED);
 }
 
@@ -255,11 +261,10 @@ TEST(Erc7730Settle, NftsAndTotalsAreListed) {
   const char* max =
       "115792089237316195423570985008687907853269984665640564039457584007913"
       "129639935";
-  EXPECT_EQ(Order()
-                .pay(0, kZero, max, true)
-                .pay(0, kZero, "1", true)
-                .review(1, ERC7730_SETTLE_CALM)
-                .find("+ items not listed here") != std::string::npos,
+  EXPECT_EQ(Order().pay(0, kZero, max, true)
+                    .pay(0, kZero, "1", true)
+                    .review(1, ERC7730_SETTLE_CALM)
+                    .find("+ items not listed here") != std::string::npos,
             true);
 }
 
@@ -275,8 +280,10 @@ TEST(Erc7730Settle, TokensUnknownOnTheChainAreNotValued) {
                 "3613500000000000\nunknown token\n"
                 "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619");
   // Mainnet WETH's address on another chain is not WETH.
-  Order().give().pay(1, kWeth, "500000000000000000", true).review(
-      8453, ERC7730_SETTLE_UNVALUED);
+  Order()
+      .give()
+      .pay(1, kWeth, "500000000000000000", true)
+      .review(8453, ERC7730_SETTLE_UNVALUED);
 }
 
 // Items paid to others never reach the summary, and an element's values never
@@ -289,10 +296,10 @@ TEST(Erc7730Settle, EachItemEndsWithItsElement) {
   erc7730_settle_amount(&order.settle, word("5000000000000000000").data(),
                         address(kZero).data(), true);
   erc7730_settle_to(&order.settle, false);
-  erc7730_settle_end_item(&order.settle);
+  erc7730_settle_end_item(&order.settle, order.chain);
   // The next element has no amount of its own.
   erc7730_settle_to(&order.settle, true);
-  erc7730_settle_end_item(&order.settle);
+  erc7730_settle_end_item(&order.settle, order.chain);
   EXPECT_EQ(order.review(1, ERC7730_SETTLE_UNVALUED),
             std::string(kDust) + "+ items not listed here");
 }
@@ -307,16 +314,16 @@ TEST(Erc7730Settle, FormatterKindsCarryTheirRoles) {
   EXPECT_EQ(erc7730_cap_formatter_flags(3),
             ERC7730_FORMATTER_FLAG_SETTLE_GIVE |
                 ERC7730_FORMATTER_FLAG_SETTLE_AMOUNT);
-  EXPECT_EQ(erc7730_cap_formatter_flags(8),
-            ERC7730_FORMATTER_FLAG_SETTLE_GIVE |
-                ERC7730_FORMATTER_FLAG_SETTLE_TYPE);
+  EXPECT_EQ(
+      erc7730_cap_formatter_flags(8),
+      ERC7730_FORMATTER_FLAG_SETTLE_GIVE | ERC7730_FORMATTER_FLAG_SETTLE_TYPE);
   EXPECT_EQ(erc7730_cap_formatter_flags(10),
             ERC7730_FORMATTER_FLAG_SETTLE_GIVE |
                 ERC7730_FORMATTER_FLAG_RECIPIENT |
                 ERC7730_FORMATTER_FLAG_SETTLE_TO);
-  EXPECT_EQ(erc7730_cap_formatter_flags(2),
-            ERC7730_FORMATTER_FLAG_SETTLE_GIVE |
-                ERC7730_FORMATTER_FLAG_TX_VALUE);
+  EXPECT_EQ(
+      erc7730_cap_formatter_flags(2),
+      ERC7730_FORMATTER_FLAG_SETTLE_GIVE | ERC7730_FORMATTER_FLAG_TX_VALUE);
   EXPECT_EQ(erc7730_cap_formatter_flags(13), 0u);
 }
 
@@ -348,7 +355,7 @@ Order& give_item(Order& order, unsigned type, const char* token,
   const auto t = address(token);
   erc7730_settle_amount(&order.settle, word(amount).data(), t.data(),
                         std::strcmp(token, kZero) == 0);
-  erc7730_settle_end_item(&order.settle);
+  erc7730_settle_end_item(&order.settle, order.chain);
   return order;
 }
 
@@ -408,17 +415,17 @@ TEST(Erc7730Settle, AnNftItemNamingACoinWarns) {
   {
     Order order;
     give_item(order, 2, kWeth, "1", "50000000000000000000");
-    EXPECT_EQ(order.pay(0, kZero, "1", false)
-                  .review(1, ERC7730_SETTLE_COIN_AS_NFT),
-              std::string(kCoinWeth) +
-                  "Nothing in this order is paid to this wallet.");
+    EXPECT_EQ(
+        order.pay(0, kZero, "1", false).review(1, ERC7730_SETTLE_COIN_AS_NFT),
+        std::string(kCoinWeth) +
+            "Nothing in this order is paid to this wallet.");
   }
   {
     Order order;
     give_item(order, 2, kWeth, "1", "1");
-    EXPECT_EQ(order.pay(0, kZero, "1", true)
-                  .review(1, ERC7730_SETTLE_COIN_AS_NFT),
-              std::string(kCoinWeth) + kDust + "1 Wei");
+    EXPECT_EQ(
+        order.pay(0, kZero, "1", true).review(1, ERC7730_SETTLE_COIN_AS_NFT),
+        std::string(kCoinWeth) + kDust + "1 Wei");
   }
   // The same address on a chain whose table does not list it: no warning
   // (the device cannot tell an NFT contract from a token it does not list).
@@ -445,4 +452,115 @@ TEST(Erc7730Settle, AnItemWithoutRecipientIsGiven) {
   // Control: nothing given, the same receipt is calm.
   EXPECT_EQ(Order().pay(0, kZero, "1", true).review(1, ERC7730_SETTLE_CALM),
             "1 Wei");
+}
+
+namespace {
+
+const char* kBayc = "bc4ca0eda7647a8ab7c2061c2e118a18a936f13d";
+const char* kUsdc = "a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+const char* kGusd = "056fd409e1d7a124bd7017459dfea2f387b6d5cd";
+const char* kGivesUnknown =
+    "This wallet gives a token the device does not know: if it is an NFT "
+    "collection, Seaport moves the NFT whose ID is the amount.\n";
+
+}  // namespace
+
+// Seaport moves an ERC-20 item with transferFrom(from, to, amount), which an
+// ERC-721 answers too: an ERC-20 item naming BAYC gives BAYC #1234. An
+// ERC-20 the order gives away that the table does not list warns.
+TEST(Erc7730Settle, GivingAnUnknownErc20Warns) {
+  {
+    Order order;
+    give_item(order, 1, kBayc, "1234");
+    EXPECT_TRUE(order.settle.gives_unknown_token);
+    EXPECT_EQ(order.pay(0, kZero, "1000000000000000", true)
+                  .review(1, ERC7730_SETTLE_GIVES_UNKNOWN_TOKEN),
+              std::string(kGivesUnknown) + "You receive:\n0.001 ETH");
+  }
+  {
+    Order order;
+    give_item(order, 1, kBayc, "1234");
+    EXPECT_EQ(order.pay(0, kZero, "1", false)
+                  .review(1, ERC7730_SETTLE_GIVES_UNKNOWN_TOKEN),
+              std::string(kGivesUnknown) +
+                  "Nothing in this order is paid to this wallet.");
+  }
+  {
+    // With an NFT item naming a coin too: both lines, then the receipt.
+    Order order;
+    give_item(order, 2, kWeth, "1", "5");
+    give_item(order, 1, kBayc, "7");
+    EXPECT_EQ(
+        order.pay(0, kZero, "1000000000000000", true)
+            .review(1, ERC7730_SETTLE_COIN_AS_NFT),
+        std::string(kCoinWeth) + kGivesUnknown + "You receive:\n0.001 ETH");
+  }
+  {
+    // Mainnet WETH is not in the table on Base: the same order warns there.
+    Order order;
+    order.chain = 8453;
+    give_item(order, 1, kWeth, "500000000000000000");
+    EXPECT_TRUE(order.settle.gives_unknown_token);
+  }
+  // Controls: a token the table lists, the native coin, an item marked only
+  // GIVE (no token shown), and an unknown token paid out, not given.
+  {
+    Order order;
+    give_item(order, 1, kWeth, "500000000000000000");
+    EXPECT_FALSE(order.settle.gives_unknown_token);
+    EXPECT_EQ(order.pay(0, kZero, "600000000000000000", true)
+                  .review(1, ERC7730_SETTLE_CALM),
+              "0.6 ETH");
+  }
+  {
+    Order order;
+    give_item(order, 0, kZero, "500000000000000000");
+    EXPECT_FALSE(order.settle.gives_unknown_token);
+  }
+  EXPECT_FALSE(Order().give().settle.gives_unknown_token);
+  EXPECT_FALSE(
+      Order().give().pay(1, kWorthless, "5", false).settle.gives_unknown_token);
+}
+
+// The dust floor in units of the coin: a millionth of one, a hundredth for
+// six decimals or fewer (one base unit of USDC is dust), one unit below two.
+TEST(Erc7730Settle, StablecoinDustWarns) {
+  EXPECT_EQ(Order()
+                .give()
+                .pay(1, kUsdc, "1", true)
+                .review(1, ERC7730_SETTLE_UNVALUED),
+            std::string(kDust) + "0.000001 USDC");
+  EXPECT_EQ(Order()
+                .give()
+                .pay(1, kUsdc, "9999", true)
+                .review(1, ERC7730_SETTLE_UNVALUED),
+            std::string(kDust) + "0.009999 USDC");
+  EXPECT_EQ(Order()
+                .give()
+                .pay(1, kUsdc, "10000", true)
+                .review(1, ERC7730_SETTLE_CALM),
+            "0.01 USDC");
+  // Two decimals: a hundredth is one base unit.
+  EXPECT_EQ(
+      Order().give().pay(1, kGusd, "1", true).review(1, ERC7730_SETTLE_CALM),
+      "0.01 GUSD");
+}
+
+// A total that overflows keeps the first amount: the summary never shows a
+// wrapped sum (2^255 + 2^255 + 10^18 would wrap to 1 ETH).
+TEST(Erc7730Settle, AnOverflowingTotalIsNotWrapped) {
+  EXPECT_EQ(
+      Order()
+          .give()
+          .pay(0, kZero,
+               "578960446186580977117854925043439539266349923328202820197287"
+               "92003956564819968",
+               true)
+          .pay(0, kZero,
+               "578960446186580977117854925043439539266349923328202820197297"
+               "92003956564819968",
+               true)
+          .review(1, ERC7730_SETTLE_CALM),
+      "57896044618658097711785492504343953926634992332820282019728."
+      "792003956564819968 ETH\n+ items not listed here");
 }

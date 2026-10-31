@@ -494,7 +494,7 @@ static void show_erc7730_field(Erc7730Workflow* workflow,
  * wallet, said by the device. The definition cannot skip or word it; a
  * decline aborts. False when the review has ended (a Failure was sent). */
 static bool confirm_erc7730_settle(Erc7730Workflow* workflow) {
-  erc7730_settle_end_item(&workflow->settle);
+  erc7730_settle_end_item(&workflow->settle, workflow->identity.chain_id);
   Erc7730SettleVerdict verdict;
   char body[512];
   bool ok =
@@ -1852,7 +1852,8 @@ void fsm_msgEthereumClearSignDefinitionChunk(
         ok = workflow->iterating && instruction.a == workflow->iteration_begin;
         /* The element's last field was shown. */
         if (ok && workflow->identity.settlement)
-          erc7730_settle_end_item(&workflow->settle);
+          erc7730_settle_end_item(&workflow->settle,
+                                  workflow->identity.chain_id);
         if (ok && ++workflow->iteration_index < workflow->iteration_count) {
           workflow->display_index = workflow->iteration_begin;
         } else {

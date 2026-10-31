@@ -28,7 +28,14 @@
  * identifier whatever its token is (an ERC-721 item naming WETH moves
  * "identifier" wei of WETH). An NFT item whose token the firmware's table
  * lists as a coin makes the last screen a warning. An item with a TYPE or an
- * AMOUNT and no TO is one the order gives away, as with GIVE. */
+ * AMOUNT and no TO is one the order gives away, as with GIVE.
+ *
+ * The other way round, Seaport moves an ERC-20 item with transferFrom(from,
+ * to, amount), which an ERC-721 contract also answers: an ERC-20 item naming
+ * an NFT collection gives the NFT whose ID is the amount. So an item the
+ * order gives away whose AMOUNT names an ERC-20 the table does not list on
+ * the chain makes the last screen a warning. (An item marked only GIVE shows
+ * no token, and is not checked.) */
 
 #define ERC7730_SETTLE_NATIVE 0u
 #define ERC7730_SETTLE_ERC20 1u
@@ -57,15 +64,18 @@ typedef struct {
   bool gives;
   bool received_any;
   bool unlisted; /* paid to the signer, not in received[] */
+  /* An item given away is an ERC-20 the table does not list on the chain. */
+  bool gives_unknown_token;
   /* An NFT item names this token of the firmware's table, or NULL. */
   const char* coin_as_nft;
 } Erc7730Settle;
 
 typedef enum {
   ERC7730_SETTLE_CALM = 0,
-  ERC7730_SETTLE_NOTHING,     /* nothing is paid to this wallet */
-  ERC7730_SETTLE_UNVALUED,    /* only what the device cannot value */
-  ERC7730_SETTLE_COIN_AS_NFT, /* an NFT item names a coin's contract */
+  ERC7730_SETTLE_NOTHING,             /* nothing is paid to this wallet */
+  ERC7730_SETTLE_UNVALUED,            /* only what the device cannot value */
+  ERC7730_SETTLE_COIN_AS_NFT,         /* an NFT item names a coin's contract */
+  ERC7730_SETTLE_GIVES_UNKNOWN_TOKEN, /* gives an ERC-20 the table lacks */
 } Erc7730SettleVerdict;
 
 /* One shown field's value, by the SETTLE flag it carries. A word is a whole
@@ -93,7 +103,7 @@ bool erc7730_settle_format_nft_amount(Erc7730Settle* settle,
                                       size_t size);
 /* The item's last field was shown (the end of an iteration element, or of
  * the program): keep it when it is paid to the signer. */
-void erc7730_settle_end_item(Erc7730Settle* settle);
+void erc7730_settle_end_item(Erc7730Settle* settle, uint64_t chain_id);
 
 /* The screen after the definition's last field: the verdict, which picks
  * its title, and its body, the items this wallet receives, one per line. */
