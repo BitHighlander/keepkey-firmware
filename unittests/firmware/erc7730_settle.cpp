@@ -319,3 +319,130 @@ TEST(Erc7730Settle, FormatterKindsCarryTheirRoles) {
                 ERC7730_FORMATTER_FLAG_TX_VALUE);
   EXPECT_EQ(erc7730_cap_formatter_flags(13), 0u);
 }
+
+namespace {
+
+// An item's amount as the review shows it (erc7730_settle_format_nft_amount
+// for an NFT item, else a token amount), after its type and identifier.
+std::string shown_amount(Erc7730Settle* settle, unsigned type, const char* id,
+                         const char* amount, const char* token,
+                         uint64_t chain = 1) {
+  const auto type_word = word(std::to_string(type).c_str());
+  erc7730_settle_type(settle, type_word.data());
+  if (id) erc7730_settle_id(settle, word(id).data());
+  if (erc7730_settle_item_is_coin(settle)) return "<coin>";
+  char out[512];
+  if (!erc7730_settle_format_nft_amount(settle, word(amount).data(),
+                                        address(token).data(), chain, out,
+                                        sizeof(out))) {
+    EXPECT_EQ(out[0], '\0');
+    return "<refused>";
+  }
+  return out;
+}
+
+// offer[] the way batch 6-D marks it: type, identifier and amounts, no GIVE.
+Order& give_item(Order& order, unsigned type, const char* token,
+                 const char* amount, const char* id = "0") {
+  shown_amount(&order.settle, type, id, amount, token);
+  const auto t = address(token);
+  erc7730_settle_amount(&order.settle, word(amount).data(), t.data(),
+                        std::strcmp(token, kZero) == 0);
+  erc7730_settle_end_item(&order.settle);
+  return order;
+}
+
+const char* kCoinWeth =
+    "An NFT item names the token WETH: Seaport moves its ID as an amount of "
+    "WETH.\n";
+
+}  // namespace
+
+// Seaport moves an NFT item by its identifier: its amount is a count of that
+// NFT, never an amount of its token. Coins keep their token amount.
+TEST(Erc7730Settle, NftAmountsAreShownAsSeaportMovesThem) {
+  const std::string nft = "\n0x387C41B0B2F1128dE44dB1Bcf8baad085f26392C";
+  Erc7730Settle s{};
+  EXPECT_EQ(shown_amount(&s, 2, "446", "1", kNft), "NFT ID 446" + nft);
+  s = {};
+  // Seaport refuses an ERC-721 amount other than 1; it reads as a count.
+  EXPECT_EQ(shown_amount(&s, 2, "446", "3", kNft), "3 of NFT ID 446" + nft);
+  s = {};
+  EXPECT_EQ(shown_amount(&s, 3, "650", "2", kNft), "2 of NFT ID 650" + nft);
+  s = {};
+  EXPECT_EQ(shown_amount(&s, 4, "0", "1", kNft), "1 NFT by criteria" + nft);
+  s = {};
+  EXPECT_EQ(shown_amount(&s, 5, "77", "7", kNft), "7 NFT by criteria" + nft);
+  // Coins, and items with no type shown, are token amounts.
+  for (unsigned type : {0u, 1u}) {
+    s = {};
+    EXPECT_EQ(shown_amount(&s, type, "0", "5", kWeth), "<coin>") << type;
+  }
+  s = {};
+  EXPECT_TRUE(erc7730_settle_item_is_coin(&s));
+  // A type beyond Seaport's, or an NFT whose identifier was not shown first.
+  s = {};
+  EXPECT_EQ(shown_amount(&s, 6, "0", "1", kNft), "<refused>");
+  s = {};
+  EXPECT_EQ(shown_amount(&s, 2, nullptr, "1", kNft), "<refused>");
+  s = {};
+  EXPECT_EQ(shown_amount(&s, 3, nullptr, "1", kNft), "<refused>");
+  // Criteria items need no identifier: the criteria is its own screen.
+  s = {};
+  EXPECT_EQ(shown_amount(&s, 4, nullptr, "1", kNft), "1 NFT by criteria" + nft);
+  EXPECT_EQ(s.coin_as_nft, nullptr);
+}
+
+// The re-review's drain: an ERC-721 (or by-criteria) item whose token is WETH
+// moves "identifier" wei of WETH. The amount reads as an NFT, and the last
+// screen warns, whatever the order pays.
+TEST(Erc7730Settle, AnNftItemNamingACoinWarns) {
+  {
+    Order order;
+    give_item(order, 4, kWeth, "1", "0");
+    EXPECT_EQ(order.settle.coin_as_nft != nullptr, true);
+    EXPECT_EQ(order.pay(0, kZero, "500000000000000000", true)
+                  .review(1, ERC7730_SETTLE_COIN_AS_NFT),
+              std::string(kCoinWeth) + "You receive:\n0.5 ETH");
+  }
+  {
+    Order order;
+    give_item(order, 2, kWeth, "1", "50000000000000000000");
+    EXPECT_EQ(order.pay(0, kZero, "1", false)
+                  .review(1, ERC7730_SETTLE_COIN_AS_NFT),
+              std::string(kCoinWeth) +
+                  "Nothing in this order is paid to this wallet.");
+  }
+  {
+    Order order;
+    give_item(order, 2, kWeth, "1", "1");
+    EXPECT_EQ(order.pay(0, kZero, "1", true)
+                  .review(1, ERC7730_SETTLE_COIN_AS_NFT),
+              std::string(kCoinWeth) + kDust + "1 Wei");
+  }
+  // The same address on a chain whose table does not list it: no warning
+  // (the device cannot tell an NFT contract from a token it does not list).
+  Erc7730Settle s{};
+  shown_amount(&s, 2, "1", "1", kWeth, 8453);
+  EXPECT_EQ(s.coin_as_nft, nullptr);
+  // A real NFT collection: no warning.
+  Order order;
+  give_item(order, 2, kNft, "1", "5318");
+  EXPECT_EQ(order.settle.coin_as_nft, nullptr);
+  EXPECT_EQ(order.pay(0, kZero, "19740000000000000", true)
+                .review(1, ERC7730_SETTLE_CALM),
+            "0.01974 ETH");
+}
+
+// An item described by type and amount with no recipient is given away, the
+// same as a GIVE: 1 wei back for it warns.
+TEST(Erc7730Settle, AnItemWithoutRecipientIsGiven) {
+  Order order;
+  give_item(order, 2, kNft, "1", "5318");
+  EXPECT_TRUE(order.settle.gives);
+  EXPECT_EQ(order.pay(0, kZero, "1", true).review(1, ERC7730_SETTLE_UNVALUED),
+            std::string(kDust) + "1 Wei");
+  // Control: nothing given, the same receipt is calm.
+  EXPECT_EQ(Order().pay(0, kZero, "1", true).review(1, ERC7730_SETTLE_CALM),
+            "1 Wei");
+}

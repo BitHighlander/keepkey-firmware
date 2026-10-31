@@ -80,6 +80,11 @@ void erc7730_settle_end_item(Erc7730Settle* settle) {
   if (!settle) return;
   Erc7730SettleItem* item = &settle->item;
   const uint8_t seen = settle->item_seen;
+  /* An item described without a recipient is one the order gives away. */
+  if (!(seen & ERC7730_FORMATTER_FLAG_SETTLE_TO) &&
+      (seen & (ERC7730_FORMATTER_FLAG_SETTLE_TYPE |
+               ERC7730_FORMATTER_FLAG_SETTLE_AMOUNT)))
+    settle->gives = true;
   if ((seen & ERC7730_FORMATTER_FLAG_SETTLE_TO) && settle->item_to_signer) {
     settle->received_any = true;
     bool readable = !settle->item_unreadable &&
@@ -157,6 +162,36 @@ static bool format_count(const uint8_t value[32], char* out, size_t size) {
   return length > 0 && length < size;
 }
 
+/* An NFT item as Seaport moves it: one ERC-721 by its identifier, a count of
+ * an ERC-1155 (or of an ERC-721, which Seaport refuses to move), a count "by
+ * criteria" (the criteria is its own screen); then the collection. */
+static bool format_nft(uint8_t kind, const uint8_t amount[32],
+                       const uint8_t id_word[32], const uint8_t token[20],
+                       char* out, size_t size) {
+  static const uint8_t one[32] = {[31] = 1};
+  char count[80], id[80], collection[43];
+  bool ok =
+      kind >= ERC7730_SETTLE_ERC721 && kind <= ERC7730_SETTLE_CRITERIA_MAX &&
+      format_count(amount, count, sizeof(count)) &&
+      format_count(id_word, id, sizeof(id)) &&
+      erc7730_format_address(token, false, collection, sizeof(collection));
+  if (ok) {
+    int length;
+    if (kind == ERC7730_SETTLE_ERC721 && memcmp(amount, one, 32) == 0)
+      length = snprintf(out, size, "NFT ID %s\n%s", id, collection);
+    else if (kind <= ERC7730_SETTLE_ERC1155)
+      length =
+          snprintf(out, size, "%s of NFT ID %s\n%s", count, id, collection);
+    else
+      length = snprintf(out, size, "%s NFT by criteria\n%s", count, collection);
+    ok = length > 0 && (size_t)length < size;
+  }
+  if (!ok && size) out[0] = '\0';
+  memzero(count, sizeof(count));
+  memzero(id, sizeof(id));
+  return ok;
+}
+
 static bool format_item(const Erc7730SettleItem* item, uint64_t chain_id,
                         char* out, size_t size) {
   if (item->kind == ERC7730_SETTLE_NATIVE)
@@ -164,25 +199,35 @@ static bool format_item(const Erc7730SettleItem* item, uint64_t chain_id,
   if (item->kind == ERC7730_SETTLE_ERC20)
     return erc7730_format_token_amount(item->amount, item->token, false,
                                        chain_id, NULL, out, size);
-  char count[80], id[80], collection[43];
-  bool ok = format_count(item->amount, count, sizeof(count)) &&
-            format_count(item->id, id, sizeof(id)) &&
-            erc7730_format_address(item->token, false, collection,
-                                   sizeof(collection));
-  if (ok) {
-    int length;
-    if (item->kind == ERC7730_SETTLE_ERC721)
-      length = snprintf(out, size, "NFT ID %s\n%s", id, collection);
-    else if (item->kind == ERC7730_SETTLE_ERC1155)
-      length =
-          snprintf(out, size, "%s of NFT ID %s\n%s", count, id, collection);
-    else
-      length = snprintf(out, size, "%s NFT by criteria\n%s", count, collection);
-    ok = length > 0 && (size_t)length < size;
-  }
-  memzero(count, sizeof(count));
-  memzero(id, sizeof(id));
-  return ok;
+  return format_nft(item->kind, item->amount, item->id, item->token, out, size);
+}
+
+bool erc7730_settle_item_is_coin(const Erc7730Settle* settle) {
+  return !settle || !(settle->item_seen & ERC7730_FORMATTER_FLAG_SETTLE_TYPE) ||
+         settle->item.kind <= ERC7730_SETTLE_ERC20;
+}
+
+bool erc7730_settle_format_nft_amount(Erc7730Settle* settle,
+                                      const uint8_t amount[32],
+                                      const uint8_t token[20],
+                                      uint64_t chain_id, char* out,
+                                      size_t size) {
+  if (!settle || !out || size == 0) return false;
+  out[0] = '\0';
+  const uint8_t kind = settle->item.kind;
+  /* ERC-721 and ERC-1155 items are told by their identifier. */
+  if (kind <= ERC7730_SETTLE_ERC1155 &&
+      !(settle->item_seen & ERC7730_FORMATTER_FLAG_SETTLE_ID))
+    return false;
+  if (!format_nft(kind, amount, settle->item.id, token, out, size))
+    return false;
+  /* No NFT is a coin: such an item moves its identifier as that coin. */
+  const TokenType* coin = chain_id <= UINT32_MAX
+                              ? tokenByChainAddress((uint32_t)chain_id, token)
+                              : UnknownToken;
+  if (coin && coin != UnknownToken && !settle->coin_as_nft)
+    settle->coin_as_nft = coin->ticker;
+  return true;
 }
 
 bool erc7730_settle_review(const Erc7730Settle* settle, uint64_t chain_id,
@@ -190,23 +235,43 @@ bool erc7730_settle_review(const Erc7730Settle* settle, uint64_t chain_id,
                            size_t body_size) {
   if (!settle || !verdict || !body || body_size == 0) return false;
   body[0] = '\0';
+  size_t used = 0;
+  if (settle->coin_as_nft) {
+    /* The table's tickers start with a space. */
+    used = (size_t)snprintf(body, body_size,
+                            "An NFT item names the token%s: Seaport moves its "
+                            "ID as an amount of%s.\n",
+                            settle->coin_as_nft, settle->coin_as_nft);
+    if (used >= body_size) {
+      body[0] = '\0';
+      return false;
+    }
+  }
   if (!settle->received_any) {
-    *verdict = ERC7730_SETTLE_NOTHING;
-    return (size_t)snprintf(body, body_size,
-                            "Nothing in this order is paid to this "
-                            "wallet.") < body_size;
+    *verdict = settle->coin_as_nft ? ERC7730_SETTLE_COIN_AS_NFT
+                                   : ERC7730_SETTLE_NOTHING;
+    const bool ok = (size_t)snprintf(body + used, body_size - used,
+                                     "Nothing in this order is paid to this "
+                                     "wallet.") < body_size - used;
+    if (!ok) body[0] = '\0';
+    return ok;
   }
   bool any_valued = false;
   for (size_t i = 0; i < settle->received_count; i++)
     any_valued = any_valued || valued(&settle->received[i], chain_id);
   *verdict = settle->gives && !any_valued ? ERC7730_SETTLE_UNVALUED
                                           : ERC7730_SETTLE_CALM;
-  size_t used = 0;
-  if (*verdict == ERC7730_SETTLE_UNVALUED) {
-    used = (size_t)snprintf(body, body_size,
-                            "This wallet gets only unknown tokens, NFTs or "
-                            "dust:");
-    if (used >= body_size) return false;
+  const char* lead = *verdict == ERC7730_SETTLE_UNVALUED
+                         ? "This wallet gets only unknown tokens, NFTs or dust:"
+                     : settle->coin_as_nft ? "You receive:"
+                                           : NULL;
+  if (settle->coin_as_nft) *verdict = ERC7730_SETTLE_COIN_AS_NFT;
+  if (lead) {
+    used += (size_t)snprintf(body + used, body_size - used, "%s", lead);
+    if (used >= body_size) {
+      body[0] = '\0';
+      return false;
+    }
   }
   char line[200];
   bool ok = true;

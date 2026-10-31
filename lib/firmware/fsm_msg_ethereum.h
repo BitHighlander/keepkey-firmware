@@ -595,16 +595,27 @@ static void show_erc7730_value(Erc7730Workflow* workflow, const char* text) {
         ok = erc7730_format_native_amount(field->value, chain_id, formatted,
                                           sizeof(formatted));
         break;
-      case 3:
-        ok = field->has_address &&
-             erc7730_format_token_amount(
-                 field->value, field->address, field->token_native, chain_id,
-                 text ? escaped : NULL, formatted, sizeof(formatted));
-        if (ok && workflow->identity.settlement &&
-            (field->flags & ERC7730_FORMATTER_FLAG_SETTLE_AMOUNT))
+      case 3: {
+        const bool settle_amount =
+            workflow->identity.settlement &&
+            (field->flags & ERC7730_FORMATTER_FLAG_SETTLE_AMOUNT);
+        /* An NFT item's amount is not an amount of its token: Seaport moves
+         * it by its identifier. */
+        if (settle_amount && !erc7730_settle_item_is_coin(&workflow->settle))
+          ok = field->has_address &&
+               erc7730_settle_format_nft_amount(&workflow->settle, field->value,
+                                                field->address, chain_id,
+                                                formatted, sizeof(formatted));
+        else
+          ok = field->has_address &&
+               erc7730_format_token_amount(
+                   field->value, field->address, field->token_native, chain_id,
+                   text ? escaped : NULL, formatted, sizeof(formatted));
+        if (ok && settle_amount)
           erc7730_settle_amount(&workflow->settle, field->value, field->address,
                                 field->token_native);
         break;
+      }
       case 4:
         ok = field->has_address &&
              erc7730_format_nft(field->value, field->address, formatted,
