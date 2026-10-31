@@ -479,12 +479,42 @@ static void show_erc7730_field(Erc7730Workflow* workflow,
                        _("Signing cancelled by user"));
     return;
   }
+  if (workflow->identity.settlement &&
+      (workflow->field.flags & ERC7730_FORMATTER_FLAG_SETTLE_GIVE))
+    erc7730_settle_give(&workflow->settle);
   if (!erc7730_workflow_advance_display(workflow)) {
     fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
                        _("Invalid ERC-7730 display continuation"));
     return;
   }
   send_erc7730_definition_request();
+}
+
+/* After a settlement definition's last field: what the order pays this
+ * wallet, said by the device. The definition cannot skip or word it; a
+ * decline aborts. False when the review has ended (a Failure was sent). */
+static bool confirm_erc7730_settle(Erc7730Workflow* workflow) {
+  erc7730_settle_end_item(&workflow->settle);
+  Erc7730SettleVerdict verdict;
+  char body[512];
+  bool ok =
+      erc7730_settle_review(&workflow->settle, workflow->identity.chain_id,
+                            &verdict, body, sizeof(body));
+  const bool shown =
+      ok && confirm_erc7730_text(
+                verdict == ERC7730_SETTLE_CALM ? "You receive" : "WARNING",
+                NULL, body);
+  memzero(body, sizeof(body));
+  if (!shown) {
+    erc7730_workflow_abort(workflow);
+    eip712_stream_abort();
+    fsm_sendFailure(ok ? FailureType_Failure_ActionCancelled
+                       : FailureType_Failure_SyntaxError,
+                    ok ? _("Signing cancelled by user")
+                       : _("Unable to format ERC-7730 field"));
+    layoutHome();
+  }
+  return shown;
 }
 
 /* A raw or addressName value that is an address. */
@@ -509,6 +539,9 @@ static void show_erc7730_address(Erc7730Workflow* workflow,
     this_wallet = memcmp(signer, address, 20) == 0;
     memzero(signer, sizeof(signer));
   }
+  if (workflow->identity.settlement &&
+      (workflow->field.flags & ERC7730_FORMATTER_FLAG_SETTLE_TO))
+    erc7730_settle_to(&workflow->settle, this_wallet);
   char formatted[64];
   if (!((workflow->field.flags & ERC7730_FORMATTER_FLAG_RECIPIENT)
             ? erc7730_format_recipient(address, this_wallet, formatted,
@@ -567,6 +600,10 @@ static void show_erc7730_value(Erc7730Workflow* workflow, const char* text) {
              erc7730_format_token_amount(
                  field->value, field->address, field->token_native, chain_id,
                  text ? escaped : NULL, formatted, sizeof(formatted));
+        if (ok && workflow->identity.settlement &&
+            (field->flags & ERC7730_FORMATTER_FLAG_SETTLE_AMOUNT))
+          erc7730_settle_amount(&workflow->settle, field->value, field->address,
+                                field->token_native);
         break;
       case 4:
         ok = field->has_address &&
@@ -596,6 +633,13 @@ static void show_erc7730_value(Erc7730Workflow* workflow, const char* text) {
              erc7730_format_enum(value, text ? escaped : NULL, formatted,
                                  sizeof(formatted));
         memzero(value, sizeof(value));
+        if (ok && workflow->identity.settlement &&
+            (field->flags & ERC7730_FORMATTER_FLAG_SETTLE_TYPE)) {
+          if (field->value_class == ERC7730_ABI_UINT)
+            erc7730_settle_type(&workflow->settle, field->value);
+          else
+            erc7730_settle_unreadable(&workflow->settle);
+        }
         break;
       }
       default:
@@ -704,8 +748,23 @@ static void deliver_erc7730_capture(Erc7730Workflow* workflow) {
       show_erc7730_address(workflow, capture.data + 12);
     }
   } else if (workflow->field.kind == 1 && workflow->calldata.capture_overflow) {
+    if (workflow->identity.settlement &&
+        (workflow->field.flags & (ERC7730_FORMATTER_FLAG_SETTLE_TYPE |
+                                  ERC7730_FORMATTER_FLAG_SETTLE_ID)))
+      erc7730_settle_unreadable(&workflow->settle);
     show_erc7730_long_value(workflow, workflow->calldata.located_length);
   } else if (workflow->field.kind == 1) {
+    const uint8_t role =
+        workflow->identity.settlement
+            ? workflow->field.flags & (ERC7730_FORMATTER_FLAG_SETTLE_TYPE |
+                                       ERC7730_FORMATTER_FLAG_SETTLE_ID)
+            : 0u;
+    if (role && (cls != ERC7730_ABI_UINT || capture.length != 32))
+      erc7730_settle_unreadable(&workflow->settle);
+    else if (role == ERC7730_FORMATTER_FLAG_SETTLE_TYPE)
+      erc7730_settle_type(&workflow->settle, capture.data);
+    else if (role == ERC7730_FORMATTER_FLAG_SETTLE_ID)
+      erc7730_settle_id(&workflow->settle, capture.data);
     char formatted[ERC7730_FORMATTED_VALUE_MAX + 1u];
     if (!erc7730_workflow_format_captured_raw(workflow, formatted,
                                               sizeof(formatted))) {
@@ -1718,6 +1777,8 @@ void fsm_msgEthereumClearSignDefinitionChunk(
           layoutHome();
           return;
         }
+        if (workflow->identity.settlement && !confirm_erc7730_settle(workflow))
+          return;
         erc7730_workflow_abort(workflow);
         if (eip712_stream_next()->kind == EIP712_REQ_DONE
                 ? !eip712_stream_show_rest()
@@ -1778,6 +1839,9 @@ void fsm_msgEthereumClearSignDefinitionChunk(
         }
       } else if (instruction.opcode == 8) {
         ok = workflow->iterating && instruction.a == workflow->iteration_begin;
+        /* The element's last field was shown. */
+        if (ok && workflow->identity.settlement)
+          erc7730_settle_end_item(&workflow->settle);
         if (ok && ++workflow->iteration_index < workflow->iteration_count) {
           workflow->display_index = workflow->iteration_begin;
         } else {

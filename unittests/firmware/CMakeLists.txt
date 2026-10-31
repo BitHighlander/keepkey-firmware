@@ -65,6 +65,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       erc7730_field.cpp
       erc7730_format.cpp
       erc7730_program.cpp
+      erc7730_settle.cpp
       erc7730_tx.cpp
       erc7730_workflow.cpp
       solana.cpp

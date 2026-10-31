@@ -45,6 +45,17 @@
  *   (@.value of its level); a call where they differ is refused. */
 #define ERC7730_FORMATTER_FLAG_RECIPIENT 1u
 #define ERC7730_FORMATTER_FLAG_TX_VALUE 2u
+/* SETTLE_* (7.17), typed data under program flag SETTLEMENT only, at most
+ * one per formatter (erc7730_settle.h): the field belongs to an item the
+ * order gives away (GIVE, any kind but embedded calldata), or is the item
+ * type (enum or raw), identifier (raw), amount (tokenAmount) or recipient
+ * (addressName) of an item it pays out. */
+#define ERC7730_FORMATTER_FLAG_SETTLE_GIVE 4u
+#define ERC7730_FORMATTER_FLAG_SETTLE_TYPE 8u
+#define ERC7730_FORMATTER_FLAG_SETTLE_ID 16u
+#define ERC7730_FORMATTER_FLAG_SETTLE_AMOUNT 32u
+#define ERC7730_FORMATTER_FLAG_SETTLE_TO 64u
+#define ERC7730_FORMATTER_FLAGS_SETTLE 0x7cu
 /* Path sources: 1 value, 2 container, 3 literal. Path step opcodes: 1 index.
  */
 #define ERC7730_CAP_PATH_SOURCES \

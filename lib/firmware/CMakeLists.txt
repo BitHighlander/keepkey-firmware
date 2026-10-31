@@ -40,6 +40,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       erc7730_field.c
       erc7730_format.c
       erc7730_program.c
+      erc7730_settle.c
       erc7730_tx.c
       erc7730_workflow.c
       ethereum_contracts/makerdao.c
