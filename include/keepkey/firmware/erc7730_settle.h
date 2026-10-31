@@ -25,9 +25,12 @@
  *    more than six decimals, 0.01 for three to six, one unit below that);
  *  - a given item the device could not read;
  *  - an NFT item naming a coin of the firmware's table, or 0xEeee...EEeE;
+ *  - giving an item by criteria (types 4 and 5): the filler picks its
+ *    identifier, any NFT of the collection or, on a token, any amount;
  *  - an ERC-721 item outside the collections the device knows with an ID of
  *    2^64 or more (an ERC-20 at that contract would move that many units);
- *  - giving an ERC-20 the table does not list on the chain.
+ *  - giving an ERC-20 the table does not list on the chain;
+ *  - giving more NFTs than the screen lists.
  *
  * TYPE is a Seaport item type: 0 the native coin, 1 an ERC-20, 2 ERC-721,
  * 3 ERC-1155, 4 and 5 the same "by criteria". An item is read only when its
@@ -51,7 +54,8 @@
 /* Items paid to the signer this many distinct (kind, token, id) at most are
  * listed; more are summed up in one line and never valued. As many distinct
  * coins given are kept to net against them; more make the last screen a
- * warning. As many distinct NFTs given are listed; more are counted. */
+ * warning. As many distinct NFTs given are listed; more are counted, and
+ * make it a warning too. */
 #define ERC7730_SETTLE_SLOTS 2u
 /* The settlement screen's body, warnings and both sides. */
 #define ERC7730_SETTLE_BODY_MAX 768u
@@ -83,6 +87,8 @@ typedef struct {
   bool unlisted; /* paid to the signer, not in received[] */
   /* An item given away is an ERC-20 the table does not list on the chain. */
   bool gives_unknown_token;
+  /* An item given away is by criteria: the filler picks its identifier. */
+  bool gives_by_criteria;
   /* An ERC-721 item outside the known collections has an ID of 2^64 or
    * more. */
   bool large_nft_id;
@@ -104,6 +110,8 @@ typedef enum {
   ERC7730_SETTLE_DUST,                /* every known coin is under the floor */
   ERC7730_SETTLE_LARGE_NFT_ID,        /* an ERC-721 ID of 2^64 or more */
   ERC7730_SETTLE_NFT_PLACEHOLDER,     /* an NFT item names 0xEeee...EEeE */
+  ERC7730_SETTLE_GIVES_BY_CRITERIA,   /* the filler picks an ID given */
+  ERC7730_SETTLE_GIVEN_UNLISTED,      /* more NFTs given than listed */
 } Erc7730SettleVerdict;
 
 /* One shown field's value, by the SETTLE flag it carries. A word is a whole

@@ -41,6 +41,9 @@ static const ChainAddress wrapped_native[] = {
 static const ChainAddress hashed_id_collections[] = {
     {1, {0x57, 0xf1, 0x88, 0x7a, 0x8b, 0xf1, 0x9b, 0x14, 0xfc, 0x0d,
          0xf6, 0xfd, 0x9b, 0x2a, 0xcc, 0x9a, 0xf1, 0x47, 0xea, 0x85}}, /* ENS */
+    {1, {0x04, 0x9a, 0xba, 0x75, 0x10, 0xf4, 0x5b, 0xa5, 0xb6, 0x4e,
+         0xa9, 0xe6, 0x58, 0xe3, 0x42, 0xf9, 0x04, 0xdb, 0x35, 0x8d}},
+    /* Unstoppable Domains */
 };
 
 static bool listed(const ChainAddress* list, size_t count, uint64_t chain_id,
@@ -187,6 +190,11 @@ void erc7730_settle_end_item(Erc7730Settle* settle, uint64_t chain_id) {
        * collection: Seaport's transferFrom(from, to, amount) then moves the
        * NFT whose ID is the amount. */
       settle->gives = true;
+      /* By criteria, the filler picks the identifier: any NFT of the
+       * collection, or, on a token, any amount. */
+      if (item->kind > ERC7730_SETTLE_ERC1155 &&
+          item->kind <= ERC7730_SETTLE_CRITERIA_MAX)
+        settle->gives_by_criteria = true;
       if (readable && item->kind == ERC7730_SETTLE_ERC20 &&
           !table_token(chain_id, item->token))
         settle->gives_unknown_token = true;
@@ -203,6 +211,7 @@ void erc7730_settle_end_item(Erc7730Settle* settle, uint64_t chain_id) {
         if (!keep(settle->given_nft, &settle->given_nft_count, item,
                   settle->item_max)) {
           if (full && !kept) {
+            /* Counted, not shown: the screen does not show all it gives. */
             if (settle->given_nft_more < UINT8_MAX) settle->given_nft_more++;
           } else {
             settle->given_unread = true; /* a count that overflows */
@@ -430,6 +439,10 @@ bool erc7730_settle_review(const Erc7730Settle* settle, uint64_t chain_id,
     ok = append(body, body_size, &used,
                 "An NFT item names 0xEeee...EEeE, the native coin's "
                 "placeholder: it is not an NFT contract.");
+  if (ok && settle->gives_by_criteria)
+    ok = append(body, body_size, &used,
+                "This wallet gives an item by criteria: the buyer picks its "
+                "ID (on a token, the ID is an amount).");
   if (ok && settle->large_nft_id)
     ok = append(body, body_size, &used,
                 "An NFT ID is 2^64 or more: if its contract is a token, "
@@ -442,6 +455,9 @@ bool erc7730_settle_review(const Erc7730Settle* settle, uint64_t chain_id,
   if (ok && settle->given_unread)
     ok = append(body, body_size, &used,
                 "This wallet gives an item the device cannot read.");
+  if (ok && settle->given_nft_more)
+    ok = append(body, body_size, &used,
+                "This wallet gives more items than this screen lists.");
   if (ok && receipt) ok = append(body, body_size, &used, receipt);
   if (ok && base == ERC7730_SETTLE_DUST) {
     char floor[100];
@@ -479,9 +495,11 @@ bool erc7730_settle_review(const Erc7730Settle* settle, uint64_t chain_id,
 
   *verdict = settle->coin_as_nft           ? ERC7730_SETTLE_COIN_AS_NFT
              : settle->nft_placeholder     ? ERC7730_SETTLE_NFT_PLACEHOLDER
+             : settle->gives_by_criteria   ? ERC7730_SETTLE_GIVES_BY_CRITERIA
              : settle->large_nft_id        ? ERC7730_SETTLE_LARGE_NFT_ID
              : settle->gives_unknown_token ? ERC7730_SETTLE_GIVES_UNKNOWN_TOKEN
              : settle->given_unread        ? ERC7730_SETTLE_GIVEN_UNREAD
+             : settle->given_nft_more      ? ERC7730_SETTLE_GIVEN_UNLISTED
                                            : base;
   memzero(line, sizeof(line));
   memzero(net, sizeof(net));

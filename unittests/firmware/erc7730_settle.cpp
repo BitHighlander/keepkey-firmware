@@ -123,6 +123,10 @@ const char* kNothing = "Nothing in this order is paid to this wallet.";
 const char* kBack = "This wallet gets back no more than it gives.";
 const char* kUnknown = "This wallet gets only unknown tokens or NFTs.";
 const char* kUnderEth = "This wallet gets under 0.0001 ETH.";
+const char* kCriteria =
+    "This wallet gives an item by criteria: the buyer picks its ID (on a "
+    "token, the ID is an amount).";
+const char* kMoreItems = "This wallet gives more items than this screen lists.";
 
 }  // namespace
 
@@ -354,7 +358,8 @@ TEST(Erc7730Settle, EveryNftGivenIsListed) {
                    std::string("NFT ID 1\n") + kNftAddress +
                        "\n2 of NFT ID 3\n" + kNftAddress,
                    pay));
-  // The same NFT twice is one line; a third and fourth are counted.
+  // The same NFT twice is one line; a third and fourth are counted, and
+  // the screen says it does not list everything given (review r2).
   EXPECT_EQ(Order()
                 .give(2, kNft, "1", nullptr, "1")
                 .give(3, kNft, "1", nullptr, "3")
@@ -362,8 +367,8 @@ TEST(Erc7730Settle, EveryNftGivenIsListed) {
                 .give(2, kNft, "1", nullptr, "4")
                 .give(2, kNft, "1", nullptr, "5")
                 .pay(0, kZero, "500000000000000000", true)
-                .review(1, ERC7730_SETTLE_CALM),
-            screen({},
+                .review(1, ERC7730_SETTLE_GIVEN_UNLISTED),
+            screen({kMoreItems},
                    std::string("NFT ID 1\n") + kNftAddress +
                        "\n2 of NFT ID 3\n" + kNftAddress + "\n+ 2 more NFTs",
                    pay));
@@ -504,7 +509,7 @@ TEST(Erc7730Settle, AnNftItemNamingACoinWarns) {
                 .give(4, kWeth, "1", nullptr, "0")
                 .pay(0, kZero, "500000000000000000", true)
                 .review(1, ERC7730_SETTLE_COIN_AS_NFT),
-            screen({kCoinWeth}, weth_nft, "0.5 ETH"));
+            screen({kCoinWeth, kCriteria}, weth_nft, "0.5 ETH"));
   EXPECT_EQ(Order()
                 .give(2, kWeth, "1", nullptr, "50000000000000000000")
                 .pay(0, kZero, "1", false)
@@ -829,11 +834,10 @@ TEST(Erc7730Settle, AGivenItemTheDeviceCannotReadWarns) {
                 .review(1, ERC7730_SETTLE_GIVEN_UNREAD),
             screen({unread}, "1 Wei\n1 USDC\n+ items not listed here",
                    "1.999999999999999999 WETH"));
-  // Control: a bundle of NFTs and one coin, all read; the same payment nets
-  // to nothing.
+  // Control: a bundle of NFTs and one coin, all read and listed; the same
+  // payment nets to nothing.
   Order()
       .give(2, kNft, "1", nullptr, "1")
-      .give(2, kNft, "1", nullptr, "2")
       .give(3, kNft, "2", nullptr, "3")
       .give(1, kWeth, "2000000000000000000")
       .pay(1, kWeth, "2000000000000000000", true)
@@ -921,7 +925,7 @@ TEST(Erc7730Settle, ReviewAnErc721NamingAnUnlistedTokenWarns) {
                    "0.000001 ETH"));
   // Controls: 2^64 - 1; a hashed-ID collection (ENS); ERC-1155 (Seaport
   // calls safeTransferFrom, which an ERC-20 does not answer); by criteria
-  // (its identifier is a root).
+  // (its identifier is a root: the criteria warning, not this one).
   Order()
       .give(2, kUsde, "1", nullptr, "18446744073709551615")
       .pay(0, kZero, "10000000000000000", true)
@@ -937,7 +941,7 @@ TEST(Erc7730Settle, ReviewAnErc721NamingAnUnlistedTokenWarns) {
   Order()
       .give(4, kUsde, "1", nullptr, kMax)
       .pay(0, kZero, "10000000000000000", true)
-      .review(1, ERC7730_SETTLE_CALM);
+      .review(1, ERC7730_SETTLE_GIVES_BY_CRITERIA);
   // ENS's address on another chain is not ENS.
   Order other;
   other.chain = 8453;
@@ -980,4 +984,221 @@ TEST(Erc7730Settle, TheScreenNeverReassures) {
     for (const char* word : {"fair", "price", "safe", "good"})
       EXPECT_EQ(body.find(word), std::string::npos) << word << ": " << body;
   }
+}
+
+namespace {
+
+const char* kSteth = "ae7ab96520de3a18e5e111b5eaab095312d7fe84";
+const char* kApe = "4d224452801aced8b2f0aebe155379bb5d594381";
+const char* kUd = "049aba7510f45ba5b64ea9e658e342f904db358d";
+const char* kUdNamehash =
+    "538974463791641374324267330513076226333073735129812319168380132343720"
+    "94094706";
+const char* kCent = "10000000000000000";  // 0.01 ETH
+
+}  // namespace
+
+// Review r2 (HIGH): an item given by criteria names no ID; Seaport takes
+// the one the filler supplies (any, with a zero root; any in the tree
+// otherwise). On an ERC-20 the table does not list, transferFrom(victim,
+// filler, ID) takes that many units; on a real collection the filler picks
+// which of the wallet's NFTs. OpenSea listings never give by criteria.
+TEST(Erc7730Settle, ReviewR2GivingByCriteriaWarns) {
+  // stETH, wildcard root.
+  EXPECT_EQ(Order()
+                .give(4, kSteth, "1", nullptr, "0")
+                .pay(0, kZero, kCent, true)
+                .review(1, ERC7730_SETTLE_GIVES_BY_CRITERIA),
+            screen({kCriteria},
+                   "1 NFT by criteria\n"
+                   "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",
+                   "0.01 ETH"));
+  // APE, a non-zero root.
+  EXPECT_EQ(Order()
+                .give(4, kApe, "1", nullptr, "12345678901234567890123456789")
+                .pay(0, kZero, kCent, true)
+                .review(1, ERC7730_SETTLE_GIVES_BY_CRITERIA),
+            screen({kCriteria},
+                   "1 NFT by criteria\n"
+                   "0x4d224452801ACEd8B2F0aebE155379bb5D594381",
+                   "0.01 ETH"));
+  // A real collection, wildcard: the filler picks the wallet's best NFT.
+  EXPECT_EQ(
+      Order()
+          .give(4, kNft, "1", nullptr, "0")
+          .pay(0, kZero, kCent, true)
+          .review(1, ERC7730_SETTLE_GIVES_BY_CRITERIA),
+      screen({kCriteria}, std::string("1 NFT by criteria\n") + kNftAddress,
+             "0.01 ETH"));
+  // ERC-1155 by criteria.
+  Order()
+      .give(5, kNft, "3", nullptr, "0")
+      .pay(0, kZero, kCent, true)
+      .review(1, ERC7730_SETTLE_GIVES_BY_CRITERIA);
+  // Controls: the same collection by ID is calm; an item by criteria the
+  // wallet receives (its own collection offer) has no criteria line.
+  Order()
+      .give(2, kNft, "1", nullptr, "1")
+      .pay(0, kZero, kCent, true)
+      .review(1, ERC7730_SETTLE_CALM);
+  EXPECT_EQ(Order()
+                .give(1, kWeth, "500000000000000000")
+                .pay(4, kNft, "1", "1", true, "0")
+                .review(1, ERC7730_SETTLE_UNVALUED),
+            screen({kUnknown}, "0.5 WETH",
+                   std::string("1 NFT by criteria\n") + kNftAddress));
+}
+
+// Review r2 (MEDIUM): NFTs given past the two the screen lists were only
+// counted, so the item that drains could hide behind "+ N more NFTs". The
+// screen now says it does not list everything given; an item that warns on
+// its own still does when it is not listed.
+TEST(Erc7730Settle, ReviewR2NftsPastTheListWarn) {
+  const std::string two =
+      std::string("NFT ID 1\n") + kNftAddress + "\nNFT ID 2\n" + kNftAddress;
+  // Three real NFTs, then an ERC-721 item naming stETH (ID 1000, under
+  // 2^64).
+  EXPECT_EQ(Order()
+                .give(2, kNft, "1", nullptr, "1")
+                .give(2, kNft, "1", nullptr, "2")
+                .give(2, kNft, "1", nullptr, "3")
+                .give(2, kSteth, "1", nullptr, "1000")
+                .pay(0, kZero, kCent, true)
+                .review(1, ERC7730_SETTLE_GIVEN_UNLISTED),
+            screen({kMoreItems}, two + "\n+ 2 more NFTs", "0.01 ETH"));
+  // A criteria item past the list.
+  EXPECT_EQ(
+      Order()
+          .give(2, kNft, "1", nullptr, "1")
+          .give(2, kNft, "1", nullptr, "2")
+          .give(4, kSteth, "1", nullptr, "0")
+          .pay(0, kZero, kCent, true)
+          .review(1, ERC7730_SETTLE_GIVES_BY_CRITERIA),
+      screen({kCriteria, kMoreItems}, two + "\n+ 1 more NFT", "0.01 ETH"));
+  // A coin as an NFT, and a large ID, past the list.
+  Order()
+      .give(2, kNft, "1", nullptr, "1")
+      .give(2, kNft, "1", nullptr, "2")
+      .give(2, kWeth, "1", nullptr, "1000000000000000000")
+      .pay(0, kZero, kCent, true)
+      .review(1, ERC7730_SETTLE_COIN_AS_NFT);
+  Order()
+      .give(2, kNft, "1", nullptr, "1")
+      .give(2, kNft, "1", nullptr, "2")
+      .give(2, kSteth, "1", nullptr, "1000000000000000000000")
+      .pay(0, kZero, kCent, true)
+      .review(1, ERC7730_SETTLE_LARGE_NFT_ID);
+  // Control: two NFTs, both listed, are calm.
+  EXPECT_EQ(Order()
+                .give(2, kNft, "1", nullptr, "1")
+                .give(2, kNft, "1", nullptr, "2")
+                .pay(0, kZero, kCent, true)
+                .review(1, ERC7730_SETTLE_CALM),
+            screen({}, two, "0.01 ETH"));
+}
+
+// Review r2 (LOW): Unstoppable Domains' ERC-721 on Ethereum uses namehash
+// IDs, like ENS: a real listing is calm. Its address elsewhere is not it.
+TEST(Erc7730Settle, ReviewR2HashedIdCollections) {
+  EXPECT_EQ(Order()
+                .give(2, kUd, "1", nullptr, kUdNamehash)
+                .pay(0, kZero, "50000000000000000", true)
+                .pay(0, kZero, "1250000000000000", false)
+                .review(1, ERC7730_SETTLE_CALM),
+            screen({},
+                   std::string("NFT ID ") + kUdNamehash +
+                       "\n0x049aba7510f45BA5b64ea9E658E342F904DB358D",
+                   "0.05 ETH"));
+  Order()
+      .give(2, kEns, "1", nullptr, kUdNamehash)
+      .pay(0, kZero, "50000000000000000", true)
+      .review(1, ERC7730_SETTLE_CALM);
+  Order base;
+  base.chain = 8453;
+  base.give(2, kUd, "1", nullptr, kUdNamehash)
+      .pay(0, kZero, "50000000000000000", true)
+      .review(8453, ERC7730_SETTLE_LARGE_NFT_ID);
+}
+
+// Review r2: an ERC-721 item naming an ERC-20 the table does not list, with
+// an ID under 2^64 (18.4 stETH), reads like an NFT: the device cannot tell
+// the contract apart (a stated limit). It shows the raw contract and ID;
+// Desktop asks the contract what it is before the device.
+TEST(Erc7730Settle, ReviewR2SmallIdOnAnUnlistedTokenIsAHostCheck) {
+  EXPECT_EQ(Order()
+                .give(2, kSteth, "1", nullptr, "18446744073709551615")
+                .pay(0, kZero, kCent, true)
+                .review(1, ERC7730_SETTLE_CALM),
+            screen({},
+                   "NFT ID 18446744073709551615\n"
+                   "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",
+                   "0.01 ETH"));
+}
+
+// The rest of review r2's attacks, each a warning (or, for the last ones,
+// the calm a real listing needs).
+TEST(Erc7730Settle, ReviewR2Attacks) {
+  // An ERC-20 item naming an NFT collection: moves NFT ID 5318.
+  Order()
+      .give(1, kNft, "5318")
+      .pay(0, kZero, kCent, true)
+      .review(1, ERC7730_SETTLE_GIVES_UNKNOWN_TOKEN);
+  // 2 WETH given, 2 ETH paid back in two items.
+  Order()
+      .give()
+      .give(1, kWeth, "2000000000000000000")
+      .pay(0, kZero, "1000000000000000000", true)
+      .pay(0, kZero, "1000000000000000000", true)
+      .review(1, ERC7730_SETTLE_NOTHING);
+  // 2 WETH given, 1 ETH and 1 WETH paid back: each nets against all given.
+  Order()
+      .give()
+      .give(1, kWeth, "2000000000000000000")
+      .pay(0, kZero, "1000000000000000000", true)
+      .pay(1, kWeth, "1000000000000000000", true)
+      .review(1, ERC7730_SETTLE_NOTHING);
+  // Three coins paid back: the third is not listed and not valued.
+  Order()
+      .give()
+      .give(1, kWeth, "2000000000000000000")
+      .pay(1, kWeth, "2000000000000000000", true)
+      .pay(1, kUsdc, "1", true)
+      .pay(0, kZero, "2000000000000000000", true)
+      .review(1, ERC7730_SETTLE_DUST);
+  // 1 WETH and 1 ETH given, 2.0001 ETH paid back: 0.0001 ETH net, at the
+  // floor, shown with both sides.
+  EXPECT_EQ(Order()
+                .give()
+                .give(1, kWeth, "1000000000000000000")
+                .give(0, kZero, "1000000000000000000")
+                .pay(0, kZero, "2000100000000000000", true)
+                .review(1, ERC7730_SETTLE_CALM),
+            screen({}, kSellerNft + "\n1 WETH\n1 ETH", "0.0001 ETH"));
+  // A Dutch auction that ends at 0.
+  Order()
+      .give()
+      .pay(0, kZero, "1000000000000000000", "0", true)
+      .review(1, ERC7730_SETTLE_DUST);
+  // Two payments that overflow 2^256 together: not a total.
+  const char* half =
+      "578960446186580977117854925043439539266349923328202820197287920039565"
+      "64819968";
+  Order()
+      .give()
+      .pay(0, kZero, half, true)
+      .pay(0, kZero, half, true)
+      .review(1, ERC7730_SETTLE_CALM)
+      .find("+ items not listed here");
+  // ERC-1155 naming an unlisted ERC-20: Seaport calls safeTransferFrom,
+  // which an ERC-20 does not answer.
+  Order()
+      .give(3, kSteth, "1", nullptr, "1000000")
+      .pay(0, kZero, kCent, true)
+      .review(1, ERC7730_SETTLE_CALM);
+  // A real listing paid in WETH, with the fee to OpenSea.
+  Order()
+      .give()
+      .pay(1, kWeth, "500000000000000000", true)
+      .pay(1, kWeth, "12500000000000000", false)
+      .review(1, ERC7730_SETTLE_CALM);
 }
