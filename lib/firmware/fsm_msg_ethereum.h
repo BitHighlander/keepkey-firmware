@@ -487,19 +487,20 @@ static void show_erc7730_field(Erc7730Workflow* workflow,
   send_erc7730_definition_request();
 }
 
-/* After a settlement definition's last field: what the order pays this
- * wallet, said by the device. The definition cannot skip or word it; a
- * decline aborts. False when the review has ended (a Failure was sent). */
+/* After a settlement definition's last field: what the order gives and
+ * pays this wallet, said by the device. The definition cannot skip or word
+ * it; a decline aborts. False when the review has ended (a Failure was
+ * sent). */
 static bool confirm_erc7730_settle(Erc7730Workflow* workflow) {
   erc7730_settle_end_item(&workflow->settle, workflow->identity.chain_id);
   Erc7730SettleVerdict verdict;
-  char body[512];
+  char body[ERC7730_SETTLE_BODY_MAX];
   bool ok =
       erc7730_settle_review(&workflow->settle, workflow->identity.chain_id,
                             &verdict, body, sizeof(body));
   const bool shown =
       ok && confirm_erc7730_text(
-                verdict == ERC7730_SETTLE_CALM ? "You receive" : "WARNING",
+                verdict == ERC7730_SETTLE_CALM ? "Order summary" : "WARNING",
                 NULL, body);
   memzero(body, sizeof(body));
   if (!shown) {
