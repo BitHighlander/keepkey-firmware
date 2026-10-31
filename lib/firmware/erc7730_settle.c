@@ -24,10 +24,6 @@ static const TokenType* table_token(uint64_t chain_id,
   return known && known != UnknownToken ? known : NULL;
 }
 
-void erc7730_settle_give(Erc7730Settle* settle) {
-  if (settle) settle->gives = true;
-}
-
 void erc7730_settle_type(Erc7730Settle* settle, const uint8_t word[32]) {
   if (!settle) return;
   /* An item type beyond Seaport's is not one the device can value. */
@@ -46,19 +42,26 @@ void erc7730_settle_id(Erc7730Settle* settle, const uint8_t word[32]) {
 void erc7730_settle_amount(Erc7730Settle* settle, const uint8_t amount[32],
                            const uint8_t token[20], bool native) {
   if (!settle) return;
+  /* An amount shown before its item's type may have read as the wrong kind. */
+  if (!(settle->item_seen & ERC7730_FORMATTER_FLAG_SETTLE_TYPE))
+    settle->item_unreadable = true;
   /* Only the zero address stands for the native coin here; any other alias
    * is valued by the token table, as an ERC-20. */
   native = native && all_zero(token, 20);
   if (settle->item_seen & ERC7730_FORMATTER_FLAG_SETTLE_AMOUNT) {
-    /* A start and an end amount: the item pays at least the smaller. */
+    /* A start and an end amount: the item pays at least the smaller, and
+     * gives at most the larger. */
     if (memcmp(settle->item.token, token, 20) != 0 ||
         settle->item_native != native)
       settle->item_unreadable = true;
     if (memcmp(amount, settle->item.amount, 32) < 0)
       memcpy(settle->item.amount, amount, 32);
+    if (memcmp(amount, settle->item_max, 32) > 0)
+      memcpy(settle->item_max, amount, 32);
     return;
   }
   memcpy(settle->item.amount, amount, 32);
+  memcpy(settle->item_max, amount, 32);
   memcpy(settle->item.token, token, 20);
   settle->item_native = native;
   settle->item_seen |= ERC7730_FORMATTER_FLAG_SETTLE_AMOUNT;
@@ -74,7 +77,7 @@ void erc7730_settle_unreadable(Erc7730Settle* settle) {
   if (settle) settle->item_unreadable = true;
 }
 
-/* sum += add; on overflow false, and sum is left as it was. */
+/* sum += add, false (and sum unchanged) on overflow. */
 static bool add_word(uint8_t sum[32], const uint8_t add[32]) {
   uint8_t total[32];
   unsigned carry = 0;
@@ -88,57 +91,72 @@ static bool add_word(uint8_t sum[32], const uint8_t add[32]) {
   return carry == 0;
 }
 
+/* Adds `amount` of `item` to the slot of the same (kind, token, id), or to a
+ * new slot; false when there is no slot left or the total overflows. */
+static bool keep(Erc7730SettleItem slots[ERC7730_SETTLE_SLOTS], uint8_t* count,
+                 const Erc7730SettleItem* item, const uint8_t amount[32]) {
+  for (size_t slot = 0; slot < *count; slot++) {
+    if (slots[slot].kind == item->kind &&
+        memcmp(slots[slot].token, item->token, 20) == 0 &&
+        memcmp(slots[slot].id, item->id, 32) == 0)
+      return add_word(slots[slot].amount, amount);
+  }
+  if (*count >= ERC7730_SETTLE_SLOTS) return false;
+  slots[*count] = *item;
+  memcpy(slots[*count].amount, amount, 32);
+  (*count)++;
+  return true;
+}
+
+/* 0xEeee...EEeE: a router's name for the native coin, not an ERC-20. */
+static bool native_placeholder(const uint8_t token[20]) {
+  for (size_t i = 0; i < 20; i++)
+    if (token[i] != 0xee) return false;
+  return true;
+}
+
 void erc7730_settle_end_item(Erc7730Settle* settle, uint64_t chain_id) {
   if (!settle) return;
   Erc7730SettleItem* item = &settle->item;
   const uint8_t seen = settle->item_seen;
-  if (!(seen & ERC7730_FORMATTER_FLAG_SETTLE_TYPE))
-    item->kind =
-        settle->item_native ? ERC7730_SETTLE_NATIVE : ERC7730_SETTLE_ERC20;
-  /* An item described without a recipient is one the order gives away. An
-   * ERC-20 of it the table does not list may be an NFT collection: Seaport's
-   * transferFrom(from, to, amount) then moves the NFT whose ID is the
-   * amount. */
-  if (!(seen & ERC7730_FORMATTER_FLAG_SETTLE_TO) &&
-      (seen & (ERC7730_FORMATTER_FLAG_SETTLE_TYPE |
-               ERC7730_FORMATTER_FLAG_SETTLE_AMOUNT))) {
-    settle->gives = true;
-    if ((seen & ERC7730_FORMATTER_FLAG_SETTLE_AMOUNT) &&
-        item->kind == ERC7730_SETTLE_ERC20 &&
-        !table_token(chain_id, item->token))
-      settle->gives_unknown_token = true;
-  }
-  if ((seen & ERC7730_FORMATTER_FLAG_SETTLE_TO) && settle->item_to_signer) {
-    settle->received_any = true;
+  if (seen) {
+    /* erc7730_settle_amount() marks an amount shown before its type. */
     bool readable = !settle->item_unreadable &&
                     (seen & ERC7730_FORMATTER_FLAG_SETTLE_AMOUNT);
     if (item->kind <= ERC7730_SETTLE_ERC20) {
       /* A coin is the native coin exactly when its token is 0x0. */
       readable = readable &&
-                 settle->item_native == (item->kind == ERC7730_SETTLE_NATIVE);
+                 settle->item_native == (item->kind == ERC7730_SETTLE_NATIVE) &&
+                 !native_placeholder(item->token);
       memzero(item->id, sizeof(item->id));
     } else {
       readable = readable && (seen & ERC7730_FORMATTER_FLAG_SETTLE_ID);
     }
-    size_t slot = 0;
-    while (slot < settle->received_count &&
-           (settle->received[slot].kind != item->kind ||
-            memcmp(settle->received[slot].token, item->token, 20) != 0 ||
-            memcmp(settle->received[slot].id, item->id, 32) != 0))
-      slot++;
-    if (!readable) {
-      settle->unlisted = true;
-    } else if (slot < settle->received_count) {
-      if (!add_word(settle->received[slot].amount, item->amount))
-        settle->unlisted = true;
-    } else if (slot < ERC7730_SETTLE_SLOTS) {
-      settle->received[slot] = *item;
-      settle->received_count++;
+    if (seen & ERC7730_FORMATTER_FLAG_SETTLE_TO) {
+      if (settle->item_to_signer) {
+        settle->received_any = true;
+        if (!readable || !keep(settle->received, &settle->received_count, item,
+                               item->amount))
+          settle->unlisted = true;
+      }
     } else {
-      settle->unlisted = true;
+      /* An item without a recipient is one the order gives away. Coins are
+       * kept to net against what is paid back; an NFT is never valued, so
+       * it is not. An ERC-20 the table does not list may be an NFT
+       * collection: Seaport's transferFrom(from, to, amount) then moves the
+       * NFT whose ID is the amount. */
+      settle->gives = true;
+      if (readable && item->kind == ERC7730_SETTLE_ERC20 &&
+          !table_token(chain_id, item->token))
+        settle->gives_unknown_token = true;
+      if (!readable ||
+          (item->kind <= ERC7730_SETTLE_ERC20 &&
+           !keep(settle->given, &settle->given_count, item, settle->item_max)))
+        settle->given_unread = true;
     }
   }
   memzero(item, sizeof(*item));
+  memzero(settle->item_max, sizeof(settle->item_max));
   settle->item_seen = 0;
   settle->item_native = false;
   settle->item_to_signer = false;
@@ -249,12 +267,35 @@ bool erc7730_settle_format_nft_amount(Erc7730Settle* settle,
   return true;
 }
 
-/* body += a line; false when it does not fit. */
-static bool append_line(char* body, size_t size, size_t* used,
-                        const char* line) {
+/* What `settle` receives of `received`, net of what it gives of the same
+ * item; false when it gets back no more than that. */
+static bool net_of_given(const Erc7730Settle* settle,
+                         const Erc7730SettleItem* received,
+                         Erc7730SettleItem* net) {
+  *net = *received;
+  for (size_t i = 0; i < settle->given_count; i++) {
+    const Erc7730SettleItem* given = &settle->given[i];
+    if (given->kind != net->kind || memcmp(given->token, net->token, 20) ||
+        memcmp(given->id, net->id, 32))
+      continue;
+    if (memcmp(net->amount, given->amount, 32) <= 0) return false;
+    unsigned borrow = 0;
+    for (int k = 31; k >= 0; k--) {
+      const unsigned difference =
+          (unsigned)net->amount[k] - given->amount[k] - borrow;
+      net->amount[k] = (uint8_t)difference;
+      borrow = (difference >> 8) & 1u;
+    }
+  }
+  return true;
+}
+
+static bool append(char* body, size_t body_size, size_t* used,
+                   const char* text) {
   const int length =
-      snprintf(body + *used, size - *used, "%s%s", *used ? "\n" : "", line);
-  if (length <= 0 || (size_t)length >= size - *used) return false;
+      snprintf(body + *used, body_size - *used, "%s%s",
+               *used && body[*used - 1] != '\n' ? "\n" : "", text);
+  if (length <= 0 || (size_t)length >= body_size - *used) return false;
   *used += (size_t)length;
   return true;
 }
@@ -269,43 +310,58 @@ bool erc7730_settle_review(const Erc7730Settle* settle, uint64_t chain_id,
   bool ok = true;
   if (settle->coin_as_nft) {
     /* The table's tickers start with a space. */
-    const int length = snprintf(line, sizeof(line),
-                                "An NFT item names the token%s: Seaport moves "
-                                "its ID as an amount of%s.",
-                                settle->coin_as_nft, settle->coin_as_nft);
-    ok = length > 0 && (size_t)length < sizeof(line) &&
-         append_line(body, body_size, &used, line);
+    ok = snprintf(line, sizeof(line),
+                  "An NFT item names the token%s: Seaport moves its ID as an "
+                  "amount of%s.",
+                  settle->coin_as_nft,
+                  settle->coin_as_nft) < (int)sizeof(line) &&
+         append(body, body_size, &used, line);
   }
   if (ok && settle->gives_unknown_token)
-    ok = append_line(body, body_size, &used,
-                     "This wallet gives a token the device does not know: if "
-                     "it is an NFT collection, Seaport moves the NFT whose ID "
-                     "is the amount.");
+    ok = append(body, body_size, &used,
+                "This wallet gives a token the device does not know: if it is "
+                "an NFT collection, Seaport moves the NFT whose ID is the "
+                "amount.");
+  if (ok && settle->given_unread)
+    ok = append(body, body_size, &used,
+                "This wallet gives an item the device cannot read.");
+  Erc7730SettleItem net[ERC7730_SETTLE_SLOTS];
+  size_t net_count = 0;
   bool any_valued = false;
-  for (size_t i = 0; i < settle->received_count; i++)
-    any_valued = any_valued || valued(&settle->received[i], chain_id);
-  Erc7730SettleVerdict result = !settle->received_any ? ERC7730_SETTLE_NOTHING
-                                : settle->gives && !any_valued
-                                    ? ERC7730_SETTLE_UNVALUED
-                                    : ERC7730_SETTLE_CALM;
-  const char* lead = result == ERC7730_SETTLE_NOTHING
-                         ? "Nothing in this order is paid to this wallet."
-                     : result == ERC7730_SETTLE_UNVALUED
-                         ? "This wallet gets only unknown tokens, NFTs or dust:"
-                     : used ? "You receive:"
-                            : NULL;
-  if (ok && lead) ok = append_line(body, body_size, &used, lead);
-  for (size_t i = 0; ok && i < settle->received_count; i++)
-    ok = format_item(&settle->received[i], chain_id, line, sizeof(line)) &&
-         append_line(body, body_size, &used, line);
-  if (ok && settle->unlisted)
-    ok = append_line(body, body_size, &used, "+ items not listed here");
-  if (settle->coin_as_nft)
-    result = ERC7730_SETTLE_COIN_AS_NFT;
-  else if (settle->gives_unknown_token)
-    result = ERC7730_SETTLE_GIVES_UNKNOWN_TOKEN;
-  *verdict = result;
+  for (size_t i = 0; i < settle->received_count; i++) {
+    if (net_of_given(settle, &settle->received[i], &net[net_count])) {
+      any_valued = any_valued || valued(&net[net_count], chain_id);
+      net_count++;
+    }
+  }
+  Erc7730SettleVerdict base = ERC7730_SETTLE_CALM;
+  if (net_count == 0 && !settle->unlisted) {
+    base = ERC7730_SETTLE_NOTHING;
+    if (ok)
+      ok = append(body, body_size, &used,
+                  settle->received_any
+                      ? "This wallet gets back no more than it gives."
+                      : "Nothing in this order is paid to this wallet.");
+  } else {
+    if (settle->gives && !any_valued) base = ERC7730_SETTLE_UNVALUED;
+    const char* lead =
+        base == ERC7730_SETTLE_UNVALUED
+            ? "This wallet gets only unknown tokens, NFTs or dust:"
+        : used ? "You receive:"
+               : NULL;
+    if (ok && lead) ok = append(body, body_size, &used, lead);
+    for (size_t i = 0; ok && i < net_count; i++)
+      ok = format_item(&net[i], chain_id, line, sizeof(line)) &&
+           append(body, body_size, &used, line);
+    if (ok && settle->unlisted)
+      ok = append(body, body_size, &used, "+ items not listed here");
+  }
+  *verdict = settle->coin_as_nft           ? ERC7730_SETTLE_COIN_AS_NFT
+             : settle->gives_unknown_token ? ERC7730_SETTLE_GIVES_UNKNOWN_TOKEN
+             : settle->given_unread        ? ERC7730_SETTLE_GIVEN_UNREAD
+                                           : base;
   memzero(line, sizeof(line));
+  memzero(net, sizeof(net));
   if (!ok) body[0] = '\0';
   return ok;
 }

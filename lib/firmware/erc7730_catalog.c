@@ -1263,6 +1263,26 @@ static bool finish_program(const Erc7730CatalogVerifier* v) {
   return (v->section_mask & external_metadata) == external_metadata;
 }
 
+/* Seaport's OrderComponents type hash (Seaport 1.1 to 1.6, every chain):
+ * keccak256 of "OrderComponents(address offerer,...,uint256 counter)" with
+ * its ConsiderationItem and OfferItem types. */
+static const uint8_t kSeaportOrderComponents[32] = {
+    0xfa, 0x44, 0x56, 0x60, 0xb7, 0xe2, 0x15, 0x15, 0xa5, 0x96, 0x17,
+    0xfc, 0xd6, 0x89, 0x10, 0xb4, 0x87, 0xaa, 0x58, 0x08, 0xb8, 0xab,
+    0xda, 0x3d, 0x78, 0xbc, 0x85, 0xdf, 0x36, 0x4b, 0x2c, 0x2f};
+
+/* A certified Seaport order definition must carry the settlement review
+ * (7.17): without it a drainer order reads as calm as a real listing under
+ * "Verified by KeepKey". A runtime definition is the host's own and is
+ * shown as not verified, so it is not bound. */
+static bool certified_seaport_without_settlement(
+    const Erc7730CatalogVerifier* v, uint8_t tier) {
+  return tier == METADATA_TIER_KEEPKEY &&
+         v->header[7] == ERC7730_DEFINITION_EIP712 &&
+         !(v->header[6] & ERC7730_PROGRAM_FLAG_SETTLEMENT) &&
+         memcmp(v->header + 38, kSeaportOrderComponents, 32) == 0;
+}
+
 static Erc7730CatalogResult finish(Erc7730CatalogVerifier* v,
                                    Erc7730CatalogIdentity* identity) {
   uint8_t actual_id[32];
@@ -1284,6 +1304,11 @@ static Erc7730CatalogResult finish(Erc7730CatalogVerifier* v,
     memzero(actual_id, sizeof(actual_id));
     v->failed = true;
     return ERC7730_CATALOG_UNTRUSTED;
+  }
+  if (certified_seaport_without_settlement(v, tier)) {
+    memzero(actual_id, sizeof(actual_id));
+    v->failed = true;
+    return ERC7730_CATALOG_BAD_PROGRAM;
   }
   identity->tier = tier;
   memcpy(identity->definition_id, actual_id, sizeof(actual_id));

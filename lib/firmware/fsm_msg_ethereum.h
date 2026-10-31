@@ -479,9 +479,6 @@ static void show_erc7730_field(Erc7730Workflow* workflow,
                        _("Signing cancelled by user"));
     return;
   }
-  if (workflow->identity.settlement &&
-      (workflow->field.flags & ERC7730_FORMATTER_FLAG_SETTLE_GIVE))
-    erc7730_settle_give(&workflow->settle);
   if (!erc7730_workflow_advance_display(workflow)) {
     fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
                        _("Invalid ERC-7730 display continuation"));

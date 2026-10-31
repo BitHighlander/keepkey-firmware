@@ -70,22 +70,21 @@ uint32_t erc7730_cap_formatter_roles(uint8_t kind) {
 }
 
 uint8_t erc7730_cap_formatter_flags(uint8_t kind) {
-  const uint8_t give = kind == 13 ? 0u : ERC7730_FORMATTER_FLAG_SETTLE_GIVE;
   switch (kind) {
     case 1:
-      return give | ERC7730_FORMATTER_FLAG_SETTLE_TYPE |
+      return ERC7730_FORMATTER_FLAG_SETTLE_TYPE |
              ERC7730_FORMATTER_FLAG_SETTLE_ID;
     case 2:
-      return give | ERC7730_FORMATTER_FLAG_TX_VALUE;
+      return ERC7730_FORMATTER_FLAG_TX_VALUE;
     case 3:
-      return give | ERC7730_FORMATTER_FLAG_SETTLE_AMOUNT;
+      return ERC7730_FORMATTER_FLAG_SETTLE_AMOUNT;
     case 8:
-      return give | ERC7730_FORMATTER_FLAG_SETTLE_TYPE;
+      return ERC7730_FORMATTER_FLAG_SETTLE_TYPE;
     case 10:
-      return give | ERC7730_FORMATTER_FLAG_RECIPIENT |
+      return ERC7730_FORMATTER_FLAG_RECIPIENT |
              ERC7730_FORMATTER_FLAG_SETTLE_TO;
     default:
-      return give;
+      return 0u;
   }
 }
 
