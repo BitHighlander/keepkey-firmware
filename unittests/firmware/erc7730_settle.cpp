@@ -885,6 +885,18 @@ TEST(Erc7730Settle, ReviewAnNftItemNamingThePlaceholderSaysWhatItIs) {
                           "coin's placeholder: it is not an NFT contract."},
                          eeee_nft, "0.5 ETH"));
   EXPECT_EQ(body.find("ETH:"), std::string::npos);
+  // Review r4: with an ID of 2^64 or more, the same one line. The table
+  // answers 0xEeee as ETH on chain 1, so the 2^64 line skips it like any
+  // coin (Desktop's prediction matches this).
+  EXPECT_EQ(Order()
+                .give(2, kEeee, "1", nullptr, "18446744073709551616")
+                .pay(0, kZero, "500000000000000000", true)
+                .review(1, ERC7730_SETTLE_NFT_PLACEHOLDER),
+            screen({"An NFT item names 0xEeee...EEeE, the native "
+                    "coin's placeholder: it is not an NFT contract."},
+                   "NFT ID 18446744073709551616\n"
+                   "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+                   "0.5 ETH"));
   // On a chain whose table has no sentinel, the same.
   Order other;
   other.chain = 8453;
@@ -1242,6 +1254,47 @@ const Collection kHashed[] = {
      "1130114"},
 };
 
+// Review r4: the hashed-ID list from real data. Every ERC-721 that Seaport 1.6
+// moved on chain 1 with an ID of 2^64 or more over blocks 26263701-26313700
+// (63,287 OrderFulfilled events), read on chain (ERC-165 ERC-721, not
+// ERC-1155, decimals() reverts); these are the eight with the most listings
+// (~/keepkey-audit-rigs/issuer/batch6/sources/hashed-ids-from-fills-6d.json).
+// Each ID is one a real listing of it sold.
+const Collection kHashedR4[] = {
+    {"ENS Commemorative", "20262e3433306a4ff250a64d20a8e0f09b2c7f68",
+     "0x20262e3433306a4FF250a64d20a8E0F09B2C7F68",
+     "4800339746304215113505442909383013170834154924283749081808552991793306"
+     "7218499"},
+    {"Unetwork Operator Software License",
+     "0bfa9aff76fd91756f837ab47e11bd99e04c15bd",
+     "0x0bfa9AFF76FD91756F837Ab47e11BD99e04C15bD",
+     "4576591384459525819354822824087780623876878923053159931781766556648552"
+     "9869688"},
+    {"Gucci", "572e33ffa523865791ab1c26b42a86ac244df784",
+     "0x572E33FFa523865791aB1C26B42a86aC244Df784",
+     "340282366920938542673693659940582850561"},
+    {"Zer0 Name Service (0x51bd)", "51bd5948cf84a1041d2720f56ded5e173396fc95",
+     "0x51bd5948CF84a1041d2720F56DEd5e173396FC95",
+     "7956835364388832789985426334073616726165905345450434453319174395065344"
+     "2050388"},
+    {"Zer0 Name Service (0x05f8)", "05f81f870cbca79e9171f22886b58b5597a603aa",
+     "0x05F81F870cBca79E9171f22886b58b5597A603AA",
+     "1889289441097877424889029978620228441072846434811872990092939913119975"
+     "2586985"},
+    {"OKX AI NFT", "741512954cb6f8e5d3cd9321c07462b05b7cc8d5",
+     "0x741512954Cb6f8e5d3cD9321c07462b05B7cC8D5",
+     "4894621097800733791606173110553506964654181500179553434699681112865701"
+     "7831425"},
+    {"Zero Name Service (0xc2e9)", "c2e9678a71e50e5aed036e00e9c5caeb1ac5987d",
+     "0xc2e9678A71e50E5AEd036e00e9c5caeb1aC5987D",
+     "5804190919614418592259370525208415466303453209166590916760934043604458"
+     "3769244"},
+    {"Rarible (0xc915)", "c9154424b823b10579895ccbe442d41b9abd96ed",
+     "0xc9154424B823b10579895cCBE442d41b9Abd96Ed",
+     "2826039867819840215306711511831437299585336968281979299548049622915281"
+     "322105"},
+};
+
 // ERC-20s the token table does not list, on chain 1 (never_nft[]): symbol and
 // decimals read on chain, no ERC-721 or ERC-1155 interface.
 struct Coin {
@@ -1280,6 +1333,32 @@ std::string coinAsNft(const char* ticker) {
 // and contract. Its address on another chain is not it.
 TEST(Erc7730Settle, ReviewR3HashedIdCollections) {
   for (const auto& c : kHashed) {
+    SCOPED_TRACE(c.name);
+    EXPECT_EQ(Order()
+                  .give(2, c.token, "1", nullptr, c.id)
+                  .pay(0, kZero, "50000000000000000", true)
+                  .pay(0, kZero, "1250000000000000", false)
+                  .review(1, ERC7730_SETTLE_CALM),
+              screen({}, std::string("NFT ID ") + c.id + "\n" + c.shown,
+                     "0.05 ETH"));
+    Order base;
+    base.chain = 8453;
+    EXPECT_EQ(base.give(2, c.token, "1", nullptr, c.id)
+                  .pay(0, kZero, "50000000000000000", true)
+                  .review(8453, ERC7730_SETTLE_LARGE_NFT_ID),
+              screen({kLargeId},
+                     std::string("NFT ID ") + c.id + "\n" + c.shown,
+                     "0.05 ETH"));
+  }
+}
+
+// Review r4 (MEDIUM): the r3 list was hand-picked; real listings of these
+// collections read "An NFT ID is 2^64 or more" (1.14% of the window's chain-1
+// listings, 0.063% after). Each is calm, and shows its ID and contract; its
+// address on another chain is not it. A mutant removing any one entry fails
+// here, under its name.
+TEST(Erc7730Settle, ReviewR4HashedIdCollectionsFromRealFills) {
+  for (const auto& c : kHashedR4) {
     SCOPED_TRACE(c.name);
     EXPECT_EQ(Order()
                   .give(2, c.token, "1", nullptr, c.id)
