@@ -551,6 +551,8 @@ const char* kUsdc = "a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
 const char* kGusd = "056fd409e1d7a124bd7017459dfea2f387b6d5cd";
 const char* kDcn = "08d32b0da63e2c3bcf8019c9c5d849d7a9d791e6";
 const char* kUsde = "4c9edd5852cd905f086c759e8383e09bff1e68b3";
+// Lido DAO: an ERC-20 the token table does not list, and no list names.
+const char* kLdo = "5a98fcbea516cf06857215779fd812ca3bef1b32";
 const char* kBaseUsdc = "833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 const char* kEns = "57f1887a8bf19b14fc0df6fd9b2acc9af147ea85";
 const char* kGivesUnknown =
@@ -897,18 +899,19 @@ TEST(Erc7730Settle, ReviewAnNftItemNamingThePlaceholderSaysWhatItIs) {
 // a hashed one's: it warns, given or received, and the item is shown by its
 // raw contract and ID.
 TEST(Erc7730Settle, ReviewAnErc721NamingAnUnlistedTokenWarns) {
-  // USDe on mainnet: 10,000 USDe as "NFT ID 10^22", for 0.01 ETH.
+  // LDO on mainnet: 10,000 LDO as "NFT ID 10^22", for 0.01 ETH (the review
+  // used USDe, which never_nft now names: see ReviewR3NeverAnNft).
   EXPECT_EQ(Order()
-                .give(2, kUsde, "1", nullptr, "10000000000000000000000")
+                .give(2, kLdo, "1", nullptr, "10000000000000000000000")
                 .pay(0, kZero, "10000000000000000", true)
                 .review(1, ERC7730_SETTLE_LARGE_NFT_ID),
             screen({kLargeId},
                    "NFT ID 10000000000000000000000\n"
-                   "0x4c9EDD5852cd905f086C759E8383e09bff1E68B3",
+                   "0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32",
                    "0.01 ETH"));
   // Received: the order pays an "NFT" that is a token amount.
   Order()
-      .pay(2, kUsde, "1", "1", true, "18446744073709551616")
+      .pay(2, kLdo, "1", "1", true, "18446744073709551616")
       .review(1, ERC7730_SETTLE_LARGE_NFT_ID);
   // USDC on Base (six decimals): 10,000 USDC is ID 10^10, under 2^64, so
   // the device cannot tell it from an NFT. The 1e12 wei paid is under the
@@ -927,7 +930,7 @@ TEST(Erc7730Settle, ReviewAnErc721NamingAnUnlistedTokenWarns) {
   // calls safeTransferFrom, which an ERC-20 does not answer); by criteria
   // (its identifier is a root: the criteria warning, not this one).
   Order()
-      .give(2, kUsde, "1", nullptr, "18446744073709551615")
+      .give(2, kLdo, "1", nullptr, "18446744073709551615")
       .pay(0, kZero, "10000000000000000", true)
       .review(1, ERC7730_SETTLE_CALM);
   Order()
@@ -935,11 +938,11 @@ TEST(Erc7730Settle, ReviewAnErc721NamingAnUnlistedTokenWarns) {
       .pay(0, kZero, "10000000000000000", true)
       .review(1, ERC7730_SETTLE_CALM);
   Order()
-      .give(3, kUsde, "1", nullptr, "10000000000000000000000")
+      .give(3, kLdo, "1", nullptr, "10000000000000000000000")
       .pay(0, kZero, "10000000000000000", true)
       .review(1, ERC7730_SETTLE_CALM);
   Order()
-      .give(4, kUsde, "1", nullptr, kMax)
+      .give(4, kLdo, "1", nullptr, kMax)
       .pay(0, kZero, "10000000000000000", true)
       .review(1, ERC7730_SETTLE_GIVES_BY_CRITERIA);
   // ENS's address on another chain is not ENS.
@@ -988,8 +991,7 @@ TEST(Erc7730Settle, TheScreenNeverReassures) {
 
 namespace {
 
-const char* kSteth = "ae7ab96520de3a18e5e111b5eaab095312d7fe84";
-const char* kApe = "4d224452801aced8b2f0aebe155379bb5d594381";
+const char* kReth = "ae78736cd615f374d3085123a210448e74fc6393";
 const char* kUd = "049aba7510f45ba5b64ea9e658e342f904db358d";
 const char* kUdNamehash =
     "538974463791641374324267330513076226333073735129812319168380132343720"
@@ -1004,23 +1006,23 @@ const char* kCent = "10000000000000000";  // 0.01 ETH
 // filler, ID) takes that many units; on a real collection the filler picks
 // which of the wallet's NFTs. OpenSea listings never give by criteria.
 TEST(Erc7730Settle, ReviewR2GivingByCriteriaWarns) {
-  // stETH, wildcard root.
+  // LDO, wildcard root.
   EXPECT_EQ(Order()
-                .give(4, kSteth, "1", nullptr, "0")
+                .give(4, kLdo, "1", nullptr, "0")
                 .pay(0, kZero, kCent, true)
                 .review(1, ERC7730_SETTLE_GIVES_BY_CRITERIA),
             screen({kCriteria},
                    "1 NFT by criteria\n"
-                   "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",
+                   "0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32",
                    "0.01 ETH"));
-  // APE, a non-zero root.
+  // rETH, a non-zero root.
   EXPECT_EQ(Order()
-                .give(4, kApe, "1", nullptr, "12345678901234567890123456789")
+                .give(4, kReth, "1", nullptr, "12345678901234567890123456789")
                 .pay(0, kZero, kCent, true)
                 .review(1, ERC7730_SETTLE_GIVES_BY_CRITERIA),
             screen({kCriteria},
                    "1 NFT by criteria\n"
-                   "0x4d224452801ACEd8B2F0aebE155379bb5D594381",
+                   "0xae78736Cd615f374D3085123A210448E74Fc6393",
                    "0.01 ETH"));
   // A real collection, wildcard: the filler picks the wallet's best NFT.
   EXPECT_EQ(
@@ -1056,13 +1058,13 @@ TEST(Erc7730Settle, ReviewR2GivingByCriteriaWarns) {
 TEST(Erc7730Settle, ReviewR2NftsPastTheListWarn) {
   const std::string two =
       std::string("NFT ID 1\n") + kNftAddress + "\nNFT ID 2\n" + kNftAddress;
-  // Three real NFTs, then an ERC-721 item naming stETH (ID 1000, under
+  // Three real NFTs, then an ERC-721 item naming LDO (ID 1000, under
   // 2^64).
   EXPECT_EQ(Order()
                 .give(2, kNft, "1", nullptr, "1")
                 .give(2, kNft, "1", nullptr, "2")
                 .give(2, kNft, "1", nullptr, "3")
-                .give(2, kSteth, "1", nullptr, "1000")
+                .give(2, kLdo, "1", nullptr, "1000")
                 .pay(0, kZero, kCent, true)
                 .review(1, ERC7730_SETTLE_GIVEN_UNLISTED),
             screen({kMoreItems}, two + "\n+ 2 more NFTs", "0.01 ETH"));
@@ -1071,7 +1073,7 @@ TEST(Erc7730Settle, ReviewR2NftsPastTheListWarn) {
       Order()
           .give(2, kNft, "1", nullptr, "1")
           .give(2, kNft, "1", nullptr, "2")
-          .give(4, kSteth, "1", nullptr, "0")
+          .give(4, kLdo, "1", nullptr, "0")
           .pay(0, kZero, kCent, true)
           .review(1, ERC7730_SETTLE_GIVES_BY_CRITERIA),
       screen({kCriteria, kMoreItems}, two + "\n+ 1 more NFT", "0.01 ETH"));
@@ -1085,7 +1087,7 @@ TEST(Erc7730Settle, ReviewR2NftsPastTheListWarn) {
   Order()
       .give(2, kNft, "1", nullptr, "1")
       .give(2, kNft, "1", nullptr, "2")
-      .give(2, kSteth, "1", nullptr, "1000000000000000000000")
+      .give(2, kLdo, "1", nullptr, "1000000000000000000000")
       .pay(0, kZero, kCent, true)
       .review(1, ERC7730_SETTLE_LARGE_NFT_ID);
   // Control: two NFTs, both listed, are calm.
@@ -1121,17 +1123,17 @@ TEST(Erc7730Settle, ReviewR2HashedIdCollections) {
 }
 
 // Review r2: an ERC-721 item naming an ERC-20 the table does not list, with
-// an ID under 2^64 (18.4 stETH), reads like an NFT: the device cannot tell
+// an ID under 2^64 (18.4 LDO), reads like an NFT: the device cannot tell
 // the contract apart (a stated limit). It shows the raw contract and ID;
 // Desktop asks the contract what it is before the device.
 TEST(Erc7730Settle, ReviewR2SmallIdOnAnUnlistedTokenIsAHostCheck) {
   EXPECT_EQ(Order()
-                .give(2, kSteth, "1", nullptr, "18446744073709551615")
+                .give(2, kLdo, "1", nullptr, "18446744073709551615")
                 .pay(0, kZero, kCent, true)
                 .review(1, ERC7730_SETTLE_CALM),
             screen({},
                    "NFT ID 18446744073709551615\n"
-                   "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",
+                   "0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32",
                    "0.01 ETH"));
 }
 
@@ -1192,7 +1194,7 @@ TEST(Erc7730Settle, ReviewR2Attacks) {
   // ERC-1155 naming an unlisted ERC-20: Seaport calls safeTransferFrom,
   // which an ERC-20 does not answer.
   Order()
-      .give(3, kSteth, "1", nullptr, "1000000")
+      .give(3, kLdo, "1", nullptr, "1000000")
       .pay(0, kZero, kCent, true)
       .review(1, ERC7730_SETTLE_CALM);
   // A real listing paid in WETH, with the fee to OpenSea.
@@ -1200,5 +1202,145 @@ TEST(Erc7730Settle, ReviewR2Attacks) {
       .give()
       .pay(1, kWeth, "500000000000000000", true)
       .pay(1, kWeth, "12500000000000000", false)
+      .review(1, ERC7730_SETTLE_CALM);
+}
+
+namespace {
+
+// Chain-1 ERC-721 collections whose live IDs are all 2^64 or more (review r3;
+// ~/keepkey-audit-rigs/issuer/batch6/sources/hashed-ids-onchain-6d.json: ERC-165
+// says ERC-721, and each of their 50 latest transfers has such an ID). Each
+// with an ID one of them moved on chain, and its address as the device shows
+// it.
+struct Collection {
+  const char* name;
+  const char* token;
+  const char* shown;
+  const char* id;
+};
+const Collection kHashed[] = {
+    {"Unstoppable Domains .crypto (CNS)",
+     "d1e5b0ff1287aa9f9a268759062e4ab08b9dacbe",
+     "0xD1E5b0FF1287aA9f9A268759062E4Ab08b9Dacbe",
+     "2640479375954687368405108873679577913755247171701477055198822272924474"
+     "546773"},
+    {"Decentraland LAND", "f87e31492faf9a91b02ee0deaad50d51d56d5d4d",
+     "0xF87E31492Faf9A91B02Ee0dEAAd50d51d56D5d4d",
+     "1157920892373161954235709850086879078505477257302730563317505871484589"
+     "83948410"},
+    {"Decentraland Names", "2a187453064356c898cae034eaed119e1663acb8",
+     "0x2A187453064356c898cAe034EAed119E1663ACb8",
+     "1104886426554971316873225178934451429952489820850483521117029452396656"
+     "89743296"},
+    {"Sorare", "629a673a8242c2ac4b7b8c5d8735fbeac21a6205",
+     "0x629A673A8242c2AC4B7B8C5D8735fbeac21A6205",
+     "8486410100290593993614660320003782926703175571181795977402868013196166"
+     "933584"},
+    {"Rarible", "f6793da657495ffeff9ee6350824910abc21356c",
+     "0xF6793dA657495ffeFF9Ee6350824910Abc21356C",
+     "4198952414451092601333812763749611905246708960792447852956960428300143"
+     "1130114"},
+};
+
+// ERC-20s the token table does not list, on chain 1 (never_nft[]): symbol and
+// decimals read on chain, no ERC-721 or ERC-1155 interface.
+struct Coin {
+  const char* ticker;
+  const char* token;
+  const char* shown;
+};
+const Coin kNeverNft[] = {
+    {"cbBTC", "cbb7c0000ab88b473b1f5afd9ef808440eed33bf",
+     "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf"},
+    {"PYUSD", "6c3ea9036406852006290770bedfcaba0e23a0e8",
+     "0x6c3ea9036406852006290770BEdFcAbA0e23A0e8"},
+    {"XAUt", "68749665ff8d2d112fa859aa293f07a622782f38",
+     "0x68749665FF8D2d112Fa859AA293F07A622782F38"},
+    {"EURC", "1abaea1f7c830bd89acc67ec4af516284b1bc33c",
+     "0x1aBaEA1f7C830bD89Acc67eC4af516284b1bC33c"},
+    {"stETH", "ae7ab96520de3a18e5e111b5eaab095312d7fe84",
+     "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84"},
+    {"wstETH", "7f39c581f595b53c5cb19bd0b3f8da6c935e2ca0",
+     "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0"},
+    {"USDe", "4c9edd5852cd905f086c759e8383e09bff1e68b3",
+     "0x4c9EDD5852cd905f086C759E8383e09bff1E68B3"},
+    {"APE", "4d224452801aced8b2f0aebe155379bb5d594381",
+     "0x4d224452801ACEd8B2F0aebE155379bb5D594381"},
+};
+
+std::string coinAsNft(const char* ticker) {
+  return std::string("An NFT item names the token ") + ticker +
+         ": Seaport moves its ID as an amount of " + ticker + ".";
+}
+
+}  // namespace
+
+// Review r3 (MEDIUM): a real chain-1 listing of a collection with hashed or
+// packed IDs read "An NFT ID is 2^64 or more". Each is calm, and shows its ID
+// and contract. Its address on another chain is not it.
+TEST(Erc7730Settle, ReviewR3HashedIdCollections) {
+  for (const auto& c : kHashed) {
+    SCOPED_TRACE(c.name);
+    EXPECT_EQ(Order()
+                  .give(2, c.token, "1", nullptr, c.id)
+                  .pay(0, kZero, "50000000000000000", true)
+                  .pay(0, kZero, "1250000000000000", false)
+                  .review(1, ERC7730_SETTLE_CALM),
+              screen({}, std::string("NFT ID ") + c.id + "\n" + c.shown,
+                     "0.05 ETH"));
+    Order base;
+    base.chain = 8453;
+    EXPECT_EQ(base.give(2, c.token, "1", nullptr, c.id)
+                  .pay(0, kZero, "50000000000000000", true)
+                  .review(8453, ERC7730_SETTLE_LARGE_NFT_ID),
+              screen({kLargeId},
+                     std::string("NFT ID ") + c.id + "\n" + c.shown,
+                     "0.05 ETH"));
+  }
+}
+
+// Review r3 (LOW): an ERC-721 item naming an ERC-20 the table does not list,
+// with an ID under 2^64, read as an NFT (for a 6- or 8-decimal token that is
+// any amount). The ERC-20s an NFT item is most likely to name that way warn
+// like a table coin, by criteria too, and with an ID of 2^64 or more say the
+// coin, not the ID. Elsewhere they are not these tokens.
+TEST(Erc7730Settle, ReviewR3NeverAnNft) {
+  for (const auto& c : kNeverNft) {
+    SCOPED_TRACE(c.ticker);
+    EXPECT_EQ(Order()
+                  .give(2, c.token, "1", nullptr, "1000000")
+                  .pay(0, kZero, kCent, true)
+                  .review(1, ERC7730_SETTLE_COIN_AS_NFT),
+              screen({coinAsNft(c.ticker)},
+                     std::string("NFT ID 1000000\n") + c.shown, "0.01 ETH"));
+    EXPECT_EQ(Order()
+                  .give(2, c.token, "1", nullptr, "10000000000000000000000")
+                  .pay(0, kZero, kCent, true)
+                  .review(1, ERC7730_SETTLE_COIN_AS_NFT),
+              screen({coinAsNft(c.ticker)},
+                     std::string("NFT ID 10000000000000000000000\n") + c.shown,
+                     "0.01 ETH"));
+    EXPECT_EQ(Order()
+                  .give(4, c.token, "1", nullptr, "0")
+                  .pay(0, kZero, kCent, true)
+                  .review(1, ERC7730_SETTLE_COIN_AS_NFT),
+              screen({coinAsNft(c.ticker), kCriteria},
+                     std::string("1 NFT by criteria\n") + c.shown,
+                     "0.01 ETH"));
+    // Received as an NFT, too.
+    Order()
+        .give(1, kWeth, "500000000000000000")
+        .pay(2, c.token, "1", "1", true, "7")
+        .review(1, ERC7730_SETTLE_COIN_AS_NFT);
+    Order base;
+    base.chain = 8453;
+    base.give(2, c.token, "1", nullptr, "1000000")
+        .pay(0, kZero, kCent, true)
+        .review(8453, ERC7730_SETTLE_CALM);
+  }
+  // CONTROL: an ERC-20 on no list (LDO) still reads as an NFT under 2^64.
+  Order()
+      .give(2, kLdo, "1", nullptr, "1000000")
+      .pay(0, kZero, kCent, true)
       .review(1, ERC7730_SETTLE_CALM);
 }

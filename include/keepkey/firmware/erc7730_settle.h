@@ -24,11 +24,15 @@
  *    given, or every known coin received is under a floor (0.0001 of one for
  *    more than six decimals, 0.01 for three to six, one unit below that);
  *  - a given item the device could not read;
- *  - an NFT item naming a coin of the firmware's table, or 0xEeee...EEeE;
+ *  - an NFT item naming a coin of the firmware's table, or of a short list
+ *    of ERC-20s the table does not list (chain 1: cbBTC, PYUSD, XAUt, EURC,
+ *    stETH, wstETH, USDe, APE), or 0xEeee...EEeE;
  *  - giving an item by criteria (types 4 and 5): the filler picks its
  *    identifier, any NFT of the collection or, on a token, any amount;
  *  - an ERC-721 item outside the collections the device knows with an ID of
- *    2^64 or more (an ERC-20 at that contract would move that many units);
+ *    2^64 or more (an ERC-20 at that contract would move that many units;
+ *    chain 1: ENS, Unstoppable Domains, Decentraland LAND and Names, Sorare,
+ *    Rarible use such IDs);
  *  - giving an ERC-20 the table does not list on the chain;
  *  - giving more NFTs than the screen lists.
  *
