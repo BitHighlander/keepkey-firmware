@@ -266,6 +266,104 @@ TEST(Erc7730Workflow, ResolvesNegativeTypedArrayIndexFromStreamedLength) {
   EXPECT_TRUE(erc7730_workflow_eip712_finish(&workflow));
 }
 
+// Seaport's shape: OrderComponents(Item[] offer), Item(address token,
+// uint256 amount). Paths offer.[] and offer.[].amount.
+static void prepareTypedItemsWorkflow(Erc7730Workflow* workflow) {
+  *workflow = Erc7730Workflow{};
+  workflow->typed_data = true;
+  workflow->phase = ERC7730_WORKFLOW_READY;
+  workflow->loader.abi_started = true;
+  workflow->loader.index.complete = true;
+  workflow->loader.abi.complete = true;
+  workflow->loader.abi.node_count = 5;
+  Erc7730AbiNode* n = workflow->loader.abi.nodes;
+  n[0].kind = ERC7730_ABI_TUPLE;
+  n[0].first_child = 1;
+  n[0].child_count = 1;
+  n[1].kind = ERC7730_ABI_ARRAY;
+  n[1].first_child = 2;
+  n[1].child_count = 1;
+  n[1].array_length = ERC7730_ABI_DYNAMIC_ARRAY;
+  n[2].kind = ERC7730_ABI_TUPLE;
+  n[2].first_child = 3;
+  n[2].child_count = 2;
+  n[3].kind = ERC7730_ABI_ADDRESS;
+  n[3].size = 160;
+  n[4].kind = ERC7730_ABI_UINT;
+  n[4].size = 256;
+}
+
+static Erc7730Path itemsPath(bool amount) {
+  Erc7730Path path{};
+  path.source = 1;
+  path.source_index = UINT16_MAX;
+  path.step_count = amount ? 3 : 2;
+  path.steps[0].opcode = 1;
+  path.steps[0].first = 0;
+  path.steps[1].opcode = 2; /* every element */
+  path.steps[2].opcode = 1;
+  path.steps[2].first = 1;
+  return path;
+}
+
+// 7.17: a typed-data iteration counts its array from the length the stream
+// sends at the array's path, then each element's field captures that element.
+TEST(Erc7730Workflow, TypedDataIterationCountsThenCapturesEachElement) {
+  Erc7730Workflow workflow;
+  prepareTypedItemsWorkflow(&workflow);
+  const Erc7730Path items = itemsPath(false);
+  const Erc7730Path amount = itemsPath(true);
+  // An "every element" step outside an iteration names no element.
+  EXPECT_FALSE(erc7730_workflow_start_eip712_capture(&workflow, &amount));
+  // A count is of an array, never of a leaf.
+  EXPECT_FALSE(erc7730_workflow_start_eip712_length(&workflow, &amount));
+  ASSERT_TRUE(erc7730_workflow_start_eip712_length(&workflow, &items));
+  const uint32_t array_path[2] = {1, 0};
+  const uint8_t three[3] = {0, 0, 2};
+  EXPECT_FALSE(erc7730_workflow_eip712_observe(&workflow, array_path, 2, three,
+                                               3, 3, false));
+  prepareTypedItemsWorkflow(&workflow);
+  ASSERT_TRUE(erc7730_workflow_start_eip712_length(&workflow, &items));
+  const uint8_t two[2] = {0, 2};
+  ASSERT_TRUE(erc7730_workflow_eip712_observe(&workflow, array_path, 2, two, 2,
+                                              2, false));
+  ASSERT_TRUE(erc7730_workflow_eip712_finish(&workflow));
+  Erc7730AbiCapture capture;
+  uint8_t cls = 0;
+  ASSERT_TRUE(erc7730_workflow_captured(&workflow, &capture, &cls));
+  EXPECT_EQ(cls, ERC7730_ABI_ARRAY);
+  EXPECT_EQ(capture.length, 32u);
+  EXPECT_EQ(capture.data[30], 0);
+  EXPECT_EQ(capture.data[31], 2);
+
+  // Element 1's amount: element 0's is not it.
+  ASSERT_TRUE(erc7730_workflow_resume_field(&workflow));
+  workflow.iterating = true;
+  workflow.iteration_index = 1;
+  workflow.iteration_count = 2;
+  // No count is taken inside an iteration.
+  EXPECT_FALSE(erc7730_workflow_start_eip712_length(&workflow, &items));
+  ASSERT_TRUE(erc7730_workflow_start_eip712_capture(&workflow, &amount));
+  ASSERT_TRUE(erc7730_workflow_eip712_observe(&workflow, array_path, 2, two, 2,
+                                              2, false));
+  uint8_t value[32] = {0};
+  const uint32_t first_amount[4] = {1, 0, 0, 1};
+  value[31] = 7;
+  ASSERT_TRUE(erc7730_workflow_eip712_observe(&workflow, first_amount, 4, value,
+                                              32, 32, false));
+  EXPECT_FALSE(workflow.calldata.capture_found);
+  const uint32_t second_amount[4] = {1, 0, 1, 1};
+  value[31] = 42;
+  ASSERT_TRUE(erc7730_workflow_eip712_observe(&workflow, second_amount, 4,
+                                              value, 32, 32, false));
+  EXPECT_TRUE(workflow.calldata.capture_found);
+  ASSERT_TRUE(erc7730_workflow_eip712_finish(&workflow));
+  char formatted[16];
+  ASSERT_TRUE(erc7730_workflow_format_captured_raw(&workflow, formatted,
+                                                   sizeof(formatted)));
+  EXPECT_STREQ(formatted, "42");
+}
+
 TEST(Erc7730Workflow, InnerDefinitionIsNeverShownAboveItsOuterTier) {
   const struct {
     uint8_t outer, inner, shown;

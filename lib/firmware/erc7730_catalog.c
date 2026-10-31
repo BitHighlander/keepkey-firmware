@@ -857,11 +857,12 @@ static bool validate_display_instruction(Erc7730CatalogVerifier* v) {
   /* The runtime leaves the review only at an end instruction, so the last
    * instruction must be one. */
   if (pc + 1u == v->entry_count && opcode != 10) return false;
-  /* Iteration: one array at a time, calldata only, and every field inside
-   * reads that array; an argument that iterates only inside it. */
+  /* Iteration: one array at a time, in calldata or (7.17) typed data, and
+   * every field inside reads that array; an argument that iterates only
+   * inside it. */
   if (opcode == 7) {
     if (a >= 64 || ((v->path_iterable_mask >> a) & 1u) == 0 ||
-        v->display_in_iteration || v->header[7] != ERC7730_DEFINITION_CALLDATA)
+        v->display_in_iteration)
       return false;
     v->display_in_iteration = true;
     v->display_iteration_array = v->path_arrays[a];

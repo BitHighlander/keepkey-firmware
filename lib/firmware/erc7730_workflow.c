@@ -485,22 +485,34 @@ bool erc7730_workflow_restore_and_start_length(Erc7730Workflow* workflow,
   return erc7730_workflow_restore_and_start_capture(workflow, tx, &array);
 }
 
-bool erc7730_workflow_start_eip712_capture(Erc7730Workflow* workflow,
-                                           const Erc7730Path* path) {
+/* Typed data: the leaf `path` names or, for `length`, the element count of
+ * the array an iteration path walks (the path without its final "every
+ * element" step), which the stream sends at the array's own path before its
+ * elements. Inside an iteration an "every element" step is the iteration's
+ * current element. */
+static bool start_eip712_capture(Erc7730Workflow* workflow,
+                                 const Erc7730Path* path, bool length) {
   if (!workflow || !path || !workflow->typed_data ||
       workflow->phase != ERC7730_WORKFLOW_READY || path->source != 1 ||
       !erc7730_cap_path(path))
+    return false;
+  uint8_t steps = path->step_count;
+  if (length &&
+      (workflow->iterating || steps < 2 || path->steps[--steps].opcode != 2))
     return false;
   Erc7730AbiProgram program;
   if (!erc7730_program_loader_complete(&workflow->loader, &program))
     return false;
   uint16_t node = program.root;
   memzero(&workflow->calldata, sizeof(workflow->calldata));
-  for (uint8_t i = 0; i < path->step_count; i++) {
-    if (path->steps[i].opcode != 1 || node >= program.node_count) return false;
+  for (uint8_t i = 0; i < steps; i++) {
+    const bool every = path->steps[i].opcode == 2 && workflow->iterating;
+    if ((path->steps[i].opcode != 1 && !every) || node >= program.node_count)
+      return false;
     const Erc7730AbiNode* parent = &program.nodes[node];
-    const int32_t requested = path->steps[i].first;
-    if (parent->kind == ERC7730_ABI_TUPLE) {
+    const int32_t requested =
+        every ? (int32_t)workflow->iteration_index : path->steps[i].first;
+    if (parent->kind == ERC7730_ABI_TUPLE && !every) {
       if (requested < 0 || (uint32_t)requested >= parent->child_count)
         return false;
       node = (uint16_t)(parent->first_child + (uint32_t)requested);
@@ -515,16 +527,27 @@ bool erc7730_workflow_start_eip712_capture(Erc7730Workflow* workflow,
     } else {
       return false;
     }
-    workflow->calldata.capture_path[i] = path->steps[i].first;
+    workflow->calldata.capture_path[i] = requested;
   }
   if (node >= program.node_count ||
-      program.nodes[node].kind > ERC7730_ABI_STRING)
+      (length ? program.nodes[node].kind != ERC7730_ABI_ARRAY
+              : program.nodes[node].kind > ERC7730_ABI_STRING))
     return false;
-  workflow->calldata.capture_path_count = path->step_count;
+  workflow->calldata.capture_path_count = steps;
   workflow->calldata.capture.node = node;
   workflow->calldata.capture_enabled = true;
   workflow->phase = ERC7730_WORKFLOW_TYPED_DATA;
   return true;
+}
+
+bool erc7730_workflow_start_eip712_capture(Erc7730Workflow* workflow,
+                                           const Erc7730Path* path) {
+  return start_eip712_capture(workflow, path, false);
+}
+
+bool erc7730_workflow_start_eip712_length(Erc7730Workflow* workflow,
+                                          const Erc7730Path* path) {
+  return start_eip712_capture(workflow, path, true);
 }
 
 static bool normalize_eip712_capture(const Erc7730AbiNode* node,
@@ -558,6 +581,13 @@ static bool normalize_eip712_capture(const Erc7730AbiNode* node,
       return false;
     memcpy(capture->data, value, value_len);
     memzero(capture->data + value_len, 32 - value_len);
+    return true;
+  }
+  if (node->kind == ERC7730_ABI_ARRAY) {
+    /* An iteration's count: the big-endian uint16 streamed at the array. */
+    if (value_len != 2) return false;
+    memzero(capture->data, 30);
+    memcpy(capture->data + 30, value, 2);
     return true;
   }
   if (node->kind == ERC7730_ABI_BYTES || node->kind == ERC7730_ABI_STRING) {

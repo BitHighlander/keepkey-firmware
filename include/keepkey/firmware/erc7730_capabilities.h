@@ -21,7 +21,7 @@
  * group, 7/8 an iteration over one array, 10 end. Opcodes 2 and 3 form one
  * run directly after the intent; each is shown as a numbered part of the
  * interpolated intent. Groups only group; an iteration shows its fields once
- * per element, numbered. */
+ * per element, numbered, in calldata and (7.17) typed-data definitions. */
 #define ERC7730_CAP_DISPLAY_OPCODES                               \
   (ERC7730_CAP_BIT(1) | ERC7730_CAP_BIT(2) | ERC7730_CAP_BIT(3) | \
    ERC7730_CAP_BIT(4) | ERC7730_CAP_BIT(5) | ERC7730_CAP_BIT(6) | \

@@ -2050,8 +2050,8 @@ std::vector<uint8_t> displays(
 }  // namespace
 
 // Phase D: an iteration walks one array, reached through tuples only, in a
-// calldata definition; every field inside reads that array, and a field that
-// iterates appears only inside an iteration.
+// calldata or (7.17) typed-data definition; every field inside reads that
+// array, and a field that iterates appears only inside an iteration.
 TEST(Erc7730Catalog, PreloadChecksIterationAgainstTheArrayItWalks) {
   const std::vector<uint8_t> begin_a = {7, 0, 0, 0, 0xff, 0xff, 0, 3};
   const std::vector<uint8_t> field_a = {4, 0, 0, 0, 0, 0, 0xff, 0xff};
@@ -2059,7 +2059,14 @@ TEST(Erc7730Catalog, PreloadChecksIterationAgainstTheArrayItWalks) {
   const std::vector<uint8_t> end = {8, 0, 0, 1, 0xff, 0xff, 0xff, 0xff};
   auto p = iterationProgram(displays({begin_a, field_a, end}), 5, 1);
   EXPECT_EQ(feedAll(envelope(p), 11), ERC7730_CATALOG_UNTRUSTED);
-  // Typed data never iterates.
+  // 7.17: typed data iterates too (Seaport's offer[] and consideration[]),
+  // under the same rules.
+  p[7] = ERC7730_DEFINITION_EIP712;
+  EXPECT_EQ(feedAll(envelope(p), 11), ERC7730_CATALOG_UNTRUSTED);
+  p = iterationProgram(displays({begin_a, field_b, end}), 5, 1);
+  p[7] = ERC7730_DEFINITION_EIP712;
+  EXPECT_EQ(feedAll(envelope(p), 11), ERC7730_CATALOG_BAD_PROGRAM);
+  p = iterationProgram(displays({field_a}), 3, 0);
   p[7] = ERC7730_DEFINITION_EIP712;
   EXPECT_EQ(feedAll(envelope(p), 11), ERC7730_CATALOG_BAD_PROGRAM);
   // A field inside that reads another array.

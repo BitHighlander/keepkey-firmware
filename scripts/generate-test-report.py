@@ -404,6 +404,7 @@ def firmware_version_tuple():
 KNOWN_CAPABILITIES = frozenset((
     "certified-contacts", "eip712-chunked-values", "entropy-audit-budget", "erc20-unlimited-approve-review",
     "erc20-unlimited-permit-review", "erc7730-runtime-review",
+    "erc7730-typed-iteration",
     "evm-certified-intent", "evm-max-amount-review", "evm-tx-metadata",
     "evm-unknown-token-review", "hive-release-review",
     "legacy-evm-router-signing", "maya-single-message", "osmosis-wire-guards",
