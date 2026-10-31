@@ -4329,6 +4329,7 @@ TEST(Fsm, FeaturesReportExactlyTheStagedCapabilities) {
       Features_Capability_CAPABILITY_SOLANA_CERTIFIED_REVIEW,
       Features_Capability_CAPABILITY_CERTIFIED_CONTACTS,
       Features_Capability_CAPABILITY_ERC7730_TYPED_ITERATION,
+      Features_Capability_CAPABILITY_ERC7730_TYPED_SETTLEMENT,
 #endif
   };
   EXPECT_EQ(expected, std::vector<Features_Capability>(

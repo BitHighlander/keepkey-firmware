@@ -555,6 +555,11 @@ TEST(Erc7730Catalog, TrailingDataFlagIsCalldataOnly) {
   EXPECT_EQ(feedAll(envelope(typed), 9), ERC7730_CATALOG_BAD_PROGRAM);
   typed[6] = 0;
   EXPECT_EQ(feedAll(envelope(typed), 9), ERC7730_CATALOG_UNTRUSTED);
+  // 7.17: SETTLEMENT (bit 1) is typed data's only flag.
+  typed[6] = ERC7730_PROGRAM_FLAG_SETTLEMENT;
+  EXPECT_EQ(feedAll(envelope(typed), 9), ERC7730_CATALOG_UNTRUSTED);
+  typed[6] |= ERC7730_PROGRAM_FLAG_TRAILING_DATA;
+  EXPECT_EQ(feedAll(envelope(typed), 9), ERC7730_CATALOG_BAD_PROGRAM);
 }
 
 TEST(Erc7730Catalog, SignatureAuthenticatesProgramUnderLoadedDelegateKey) {
@@ -2048,6 +2053,117 @@ std::vector<uint8_t> displays(
 }
 
 }  // namespace
+
+// 7.17: a typed-data definition opts in to the settlement review with header
+// flag SETTLEMENT; only then may its fields carry a SETTLE role, one each, on
+// a kind that holds the role's value. The identity carries the flag.
+TEST(Erc7730Catalog, SettlementRolesNeedTheTypedDataOptIn) {
+  const std::vector<uint8_t> begin_a = {7, 0, 0, 0, 0xff, 0xff, 0, 3};
+  const std::vector<uint8_t> field_a = {4, 0, 0, 0, 0, 0, 0xff, 0xff};
+  const std::vector<uint8_t> end = {8, 0, 0, 1, 0xff, 0xff, 0xff, 0xff};
+  const auto program = [&](uint8_t program_flags, uint8_t kind,
+                           uint8_t flags) {
+    auto p = iterationProgram(displays({begin_a, field_a, end}), 5, 1);
+    p = replaceTable(p, 6, {10, flags, 1, 1, 1, 0, 0, 10, 0, 1, 1, 1, 0, 1},
+                     2);
+    p[6] = program_flags;
+    p[7] = kind;
+    return p;
+  };
+  const uint8_t typed = ERC7730_DEFINITION_EIP712;
+  const uint8_t calldata = ERC7730_DEFINITION_CALLDATA;
+  const uint8_t on = ERC7730_PROGRAM_FLAG_SETTLEMENT;
+  const uint8_t to = ERC7730_FORMATTER_FLAG_SETTLE_TO;
+  const struct {
+    uint8_t program_flags, kind, flags;
+    Erc7730CatalogResult result;
+  } cases[] = {
+      {on, typed, 0, ERC7730_CATALOG_UNTRUSTED},
+      {on, typed, to, ERC7730_CATALOG_UNTRUSTED},
+      {on, typed, to | ERC7730_FORMATTER_FLAG_RECIPIENT,
+       ERC7730_CATALOG_UNTRUSTED},
+      // A role without the opt-in, two roles, a role the kind cannot hold;
+      // 4 is no role (an item is given when it has no recipient).
+      {0, typed, to, ERC7730_CATALOG_BAD_PROGRAM},
+      {on, typed, 4, ERC7730_CATALOG_BAD_PROGRAM},
+      {on, typed, to | 4, ERC7730_CATALOG_BAD_PROGRAM},
+      {on, typed, ERC7730_FORMATTER_FLAG_SETTLE_AMOUNT,
+       ERC7730_CATALOG_BAD_PROGRAM},
+      {on, typed, 0x80, ERC7730_CATALOG_BAD_PROGRAM},
+      // Calldata never settles.
+      {on, calldata, 0, ERC7730_CATALOG_BAD_PROGRAM},
+      {0, calldata, to, ERC7730_CATALOG_BAD_PROGRAM},
+  };
+  for (const auto& c : cases) {
+    EXPECT_EQ(feedAll(envelope(program(c.program_flags, c.kind, c.flags)), 11),
+              c.result)
+        << (int)c.program_flags << " " << (int)c.kind << " " << (int)c.flags;
+  }
+  SignedFixture fixture;
+  loadRuntimeSigner(&fixture, "Settle signer");
+  for (uint8_t flags : {(uint8_t)0, on}) {
+    Erc7730CatalogIdentity identity{};
+    ASSERT_EQ(feedIdentity(signedEnvelope(fixture, program(flags, typed, 0)),
+                           &identity),
+              ERC7730_CATALOG_COMPLETE);
+    EXPECT_EQ(identity.settlement, flags != 0);
+  }
+}
+
+// 7.17: a certified definition of Seaport's OrderComponents must opt in to
+// the settlement review. Without it a drainer order (an NFT for 1 wei to a
+// stranger) reads as calm as a real listing under "Verified by KeepKey".
+TEST(Erc7730Catalog, CertifiedSeaportOrderNeedsTheSettlementReview) {
+  static const uint8_t seaport[32] = {
+      0xfa, 0x44, 0x56, 0x60, 0xb7, 0xe2, 0x15, 0x15, 0xa5, 0x96, 0x17,
+      0xfc, 0xd6, 0x89, 0x10, 0xb4, 0x87, 0xaa, 0x58, 0x08, 0xb8, 0xab,
+      0xda, 0x3d, 0x78, 0xbc, 0x85, 0xdf, 0x36, 0x4b, 0x2c, 0x2f};
+  const auto typed = [](const uint8_t* type_hash, uint8_t flags) {
+    auto p = minimalProgram();
+    p[6] = flags;
+    p[7] = ERC7730_DEFINITION_EIP712;
+    std::copy(type_hash, type_hash + 32, p.begin() + 38);
+    return p;
+  };
+  uint8_t other[32];
+  memcpy(other, seaport, 32);
+  other[31] ^= 1;
+  const uint8_t on = ERC7730_PROGRAM_FLAG_SETTLEMENT;
+  {
+    CertifiedFixture fixture;
+    makeCertifiedFixture(&fixture);
+    TestRoot root(fixture.root_pubkey);
+    const auto cert = rootCert(fixture.root_key, fixture.delegate.pubkey);
+    const struct {
+      const uint8_t* type_hash;
+      uint8_t flags;
+      Erc7730CatalogResult result;
+    } cases[] = {
+        {seaport, 0, ERC7730_CATALOG_BAD_PROGRAM},
+        {seaport, on, ERC7730_CATALOG_COMPLETE},
+        {other, 0, ERC7730_CATALOG_COMPLETE},
+    };
+    for (const auto& c : cases) {
+      Erc7730CatalogIdentity identity{};
+      EXPECT_EQ(feedIdentity(certifiedEnvelope(fixture,
+                                               typed(c.type_hash, c.flags),
+                                               cert),
+                             &identity),
+                c.result)
+          << (int)c.flags << " " << (c.type_hash == seaport);
+      if (c.result == ERC7730_CATALOG_COMPLETE)
+        EXPECT_EQ(identity.tier, (uint8_t)METADATA_TIER_KEEPKEY);
+    }
+  }
+  // The runtime tier is the host's own signer, shown as not verified: not
+  // bound.
+  SignedFixture fixture;
+  loadRuntimeSigner(&fixture, "Seaport signer");
+  Erc7730CatalogIdentity identity{};
+  EXPECT_EQ(feedIdentity(signedEnvelope(fixture, typed(seaport, 0)), &identity),
+            ERC7730_CATALOG_COMPLETE);
+  EXPECT_EQ(identity.tier, (uint8_t)METADATA_TIER_RUNTIME);
+}
 
 // Phase D: an iteration walks one array, reached through tuples only, in a
 // calldata or (7.17) typed-data definition; every field inside reads that
