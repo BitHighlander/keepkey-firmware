@@ -114,6 +114,30 @@ void recovery_cipher_reset(void) {
  * no button press at all. Aborting is a memzero, and nothing else. */
 void recovery_cipher_abort(void) { setup_abort(); }
 
+/* Every word decodes to a BIP-39 word by this point, so a failed
+ * mnemonic_check() can only mean the checksum: name it, or users read the
+ * failure as a cipher or device fault. */
+#define CHECKSUM_FAILED_TITLE "Checksum Failed"
+#define CHECKSUM_FAILED_BODY                                      \
+  "Every word is a real BIP-39 word, but together they fail the " \
+  "checksum. A word is wrong or out of order."
+
+/* Rejects a word that decodes to no BIP-39 word. The device names the word
+ * and shows the letters it decoded -- the entry screen already showed them --
+ * while the host learns only the word number. The caller has already aborted
+ * the ceremony. */
+static void reject_non_word(uint32_t word_num, const char* letters) {
+  static CONFIDENTIAL char warning[48];
+  char msg[64];
+  snprintf(msg, sizeof(msg),
+           "Word not found in BIP39 wordlist (word %" PRIu32 ")", word_num);
+  fsm_sendFailure(FailureType_Failure_SyntaxError, msg);
+  snprintf(warning, sizeof(warning),
+           "Word %" PRIu32 " \"%s\" is not a BIP-39 word", word_num, letters);
+  layout_warning_static(warning);
+  memzero(warning, sizeof(warning));
+}
+
 /// Formats the passed word to show position in mnemonic as well as characters
 /// left.
 ///
@@ -389,7 +413,7 @@ void next_character(void) {
     recovery_cipher_abort();
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     "Words were not entered correctly. Make sure you are using "
-                    "the substition cipher.");
+                    "the substitution cipher.");
     layoutHome();
     return;
   }
@@ -541,7 +565,7 @@ void recovery_character(const char* character) {
         recovery_cipher_abort();
         fsm_sendFailure(FailureType_Failure_SyntaxError,
                         "Words were not entered correctly. Make sure you are "
-                        "using the substition cipher.");
+                        "using the substitution cipher.");
         layoutHome();
         return;
       }
@@ -556,13 +580,15 @@ void recovery_character(const char* character) {
       strlcpy(check_word, decoded_word, sizeof(check_word));
       bool valid = attempt_auto_complete(check_word);
       if (enforce_wordlist && !valid) {
-        memzero(check_word, sizeof(check_word));
+        /* Aborting resets the word count and scrubs decoded_word: copy both
+         * first. */
+        const uint32_t word_num = words_entered;
+        strlcpy(check_word, decoded_word, sizeof(check_word));
         memzero(coded_word, sizeof(coded_word));
         memzero(decoded_word, sizeof(decoded_word));
         recovery_cipher_abort();
-        fsm_sendFailure(FailureType_Failure_SyntaxError,
-                        "Word not found in BIP39 wordlist");
-        layout_warning_static("Word not in wordlist");
+        reject_non_word(word_num, check_word);
+        memzero(check_word, sizeof(check_word));
         return;
       }
       /* Record the just-completed (auto-expanded) word for the "previous
@@ -716,12 +742,22 @@ void recovery_cipher_finalize(void) {
 
   /* Attempt to autocomplete each word */
   uint32_t words_committed = 0;
+  uint32_t bad_word_num = 0;
+  static CONFIDENTIAL char bad_word_letters[CURRENT_WORD_BUF];
+  memzero(bad_word_letters, sizeof(bad_word_letters));
   char* tok = strtok(mnemonic, " ");
 
   while (tok) {
     strlcpy(temp_word_scratch, tok, CURRENT_WORD_BUF);
 
-    auto_completed &= attempt_auto_complete(temp_word_scratch);
+    const bool word_ok = attempt_auto_complete(temp_word_scratch);
+    auto_completed &= word_ok;
+    /* Words before the last are checked as they are entered, so this is
+     * normally the last word, which ends with "done" rather than a space. */
+    if (!word_ok && !bad_word_num) {
+      bad_word_num = words_committed + 1;
+      strlcpy(bad_word_letters, tok, sizeof(bad_word_letters));
+    }
 
     strlcat(final_mnemonic_scratch, temp_word_scratch, MNEMONIC_BUF);
     strlcat(final_mnemonic_scratch, " ", MNEMONIC_BUF);
@@ -740,6 +776,7 @@ void recovery_cipher_finalize(void) {
    */
   if (words_committed != words_entered) {
     memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
+    memzero(bad_word_letters, sizeof(bad_word_letters));
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     "Not enough words entered");
     setup_abort();
@@ -751,13 +788,13 @@ void recovery_cipher_finalize(void) {
   /* An enforced recovery must decode to BIP-39 words. Import mode deliberately
    * accepts non-word phrases; the count/nonempty guard above still applies. */
   if (enforce_wordlist && !auto_completed) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    "Words were not entered correctly. Make sure you are using "
-                    "the substition cipher.");
+    memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
     setup_abort();
-    layoutHome();
+    reject_non_word(bad_word_num, bad_word_letters);
+    memzero(bad_word_letters, sizeof(bad_word_letters));
     return;
   }
+  memzero(bad_word_letters, sizeof(bad_word_letters));
 
   /* Truncate additional space at the end */
   final_mnemonic_scratch[MAX(1u, strnlen(final_mnemonic_scratch,
@@ -781,23 +818,31 @@ void recovery_cipher_finalize(void) {
       fsm_sendSuccess("The seed is valid and matches the one in the device.");
     } else if (mnemonic_check(final_mnemonic_scratch)) {
       review(ButtonRequestType_ButtonRequest_Other, "Recovery Dry Run",
-             "The seed is valid, but DOES NOT MATCH the one in the device.");
+             "A valid phrase, but for a different wallet. It DOES NOT MATCH "
+             "the one in the device.");
       fsm_sendFailure(
           FailureType_Failure_Other,
           "The seed is valid, but does not match the one in the device.");
     } else {
-      review(ButtonRequestType_ButtonRequest_Other, "Recovery Dry Run",
-             "The seed is INVALID, and DOES NOT MATCH the one in the device.");
-      fsm_sendFailure(
-          FailureType_Failure_Other,
-          "The seed is invalid, and does not match the one in the device.");
+      review(ButtonRequestType_ButtonRequest_Other, CHECKSUM_FAILED_TITLE,
+             CHECKSUM_FAILED_BODY);
+      fsm_sendFailure(FailureType_Failure_Other,
+                      "The seed is invalid (checksum failed), and does not "
+                      "match the one in the device.");
     }
     memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
   } else {
     /* Nothing reached storage: the staged settings and the mnemonic are
-     * still only in RAM, and the common cleanup below discards both. */
+     * still only in RAM; discard both. Leave the checksum screen up instead
+     * of returning home. */
     fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    "Invalid mnemonic, are words in correct order?");
+                    "Invalid mnemonic (checksum failed), are words in correct "
+                    "order?");
+    memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
+    setup_abort();
+    layout_standard_notification(CHECKSUM_FAILED_TITLE, CHECKSUM_FAILED_BODY,
+                                 NOTIFICATION_INFO);
+    return;
   }
 
   memzero(final_mnemonic_scratch, sizeof(final_mnemonic_scratch));
