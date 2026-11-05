@@ -642,6 +642,8 @@ static struct {
 
   /* SHOW_*: what this walk of the message shows. */
   uint8_t show_once;
+  bool
+      safe_data_covered; /* a signed embedded formatter must review this leaf */
   /* This walk's message values so far, leaves and array lengths in walk
    * order; the one being read is number leaf - 1. */
   uint16_t leaf;
@@ -690,6 +692,9 @@ static bool leaf_shown_now(bool first) {
 }
 
 static bool value_shown(size_t len) {
+  if (e712.safe_data_covered && e712.root == 1 && e712.depth == 1 &&
+      strcmp(e712.pending_name, "data") == 0)
+    return false;
   return leaf_shown_now(len > ERC7730_ABI_CAPTURE_MAX);
 }
 
@@ -1030,6 +1035,15 @@ static bool in_safe_tx(void) {
   return !f->is_array && strcmp(e712.types.names[f->u.s.type], "SafeTx") == 0;
 }
 
+bool eip712_stream_cover_safe_data(void) {
+  if (!e712.active || !e712.require_definition || !e712.definition_accepted ||
+      e712.root != 1 || e712.depth != 1 || !in_safe_tx() ||
+      strcmp(e712.pending_name, "data") != 0)
+    return false;
+  e712.safe_data_covered = true;
+  return true;
+}
+
 /* The open SafeTx's `to`, once read; NULL before then. */
 static const uint8_t* safe_tx_to(void) {
   const Eip712Frame* f = &e712.stack[e712.depth - 1];
@@ -1288,6 +1302,10 @@ static bool confirm_safe_library(uint8_t lib, const char* who) {
   }
   return !warning_shown() || confirm(ButtonRequestType_ButtonRequest_Other,
                                      "Safe upgrade", "%s %s", who, what);
+}
+
+bool eip712_stream_safe_multisend(const uint8_t address[20]) {
+  return address && safe_contract(address) == SAFE_LIB_MULTISEND;
 }
 
 /* ── Approves inside a MultiSend ──────────────────────────────────────
@@ -3061,7 +3079,11 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
 
 bool eip712_stream_domain_facts(Eip712DomainFacts* facts) {
   /* Unbindable facts bind nothing: every ERC-7730 consumer fails closed. */
-  if (!facts || !e712.active || unbindable()) return false;
+  if (!facts || unbindable() ||
+      (!e712.active &&
+       !(next_step.kind == EIP712_REQ_DONE && e712.require_definition &&
+         e712.definition_accepted && e712.have_domain_separator)))
+    return false;
   memcpy(facts, &e712.domain_facts, sizeof(*facts));
   return true;
 }

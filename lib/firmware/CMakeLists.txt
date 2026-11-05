@@ -43,6 +43,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       erc7730_settle.c
       erc7730_tx.c
       erc7730_workflow.c
+      safe_batch.c
       ethereum_contracts/makerdao.c
       ethereum_contracts/saproxy.c
       ethereum_contracts/zxappliquid.c

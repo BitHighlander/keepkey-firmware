@@ -165,6 +165,12 @@ bool eip712_domain_facts_observe(
     const uint8_t* value, uint16_t value_len);
 
 bool eip712_stream_domain_facts(Eip712DomainFacts* facts);
+/* Pinned canonical MultiSend at the current domain's chain. */
+bool eip712_stream_safe_multisend(const uint8_t address[20]);
+/* Called only after a signed embedded formatter selects canonical SafeTx.data.
+ * Suppresses its raw hex, preserving every device-owned warning. Failure of
+ * inner review must end the entire signature. */
+bool eip712_stream_cover_safe_data(void);
 /* The domain separator (source 5) or the primary type hash (source 6) of the
  * document being walked, for ERC-7730 container paths. */
 bool eip712_stream_container_hash(uint16_t source_index, uint8_t value[32]);

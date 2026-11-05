@@ -162,7 +162,9 @@ static void send_erc7730_fetch_request(void) {
     return;
   }
   RESP_INIT(EthereumClearSignDefinitionRequest);
-  resp->kind = EthereumClearSignDefinitionKind_ERC7730_CALLDATA;
+  resp->kind = workflow->typed_root && workflow->fetch_depth == 0
+                   ? EthereumClearSignDefinitionKind_ERC7730_EIP712
+                   : EthereumClearSignDefinitionKind_ERC7730_CALLDATA;
   resp->chain_id = workflow->identity.chain_id;
   if (workflow->fetch_depth > workflow->depth) {
     resp->has_contract_address = true;
@@ -375,7 +377,7 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow);
  * typed-data review the field belongs to. */
 static void fail_erc7730_field(Erc7730Workflow* workflow, FailureType type,
                                const char* message) {
-  const bool typed = workflow->typed_data;
+  const bool typed = workflow->typed_data || workflow->typed_root;
   erc7730_workflow_abort(workflow);
   if (typed) eip712_stream_abort();
   fsm_sendFailure(type, message);
@@ -404,7 +406,7 @@ static Erc7730SignerResult erc7730_signer_address(
     const Erc7730Workflow* workflow, uint8_t address[20]) {
   uint32_t address_n[8];
   size_t count = 0;
-  if (workflow->typed_data) {
+  if (workflow->typed_data || workflow->typed_root) {
     if (!eip712_stream_signer_path(address_n, &count))
       return ERC7730_SIGNER_FAILED;
   } else {
@@ -525,7 +527,7 @@ static void show_erc7730_address(Erc7730Workflow* workflow,
     if (result != ERC7730_SIGNER_OK) {
       memzero(signer, sizeof(signer));
       if (result == ERC7730_SIGNER_REPORTED) {
-        const bool typed = workflow->typed_data;
+        const bool typed = workflow->typed_data || workflow->typed_root;
         erc7730_workflow_abort(workflow);
         if (typed) eip712_stream_abort();
       } else {
@@ -881,6 +883,8 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
     return;
   }
   if (field->kind == 13) {
+    if (workflow->typed_data && workflow->safe_delegatecall)
+      erc7730_workflow_safe_batch_call(workflow);
     /* A Safe delegatecall is never shown as the callee's own action. */
     if (workflow->safe_delegatecall) {
       if (erc7730_workflow_safe_setup_to_l2(workflow, field))
@@ -1334,6 +1338,18 @@ static void finish_erc7730_calldata(Erc7730Workflow* workflow) {
 
 static void start_erc7730_calldata(Erc7730Workflow* workflow,
                                    const Erc7730Path* path) {
+  if (workflow->typed_root) {
+    if (!erc7730_workflow_start_typed_inner(
+            workflow, path,
+            workflow->display_stage == ERC7730_DISPLAY_ITERATION) ||
+        !eip712_stream_resume_for_field()) {
+      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                         _("Invalid Safe typed-data inner call"));
+      return;
+    }
+    eip712_pump();
+    return;
+  }
   EthereumSignTx tx;
   const bool started =
       !path ? erc7730_workflow_restore_and_start_calldata(workflow, &tx)
@@ -1653,20 +1669,37 @@ void fsm_msgEthereumClearSignDefinitionChunk(
     return;
   }
   if (selection_kind == ERC7730_SELECTION_NONE) {
-    if (workflow->typed_data) {
-      if (!continue_erc7730_domain_checks(workflow)) fail_erc7730_domain();
-      return;
-    }
     if (workflow->resuming) {
       /* Back from an inner call: continue after the instruction that held
        * it. The calldata was validated and its digest fixed long ago. */
       workflow->resuming = false;
+      if (workflow->typed_data && workflow->typed_batch &&
+          workflow->typed_batch_index + 1u < workflow->safe_batch.count) {
+        workflow->typed_batch_index++;
+        workflow->display_stage = ERC7730_DISPLAY_INSTRUCTION;
+        if (!erc7730_workflow_select_display(workflow,
+                                             workflow->display_index)) {
+          fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                             _("Invalid Safe batch continuation"));
+          return;
+        }
+        send_erc7730_definition_request();
+        return;
+      }
+      if (workflow->typed_data) {
+        workflow->typed_batch_index = 0;
+        workflow->typed_batch = false;
+      }
       if (!erc7730_workflow_advance_display(workflow)) {
         fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
                            _("Invalid ERC-7730 display continuation"));
         return;
       }
       send_erc7730_definition_request();
+      return;
+    }
+    if (workflow->typed_data) {
+      if (!continue_erc7730_domain_checks(workflow)) fail_erc7730_domain();
       return;
     }
     /* Validate the whole calldata against the ABI (at depth 1: the inner
@@ -2539,7 +2572,9 @@ static void eip712_pump(void) {
     }
     case EIP712_REQ_DONE: {
       Erc7730Workflow* workflow = erc7730_workflow_state();
-      if (workflow->phase == ERC7730_WORKFLOW_TYPED_DATA) {
+      if (workflow->phase == ERC7730_WORKFLOW_TYPED_DATA ||
+          (workflow->typed_root &&
+           workflow->phase == ERC7730_WORKFLOW_CALLDATA)) {
         if (!erc7730_workflow_eip712_finish(workflow) ||
             !erc7730_workflow_eip712_commit(workflow, next->domain_separator,
                                             next->message_hash)) {
@@ -2548,6 +2583,11 @@ static void eip712_pump(void) {
           fsm_sendFailure(FailureType_Failure_SyntaxError,
                           _("Certified EIP-712 value was not found"));
           layoutHome();
+          return;
+        }
+        if (!workflow->typed_data) {
+          EthereumSignTx unused = {0};
+          confirm_erc7730_intent_and_continue(&unused);
           return;
         }
         const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
@@ -2746,16 +2786,26 @@ void fsm_msgEthereumTypedDataValueAck(const EthereumTypedDataValueAck* msg) {
     memcpy(member_path, requested->member_path,
            member_path_count * sizeof(uint32_t));
   }
+  Erc7730Workflow* workflow = erc7730_workflow_state();
+  if (workflow->typed_data && workflow->phase == ERC7730_WORKFLOW_TYPED_DATA &&
+      workflow->calldata.capture_locate && member_path_count == 2 &&
+      member_path[0] == 1 && member_path[1] == 2 &&
+      !eip712_stream_cover_safe_data()) {
+    fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                       _("Invalid certified Safe data path"));
+    return;
+  }
   if (!eip712_stream_on_value(msg)) {
     memzero(member_path, sizeof(member_path));
     eip712_pump();
     return;
   }
-  Erc7730Workflow* workflow = erc7730_workflow_state();
   const bool captured = workflow->calldata.capture_found;
   /* The stream accepted this ack, so an offset marks a later chunk of a long
    * value and a total length marks its first. */
-  if (workflow->phase == ERC7730_WORKFLOW_TYPED_DATA &&
+  if ((workflow->phase == ERC7730_WORKFLOW_TYPED_DATA ||
+       (workflow->typed_root &&
+        workflow->phase == ERC7730_WORKFLOW_CALLDATA)) &&
       !erc7730_workflow_eip712_observe(workflow, member_path, member_path_count,
                                        msg->value.bytes, msg->value.size,
                                        msg->has_value_total_length
