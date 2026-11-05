@@ -28,12 +28,28 @@ jobs:
     env:
       MACOSX_DEPLOYMENT_TARGET: '15.0'
     steps:
-      - name: Checkout exact revision and pinned submodules
+      - name: Checkout exact revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          submodules: recursive
           persist-credentials: false
+
+      - name: Initialize pinned emulator dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The native firmware uses trezor-crypto's C sources, not its vendored
+          # MicroPython application. Recursing that unused tree reaches lwIP's
+          # dumb-HTTP server, which cannot serve checkout's shallow fetches.
+          git submodule update --init \
+            code-signing-keys \
+            deps/crypto/trezor-firmware \
+            deps/device-protocol \
+            deps/googletest \
+            deps/qrenc/QR-Code-generator \
+            deps/sca-hardening/SecAESSTM32
+          # The token generator needs the pinned nested ethereum-lists source.
+          git submodule update --init --recursive deps/python-keepkey
 
       - name: Python 3.10 for the pinned legacy nanopb generator
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
