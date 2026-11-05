@@ -71,6 +71,7 @@ bool pin_protect_uncached(void);
 
 /// Process a PIN change.
 /// \returns true iff the PIN was successfully changed.
+/// A false result has already sent its terminal Failure response.
 bool change_pin(void);
 
 /// Process a wipe code change.
