@@ -68,6 +68,7 @@ void kk_test_set_message_hook(std::function<void(MessageType, const void*)>);
 bool kkconfirm_preload(int nYes, int nNo);
 bool kkconfirm_preload_no_sentinel(int nYes, int nNo);
 int kkconfirm_drain(void);
+std::vector<uint16_t> kkconfirm_readResponseIds(void);
 bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload, uint8_t len);
 void kkconfirm_capture_start(void);
 std::vector<std::string> kkconfirm_capture_finish(void);
@@ -4336,6 +4337,48 @@ TEST(Fsm, FeaturesReportExactlyTheStagedCapabilities) {
   EXPECT_EQ(expected, std::vector<Features_Capability>(
                           features.capabilities,
                           features.capabilities + features.capabilities_count));
+}
+
+TEST(Fsm, PinChangeCancellationAndMismatchSendExactlyOneFailure) {
+  kk_test_board_init();
+  fsm_init();
+  for (int stage = 0; stage < 3; stage++) {
+    SCOPED_TRACE(stage);  // first matrix, second matrix, mismatched entries
+    ScopedFlash flash;
+    storage_setMnemonic("all all all all all all all all all all all all");
+    ASSERT_FALSE(storage_hasPin());
+    ASSERT_TRUE(kkconfirm_preload_no_sentinel(1, 0));
+    if (stage > 0) {
+      const uint8_t first[] = {0x0a, 0x01, '1'};
+      ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_PinMatrixAck,
+                                     first, sizeof(first)));
+    }
+    if (stage == 2) {
+      // Different lengths guarantee a mismatch regardless of matrix shuffle.
+      const uint8_t second[] = {0x0a, 0x02, '2', '2'};
+      ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_PinMatrixAck,
+                                     second, sizeof(second)));
+    } else {
+      ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_Cancel, nullptr,
+                                     0));
+    }
+    ChangePin change = {};
+    receiveMessage(MessageType_MessageType_ChangePin, ChangePin_fields,
+                   &change);
+    const auto replies = kkconfirm_readResponseIds();
+    EXPECT_EQ(1, std::count(replies.begin(), replies.end(),
+                            MessageType_MessageType_Failure));
+    EXPECT_EQ(stage == 2 ? FailureType_Failure_ActionCancelled
+                         : FailureType_Failure_PinCancelled,
+              fsm_test_lastFailureCode());
+    EXPECT_TRUE(storage_isInitialized());
+    EXPECT_FALSE(storage_hasPin());
+    GetFeatures request = {};
+    receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
+                   &request);
+    EXPECT_EQ(std::vector<uint16_t>{MessageType_MessageType_Features},
+              kkconfirm_readResponseIds());
+  }
 }
 
 // DebugLinkGetState is also serviced inside the PIN, passphrase and confirm

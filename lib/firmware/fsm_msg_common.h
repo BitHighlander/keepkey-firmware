@@ -514,7 +514,7 @@ void fsm_msgChangePin(ChangePin* msg) {
   }
 
   if (!change_pin()) {
-    fsm_sendFailure(FailureType_Failure_ActionCancelled, "PINs do not match");
+    /* change_pin owns its terminal failure, including cancellation. */
     layoutHome();
     return;
   }
