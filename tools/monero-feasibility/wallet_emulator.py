@@ -29,9 +29,17 @@ def main():
                         default=HERE / "evidence/2026-11-04-interoperability/host.json")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--build-only", action="store_true")
+    parser.add_argument("--existing-build", type=Path,
+                        help="Verify an existing research build without configuring or rebuilding it")
+    parser.add_argument("--ordinary-library", type=Path,
+                        help="Existing ordinary control library (required with --existing-build)")
     args = parser.parse_args()
     if not args.receive_only and not args.engine_link:
         parser.error("--engine-link is required unless --receive-only is selected")
+    if bool(args.existing_build) != bool(args.ordinary_library):
+        parser.error("--existing-build and --ordinary-library must be supplied together")
+    if args.existing_build and args.build_only:
+        parser.error("--build-only cannot be used with --existing-build")
     root, out = args.toolchain_root.resolve(), args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
     if any(out.iterdir()):
@@ -57,20 +65,22 @@ def main():
                      "-DCMAKE_CXX_FLAGS=-DPB_NO_PACKED_STRUCTS=1",
                      f"-DNANOPB_DIR={root / 'nanopb'}",
                      f"-DPROTOC_BINARY={root / 'protoc351/bin/protoc'}"]
-    build = out / "build"
+    build = args.existing_build.resolve() if args.existing_build else out / "build"
     research_configuration = ["-DKK_MONERO_EMULATOR_RESEARCH=ON", "-DKK_MONERO_KEY_IMAGE_PROTOCOL=ON",
                               f"-DKK_MONERO_CORE_SIGNING={'OFF' if args.receive_only else 'ON'}"]
     if not args.receive_only:
         research_configuration.append(f"-DKK_MONERO_CORE_LINK_CMAKE={args.engine_link.resolve()}")
-    run(["cmake", "-S", str(FW), "-B", str(build), *configuration,
-         f"-DCMAKE_PROJECT_KeepKeyFirmware_INCLUDE={HERE / 'commands-overlay.cmake'}",
-         *research_configuration], "configure")
-    run(["cmake", "--build", str(build), "--target", "kkemulator_dylib", "-j8"], "build")
+    if not args.existing_build:
+        run(["cmake", "-S", str(FW), "-B", str(build), *configuration,
+             f"-DCMAKE_PROJECT_KeepKeyFirmware_INCLUDE={HERE / 'commands-overlay.cmake'}",
+             *research_configuration], "configure")
+        run(["cmake", "--build", str(build), "--target", "kkemulator_dylib", "-j8"], "build")
     suffix = "libkkemu.dylib" if sys.platform == "darwin" else "libkkemu.so"
     libraries = list(build.rglob(suffix))
     if len(libraries) != 1:
         raise RuntimeError("expected one complete research libkkemu")
     library = libraries[0]
+    library_before = hashlib.sha256(library.read_bytes()).hexdigest()
     if args.build_only:
         print(json.dumps({"built_only": True, "library": str(library), "signing_enabled": not args.receive_only}))
         return
@@ -96,10 +106,15 @@ def main():
     run([sys.executable, str(HERE / "commands/test_crypto.py"), *common,
          "--output", str(out / "crypto")], "crypto")
     reports["crypto"] = json.loads((out / "crypto/result.json").read_text())
-    ordinary = out / "ordinary-build"
-    run(["cmake", "-S", str(FW), "-B", str(ordinary), *configuration], "ordinary-configure")
-    run(["cmake", "--build", str(ordinary), "--target", "kkemulator_dylib", "-j8"], "ordinary-build")
-    ordinary_libraries = list(ordinary.rglob(suffix))
+    if args.ordinary_library:
+        ordinary_libraries = [args.ordinary_library.resolve()]
+        if not ordinary_libraries[0].is_file():
+            parser.error("ordinary control library does not exist")
+    else:
+        ordinary = out / "ordinary-build"
+        run(["cmake", "-S", str(FW), "-B", str(ordinary), *configuration], "ordinary-configure")
+        run(["cmake", "--build", str(ordinary), "--target", "kkemulator_dylib", "-j8"], "ordinary-build")
+        ordinary_libraries = list(ordinary.rglob(suffix))
     if len(ordinary_libraries) != 1:
         raise RuntimeError("expected one ordinary libkkemu")
     for name, script in [("ordinary-addresses", "test_wire.py"), ("ordinary-watch", "test_watch.py"),
@@ -109,6 +124,8 @@ def main():
         reports[name] = json.loads((out / name / "result.json").read_text())
     if any(report.get("status") != "pass" for report in reports.values()):
         raise RuntimeError("one of the experiment gates did not pass")
+    if hashlib.sha256(library.read_bytes()).hexdigest() != library_before:
+        raise RuntimeError("research library changed during verification")
 
     inputs = [Path(__file__), HERE / "build_core.py", HERE / "commands-overlay.cmake",
               *[p for p in (HERE / "commands").rglob("*") if p.is_file() and "__pycache__" not in p.parts],
@@ -118,6 +135,8 @@ def main():
         "schema_version": 1, "status": "pass", "reports": reports,
         "engine": json.loads(engine_report.read_text()) if engine_report else None,
         "signing_enabled": not args.receive_only,
+        "existing_build_verified": bool(args.existing_build),
+        "shared_library_unchanged_during_verification": True,
         "firmware_commit": subprocess.check_output(["git", "-C", str(FW), "rev-parse", "HEAD"], text=True).strip(),
         "source_sha256": {str(p.relative_to(FW)): hashlib.sha256(p.read_bytes()).hexdigest()
                           for p in sorted(set(inputs))},

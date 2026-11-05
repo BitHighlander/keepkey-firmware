@@ -32,7 +32,8 @@ static const uint8_t scalar_order[32] = {
 /* Decode canonically and require a nonidentity point in the prime subgroup.
  * Validation is on public inputs. No secret-dependent variable-time multiply. */
 static int public_point(ge25519 *out, const uint8_t encoded[32]) {
-  uint8_t canonical[32], product[32], identity[32] = {1};
+  uint8_t canonical[32], product[32];
+  const uint8_t identity[32] = {1};
   bignum256modm order;
   ge25519 check;
   /* The upstream positive-unpack wrapper negates coordinates even on error. */

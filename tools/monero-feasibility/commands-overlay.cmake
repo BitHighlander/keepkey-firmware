@@ -50,7 +50,10 @@ function(monero_address_commands_overlay)
     target_sources(kkfirmware PRIVATE "${research}/signing-plan.c")
     # The engine is a native-only shared dependency. Its C API accepts the
     # private node inside this process and exports only a signed transaction.
-    target_link_libraries(kkemulator_dylib monero_core_signing)
+    target_link_libraries(kkfirmware PUBLIC monero_core_signing)
+    # One dependency graph keeps the common archive identical for every link.
+    add_custom_target(monero-emulator-compatibility
+      DEPENDS kkemulator_dylib firmware-unit board-unit crypto-unit zcash-display-unit)
   endif()
   target_compile_options(trezorcrypto PRIVATE -UUSE_MONERO -DUSE_MONERO=1)
   target_sources(trezorcrypto PRIVATE

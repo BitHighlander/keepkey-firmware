@@ -47,7 +47,10 @@ def main():
     parser.add_argument("--build-dir", type=Path, help="Optional existing compatible Core build cache")
     parser.add_argument("--archive-dir", type=Path, help="Directory containing the four exact pinned source archives; defaults to source parent")
     parser.add_argument("--openssl-root", type=Path, default=Path("/opt/homebrew/opt/openssl@3"))
+    parser.add_argument("--jobs", type=int, default=8, help="Maximum native build parallelism")
     args = parser.parse_args()
+    if not 1 <= args.jobs <= 32:
+        parser.error("--jobs must be between 1 and 32")
     source, out = args.source.resolve(), args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
     if any(out.iterdir()):
@@ -118,7 +121,7 @@ def main():
          f"-DOPENSSL_INCLUDE_DIR={openssl / 'include'}", f"-DOPENSSL_SSL_LIBRARY={openssl / 'lib/libssl.dylib'}",
          f"-DOPENSSL_CRYPTO_LIBRARY={openssl / 'lib/libcrypto.dylib'}",
          f"-DCMAKE_PROJECT_monero_INCLUDE={hook}"], "configure.log")
-    run(["cmake", "--build", str(build), "--target", "monero_core_signing", "-j8"], "build.log")
+    run(["cmake", "--build", str(build), "--target", "monero_core_signing", f"-j{args.jobs}"], "build.log")
     candidates = list((out / "lib").glob("libmonero_core_signing.*"))
     libraries = [p for p in candidates if p.suffix in [".dylib", ".so"]]
     if len(libraries) != 1:

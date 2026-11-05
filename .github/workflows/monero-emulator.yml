@@ -1,4 +1,4 @@
-name: Monero receive-only emulator
+name: Monero firmware emulator evidence
 
 on:
   pull_request:
@@ -11,20 +11,33 @@ on:
       - 'CMakeLists.txt'
       - 'deps/**'
       - '.github/workflows/monero-emulator.yml'
+      - 'scripts/*report*'
   workflow_dispatch:
+    inputs:
+      full_wallet_evidence:
+        description: Build signing firmware and generate private-chain PDF evidence
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      full_wallet_evidence:
+        description: Include full signing, regression and private-chain evidence
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: monero-receive-${{ github.event.pull_request.number || github.ref }}
+  group: monero-evidence-${{ github.workflow }}-${{ inputs.full_wallet_evidence || false }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   receive-only:
+    name: ${{ inputs.full_wallet_evidence && 'Full signer and private chain' || 'Receive-only controls' }}
     # GitHub's macos-15 label is Apple Silicon. Refuse a future label migration.
     runs-on: macos-15
-    timeout-minutes: 35
+    timeout-minutes: 90
     env:
       MACOSX_DEPLOYMENT_TARGET: '15.0'
     steps:
@@ -70,7 +83,7 @@ jobs:
           mkdir -p "$MONERO_TOOLCHAIN"
           printf 'MONERO_TOOLCHAIN=%s\n' "$MONERO_TOOLCHAIN" >> "$GITHUB_ENV"
           python -m venv "$MONERO_TOOLCHAIN/pyk-venv"
-          "$MONERO_TOOLCHAIN/pyk-venv/bin/python" -m pip install 'protobuf==3.20.3' 'requests==2.32.5'
+          "$MONERO_TOOLCHAIN/pyk-venv/bin/python" -m pip install 'protobuf==3.20.3' 'requests==2.32.5' 'pytest==8.4.2' 'pytest-timeout==2.4.0'
           git init --quiet "$MONERO_TOOLCHAIN/nanopb"
           git -C "$MONERO_TOOLCHAIN/nanopb" remote add origin https://github.com/nanopb/nanopb.git
           git -C "$MONERO_TOOLCHAIN/nanopb" fetch --depth 1 origin 7ee9ef9f627d85cbe1b8c4f49a3ed26eed216c77
@@ -117,6 +130,15 @@ jobs:
             --core-source "$RUNNER_TEMP/monero-reference-source" \
             --boost-include "$(brew --prefix boost)/include" \
             --output "$RUNNER_TEMP/monero-reference"
+
+      - name: Verify evidence capture and input preparation contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$MONERO_TOOLCHAIN/pyk-venv/bin/python" -m unittest discover \
+            -s tools/monero-feasibility/commands -p test_screen_capture.py -v
+          "$MONERO_TOOLCHAIN/pyk-venv/bin/python" -m unittest discover \
+            -s tools/monero-feasibility -p test_prepare_core.py -v
 
       - name: Build and test receive-only firmware plus ordinary negative controls
         shell: bash
@@ -181,3 +203,89 @@ jobs:
           path: ${{ runner.temp }}/monero-emulator-artifact/
           if-no-files-found: error
           retention-days: 14
+
+      - name: Prepare authenticated full signing dependencies
+        if: inputs.full_wallet_evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install openssl@3 unbound hidapi gnupg
+          "$MONERO_TOOLCHAIN/pyk-venv/bin/python" -m pip install -e deps/python-keepkey
+          "$MONERO_TOOLCHAIN/pyk-venv/bin/python" tools/monero-feasibility/prepare_core.py \
+            --archives "$RUNNER_TEMP/monero-core-archives" --source "$RUNNER_TEMP/monero-core-source"
+          "$MONERO_TOOLCHAIN/pyk-venv/bin/python" tools/monero-feasibility/prepare_host.py \
+            --output "$RUNNER_TEMP/monero-host-tools"
+
+      - name: Build full Core signing bridge and host adapter
+        if: inputs.full_wallet_evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$MONERO_TOOLCHAIN/pyk-venv/bin/python" tools/monero-feasibility/build_core.py \
+            --source "$RUNNER_TEMP/monero-core-source" --archive-dir "$RUNNER_TEMP/monero-core-archives" \
+            --build-dir "$RUNNER_TEMP/monero-core-build" --output "$RUNNER_TEMP/monero-core-engine" \
+            --openssl-root "$(brew --prefix openssl@3)" --jobs 2
+          "$MONERO_TOOLCHAIN/pyk-venv/bin/python" tools/monero-feasibility/build_host.py \
+            --source "$RUNNER_TEMP/monero-core-source" --archive-dir "$RUNNER_TEMP/monero-core-archives" \
+            --build-dir "$RUNNER_TEMP/monero-core-build" --output "$RUNNER_TEMP/monero-host-adapter" \
+            --openssl-root "$(brew --prefix openssl@3)" --jobs 2
+
+      - name: Run full firmware workflow gates and ordinary regression suites
+        if: inputs.full_wallet_evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$MONERO_TOOLCHAIN/pyk-venv/bin/python" tools/monero-feasibility/wallet_emulator.py \
+            --toolchain-root "$MONERO_TOOLCHAIN" --engine-link "$RUNNER_TEMP/monero-core-engine/core-link.cmake" \
+            --reference "$RUNNER_TEMP/monero-reference/reference.json" \
+            --core-library "$RUNNER_TEMP/monero-reference/core-reference.dylib" \
+            --output "$RUNNER_TEMP/monero-wallet-validation"
+          "$MONERO_TOOLCHAIN/pyk-venv/bin/python" tools/monero-feasibility/compatibility_emulator.py \
+            --build "$RUNNER_TEMP/monero-wallet-validation/build" \
+            --library "$RUNNER_TEMP/monero-wallet-validation/build/lib/libkkemu.dylib" \
+            --output "$RUNNER_TEMP/monero-compatibility"
+          # Native regression targets can regenerate common build inputs.
+          # Freeze after that build and rerun all XMR gates without relinking.
+          "$MONERO_TOOLCHAIN/pyk-venv/bin/python" tools/monero-feasibility/wallet_emulator.py \
+            --toolchain-root "$MONERO_TOOLCHAIN" --engine-link "$RUNNER_TEMP/monero-core-engine/core-link.cmake" \
+            --reference "$RUNNER_TEMP/monero-reference/reference.json" \
+            --core-library "$RUNNER_TEMP/monero-reference/core-reference.dylib" \
+            --existing-build "$RUNNER_TEMP/monero-wallet-validation/build" \
+            --ordinary-library "$RUNNER_TEMP/monero-wallet-validation/ordinary-build/lib/libkkemu.dylib" \
+            --output "$RUNNER_TEMP/monero-final-validation"
+
+      - name: Sign, decode, mine and verify two private-chain payments
+        if: inputs.full_wallet_evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$MONERO_TOOLCHAIN/pyk-venv/bin/python" tools/monero-feasibility/host_emulator.py \
+            --bin-dir "$RUNNER_TEMP/monero-host-tools/bin" \
+            --host-adapter "$RUNNER_TEMP/monero-host-adapter/bin/monero-host-adapter" \
+            --library "$RUNNER_TEMP/monero-wallet-validation/build/lib/libkkemu.dylib" \
+            --core-library "$RUNNER_TEMP/monero-reference/core-reference.dylib" \
+            --reference "$RUNNER_TEMP/monero-reference/reference.json" \
+            --output "$RUNNER_TEMP/monero-host-validation"
+
+      - name: Validate public evidence and render the firmware PDF
+        if: inputs.full_wallet_evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$MONERO_TOOLCHAIN/pyk-venv/bin/python" tools/monero-feasibility/report_evidence.py \
+            --wallet "$RUNNER_TEMP/monero-final-validation" \
+            --host "$RUNNER_TEMP/monero-host-validation" \
+            --compatibility "$RUNNER_TEMP/monero-compatibility" \
+            --output "$RUNNER_TEMP/monero-public-evidence"
+          "$MONERO_TOOLCHAIN/pyk-venv/bin/python" scripts/monero-report.py \
+            --evidence "$RUNNER_TEMP/monero-public-evidence/manifest.json" \
+            --output "$RUNNER_TEMP/monero-public-evidence/monero-firmware-report.pdf"
+
+      - name: Upload only validated public Monero evidence
+        if: inputs.full_wallet_evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: monero-wallet-evidence
+          path: ${{ runner.temp }}/monero-public-evidence/
+          if-no-files-found: error
+          retention-days: 90

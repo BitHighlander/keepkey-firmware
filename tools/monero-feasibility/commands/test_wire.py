@@ -25,6 +25,7 @@ ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 WIDTH = [0, 2, 3, 5, 6, 7, 9, 10, 11]
 TAGS = {0: (18, 42), 1: (53, 63), 2: (24, 36)}
 RETAINED_SESSIONS = []  # Preserve flash/library ownership if bounded shutdown fails.
+MAX_UNIQUE_CAPTURED_FRAMES = 1024  # Bound disk use; exceeding it fails evidence collection.
 
 
 def sha(data):
@@ -226,15 +227,17 @@ class Session:
                 h = sha(pixels)
                 if h in self.frame_hashes:
                     continue
+                if len(self.frames) >= MAX_UNIQUE_CAPTURED_FRAMES:
+                    raise RuntimeError("OLED evidence frame limit exceeded; capture cannot be reported as complete")
+                stem = f"{self.label}-{len(self.frames):03d}-{name}"
+                raw_path, pgm_path = f"{stem}.bin", f"{stem}.pgm"
+                (self.out / raw_path).write_bytes(pixels)
+                pgm = bytes(255 if pixels[x + (y // 8) * 256] & (1 << (y % 8)) else 0
+                            for y in range(64) for x in range(256))
+                (self.out / pgm_path).write_bytes(b"P5\n256 64\n255\n" + pgm)
+                self.frames.append({"name": name, "sha256": h, "path": pgm_path, "raw_path": raw_path})
                 self.frame_hashes.add(h)
                 found.append(h)
-                if len(self.frames) < 128:
-                    stem = f"{self.label}-{len(self.frames):03d}-{name}"
-                    (self.out / f"{stem}.bin").write_bytes(pixels)
-                    pgm = bytes(255 if pixels[x + (y // 8) * 256] & (1 << (y % 8)) else 0
-                                for y in range(64) for x in range(256))
-                    (self.out / f"{stem}.pgm").write_bytes(b"P5\n256 64\n255\n" + pgm)
-                    self.frames.append({"name": name, "sha256": h, "path": f"{stem}.pgm"})
             if found or time.monotonic() >= end:
                 return found
             time.sleep(.002)

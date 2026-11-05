@@ -1,5 +1,10 @@
 # Monero feasibility experiment
 
+The [firmware PDF evidence workflow](REPORT.md) records actual address, amount,
+fee and signing screens, decoded transaction data, private-chain mining and
+recipient credits, refusal cases and ordinary firmware regressions against the
+same native research artifact. It also states the remaining MCU signing gaps.
+
 A separate [private mainnet receiving workflow](PRIVATE_MAINNET.md) generates
 a fresh seed, stores encrypted flash with a dedicated OS Keychain key,
 verifies restoration in a second process and runs a local view-only monitor.

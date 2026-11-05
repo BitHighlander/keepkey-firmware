@@ -29,7 +29,10 @@ def main():
     parser.add_argument("--build-dir", type=Path)
     parser.add_argument("--archive-dir", type=Path)
     parser.add_argument("--openssl-root", type=Path, default=Path("/opt/homebrew/opt/openssl@3"))
+    parser.add_argument("--jobs", type=int, default=8, help="Maximum native build parallelism")
     args = parser.parse_args()
+    if not 1 <= args.jobs <= 32:
+        parser.error("--jobs must be between 1 and 32")
     source, out = args.source.resolve(), args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
     if any(out.iterdir()):
@@ -81,7 +84,7 @@ def main():
          f"-DOPENSSL_INCLUDE_DIR={openssl / 'include'}", f"-DOPENSSL_SSL_LIBRARY={openssl / 'lib/libssl.dylib'}",
          f"-DOPENSSL_CRYPTO_LIBRARY={openssl / 'lib/libcrypto.dylib'}",
          f"-DCMAKE_PROJECT_monero_INCLUDE={hook}"], "configure.log")
-    run(["cmake", "--build", str(build), "--target", "monero_host_adapter", "-j8"], "build.log")
+    run(["cmake", "--build", str(build), "--target", "monero_host_adapter", f"-j{args.jobs}"], "build.log")
     executable = out / "bin/monero-host-adapter"
     if not executable.is_file():
         raise RuntimeError("Expected compiled host adapter executable")

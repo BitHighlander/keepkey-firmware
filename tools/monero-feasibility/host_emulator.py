@@ -7,6 +7,7 @@ selects real chain outputs and decoys; the emulator authorizes both spends.
 """
 import argparse
 import ctypes
+import datetime
 import hashlib
 import importlib.util
 import json
@@ -226,7 +227,8 @@ def main():
     sodium = key_images.Sodium()
     checks = wire.Checks()
     processes = Processes(out)
-    rpc_log, stages, transactions = [], [], []
+    rpc_log, stages, transactions, rejections = [], [], [], []
+    started_utc = datetime.datetime.now(datetime.timezone.utc).isoformat()
     session = None
     daemon_port, p2p_port, faucet_port, watch_port, recipient_port = ports(5)
     daemon = Rpc("daemon", daemon_port, rpc_log)
@@ -243,6 +245,8 @@ def main():
     def write_report(lifecycle):
         report = {"schema_version": 1, "status": status, "error": failure, "stages": stages,
                   "checks": checks.items, "check_count": len(checks.items), "transactions": transactions,
+                  "rejection_cases": rejections, "started_utc": started_utc,
+                  "finished_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                   "endpoints": endpoints, "network": "isolated offline regtest (mainnet-format fixture addresses)",
                   "scope": "stock daemon and watch-only wallet RPC with emulator view export, encrypted key images, two authorized spends and real local-chain confirmation",
                   "funding": "ordinary confidential faucet transfer funded by private-chain block rewards",
@@ -340,6 +344,55 @@ def main():
         (out / f"{label}-key-images.json").write_text(json.dumps({"offset": offset, "proofs": proofs, "import_result": result}, indent=2)+"\n")
         return encoded, items, result
 
+    def signing_context_zero():
+        library = session.lib
+        library.monero_signing_state_is_zero.argtypes = []
+        library.monero_signing_state_is_zero.restype = ctypes.c_bool
+        deadline = time.monotonic() + 2
+        while not library.kkemu_trylock():
+            if time.monotonic() > deadline:
+                raise RuntimeError("signing-context observer could not acquire firmware lock")
+            time.sleep(.001)
+        try:
+            return library.monero_signing_state_is_zero()
+        finally:
+            library.kkemu_unlock()
+
+    def reject_signing(plan, role):
+        """Exercise a real review rejection before either private-chain spend."""
+        label = f"reject-{role}"
+        session.send(65000, signing.encode_plan(plan))
+        screens, rejected = [], False
+        for _ in range(64):
+            msg = session.receive(60)
+            if msg is None or msg[0] != 26:
+                raise RuntimeError("expected a real review before cancellation")
+            meta = session.observe_screen(label + f"-review-{len(screens)}")
+            is_target = ((role == "fee" and meta["title"] == "Monero transaction") or
+                         (role == "output" and "Output 1/" in meta["body"]) or
+                         (role == "final" and meta["title"] == "Sign Monero tx"))
+            meta["approval"] = "rejected" if is_target else "approved"
+            screens.append(meta)
+            session.log.append({"direction": "screen", **meta})
+            session.send(27)
+            session.send(100, wire.fv(1, int(not is_target)), iface=1)
+            if is_target:
+                terminal = session.receive(60)
+                wire.failure(checks, label + "-no-signature-returned", terminal, [4])
+                checks.record(label + "-no-late-transaction", session.receive(.03) is None)
+                checks.record(label + "-derived-node-zero", session.derived_node_zero())
+                checks.record(label + "-signing-context-zero", signing_context_zero())
+                pool = daemon.post("/get_transaction_pool", {})
+                checks.record(label + "-private-chain-pool-empty", not pool.get("transactions"))
+                rejections.append({"name": label, "target": role, "review_screens": screens,
+                                   "terminal_type": terminal[0], "failure_code": 4,
+                                   "signed_response_returned": False, "pool_empty": True,
+                                   "derived_node_zero": True, "signing_context_zero": True})
+                rejected = True
+                break
+        if not rejected:
+            raise RuntimeError("requested cancellation stage was not reached")
+
     def make_signed(number, amount, outputs_hex, allowed_inputs):
         label = f"send-{number}"
         selected = watch.call("transfer", {"destinations": [{"address": recipient_address, "amount": amount}],
@@ -359,6 +412,9 @@ def main():
             checks.record(label+f"-selected-input-{len(real_keys)}-is-owned-unspent-output", real in allowed_inputs and real in imported)
             real_keys.append(real)
             expected_images[imported[real]["key_image"]] = source
+        if number == 1:
+            for role in ["fee", "output", "final"]:
+                reject_signing(plan, role)
         session.send(65000, signing.encode_plan(plan))
         screens = []
         while True:
@@ -368,6 +424,7 @@ def main():
             if msg[0] != 26:
                 break
             meta = session.observe_screen(label+f"-review-{len(screens)}")
+            meta["approval"] = "approved"
             screens.append(meta)
             session.log.append({"direction": "screen", **meta})
             if len(screens) == 1:
@@ -406,12 +463,39 @@ def main():
             checks.record(label+f"-output-{i}-full-address-reviewed", bytes(dest.address).decode() in bodies)
             checks.record(label+f"-output-{i}-exact-amount-reviewed", len(details) == 1 and signing.displayed_atomic(details[0], "Amount") == dest.amount)
         checks.record(label+"-derived-node-zero-after-signing", session.derived_node_zero())
+        checks.record(label+"-signing-context-zero-after-signing", signing_context_zero())
         (out / f"{label}.tx.bin").write_bytes(blob)
         (out / f"{label}.tx.hex").write_text(blob.hex()+"\n")
+        primary, additional = signing.transaction_public_keys(parsed["extra"])
+        decoded_outputs = []
+        for output_index, (public_output, (plan_index, decoded_amount)) in enumerate(zip(parsed["outputs"], scanned)):
+            destination = plan.destinations[plan_index]
+            if decoded_amount != destination.amount:
+                raise RuntimeError("recipient scan did not match the reviewed amount")
+            decoded_outputs.append({"tx_output_index": output_index, "plan_output_index": plan_index,
+                                    "address": bytes(destination.address).decode(),
+                                    "role": "change" if destination.is_change else "recipient",
+                                    "amount_atomic": str(decoded_amount),
+                                    "one_time_public_key": public_output["public_key"].hex(),
+                                    "view_tag": public_output["view_tag"].hex(),
+                                    "encrypted_amount": public_output["encrypted_amount"].hex(),
+                                    "commitment": public_output["commitment"].hex(),
+                                    "commitment_verified": True, "view_tag_verified": True,
+                                    "decoding_method": "independent recipient-view-key scan and Pedersen commitment verification"})
         entry = {"number": number, "tx_hash": tx_hash.hex(), "bytes": len(blob), "fee": plan.fee,
                  "recipient_amount": amount, "input_count": plan.input_count, "output_count": plan.output_count,
+                 "input_total_atomic": str(sum(source.amount for source in plan.sources[:plan.input_count])),
+                 "change_amount_atomic": str(sum(destination.amount for destination in plan.destinations[:plan.output_count] if destination.is_change)),
                  "real_output_keys": real_keys, "key_images": list(expected_images),
-                 "independent_scanned_outputs": scanned, "review_stages": [s["title"] for s in screens]}
+                 "independent_scanned_outputs": scanned, "review_stages": [s["title"] for s in screens],
+                 "review_screens": screens,
+                 "public_decoding": {"version": parsed["version"], "unlock_time": parsed["unlock_time"],
+                                     "rct_type": parsed["rct_type"], "fee_atomic": str(parsed["fee"]),
+                                     "inputs": parsed["inputs"], "transaction_public_key": primary.hex(),
+                                     "additional_transaction_public_keys": [key.hex() for key in additional],
+                                     "bulletproof_plus_rounds": parsed["bulletproof_plus_rounds"]},
+                 "decoded_outputs": decoded_outputs, "official_core_verified": True,
+                 "raw_tx_sha256": digest(blob)}
         transactions.append(entry)
         return blob, entry
 
@@ -425,11 +509,31 @@ def main():
         checks.record(f"send-{number}-watch-change-balance-confirmed", remaining["balance"] == expected_balance and remaining["unlocked_balance"] == expected_balance)
         spent = daemon.post("/is_key_image_spent", {"key_images": entry["key_images"]})
         checks.record(f"send-{number}-input-key-images-spent-on-chain", spent.get("spent_status") == [1] * len(entry["key_images"]))
+        chain_result = daemon.post("/get_transactions", {"txs_hashes": [entry["tx_hash"]],
+                                                        "decode_as_json": True, "prune": False})
+        chain = chain_result.get("txs", [])
+        checks.record(f"send-{number}-exact-signed-bytes-mined", len(chain) == 1 and
+                      chain[0].get("tx_hash") == entry["tx_hash"] and not chain[0].get("in_pool", True) and
+                      bytes.fromhex(chain[0].get("as_hex", "")) == blob)
+        chain = chain[0]
+        payment = recipient.call("get_transfer_by_txid", {"txid": entry["tx_hash"], "account_index": 0})["transfer"]
+        checks.record(f"send-{number}-stock-recipient-decoded-exact-payment", payment.get("txid") == entry["tx_hash"] and
+                      payment.get("amount") == entry["recipient_amount"] and payment.get("type") == "in" and
+                      payment.get("height") == chain.get("block_height"))
         incoming = watch.call("incoming_transfers", {"transfer_type": "all", "account_index": 0})
         by_image = {x.get("key_image"): x for x in incoming.get("transfers", [])}
         checks.record(f"send-{number}-watch-wallet-tracks-spent-inputs", all(by_image.get(image, {}).get("spent") for image in entry["key_images"]))
         entry.update({"confirmed_height": height, "recipient_balance": received["balance"],
-                      "watch_balance": remaining["balance"], "unlocked_change": remaining["unlocked_balance"]})
+                      "watch_balance": remaining["balance"], "unlocked_change": remaining["unlocked_balance"],
+                      "daemon_accepted": accepted.get("status") == "OK", "daemon_acceptance": accepted,
+                      "key_images_spent": spent.get("spent_status"),
+                      "recipient_payment_found": received["balance"] == sum(SEND_AMOUNTS[:number]),
+                      "chain_receipt": {"txid": chain["tx_hash"], "block_height": chain["block_height"],
+                                        "confirmations": chain["confirmations"], "in_pool": chain["in_pool"],
+                                        "raw_tx_sha256": digest(bytes.fromhex(chain["as_hex"]))},
+                      "recipient_receipt": {"txid": payment["txid"], "amount_atomic": str(payment["amount"]),
+                                            "height": payment["height"], "confirmations": payment["confirmations"],
+                                            "type": payment["type"]}})
         return remaining
 
     if args.keep_running:
