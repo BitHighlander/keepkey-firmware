@@ -135,6 +135,12 @@ class PublicExport(unittest.TestCase):
             if path.is_file(): self.assertNotIn(b"CANARY-MUST-NEVER-BE-EXPORTED", path.read_bytes())
         self.assertEqual(2, len(fixture.report.validate_evidence(result["manifest"])["manifest"]["transactions"]))
 
+    def test_repeated_unselected_setup_labels_do_not_hide_selected_screen_order(self):
+        setup = {"direction": "screen", "label": "message530-confirm0", "title": "Synchronize",
+                 "body": "SYNTHETIC UNIT SETUP", "frame_sha256": "f" * 64}
+        self.wire += [setup, copy.deepcopy(setup), copy.deepcopy(setup)]
+        self.assertEqual(11, self.export()["screens"])
+
     def test_stale_wallet_artifact_cannot_be_exported(self):
         self.wallet["shared_library_sha256"] = "0" * 64
         with self.assertRaisesRegex(exporter.pdf.EvidenceError, "unchanged dylib"):

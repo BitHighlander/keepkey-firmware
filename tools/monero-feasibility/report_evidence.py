@@ -107,16 +107,18 @@ def export(wallet_dir, host_dir, compatibility_dir, output):
 
     frames = {item["sha256"]: item for item in host["frames"]}
     observed = [item for item in read_json(host_dir / "host-emulator-wire.json") if item.get("direction") == "screen"]
-    labels = {item["label"]: (index, item) for index, item in enumerate(observed)}
-    require(len(labels) == len(observed), "Observed screen labels are ambiguous")
+    labels = {}
+    for index, item in enumerate(observed):
+        labels.setdefault(item["label"], []).append((index, item))
     screens = []
 
     def screen(meta, role, approval):
         require(meta.get("label") in labels and meta.get("frame_sha256") in frames,
                 "A reviewed screen has no retained raw firmware frame")
-        sequence, logged = labels[meta["label"]]
-        require(all(meta.get(field) == logged.get(field) for field in ("frame_sha256", "title", "body")),
-                "Screen metadata does not match its actual observed wire event")
+        matches = [(index, item) for index, item in labels[meta["label"]]
+                   if all(meta.get(field) == item.get(field) for field in ("frame_sha256", "title", "body"))]
+        require(len(matches) == 1, "Selected screen does not bind to one actual observed wire event")
+        sequence, logged = matches[0]
         frame = frames[meta["frame_sha256"]]
         _, raw = pdf.public_file(host_dir, frame["raw_path"], meta["frame_sha256"], 2048)
         pixels = pdf.raw_pixels(raw)
