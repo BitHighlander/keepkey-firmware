@@ -185,7 +185,10 @@ def main():
             scratch.mkdir()
             binary = build / "bin" / name
             report = scratch / "junit.xml"
-            code = run([binary, "--gtest_output=xml:" + str(report)], name, scratch)
+            # The full alpha firmware suite already takes about 12 minutes in
+            # ordinary CI; retain its controls instead of timing out at ten.
+            code = run([binary, "--gtest_output=xml:" + str(report)], name, scratch,
+                       timeout=1200 if name == "firmware-unit" else 600)
             result = junit(report) if report.exists() else {"tests": 0, "failures": 0, "errors": 1, "skipped": 0}
             native.append({"name": name, "returncode": code, "binary": str(binary),
                            "binary_sha256": sha(binary), "junit": str(report.relative_to(out)),

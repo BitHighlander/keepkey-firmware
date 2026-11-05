@@ -111,6 +111,7 @@ def main():
             stream.flush()
             completed = subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT)
         if completed.returncode:
+            print((out / log).read_text(errors="replace")[-24000:], file=sys.stderr)
             raise RuntimeError(f"Core build failed: {out / log}")
 
     run(["cmake", "-S", str(source), "-B", str(build), "-DMANUAL_SUBMODULES=ON",

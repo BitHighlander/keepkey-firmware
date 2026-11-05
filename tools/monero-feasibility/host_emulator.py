@@ -48,6 +48,18 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def rejection_target(meta, role, fee):
+    """Select the actual visible review page, including paginated fee reviews."""
+    if role == "fee":
+        return (meta["title"].startswith("Monero transaction") and
+                signing.displayed_atomic(meta["body"], "Fee") == fee)
+    if role == "output":
+        return "Output 1/" in meta["body"]
+    if role == "final":
+        return meta["title"] == "Sign Monero tx"
+    raise ValueError(f"unknown rejection target: {role}")
+
+
 class Rpc:
     def __init__(self, name, port, transcript):
         self.name = name
@@ -368,9 +380,7 @@ def main():
             if msg is None or msg[0] != 26:
                 raise RuntimeError("expected a real review before cancellation")
             meta = session.observe_screen(label + f"-review-{len(screens)}")
-            is_target = ((role == "fee" and meta["title"] == "Monero transaction") or
-                         (role == "output" and "Output 1/" in meta["body"]) or
-                         (role == "final" and meta["title"] == "Sign Monero tx"))
+            is_target = rejection_target(meta, role, plan.fee)
             meta["approval"] = "rejected" if is_target else "approved"
             screens.append(meta)
             session.log.append({"direction": "screen", **meta})

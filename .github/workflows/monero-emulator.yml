@@ -139,6 +139,8 @@ jobs:
             -s tools/monero-feasibility/commands -p test_screen_capture.py -v
           "$MONERO_TOOLCHAIN/pyk-venv/bin/python" -m unittest discover \
             -s tools/monero-feasibility -p test_prepare_core.py -v
+          "$MONERO_TOOLCHAIN/pyk-venv/bin/python" -m unittest discover \
+            -s tools/monero-feasibility -p test_host_review.py -v
 
       - name: Build and test receive-only firmware plus ordinary negative controls
         shell: bash
@@ -209,7 +211,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          brew install openssl@3 unbound hidapi gnupg
+          # Core requires ZeroMQ headers/libraries during configuration even
+          # when only its native signing bridge and wallet adapter are built.
+          brew install openssl@3 unbound hidapi gnupg zeromq
           "$MONERO_TOOLCHAIN/pyk-venv/bin/python" -m pip install -e deps/python-keepkey
           "$MONERO_TOOLCHAIN/pyk-venv/bin/python" tools/monero-feasibility/prepare_core.py \
             --archives "$RUNNER_TEMP/monero-core-archives" --source "$RUNNER_TEMP/monero-core-source"
@@ -289,3 +293,14 @@ jobs:
           path: ${{ runner.temp }}/monero-public-evidence/
           if-no-files-found: error
           retention-days: 90
+
+      - name: Retain public compiler diagnostics on failure
+        if: failure() && inputs.full_wallet_evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: monero-build-diagnostics
+          path: |
+            ${{ runner.temp }}/monero-core-engine/*.log
+            ${{ runner.temp }}/monero-host-adapter/*.log
+          if-no-files-found: warn
+          retention-days: 14
