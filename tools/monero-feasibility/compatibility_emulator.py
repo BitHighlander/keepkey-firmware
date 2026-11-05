@@ -91,8 +91,19 @@ def main():
     parser.add_argument("--build", type=Path, required=True)
     parser.add_argument("--library", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--resume-from", type=Path,
+                        help="Continue unfinished cases from an unchanged timed-out run without rebuilding")
+    parser.add_argument("--validation-tools-commit",
+                        help="Reviewable helper/dispatcher revision required for --resume-from")
     parser.add_argument("--screenshot-worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.resume_from:
+        if args.screenshot_worker or not args.validation_tools_commit:
+            parser.error("--resume-from requires --validation-tools-commit and cannot run a screenshot worker")
+        return subprocess.call([sys.executable, str(HERE / "resume_compatibility.py"),
+                                "--input", str(args.resume_from), "--output", str(args.output),
+                                "--library", str(args.library),
+                                "--validation-tools-commit", args.validation_tools_commit])
     build, library, out = args.build.resolve(), args.library.resolve(), args.output.resolve()
     if args.screenshot_worker:
         return screenshot_worker(out)

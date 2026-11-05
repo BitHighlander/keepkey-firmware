@@ -138,6 +138,10 @@ jobs:
           "$MONERO_TOOLCHAIN/pyk-venv/bin/python" -m unittest discover \
             -s tools/monero-feasibility/commands -p test_screen_capture.py -v
           "$MONERO_TOOLCHAIN/pyk-venv/bin/python" -m unittest discover \
+            -s tools/monero-feasibility/commands -p test_rpc_deadline.py -v
+          "$MONERO_TOOLCHAIN/pyk-venv/bin/python" -m unittest discover \
+            -s tools/monero-feasibility -p test_resume_compatibility.py -v
+          "$MONERO_TOOLCHAIN/pyk-venv/bin/python" -m unittest discover \
             -s tools/monero-feasibility -p test_prepare_core.py -v
           "$MONERO_TOOLCHAIN/pyk-venv/bin/python" -m unittest discover \
             -s tools/monero-feasibility -p test_host_review.py -v
