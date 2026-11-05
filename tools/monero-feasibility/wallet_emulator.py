@@ -56,6 +56,7 @@ def main():
             log.flush()
             result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, env=env)
         if result.returncode:
+            print((out / (name + ".log")).read_text(errors="replace")[-24000:], file=sys.stderr)
             raise RuntimeError(f"failed: {out / (name + '.log')}")
 
     configuration = ["-DKK_EMULATOR=ON", "-DKK_BUILD_DYLIB=ON", "-DKK_DEBUG_LINK=ON",

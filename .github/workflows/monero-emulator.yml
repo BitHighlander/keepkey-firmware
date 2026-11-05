@@ -294,7 +294,7 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - name: Retain public compiler diagnostics on failure
+      - name: Retain public build and fixture diagnostics on failure
         if: failure() && inputs.full_wallet_evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -302,5 +302,7 @@ jobs:
           path: |
             ${{ runner.temp }}/monero-core-engine/*.log
             ${{ runner.temp }}/monero-host-adapter/*.log
+            ${{ runner.temp }}/monero-wallet-validation/*.log
+            ${{ runner.temp }}/monero-final-validation/*.log
           if-no-files-found: warn
           retention-days: 14
