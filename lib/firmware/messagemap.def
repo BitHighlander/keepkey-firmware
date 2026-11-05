@@ -1,4 +1,22 @@
     /* Normal Messages */
+#ifdef KK_MONERO_EMULATOR_RESEARCH
+    MSG_IN(MessageType_MessageType_MoneroGetAddress,                MoneroGetAddress,            fsm_msgMoneroGetAddress)
+    MSG_OUT(MessageType_MessageType_MoneroAddress,                  MoneroAddress,               NO_PROCESS_FUNC)
+    MSG_IN(MessageType_MessageType_MoneroGetWatchKey,                MoneroGetWatchKey,            fsm_msgMoneroGetWatchKey)
+    MSG_OUT(MessageType_MessageType_MoneroWatchKey,                  MoneroWatchKey,               NO_PROCESS_FUNC)
+#ifdef KK_MONERO_KEY_IMAGE_PROTOCOL
+    MSG_IN(MessageType_MessageType_MoneroKeyImageExportInitRequest,  MoneroKeyImageExportInitRequest, fsm_msgMoneroKeyImageExportInit)
+    MSG_OUT(MessageType_MessageType_MoneroKeyImageExportInitAck,     MoneroKeyImageExportInitAck,  NO_PROCESS_FUNC)
+    MSG_IN(MessageType_MessageType_MoneroKeyImageSyncStepRequest,    MoneroKeyImageSyncStepRequest, fsm_msgMoneroKeyImageSyncStep)
+    MSG_OUT(MessageType_MessageType_MoneroKeyImageSyncStepAck,       MoneroKeyImageSyncStepAck,    NO_PROCESS_FUNC)
+    MSG_IN(MessageType_MessageType_MoneroKeyImageSyncFinalRequest,   MoneroKeyImageSyncFinalRequest, fsm_msgMoneroKeyImageSyncFinal)
+    MSG_OUT(MessageType_MessageType_MoneroKeyImageSyncFinalAck,      MoneroKeyImageSyncFinalAck,   NO_PROCESS_FUNC)
+#endif
+#ifdef KK_MONERO_CORE_SIGNING
+    MSG_IN(MessageType_MessageType_MoneroResearchSignTransaction,   MoneroResearchSignTransaction, fsm_msgMoneroResearchSignTransaction)
+    MSG_OUT(MessageType_MessageType_MoneroResearchSignedTransaction, MoneroResearchSignedTransaction, NO_PROCESS_FUNC)
+#endif
+#endif
     MSG_IN(MessageType_MessageType_Initialize,                      Initialize,                  fsm_msgInitialize)
     MSG_IN(MessageType_MessageType_GetFeatures,                     GetFeatures,                 fsm_msgGetFeatures)
     MSG_IN(MessageType_MessageType_GetCoinTable,                    GetCoinTable,                fsm_msgGetCoinTable)

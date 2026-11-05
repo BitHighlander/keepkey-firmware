@@ -44,6 +44,12 @@
 #include "keepkey/board/variant.h"
 #include "keepkey/firmware/authenticator.h"
 #include "keepkey/firmware/fsm.h"
+#ifdef KK_MONERO_CORE_SIGNING
+#include "signing-plan.h"
+#endif
+#ifdef KK_MONERO_KEY_IMAGE_PROTOCOL
+#include "key-image.h"
+#endif
 #include "keepkey/firmware/passphrase_sm.h"
 #include "keepkey/firmware/policy.h"
 #include "keepkey/firmware/reset.h"
@@ -2010,6 +2016,12 @@ void storage_clearKeys(void) {
 }
 
 void session_clear(bool clear_pin) {
+#ifdef KK_MONERO_CORE_SIGNING
+  monero_signing_abort();
+#endif
+#ifdef KK_MONERO_KEY_IMAGE_PROTOCOL
+  monero_key_image_abort();
+#endif
   /* Every session loss is an authorization boundary even when Initialize asks
    * to preserve the cached PIN. Abort signing and discard all plaintext
    * setup/authenticator state before the caller can report success.

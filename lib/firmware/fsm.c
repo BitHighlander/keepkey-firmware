@@ -104,6 +104,19 @@
 #include "messages-zcash.pb.h"
 #include "messages-hive.pb.h"
 
+#ifdef KK_MONERO_EMULATOR_RESEARCH
+#ifndef EMULATOR
+#error "Monero wallet research is supported only by the native emulator"
+#endif
+#include "research-schema.h"
+#ifdef KK_MONERO_CORE_SIGNING
+#include "signing-plan.h"
+#endif
+#ifdef KK_MONERO_KEY_IMAGE_PROTOCOL
+#include "key-image.h"
+#endif
+#endif
+
 #include <stdio.h>
 /* strnlen: the THORChain memo paths measure fixed arrays rather than
    trusting their capacity. Included explicitly instead of relying on the
@@ -300,7 +313,7 @@ static const MessagesMap_t MessagesMap[] = {
 #undef DEBUG_OUT
 #define DEBUG_OUT(ID, STRUCT_NAME, PROCESS_FUNC) case ID:
 
-static void __attribute__((unused)) fsm_messageIdsAreUnique(MessageType id) {
+static void __attribute__((unused)) fsm_messageIdsAreUnique(uint32_t id) {
   switch (id) {
 #include "messagemap.def"
     default:
@@ -437,6 +450,12 @@ static void sendFailureWrapper(FailureType code, const char* text) {
 
 /* True while a setup ceremony is armed or any signer waits for the host. */
 bool fsm_workflowInProgress(void) {
+#ifdef KK_MONERO_CORE_SIGNING
+  if (monero_signing_active()) return true;
+#endif
+#ifdef KK_MONERO_KEY_IMAGE_PROTOCOL
+  if (monero_key_image_active()) return true;
+#endif
   if (setup_isArmed() || signing_is_active()) return true;
 #if !BITCOIN_ONLY
   if (ethereum_signing_isInProgress() ||
@@ -464,6 +483,12 @@ static uint32_t entropy_audit_approved_remaining;
 void fsm_revoke_entropy_audit(void) { entropy_audit_approved_remaining = 0; }
 
 void fsm_init(void) {
+#ifdef KK_MONERO_CORE_SIGNING
+  monero_signing_abort();
+#endif
+#ifdef KK_MONERO_KEY_IMAGE_PROTOCOL
+  monero_key_image_abort();
+#endif
   entropy_audit_approved_remaining = 0;
   msg_map_init(MessagesMap, sizeof(MessagesMap) / sizeof(MessagesMap_t));
   set_msg_failure_handler(&sendFailureWrapper);
@@ -497,6 +522,18 @@ static bool reject_stale_continuation(const char* text) {
 }
 
 static bool fsm_dispatchGate(MessageType msg_id) {
+#ifdef KK_MONERO_KEY_IMAGE_PROTOCOL
+  if (msg_id == MessageType_MessageType_MoneroKeyImageSyncStepRequest ||
+      msg_id == MessageType_MessageType_MoneroKeyImageSyncFinalRequest) {
+    if (!monero_key_image_active())
+      return reject_stale_continuation("Monero key-image sync not in progress");
+    return true;
+  }
+  if (msg_id != MessageType_MessageType_GetFeatures &&
+      msg_id != MessageType_MessageType_GetCoinTable) {
+    monero_key_image_abort();
+  }
+#endif
   switch (msg_id) {
     case MessageType_MessageType_GetFeatures:
     case MessageType_MessageType_GetCoinTable:
@@ -747,6 +784,12 @@ void fsm_abort_workflows(void) {
 /* End every signing engine. A preloaded ERC-7730 definition that no review
  * has started on is kept, for the signing request that consumes it. */
 static void abort_signing_engines(void) {
+#ifdef KK_MONERO_CORE_SIGNING
+  monero_signing_abort();
+#endif
+#ifdef KK_MONERO_KEY_IMAGE_PROTOCOL
+  monero_key_image_abort();
+#endif
   signing_abort();
 #if !BITCOIN_ONLY
   ethereum_signing_abort();
@@ -824,6 +867,16 @@ void fsm_msgClearSession(ClearSession* msg) {
 /* After fsm_msg_solana.h: reuses its base58 helper and the KKSOLSC1 parser. */
 #include "fsm_msg_clearsign_attestor.h"
 #include "fsm_msg_hive.h"
+#ifdef KK_MONERO_EMULATOR_RESEARCH
+#include "fsm_msg_monero_research.h"
+#include "fsm_msg_monero_watch.h"
+#ifdef KK_MONERO_CORE_SIGNING
+#include "fsm_msg_monero_sign.h"
+#endif
+#ifdef KK_MONERO_KEY_IMAGE_PROTOCOL
+#include "fsm_msg_monero_key_image.h"
+#endif
+#endif
 #else
 // The coin engines above are compiled out, and every call to these hooks is
 // compiled out with them. The no-ops keep the symbols defined in this

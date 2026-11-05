@@ -1,0 +1,30 @@
+MoneroGetAddress.address_n   max_count:3
+MoneroGetAddress.payment_id  max_size:8
+MoneroAddress.address        max_size:95
+MoneroGetWatchKey.address_n  max_count:3
+MoneroWatchKey.watch_key     max_size:32
+MoneroWatchKey.address       max_size:95
+MoneroKeyImageExportInitRequest.hash       max_size:32
+MoneroKeyImageExportInitRequest.address_n  max_count:3
+MoneroKeyImageExportInitRequest.subs       max_count:4
+MoneroSubAddressIndicesList.minor_indices  max_count:8
+MoneroTransferDetails.out_key                 max_size:32
+MoneroTransferDetails.tx_pub_key              max_size:32
+MoneroTransferDetails.additional_tx_pub_keys  max_count:16 max_size:32
+MoneroKeyImageSyncStepRequest.tdis  max_count:4
+MoneroExportedKeyImage.iv           max_size:12
+MoneroExportedKeyImage.blob         max_size:112
+MoneroKeyImageSyncStepAck.kis       max_count:4
+MoneroKeyImageSyncFinalAck.enc_key  max_size:32
+MoneroResearchRingMember.public_key   max_size:32
+MoneroResearchRingMember.commitment   max_size:32
+MoneroResearchSource.tx_public_key    max_size:32
+MoneroResearchSource.mask             max_size:32
+MoneroResearchSource.ring             max_count:16
+MoneroResearchSource.additional_tx_public_keys max_count:16 max_size:32
+MoneroResearchDestination.address     max_size:96
+MoneroResearchSignTransaction.address_n max_count:3
+MoneroResearchSignTransaction.inputs  max_count:4
+MoneroResearchSignTransaction.outputs max_count:4
+MoneroResearchSignedTransaction.tx_blob max_size:16384
+MoneroResearchSignedTransaction.tx_hash max_size:32
