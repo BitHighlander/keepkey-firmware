@@ -149,8 +149,11 @@ jobs:
               'stages': {name: {'status': stage['status'], 'checks': len(stage.get('checks', []))}
                          for name, stage in report['reports'].items()},
           }
+          public_payload = json.dumps(public_report, indent=2) + '\n'
+          manifest['source']['rawValidationReportSha256'] = manifest['source']['validationReportSha256']
+          manifest['source']['validationReportSha256'] = hashlib.sha256(public_payload.encode()).hexdigest()
           (bundle / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
-          (bundle / 'validation.json').write_text(json.dumps(public_report, indent=2) + '\n')
+          (bundle / 'validation.json').write_text(public_payload)
           (bundle / 'source-sha256.json').write_text(json.dumps(report['source_sha256'], indent=2) + '\n')
           print(json.dumps(public_report, indent=2))
           PY
