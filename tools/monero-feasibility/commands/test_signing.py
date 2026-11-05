@@ -328,7 +328,7 @@ def main():
         payload = b"".join(wire.fv(1, n) for n in [0x8000002c, 0x80000080, 0x80000000]) + wire.fv(3, 0)
         session = wire.Session(args.library.resolve(), out, "ordinary-signing")
         try:
-            msg, events, _ = session.rpc(65000, payload)
+            msg, events, _ = session.rpc(65000, payload, context="ordinary-signing-disabled")
             code = wire.only(wire.fields(msg[1]), 1) if msg[0] == 3 else None
             if msg[0] != 3 or code != 1 or events != [3]:
                 raise RuntimeError("ordinary emulator must refuse research signing")
@@ -389,7 +389,7 @@ def main():
         screens, events = [], []
         for _ in range(96):
             msg = session.receive(60)
-            if not msg: raise RuntimeError("signing response timed out")
+            if not msg: raise RuntimeError(f"signing {label} response timed out (deadline 60s)")
             events.append(msg[0])
             if msg[0] == 26:
                 meta = session.observe_screen(label + f"-review{len(screens)}")
@@ -467,7 +467,7 @@ def main():
         return screens
 
     try:
-        msg, _, _ = session.rpc(65000, encode_plan(plan))
+        msg, _, _ = session.rpc(65000, encode_plan(plan), context="missing-wallet")
         wire.failure(checks, "missing-wallet-cannot-sign", msg, [11])
         wire.load_wallet(session, checks, "abandon")
         screens = check_signed(plan, input_cases, recipients, "base-input", hold=True)
@@ -529,12 +529,12 @@ def main():
         invalid += [("nonzero-unlock-time", plan, {"unlock": 1}),
                     ("wrong-wallet-path", plan, {"path": [0x8000002c, 0x80000081, 0x80000000]})]
         for label, p, options in invalid:
-            msg, events, _ = session.rpc(65000, encode_plan(p, **options))
+            msg, events, _ = session.rpc(65000, encode_plan(p, **options), context=label)
             wire.failure(checks, label, msg, [1, 3, 9])
             checks.record(label + "-no-user-prompt", 26 not in events and 65001 not in events)
             checks.record(label + "-no-late-signed-tx", session.receive(.025) is None)
             checks.record(label + "-signing-state-wiped", state_zero())
-        msg, _, _ = session.rpc(65000, b"\x22\x80")
+        msg, _, _ = session.rpc(65000, b"\x22\x80", context="malformed-signing-protobuf")
         wire.failure(checks, "malformed-signing-protobuf", msg, [1, 3])
 
         source_body = source_wire(plan.sources[0])
@@ -560,7 +560,7 @@ def main():
             ("overflowing-output-index", replace_source(source_body.replace(wire.fv(3, 0), wire.fv(3, 2**32), 1))),
         ]
         for label, payload in malformed:
-            msg, events, _ = session.rpc(65000, payload)
+            msg, events, _ = session.rpc(65000, payload, context=label)
             wire.failure(checks, label, msg, [1, 3, 9])
             checks.record(label + "-no-user-prompt", 26 not in events and 65001 not in events)
             checks.record(label + "-signing-state-wiped", state_zero())
@@ -585,7 +585,11 @@ def main():
             checks.record(label + "-cancel-node-zero", session.derived_node_zero())
             checks.record(label + "-cancel-signing-state-wiped", state_zero())
         for label, kind in [("initialize", 0), ("unexpected-ping", 1)]:
-            first, _, _ = session.rpc(65000, encode_plan(plan), approve=None)
+            # A valid plan reaches the same Core validation as sign(), which
+            # already permits 60s on slower CI hosts. Fast invalid controls
+            # above retain the generic five-second transport deadline.
+            first, _, _ = session.rpc(65000, encode_plan(plan), approve=None,
+                                      timeout=60, context=label + "-review-open")
             checks.record(label + "-review-open", first[0] == 26)
             session.send(kind)
             msg = session.receive()
@@ -600,12 +604,14 @@ def main():
         sessions.append(session)
         wire.load_wallet(session, checks, "abandon", pin="1234")
         session.rpc(24)
-        first, _, _ = session.rpc(65000, encode_plan(plan))
+        first, _, _ = session.rpc(65000, encode_plan(plan), timeout=60,
+                                  context="locked-wallet-pin-challenge")
         checks.record("signing-locked-wallet-demands-pin", first[0] == 18)
         session.send(20)
         wire.failure(checks, "signing-pin-cancel-no-transaction", session.receive(), [6])
         checks.record("signing-pin-cancel-state-wiped", state_zero())
-        msg, events, _ = session.rpc(65000, encode_plan(plan), pin="9999")
+        msg, events, _ = session.rpc(65000, encode_plan(plan), pin="9999", timeout=60,
+                                     context="wrong-pin-refused")
         wire.failure(checks, "signing-wrong-pin-refused", msg, [7])
         checks.record("signing-wrong-pin-was-challenged", 18 in events)
         checks.record("signing-wrong-pin-state-wiped", state_zero())
@@ -615,7 +621,8 @@ def main():
         session = wire.Session(args.library.resolve(), out, "signing-passphrase")
         sessions.append(session)
         wire.load_wallet(session, checks, "abandon", passphrase=True)
-        first, _, _ = session.rpc(65000, encode_plan(plan))
+        first, _, _ = session.rpc(65000, encode_plan(plan), timeout=60,
+                                  context="wallet-passphrase-challenge")
         checks.record("signing-wallet-demands-passphrase", first[0] == 41)
         session.send(20)
         wire.failure(checks, "signing-passphrase-cancel-no-transaction", session.receive(), [11])

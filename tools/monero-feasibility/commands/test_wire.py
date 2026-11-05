@@ -286,15 +286,18 @@ class Session:
         self.send(100, fv(1, int(yes)), iface=1)
         return meta
 
-    def rpc(self, kind, payload=b"", approve=True, pin=None, passphrase=None):
+    def rpc(self, kind, payload=b"", approve=True, pin=None, passphrase=None,
+            timeout=5, context=None):
         self.capture("stale")
         self.send(kind, payload)
         events = []
         screens = []
         for _ in range(64):
-            msg = self.receive()
+            msg = self.receive(timeout)
             if msg is None:
-                raise RuntimeError(f"timeout awaiting response to message {kind}")
+                detail = f"; scenario {context}" if context else ""
+                raise RuntimeError(f"timeout awaiting response to message {kind} "
+                                   f"(deadline {timeout:g}s{detail})")
             msg_type, body, count = msg
             events.append(msg_type)
             if msg_type == 26:
