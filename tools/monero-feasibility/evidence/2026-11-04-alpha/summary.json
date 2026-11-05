@@ -14,7 +14,7 @@
     "tools/monero-feasibility/build_core.py": "4b97825179cde68c1977dd537bd260e501e6316dc0be27bdb4cb8bc7f88cff93",
     "tools/monero-feasibility/build_host.py": "ba812b5f72478aaf9f34f2d64316f05e2c84f8976cd314f3b2df3cf0a4420463",
     "tools/monero-feasibility/commands/core-signing.cpp": "18b691ad347237d3afa88fdf856834ebf2f785036222643bd044fa074ff7e2c7",
-    "tools/monero-feasibility/commands/core-signing.h": "a6f789d2e8579d087807f08337f3bfb97e824a40282fbc6f0788f86d8d9c3f75",
+    "tools/monero-feasibility/commands/core-signing.h": "fc79d59d6e84e33906842fb1e54958264f0dd44c120fe2bdfc48024510f2ed51",
     "tools/monero-feasibility/commands/crypto-check.c.in": "5bb0a3836354fdbda43f0c3750ecca32f58cf6b67f0fb960b8c24b59aaf35d66",
     "tools/monero-feasibility/commands/fsm_msg_monero_key_image.h": "79c7acee9f947121c01356d83d27c4f143df61309341b0ae671559ac99d32bd5",
     "tools/monero-feasibility/commands/fsm_msg_monero_research.h": "a4f8946bf58a452ab9a1849cd27476d05263ea0110b418041ef880744cadb971",
@@ -25,7 +25,7 @@
     "tools/monero-feasibility/commands/messages-monero-research.options": "36ceedb663eb0ca1ea11727b4227b1bf0c49c8d185c551ba0ad8dea390267932",
     "tools/monero-feasibility/commands/messages-monero-research.proto": "a3a1989a7e24c7dcf3389073fe46e1e9f3609b6ae5e7b473bea99cf5653aac2e",
     "tools/monero-feasibility/commands/monero_research.c": "ef1f70003512544efc0c6bda299a416cc728b6ce66be4f9028a0d7cab1ea6842",
-    "tools/monero-feasibility/commands/monero_research.h": "899a173d8034bc2c7535b87c8b60a4c3c876d784177bdc7c2fbec3626325d87a",
+    "tools/monero-feasibility/commands/monero_research.h": "7facb4a72bcdb1ae451252a085ea7eefcb704bf556d6af1da7801a477ec2a155",
     "tools/monero-feasibility/commands/research-schema.h": "4981e246f25b9078d7e3be4095e118ec1447f1b343748db022867c962d2cd168",
     "tools/monero-feasibility/commands/signing-plan.c": "70f6db0ecafe3cdde60d7ffc589a4574e79c370aad86a02e2274026731139dba",
     "tools/monero-feasibility/commands/signing-plan.h": "0896282e657922c7c5e60c7326404dbae3ec1d27845656d516183adfdc027b74",
@@ -65,7 +65,7 @@
     "tools/monero-feasibility/verify_host_adapter.py": "e28b310ac19d8bd2f33ea3fab666d58b03d2a187cea4b6b2eccd68416fabde9d",
     "tools/monero-feasibility/wallet_emulator.py": "fc979d868095d2e5365e87fececc53f41fe5755e4977607b6341714ddcff98e2"
   },
-  "source_manifest_sha256": "5fad13d94691257c535778b039609b82394a9f7e31bf2e74d1a013c353c0c715",
+  "source_manifest_sha256": "57746b6d893557640d27506a4f174a6e849263ef0669eb6eb29ef2865a8fc326",
   "submodules": {
     "code-signing-keys": "a6470bd8598e5e9a7bfc38bf139a5e5a616f05ec",
     "deps/crypto/trezor-firmware": "ad16f7fc3ffa6e0ee18ce684b35fe366a2c03c71",

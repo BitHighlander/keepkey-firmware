@@ -8,6 +8,9 @@
 
 #if !defined(EMULATOR) || !defined(KK_MONERO_EMULATOR_RESEARCH) || \
     !KK_MONERO_EMULATOR_RESEARCH || BITCOIN_ONLY
+/* The analyzer also explores unsupported build configurations; the compiler
+ * must continue to reject those configurations at this exact boundary. */
+// cppcheck-suppress preprocessorErrorDirective
 #error "Monero research commands are limited to the regular firmware emulator"
 #endif
 

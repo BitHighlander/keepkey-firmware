@@ -66,16 +66,16 @@ typedef struct monero_core_summary {
  * The bridge never returns spend/view secrets or transaction secret keys.
  */
 int monero_core_validate(const monero_core_plan *plan,
-                         const uint8_t node_private_key[32],
+                         const uint8_t key[32],
                          monero_core_summary *summary,
                          char error[MONERO_CORE_ERROR_CAPACITY]);
 int monero_core_sign(const monero_core_plan *plan,
-                     const uint8_t node_private_key[32],
-                     uint8_t *transaction, size_t capacity,
-                     size_t *transaction_size, uint8_t transaction_hash[32],
+                     const uint8_t key[32],
+                     uint8_t *bytes, size_t capacity,
+                     size_t *size, uint8_t hash[32],
                      char error[MONERO_CORE_ERROR_CAPACITY]);
 int monero_core_verify(const monero_core_plan *plan,
-                       const uint8_t *transaction, size_t transaction_size,
+                       const uint8_t *bytes, size_t size,
                        char error[MONERO_CORE_ERROR_CAPACITY]);
 size_t monero_core_plan_size(void);
 size_t monero_core_summary_size(void);
