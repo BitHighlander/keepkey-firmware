@@ -182,6 +182,13 @@ static bool pin_request(const char* prompt, PINInfo* pin_info) {
     animate();
     display_refresh();
 
+#ifdef EMULATOR
+    /* The shared-library poll clock is paused inside this blocking wait.
+     * Advance it at wall-clock pace so the PIN scramble animation can draw
+     * every digit before a user enters their PIN. Hardware has its ISR. */
+    delay_ms(1);
+#endif
+
     run_pin_state(&pin_state, pin_info);
 
     if (pin_state == PIN_FINISHED) {
