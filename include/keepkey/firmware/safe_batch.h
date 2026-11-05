@@ -20,7 +20,7 @@ typedef struct {
 } SafeBatch;
 
 bool safe_batch_begin(SafeBatch* batch, uint32_t total, uint16_t wanted);
-bool safe_batch_feed(SafeBatch* batch, const uint8_t* bytes, size_t length);
-bool safe_batch_finish(const SafeBatch* batch);
+bool safe_batch_feed(SafeBatch* b, const uint8_t* bytes, size_t length);
+bool safe_batch_finish(const SafeBatch* b);
 
 #endif
