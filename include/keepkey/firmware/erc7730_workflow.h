@@ -11,6 +11,7 @@
 #include "keepkey/firmware/erc7730_program.h"
 #include "keepkey/firmware/erc7730_settle.h"
 #include "keepkey/firmware/erc7730_tx.h"
+#include "keepkey/firmware/safe_batch.h"
 #include "trezor/crypto/sha2.h"
 
 typedef enum {
@@ -147,7 +148,10 @@ typedef struct {
  * a protobuf transport buffer survives a handler return. */
 typedef struct {
   Erc7730CatalogIdentity identity;
-  Erc7730TxContinuation continuation;
+  union {
+    Erc7730TxContinuation continuation;
+    SafeBatch safe_batch; /* EIP-712 has no EthereumSignTx continuation. */
+  };
   Erc7730ProgramLoader loader;
   union {
     Erc7730ProgramDisplay display;
@@ -196,8 +200,8 @@ typedef struct {
   Erc7730EmbedFrame frames[ERC7730_EMBED_MAX_DEPTH];
   Erc7730EmbedContext contexts[ERC7730_EMBED_MAX_DEPTH - 1u]; /* levels 1.. */
   /* The level-d call's own containers: @.to (callee), @.value, @.from.
-   * Typed data has no inner call; its @.to, the domain's verifyingContract
-   * the definition is bound to, is kept in inner_to. */
+   * At an EIP-712 root, inner_to instead holds the verifyingContract the
+   * definition is bound to. Nested calls use their own callee and authority. */
   uint8_t inner_to[20];
   uint8_t inner_value[32];
   uint8_t inner_from[20];
@@ -224,6 +228,13 @@ typedef struct {
   uint8_t selection_kind : 4;
   uint8_t display_stage : 4;
   bool typed_data;
+  /* The signed request is EIP-712 even while a nested calldata definition
+   * is loaded. Inner ABI passes replay SafeTx.data through the typed-data
+   * walker; their full domain/message digest must match the outer review. */
+  bool typed_root;
+  uint32_t typed_length;
+  uint16_t typed_batch_index;
+  bool typed_batch;
   bool calldata_validated; /* the first, validating calldata pass is done */
   bool intent_confirmed;
   bool identity_confirmed;
@@ -300,6 +311,9 @@ bool erc7730_workflow_start_eip712_capture(Erc7730Workflow* workflow,
  * as erc7730_workflow_restore_and_start_length does for calldata. */
 bool erc7730_workflow_start_eip712_length(Erc7730Workflow* workflow,
                                           const Erc7730Path* path);
+bool erc7730_workflow_start_typed_inner(Erc7730Workflow* workflow,
+                                        const Erc7730Path* path, bool length);
+bool erc7730_workflow_safe_batch_call(Erc7730Workflow* workflow);
 /* One typed-data value ack. A value too long for one ack arrives in chunks
  * under the same member path: whole_len is the whole value's length, and
  * continuation marks every ack after the first. */

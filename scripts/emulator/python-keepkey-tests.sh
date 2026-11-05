@@ -181,6 +181,14 @@ pytest -v $PYTEST_TIMEOUT_ARGS . /kkemu/unittests/host/test_p02_transport.py \
   --junitxml=/kkemu/test-reports/python-keepkey/junit.xml
 PYTEST_RC=$?
 
+if [ "$KK_FIRMWARE_VARIANT" = "full" ]; then
+  echo "=== Safe ClearSign incident regressions (isolated test root) ==="
+  python3 /kkemu/scripts/emulator/test_safe_clearsign.py \
+    --emulator "$KK_EMULATOR_BIN" \
+    --python-keepkey /kkemu/deps/python-keepkey \
+    --junit /kkemu/test-reports/python-keepkey/junit-safe-incident.xml || RC=1
+fi
+
 KK_TRANSPORT_MAIN=kkemu:11044 \
 KK_TRANSPORT_DEBUG=kkemu:11045 \
 pytest -v --tb=short \

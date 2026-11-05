@@ -75,6 +75,7 @@ bool erc7730_workflow_begin_eip712(Erc7730Workflow* workflow,
     return false;
   }
   workflow->typed_data = true;
+  workflow->typed_root = true;
   workflow->review_tier = identity->tier;
   if (!begin_replay(workflow, identity)) return false;
   /* The definition applies only at a signed deployment on the typed data's
@@ -438,6 +439,50 @@ bool erc7730_workflow_restore_and_start_calldata(Erc7730Workflow* workflow,
   return true;
 }
 
+/* A calldata definition inside SafeTx.data uses the existing ABI interpreter,
+ * but all its input still comes from a full, digest-checked EIP-712 rewalk.
+ * Offsets are relative to the beginning of the signed bytes leaf. */
+bool erc7730_workflow_start_typed_inner(Erc7730Workflow* workflow,
+                                        const Erc7730Path* path, bool length) {
+  if (!workflow || !workflow->typed_root || workflow->typed_data ||
+      workflow->depth == 0 || workflow->phase != ERC7730_WORKFLOW_READY ||
+      workflow->inner_length < 4 ||
+      workflow->inner_offset > workflow->typed_length ||
+      workflow->inner_length > workflow->typed_length - workflow->inner_offset)
+    return false;
+  Erc7730AbiProgram program;
+  if (!erc7730_program_loader_complete(&workflow->loader, &program) ||
+      erc7730_abi_stream_begin(&workflow->calldata, &program,
+                               workflow->inner_length - 4u) != ERC7730_ABI_OK)
+    return false;
+  if (path) {
+    if (path->source != 1 || !erc7730_cap_path(path) ||
+        (length && (path->step_count < 2 || workflow->iterating ||
+                    path->steps[path->step_count - 1u].opcode != 2)))
+      return false;
+    int32_t components[ERC7730_ABI_MAX_DEPTH];
+    const uint8_t count = path->step_count - (length ? 1u : 0u);
+    for (uint8_t i = 0; i < count; i++) {
+      if (path->steps[i].opcode == 1)
+        components[i] = path->steps[i].first;
+      else if (path->steps[i].opcode == 2 && workflow->iterating)
+        components[i] = workflow->iteration_index;
+      else
+        return false;
+    }
+    if (erc7730_abi_stream_capture_path(&workflow->calldata, components,
+                                        count) != ERC7730_ABI_OK)
+      return false;
+    workflow->calldata.capture_locate =
+        workflow->field.kind == 13 && workflow->field.pending_role == 1;
+  }
+  workflow->outer_total = workflow->typed_length;
+  workflow->outer_received = 0;
+  workflow->phase = ERC7730_WORKFLOW_CALLDATA;
+  sha256_Init(&workflow->calldata_hash);
+  return true;
+}
+
 bool erc7730_workflow_restore_and_start_capture(Erc7730Workflow* workflow,
                                                 EthereumSignTx* tx,
                                                 const Erc7730Path* path) {
@@ -503,6 +548,21 @@ static bool start_eip712_capture(Erc7730Workflow* workflow,
   Erc7730AbiProgram program;
   if (!erc7730_program_loader_complete(&workflow->loader, &program))
     return false;
+  if (workflow->field.kind == 13) {
+    /* Initially support only Safe's canonical transaction schema and its
+     * actual data member. In particular an arbitrary typed bytes field must
+     * never bypass Safe's operation/delegatecall policy. */
+    static const uint8_t safe_type_hash[32] = {
+        0xbb, 0x83, 0x10, 0xd4, 0x86, 0x36, 0x8d, 0xb6, 0xbd, 0x6f, 0x84,
+        0x94, 0x02, 0xfd, 0xd7, 0x3a, 0xd5, 0x3d, 0x31, 0x6b, 0x5a, 0x4b,
+        0x26, 0x44, 0xad, 0x6e, 0xfe, 0x0f, 0x94, 0x12, 0x86, 0xd8};
+    if (workflow->field.pending_role == 1 &&
+        (memcmp(workflow->identity.selector_or_type_hash, safe_type_hash, 32) !=
+             0 ||
+         path->step_count != 1 || path->steps[0].opcode != 1 ||
+         path->steps[0].first != 2))
+      return false;
+  }
   uint16_t node = program.root;
   memzero(&workflow->calldata, sizeof(workflow->calldata));
   for (uint8_t i = 0; i < steps; i++) {
@@ -536,6 +596,8 @@ static bool start_eip712_capture(Erc7730Workflow* workflow,
   workflow->calldata.capture_path_count = steps;
   workflow->calldata.capture.node = node;
   workflow->calldata.capture_enabled = true;
+  workflow->calldata.capture_locate =
+      workflow->field.kind == 13 && workflow->field.pending_role == 1;
   workflow->phase = ERC7730_WORKFLOW_TYPED_DATA;
   return true;
 }
@@ -604,11 +666,29 @@ bool erc7730_workflow_eip712_observe(Erc7730Workflow* workflow,
                                      size_t member_path_count,
                                      const uint8_t* value, size_t value_len,
                                      size_t whole_len, bool continuation) {
+  if (workflow && workflow->typed_root && !workflow->typed_data &&
+      workflow->phase == ERC7730_WORKFLOW_CALLDATA) {
+    if (!member_path || !value || member_path_count < 2 || member_path[0] != 1)
+      return false;
+    if (member_path_count != 2 || member_path[1] != 2) return true;
+    if ((!continuation && (workflow->outer_received != 0 ||
+                           whole_len != workflow->typed_length)) ||
+        (continuation && workflow->outer_received == 0))
+      return false;
+    return value_len == 0 ? workflow->typed_length == 0
+                          : erc7730_workflow_calldata_feed(
+                                workflow, value, value_len) == ERC7730_ABI_OK;
+  }
   if (!workflow || !member_path || !value || whole_len < value_len ||
       workflow->phase != ERC7730_WORKFLOW_TYPED_DATA ||
       !workflow->calldata.capture_enabled || member_path_count < 2 ||
       member_path[0] != 1)
     return false;
+  if (workflow->calldata.capture_locate && member_path_count == 2 &&
+      member_path[1] == 3) {
+    if (value_len != 1 || continuation || value[0] > 1) return false;
+    workflow->safe_delegatecall = value[0] != 0;
+  }
   /* Array lengths are streamed at the array's own path before its elements.
    * Resolve a signed negative component from that device-validated length,
    * then compare subsequent element paths using the resulting absolute index.
@@ -635,6 +715,31 @@ bool erc7730_workflow_eip712_observe(Erc7730Workflow* workflow,
       return true;
   /* A long value is observed once, at its first chunk. The later chunks only
    * have to continue a value that was too long to capture. */
+  if (workflow->calldata.capture_locate) {
+    if ((!continuation && workflow->calldata.capture_found) ||
+        (continuation && !workflow->calldata.capture_found))
+      return false;
+    if (!continuation) {
+      if (whole_len > UINT32_MAX) return false;
+      workflow->calldata.located_length = whole_len;
+      workflow->typed_length = (uint32_t)whole_len;
+      safe_batch_begin(&workflow->safe_batch, workflow->typed_length,
+                       workflow->typed_batch_index);
+    }
+    const size_t received = workflow->calldata.received;
+    if (value_len > workflow->typed_length - received) return false;
+    const size_t keep = received >= ERC7730_ABI_LOCATE_PREFIX
+                            ? 0
+                            : (value_len < ERC7730_ABI_LOCATE_PREFIX - received
+                                   ? value_len
+                                   : ERC7730_ABI_LOCATE_PREFIX - received);
+    if (keep) memcpy(workflow->calldata.capture.data + received, value, keep);
+    workflow->calldata.capture.length += keep;
+    workflow->calldata.received += value_len;
+    workflow->calldata.capture_found = true;
+    safe_batch_feed(&workflow->safe_batch, value, value_len);
+    return true;
+  }
   if (continuation)
     return workflow->calldata.capture_found &&
            workflow->calldata.capture_overflow;
@@ -660,8 +765,13 @@ bool erc7730_workflow_eip712_observe(Erc7730Workflow* workflow,
 }
 
 bool erc7730_workflow_eip712_finish(Erc7730Workflow* workflow) {
+  if (workflow && workflow->typed_root && !workflow->typed_data)
+    return erc7730_workflow_calldata_finish(workflow) == ERC7730_ABI_OK;
   if (!workflow || workflow->phase != ERC7730_WORKFLOW_TYPED_DATA ||
       !workflow->calldata.capture_enabled || !workflow->calldata.capture_found)
+    return false;
+  if (workflow->calldata.capture_locate &&
+      workflow->calldata.received != workflow->typed_length)
     return false;
   workflow->calldata.complete = true;
   workflow->phase = ERC7730_WORKFLOW_COMPLETE;
@@ -671,7 +781,8 @@ bool erc7730_workflow_eip712_finish(Erc7730Workflow* workflow) {
 bool erc7730_workflow_eip712_commit(Erc7730Workflow* workflow,
                                     const uint8_t domain[32],
                                     const uint8_t message[32]) {
-  if (!workflow || !domain || !message || !workflow->typed_data ||
+  if (!workflow || !domain || !message ||
+      !(workflow->typed_data || workflow->typed_root) ||
       workflow->phase != ERC7730_WORKFLOW_COMPLETE)
     return false;
   uint8_t digest[32];
@@ -892,6 +1003,12 @@ Erc7730AbiResult erc7730_workflow_calldata_finish(Erc7730Workflow* workflow) {
   if (workflow->depth == 0)
     workflow->suffix_length =
         (uint32_t)erc7730_abi_stream_suffix(&workflow->calldata);
+  /* The full EIP-712 digest is checked immediately after this ABI pass,
+   * before its intent, fields or any signature can be approved. */
+  if (workflow->typed_root) {
+    workflow->phase = ERC7730_WORKFLOW_COMPLETE;
+    return ERC7730_ABI_OK;
+  }
   uint8_t digest[32];
   sha256_Final(&workflow->calldata_hash, digest);
   const bool matches = !workflow->reviewed_digest_set ||
@@ -1007,6 +1124,16 @@ bool erc7730_workflow_advance_display(Erc7730Workflow* workflow) {
        workflow->phase != ERC7730_WORKFLOW_READY) ||
       workflow->display_index == UINT16_MAX)
     return false;
+  const bool batch = workflow->typed_data && workflow->typed_batch &&
+                     workflow->field.kind == 13;
+  const bool repeat =
+      batch && workflow->typed_batch_index + 1u < workflow->safe_batch.count;
+  if (repeat)
+    workflow->typed_batch_index++;
+  else if (batch) {
+    workflow->typed_batch_index = 0;
+    workflow->typed_batch = false;
+  }
   memzero(workflow->label, sizeof(workflow->label));
   memzero(&workflow->field, sizeof(workflow->field));
   workflow->intent_part = 0;
@@ -1015,7 +1142,7 @@ bool erc7730_workflow_advance_display(Erc7730Workflow* workflow) {
   erc7730_abi_stream_clear(&workflow->calldata);
   workflow->phase = ERC7730_WORKFLOW_READY;
   workflow->display_stage = ERC7730_DISPLAY_INSTRUCTION;
-  workflow->display_index++;
+  if (!repeat) workflow->display_index++;
   return erc7730_workflow_select_display(workflow, workflow->display_index);
 }
 
@@ -1049,7 +1176,7 @@ bool erc7730_workflow_captured(const Erc7730Workflow* workflow,
 bool erc7730_workflow_inner_fetchable(const Erc7730Workflow* workflow) {
   if (!workflow) return false;
   const Erc7730Field* field = &workflow->field;
-  return workflow->depth < ERC7730_EMBED_MAX_DEPTH && !workflow->typed_data &&
+  return workflow->depth < ERC7730_EMBED_MAX_DEPTH &&
          !workflow->inner_refused && field->kind == 13 && field->has_inner &&
          field->has_address && field->inner_selector_length == 4 &&
          field->inner_length >= 4 && (field->inner_length - 4u) % 32u == 0;
@@ -1060,19 +1187,50 @@ bool erc7730_workflow_inner_empty_call(const Erc7730Workflow* workflow) {
   if (!workflow) return false;
   const Erc7730Field* field = &workflow->field;
   const uint8_t* selector = workflow->identity.selector_or_type_hash;
-  if (workflow->typed_data || field->kind != 13 || !field->has_inner ||
-      !field->has_address || field->inner_length != 0)
+  if (field->kind != 13 || !field->has_inner || !field->has_address ||
+      field->inner_length != 0)
     return false;
   /* The value it moves is all of it: shown, or none by setup()'s code. */
   if (!field->has_value && !safe_setup_selector(selector)) return false;
   return memcmp(field->address, nobody, 20) == 0 ||
-         (safe_exec_selector(selector) && !workflow->safe_delegatecall);
+         ((workflow->typed_data || safe_exec_selector(selector)) &&
+          !workflow->safe_delegatecall);
+}
+
+/* A delegatecall may be expanded only for the pinned Safe MultiSend code,
+ * and only after every packed entry was proven to be a CALL. No description
+ * of an arbitrary callee can change delegatecall semantics. */
+bool erc7730_workflow_safe_batch_call(Erc7730Workflow* workflow) {
+  if (!workflow || !workflow->typed_data || !workflow->safe_delegatecall ||
+      !workflow->field.has_address ||
+      !eip712_stream_safe_multisend(workflow->field.address) ||
+      !safe_batch_finish(&workflow->safe_batch))
+    return false;
+  Erc7730Field* f = &workflow->field;
+  const SafeBatch* b = &workflow->safe_batch;
+  memcpy(f->address, b->to, 20);
+  memcpy(f->value, b->value, 32);
+  f->has_value = true;
+  f->inner_offset = b->offset;
+  f->inner_length = b->length;
+  f->inner_selector_length = b->prefix_length < 4 ? b->prefix_length : 4;
+  memcpy(f->inner_selector, b->prefix, f->inner_selector_length);
+  f->unlimited_approve = false;
+  if (b->prefix_length == 68 &&
+      (memcmp(b->prefix, "\x09\x5e\xa7\xb3", 4) == 0 ||
+       memcmp(b->prefix, "\x39\x50\x93\x51", 4) == 0)) {
+    for (size_t i = 4; i < 16; i++)
+      if (b->prefix[i]) return false;
+    f->unlimited_approve = ethereum_allowanceAmountIsUnlimited(b->prefix + 36);
+    if (f->unlimited_approve) memcpy(f->approve_spender, b->prefix + 16, 20);
+  }
+  workflow->safe_delegatecall = false;
+  workflow->typed_batch = true;
+  return true;
 }
 
 bool erc7730_workflow_begin_fetch(Erc7730Workflow* workflow, uint8_t depth) {
-  if (!workflow || workflow->typed_data ||
-      workflow->phase != ERC7730_WORKFLOW_READY)
-    return false;
+  if (!workflow || workflow->phase != ERC7730_WORKFLOW_READY) return false;
   if (depth == workflow->depth + 1u) {
     if (!erc7730_workflow_inner_fetchable(workflow)) return false;
     /* What restores this level, whichever way the inner call ends. */
@@ -1185,7 +1343,9 @@ bool erc7730_workflow_fetch_complete(Erc7730Workflow* workflow) {
        * it moves (without one, an inner definition that shows it was refused
        * in erc7730_workflow_fetch_feed) and @.from whose authority it runs
        * with (none: the contract making the call). */
-      const uint8_t* caller = workflow->identity.contract_address;
+      const uint8_t* caller = workflow->typed_data
+                                  ? workflow->inner_to
+                                  : workflow->identity.contract_address;
       memcpy(workflow->inner_from,
              workflow->field.has_spender ? workflow->field.spender : caller,
              20);
@@ -1196,6 +1356,7 @@ bool erc7730_workflow_fetch_complete(Erc7730Workflow* workflow) {
       if (workflow->field.has_value)
         memcpy(workflow->inner_value, workflow->field.value, 32);
       workflow->depth = workflow->fetch_depth;
+      workflow->typed_data = false;
       if (identity.tier < workflow->review_tier)
         workflow->review_tier = identity.tier;
       workflow->identity_confirmed = false;
@@ -1216,6 +1377,7 @@ bool erc7730_workflow_fetch_complete(Erc7730Workflow* workflow) {
       /* Resume after the field that held the inner call, in the iteration
        * it was in. */
       workflow->depth = workflow->fetch_depth;
+      workflow->typed_data = workflow->typed_root && workflow->depth == 0;
       workflow->display_index = frame->resume;
       workflow->identity_confirmed = frame->identity_confirmed;
       workflow->intent_confirmed = frame->intent_confirmed;
@@ -1240,6 +1402,13 @@ bool erc7730_workflow_fetch_complete(Erc7730Workflow* workflow) {
         memzero(workflow->inner_to, sizeof(workflow->inner_to));
         memzero(workflow->inner_value, sizeof(workflow->inner_value));
         memzero(workflow->inner_from, sizeof(workflow->inner_from));
+        if (workflow->typed_data) {
+          Eip712DomainFacts facts;
+          if (!eip712_stream_domain_facts(&facts) ||
+              !facts.has_verifying_contract)
+            return false;
+          memcpy(workflow->inner_to, facts.verifying_contract, 20);
+        }
       }
       workflow->calldata_validated = true;
       workflow->resuming = true;

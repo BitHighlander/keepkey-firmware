@@ -68,6 +68,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       erc7730_settle.cpp
       erc7730_tx.cpp
       erc7730_workflow.cpp
+      safe_batch.cpp
       solana.cpp
       thorchain.cpp
       tron.cpp

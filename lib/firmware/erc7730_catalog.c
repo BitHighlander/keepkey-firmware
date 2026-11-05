@@ -710,9 +710,15 @@ static bool finish_formatter(Erc7730CatalogVerifier* v) {
       (roles & ~formatter_allowed_roles(v->formatter_kind)) != 0 ||
       required == 0 || (roles & required) != required)
     return false;
-  /* Embedded calldata is executed for calldata definitions only. */
-  if (v->formatter_kind == 13 && v->header[7] != ERC7730_DEFINITION_CALLDATA)
-    return false;
+  /* Typed embedded calls are restricted at execution to canonical SafeTx.data,
+   * whose operation is read independently of the display definition. */
+  if (v->formatter_kind == 13 && v->header[7] == ERC7730_DEFINITION_EIP712) {
+    static const uint8_t safe_type[32] = {
+        0xbb, 0x83, 0x10, 0xd4, 0x86, 0x36, 0x8d, 0xb6, 0xbd, 0x6f, 0x84,
+        0x94, 0x02, 0xfd, 0xd7, 0x3a, 0xd5, 0x3d, 0x31, 0x6b, 0x5a, 0x4b,
+        0x26, 0x44, 0xad, 0x6e, 0xfe, 0x0f, 0x94, 0x12, 0x86, 0xd8};
+    if (memcmp(v->header + 38, safe_type, 32) != 0) return false;
+  }
   if ((v->formatter_kind == 3 && (roles & FORMAT_ROLE_BIT(2)) == 0) ||
       (v->formatter_kind == 4 && (roles & FORMAT_ROLE_BIT(3)) == 0) ||
       (v->formatter_kind == 8 && (roles & FORMAT_ROLE_BIT(10)) == 0) ||
