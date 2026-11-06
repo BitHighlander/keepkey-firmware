@@ -386,6 +386,9 @@ void timer_wait_ticks(void) {
   if (!poll_driven_timer) return;
   uint64_t now = monotonic_ms();
   if (tick_due_ms == 0) tick_due_ms = now + 1; /* no baseline yet */
+  /* A host that stalled (app suspended, debugger) must not replay every
+   * missed millisecond in one burst: catch up at most one second. */
+  if (now >= tick_due_ms + 1000) tick_due_ms = now - 1000;
   while (tick_due_ms <= now) {
     tick_due_ms++;
     timerisr_usr();
