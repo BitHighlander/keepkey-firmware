@@ -61,6 +61,12 @@ void kk_timer_init(void);
 #ifdef EMULATOR
 /* Select local delay ticks for a library whose host supplies the clock. */
 void timer_set_poll_driven(bool enabled);
+/* Poll-driven clock only. The outer poll loop ticks a fixed period per pass;
+ * a nested wait for the host (PIN, confirm, passphrase, dice) never returns
+ * to it, so it ticks by wall time instead. Both share one baseline, so no
+ * millisecond is ticked twice. */
+void timer_poll_ticks(uint32_t ms);
+void timer_wait_ticks(void);
 #ifndef _WIN32
 /* Standalone process only: start SIGALRM without resetting queued callbacks. */
 void timer_start_emulator_signals(void);

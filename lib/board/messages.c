@@ -562,6 +562,9 @@ static MessageType tiny_msg_poll_and_buffer(bool block, uint8_t* buf) {
 
   while (msg_tiny_id == MSG_TINY_TYPE_ERROR && !tiny_handler_rejected) {
     usbPoll();
+#ifdef EMULATOR
+    timer_wait_ticks(); /* hardware's timer interrupt keeps running here */
+#endif
     keepkey_idle_clock_sample();
 
     if (!block) {

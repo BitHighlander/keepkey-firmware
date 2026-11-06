@@ -374,6 +374,25 @@ static void delay_tick(void) {
 #endif
 }
 
+#ifdef EMULATOR
+void timer_poll_ticks(uint32_t ms) {
+  while (ms--) timerisr_usr();
+  if (poll_driven_timer) tick_due_ms = monotonic_ms() + 1;
+}
+
+/* Without this the clock stood still for the whole prompt: the PIN scramble
+ * animation never drew a digit, so PIN entry on the emulator was blind. */
+void timer_wait_ticks(void) {
+  if (!poll_driven_timer) return;
+  uint64_t now = monotonic_ms();
+  if (tick_due_ms == 0) tick_due_ms = now + 1; /* no baseline yet */
+  while (tick_due_ms <= now) {
+    tick_due_ms++;
+    timerisr_usr();
+  }
+}
+#endif
+
 void delay_ms(uint32_t ms) {
   remaining_delay = ms;
   delay_start();
