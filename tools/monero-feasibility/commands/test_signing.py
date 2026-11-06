@@ -560,7 +560,9 @@ def main():
             ("overflowing-output-index", replace_source(source_body.replace(wire.fv(3, 0), wire.fv(3, 2**32), 1))),
         ]
         for label, payload in malformed:
-            msg, events, _ = session.rpc(65000, payload, context=label)
+            # The emulator reads one 64-byte report per 16 ms poll: a multi-input
+            # payload needs seconds just to arrive on a slow CI host.
+            msg, events, _ = session.rpc(65000, payload, timeout=60, context=label)
             wire.failure(checks, label, msg, [1, 3, 9])
             checks.record(label + "-no-user-prompt", 26 not in events and 65001 not in events)
             checks.record(label + "-signing-state-wiped", state_zero())
@@ -587,7 +589,7 @@ def main():
         for label, kind in [("initialize", 0), ("unexpected-ping", 1)]:
             # A valid plan reaches the same Core validation as sign(), which
             # already permits 60s on slower CI hosts. Fast invalid controls
-            # above retain the generic five-second transport deadline.
+            # above also allow 60s for transport delivery.
             first, _, _ = session.rpc(65000, encode_plan(plan), approve=None,
                                       timeout=60, context=label + "-review-open")
             checks.record(label + "-review-open", first[0] == 26)
