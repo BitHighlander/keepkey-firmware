@@ -296,12 +296,18 @@ bool pin_protect_cached(void) {
 
 bool pin_protect_uncached(void) { return pin_protect("Enter\nYour PIN"); }
 
-bool change_pin_staged(char* out, size_t out_len) {
+typedef enum {
+  PIN_CHANGE_FAILED_REPORTED,
+  PIN_CHANGE_MISMATCH,
+  PIN_CHANGE_OK,
+} PinChangeResult;
+
+static PinChangeResult request_new_pin(char* out, size_t out_len) {
   /* Not CONFIDENTIAL: that macro expands to a section attribute, which the
      ARM toolchain rejects on locals. Both structs are memzero'd on every
      exit path below, including the failure ones. */
   PINInfo pin_info_first, pin_info_second;
-  bool ret = false;
+  PinChangeResult ret = PIN_CHANGE_FAILED_REPORTED;
 
   /* Set request types */
   pin_info_first.type = PinMatrixRequestType_PinMatrixRequestType_NewFirst;
@@ -311,10 +317,13 @@ bool change_pin_staged(char* out, size_t out_len) {
 
   if (!pin_request("Re-Enter\nNew PIN", &pin_info_second)) goto done;
 
-  if (strcmp(pin_info_first.pin, pin_info_second.pin) != 0) goto done;
+  if (strcmp(pin_info_first.pin, pin_info_second.pin) != 0) {
+    ret = PIN_CHANGE_MISMATCH;
+    goto done;
+  }
 
   strlcpy(out, pin_info_first.pin, out_len);
-  ret = true;
+  ret = PIN_CHANGE_OK;
 
 done:
   memzero(&pin_info_first, sizeof(pin_info_first));
@@ -322,14 +331,20 @@ done:
   return ret;
 }
 
+bool change_pin_staged(char* out, size_t out_len) {
+  return request_new_pin(out, out_len) == PIN_CHANGE_OK;
+}
+
 bool change_pin(void) {
   char pin[PIN_BUF]; /* memzero'd below; see change_pin_staged() */
-  bool ret = change_pin_staged(pin, sizeof(pin));
+  const PinChangeResult result = request_new_pin(pin, sizeof(pin));
 
-  if (ret) storage_setPin(pin);
+  if (result == PIN_CHANGE_OK) storage_setPin(pin);
+  if (result == PIN_CHANGE_MISMATCH)
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, "PINs do not match");
 
   memzero(pin, sizeof(pin));
-  return ret;
+  return result == PIN_CHANGE_OK;
 }
 
 bool change_wipe_code(void) {
