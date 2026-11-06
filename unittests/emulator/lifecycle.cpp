@@ -261,3 +261,90 @@ TEST_F(EmulatorLifecycle, StopDuringPinBackoffTimesOutThenJoins) {
   EXPECT_EQ(0, kkemu_trylock());
   EXPECT_EQ(0, kkemu_shutdown_timeout(12000));
 }
+
+// The scrambled PIN digits are drawn by an animation, and a PIN prompt waits
+// for the host inside pin_request() without returning to the poll loop. These
+// tests read the OLED frames a threaded host (KeepKey Desktop) receives and
+// require all nine digits on screen, not just the "Enter Your PIN" prompt.
+class EmulatorPinMatrix : public EmulatorLifecycle {
+ protected:
+  static void send(uint16_t type, std::vector<uint8_t> payload = {},
+                   int iface = KKEMU_IFACE_MAIN) {
+    uint8_t packet[64] = {'?', '#', '#', uint8_t(type >> 8),     uint8_t(type),
+                          0,   0,   0,   uint8_t(payload.size())};
+    memcpy(packet + 9, payload.data(), payload.size());
+    ASSERT_EQ(0, kkemu_write(packet, sizeof(packet), iface));
+  }
+  // Type of the next message on the main interface, answering any confirm on
+  // the way as the host and its user would (ButtonAck + DebugLinkDecision).
+  uint16_t nextMessageAcceptingConfirms() {
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < deadline) {
+      uint8_t reply[64];
+      drainFrames();
+      if (kkemu_read(reply, sizeof(reply), KKEMU_IFACE_MAIN) != 64 ||
+          memcmp(reply, "?##", 3) != 0) {
+        usleep(1000);
+        continue;
+      }
+      uint16_t type = uint16_t(reply[3] << 8 | reply[4]);
+      if (type != 26) return type;                 // ButtonRequest
+      send(27);                                    // ButtonAck
+      send(100, {0x08, 0x01}, KKEMU_IFACE_DEBUG);  // DebugLinkDecision yes
+    }
+    return 0;
+  }
+  void drainFrames() {
+    while (kkemu_pop_frame(last_frame)) frames++;
+  }
+  // Lit pixels in a digit cell beyond the dithered cell background.
+  static int digitPixels(const uint8_t* frame, int row, int col) {
+    int extra = 0;
+    for (int y = 5 + row * 19; y < 5 + row * 19 + 18; ++y)
+      for (int x = 195 + col * 19; x < 195 + col * 19 + 18; ++x) {
+        bool lit = (frame[x + (y / 8) * 256] >> (y % 8)) & 1;
+        extra += lit - display_mono_pixel_is_lit(0x11, x, y);
+      }
+    return extra;
+  }
+  static bool gridDrawn(const uint8_t* frame) {
+    for (int row = 0; row < 3; ++row)
+      for (int col = 0; col < 3; ++col)
+        if (digitPixels(frame, row, col) < 20) return false;
+    return true;
+  }
+  // The scramble animation lasts PIN_MAX_ANIMATION_MS (1 s).
+  ::testing::AssertionResult gridDrawnWithin(std::chrono::milliseconds limit) {
+    auto deadline = std::chrono::steady_clock::now() + limit;
+    while (std::chrono::steady_clock::now() < deadline) {
+      drainFrames();
+      if (frames && gridDrawn(last_frame)) return ::testing::AssertionSuccess();
+      usleep(1000);
+    }
+    return ::testing::AssertionFailure()
+           << "no PIN digit grid on the OLED within " << limit.count()
+           << " ms (" << frames << " frames)";
+  }
+  uint8_t last_frame[2048] = {};
+  unsigned frames = 0;
+};
+
+TEST_F(EmulatorPinMatrix, CurrentPinPromptDrawsDigitGrid) {
+  storage_setPin("1234");
+  session_clear(true);
+  send(1, {0x18, 1});  // Ping {pin_protection: true}
+  ASSERT_EQ(0, kkemu_start());
+  ASSERT_EQ(18, nextMessageAcceptingConfirms());  // PinMatrixRequest
+  EXPECT_TRUE(gridDrawnWithin(std::chrono::milliseconds(1500)));
+}
+
+TEST_F(EmulatorPinMatrix, NewPinPromptsDrawDigitGrid) {
+  send(4);  // ChangePin: confirm, then new PIN twice
+  ASSERT_EQ(0, kkemu_start());
+  ASSERT_EQ(18, nextMessageAcceptingConfirms());
+  EXPECT_TRUE(gridDrawnWithin(std::chrono::milliseconds(1500)));
+  send(19, {0x0a, 1, '1'});  // PinMatrixAck
+  ASSERT_EQ(18, nextMessageAcceptingConfirms());
+  frames = 0;
+  EXPECT_TRUE(gridDrawnWithin(std::chrono::milliseconds(1500)));
+}

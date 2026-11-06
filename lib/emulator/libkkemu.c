@@ -417,7 +417,7 @@ int kkemu_read(uint8_t* buf, size_t len, int iface) {
  * runnable fires and animations + delay_ms() advance at roughly real speed.
  */
 static void kkemu_poll_body(void) {
-  for (int t = 0; t < KKEMU_POLL_INTERVAL_MS; t++) timerisr_usr();
+  timer_poll_ticks(KKEMU_POLL_INTERVAL_MS);
 
   usbPoll();
   animate();
