@@ -4,10 +4,12 @@
 import datetime
 import glob
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -21,6 +23,7 @@ REPORT_GENERATOR = (
 )
 REPORT_DIR = ROOT / "test-report"
 REPORT_PDF = REPORT_DIR / "test-report.pdf"
+MONERO_REPORT_GENERATOR = ROOT / "scripts" / "monero-report.py"
 MERGED_JUNIT = REPORT_DIR / "junit-merged.xml"
 BTC_MERGED_JUNIT = REPORT_DIR / "junit-merged-bitcoin-only.xml"
 
@@ -773,6 +776,47 @@ def require_native_junit(root, product_dir=Path("test-reports")):
     return sorted(native_dir.glob("*.xml"))
 
 
+def prepare_monero_evidence(path, firmware_sha):
+    """Validate, bind, and copy only explicitly verified public evidence files.
+
+    Never copy an entire source directory: the nearby raw run can contain
+    wallet fixtures and credentials that are intentionally not report inputs.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "monero_report_evidence", MONERO_REPORT_GENERATOR)
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    bundle = helper.validate_evidence(path)
+    if bundle["manifest"]["provenance"]["firmware_commit"] != firmware_sha:
+        fail("Monero evidence does not match the checked-out firmware commit")
+    for source, digest in bundle["manifest"]["provenance"]["source_sha256"].items():
+        checked_out = ROOT / source
+        if not checked_out.is_file() or sha256_file(checked_out) != digest:
+            fail("Monero evidence source does not match the checked-out firmware source: " + source)
+    destination = REPORT_DIR / ("monero-evidence-" + bundle["manifest_sha256"][:16])
+    if destination.is_symlink():
+        fail("Monero report destination must not be a symlink")
+    destination.mkdir(parents=True, exist_ok=True)
+    files = [bundle["manifest_path"]] + bundle["files"]
+    for source in files:
+        relative = source.relative_to(bundle["source_root"])
+        target = destination / relative
+        current = destination
+        for part in relative.parts:
+            current = current / part
+            if current.is_symlink():
+                fail("Monero report destination must not contain symlinks")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source != target:
+            shutil.copyfile(source, target)
+    copied_manifest = destination / bundle["manifest_path"].name
+    # Detect source mutation between initial validation and copying as well.
+    copied = helper.validate_evidence(copied_manifest)
+    if copied["manifest_sha256"] != bundle["manifest_sha256"]:
+        fail("Monero evidence changed while being copied")
+    return copied
+
+
 def main():
     if not REPORT_GENERATOR.is_file():
         fail("report generator submodule is not initialized")
@@ -785,6 +829,8 @@ def main():
         fail("workflow metadata does not match checked-out source")
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    monero_path = os.environ.get("KK_MONERO_EVIDENCE", "")
+    monero = prepare_monero_evidence(monero_path, firmware_sha) if monero_path else None
     junit_paths = [ROOT / "test-reports" / "python-keepkey" / "junit.xml"]
     junit_paths += require_native_junit(ROOT)
     junit_paths.append(ROOT / "test-reports" / "dylib-junit.xml")
@@ -819,8 +865,9 @@ def main():
 
     wrapper_hash = sha256_file(Path(__file__))
     renderer_hash = sha256_file(REPORT_GENERATOR)
+    monero_hash = sha256_file(MONERO_REPORT_GENERATOR) if monero else ""
     generator_hash = hashlib.sha256(
-        (wrapper_hash + renderer_hash).encode("ascii")).hexdigest()
+        (wrapper_hash + renderer_hash + monero_hash).encode("ascii")).hexdigest()
     arm_manifest_hash = hashlib.sha256(json.dumps({
         variant: item["manifest_sha256"]
         for variant, item in sorted(arm_manifests.items())
@@ -849,8 +896,12 @@ def main():
         "--fw-version=%s" % fw_version,
     ], cwd=str(ROOT), check=True)
 
-    subprocess.run([
-        sys.executable, str(REPORT_GENERATOR),
+    render_command = [sys.executable, str(REPORT_GENERATOR)]
+    if monero:
+        render_command = [sys.executable, str(MONERO_REPORT_GENERATOR),
+                          "--evidence", str(monero["manifest_path"]),
+                          "--canonical-renderer", str(REPORT_GENERATOR), "--"]
+    subprocess.run(render_command + [
         "--output=%s" % REPORT_PDF,
         "--junit=%s" % MERGED_JUNIT,
         "--screenshots=%s" % screenshot_root,
@@ -938,6 +989,28 @@ def main():
             "sha256": sha256_file(REPORT_PDF),
         },
     }
+    if monero:
+        receipt = REPORT_PDF.with_suffix(REPORT_PDF.suffix + ".monero.json")
+        if not receipt.is_file():
+            fail("Monero PDF appendix receipt was not created")
+        receipt_content = json.loads(receipt.read_text())
+        if (receipt_content.get("evidence_manifest_sha256") != monero["manifest_sha256"] or
+                receipt_content.get("monero_report_generator_sha256") != monero_hash or
+                receipt_content.get("renderer_sha256") != renderer_hash or
+                receipt_content.get("pdf_sha256") != evidence["pdf"]["sha256"] or
+                not isinstance(receipt_content.get("monero_pages"), int) or
+                receipt_content["monero_pages"] < 1):
+            fail("Monero PDF appendix receipt does not bind the current report inputs")
+        evidence["generators"]["monero_report_sha256"] = monero_hash
+        evidence["monero"] = {
+            "evidence_manifest": str(monero["manifest_path"].relative_to(REPORT_DIR)),
+            "evidence_manifest_sha256": monero["manifest_sha256"],
+            "firmware_commit": firmware_sha,
+            "scope": monero["manifest"]["scope"],
+            "transaction_count": len(monero["manifest"]["transactions"]),
+            "screen_count": len(monero["screens"]),
+            "pdf_receipt_sha256": sha256_file(receipt),
+        }
     manifest_path = REPORT_DIR / "test-report-manifest.json"
     with open(manifest_path, "w", encoding="utf-8") as handle:
         json.dump(evidence, handle, sort_keys=True, indent=2)

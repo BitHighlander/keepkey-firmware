@@ -1,0 +1,98 @@
+// Research-only subset of pinned Trezor's Monero address wire schema.
+// IDs 540/541 are registered only by the explicit emulator research overlay.
+syntax = "proto2";
+
+message MoneroGetAddress {
+  repeated uint32 address_n = 1;
+  optional bool show_display = 2;
+  optional uint32 network_type = 3;
+  optional uint32 account = 4;
+  optional uint32 minor = 5;
+  optional bytes payment_id = 6;
+}
+
+message MoneroAddress {
+  optional bytes address = 1;
+}
+
+message MoneroGetWatchKey {
+  repeated uint32 address_n = 1;
+  optional uint32 network_type = 2;
+}
+message MoneroWatchKey {
+  optional bytes watch_key = 1;
+  optional bytes address = 2;
+}
+
+message MoneroSubAddressIndicesList {
+  optional uint32 account = 1;
+  repeated uint32 minor_indices = 2;
+}
+message MoneroKeyImageExportInitRequest {
+  optional uint64 num = 1;
+  optional bytes hash = 2;
+  repeated uint32 address_n = 3;
+  optional uint32 network_type = 4;
+  repeated MoneroSubAddressIndicesList subs = 5;
+}
+message MoneroKeyImageExportInitAck {}
+message MoneroTransferDetails {
+  optional bytes out_key = 1;
+  optional bytes tx_pub_key = 2;
+  repeated bytes additional_tx_pub_keys = 3;
+  optional uint64 internal_output_index = 4;
+  optional uint32 sub_addr_major = 5;
+  optional uint32 sub_addr_minor = 6;
+}
+message MoneroKeyImageSyncStepRequest {
+  repeated MoneroTransferDetails tdis = 1;
+}
+message MoneroExportedKeyImage {
+  optional bytes iv = 1;
+  optional bytes blob = 3;
+}
+message MoneroKeyImageSyncStepAck {
+  repeated MoneroExportedKeyImage kis = 1;
+}
+message MoneroKeyImageSyncFinalRequest {}
+message MoneroKeyImageSyncFinalAck {
+  optional bytes enc_key = 1;
+}
+
+// Native-emulator transaction construction experiment. These messages are
+// deliberately separate from Trezor's streamed transaction-signing protocol.
+message MoneroResearchRingMember {
+  required uint64 global_index = 1;
+  required bytes public_key = 2;
+  required bytes commitment = 3;
+}
+message MoneroResearchSource {
+  required uint64 amount = 1;
+  required uint32 real_member = 2;
+  required uint32 output_index = 3;
+  required uint32 subaddress_major = 4;
+  required uint32 subaddress_minor = 5;
+  required bytes tx_public_key = 6;
+  required bytes mask = 7;
+  repeated MoneroResearchRingMember ring = 8;
+  repeated bytes additional_tx_public_keys = 9;
+}
+message MoneroResearchDestination {
+  required uint64 amount = 1;
+  required string address = 2;
+  optional bool is_change = 3;
+  optional uint32 change_major = 4;
+  optional uint32 change_minor = 5;
+}
+message MoneroResearchSignTransaction {
+  repeated uint32 address_n = 1;
+  optional uint32 network_type = 2;
+  required uint64 fee = 3;
+  repeated MoneroResearchSource inputs = 4;
+  repeated MoneroResearchDestination outputs = 5;
+  optional uint64 unlock_time = 6;
+}
+message MoneroResearchSignedTransaction {
+  required bytes tx_blob = 1;
+  required bytes tx_hash = 2;
+}

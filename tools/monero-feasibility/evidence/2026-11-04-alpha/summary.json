@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "status": "pass",
+  "firmware_base_commit": "1ff40f344de9e9ac970a309492cfd344b2ddca19",
+  "firmware_branch": "feat/monero-emulator",
+  "compiler_scope": "macOS arm64 native emulator; no MCU execution",
+  "source_sha256": {
+    "lib/firmware/fsm.c": "7c03b8ea1fd101521e8ea00405b35cb8a2630a1b158eb1ed238e9abb1cea7815",
+    "lib/firmware/messagemap.def": "2b65f759e3f2bb453c0dbe6bc39f36fd702c32f1d78ff25e0d56fffa4fe46668",
+    "lib/firmware/storage.c": "f8a57102eff93c32ab14b83fcd5fa4d2144c689e370e35050ff4e535a8ce097d",
+    "tools/monero-feasibility/arm-startup.S": "3fce0d260260466440ef66761d60b21fe99e7952923936e2f0e0146db5acb0e1",
+    "tools/monero-feasibility/arm.ld": "ff63af7351d99b1724d5d9219679a818cc1a5b99aedf875082fd245c43ae1cea",
+    "tools/monero-feasibility/arm_execute.py": "02ad945c915ba9c435b1cf9611b122695fc3257a7275e474a02b0bd44f8ddaae",
+    "tools/monero-feasibility/build_core.py": "4b97825179cde68c1977dd537bd260e501e6316dc0be27bdb4cb8bc7f88cff93",
+    "tools/monero-feasibility/build_host.py": "ba812b5f72478aaf9f34f2d64316f05e2c84f8976cd314f3b2df3cf0a4420463",
+    "tools/monero-feasibility/commands/core-signing.cpp": "18b691ad347237d3afa88fdf856834ebf2f785036222643bd044fa074ff7e2c7",
+    "tools/monero-feasibility/commands/core-signing.h": "fc79d59d6e84e33906842fb1e54958264f0dd44c120fe2bdfc48024510f2ed51",
+    "tools/monero-feasibility/commands/crypto-check.c.in": "5bb0a3836354fdbda43f0c3750ecca32f58cf6b67f0fb960b8c24b59aaf35d66",
+    "tools/monero-feasibility/commands/fsm_msg_monero_key_image.h": "79c7acee9f947121c01356d83d27c4f143df61309341b0ae671559ac99d32bd5",
+    "tools/monero-feasibility/commands/fsm_msg_monero_research.h": "a4f8946bf58a452ab9a1849cd27476d05263ea0110b418041ef880744cadb971",
+    "tools/monero-feasibility/commands/fsm_msg_monero_sign.h": "cf3b9ddcfcb40402dbb00c6e1ee9afc0b93d054d12d6e6967dbd2e2c90bf631c",
+    "tools/monero-feasibility/commands/fsm_msg_monero_watch.h": "286192bcd8007a0183e8f53faa75c0d14da8a1aa49206515e9bb597bf592d6c3",
+    "tools/monero-feasibility/commands/key-image.c": "eecc8b084b4a96448a6da71e18671420d9398840af4179b334c0c19d52d1c6dc",
+    "tools/monero-feasibility/commands/key-image.h": "985e1afcf451f0170c8d123f03d5518bcb2c8f5e4e8d255976b224ebedbcb1bf",
+    "tools/monero-feasibility/commands/messages-monero-research.options": "36ceedb663eb0ca1ea11727b4227b1bf0c49c8d185c551ba0ad8dea390267932",
+    "tools/monero-feasibility/commands/messages-monero-research.proto": "a3a1989a7e24c7dcf3389073fe46e1e9f3609b6ae5e7b473bea99cf5653aac2e",
+    "tools/monero-feasibility/commands/monero_research.c": "ef1f70003512544efc0c6bda299a416cc728b6ce66be4f9028a0d7cab1ea6842",
+    "tools/monero-feasibility/commands/monero_research.h": "7facb4a72bcdb1ae451252a085ea7eefcb704bf556d6af1da7801a477ec2a155",
+    "tools/monero-feasibility/commands/research-schema.h": "4981e246f25b9078d7e3be4095e118ec1447f1b343748db022867c962d2cd168",
+    "tools/monero-feasibility/commands/signing-plan.c": "70f6db0ecafe3cdde60d7ffc589a4574e79c370aad86a02e2274026731139dba",
+    "tools/monero-feasibility/commands/signing-plan.h": "0896282e657922c7c5e60c7326404dbae3ec1d27845656d516183adfdc027b74",
+    "tools/monero-feasibility/commands/test_crypto.py": "ea61a3804d9d9b93e3171ca40cb2d731edae4dbe1ba6a5c2c9cea22d74ae1ca5",
+    "tools/monero-feasibility/commands/test_key_image.py": "b0d5e759140b5d3a45774b07676ae4d9420137a9ed8c27569eaeb689bf41075f",
+    "tools/monero-feasibility/commands/test_signing.py": "bc404bc2cfed350b1f84ac6a3db47e36eab1184d20987098d4188ce1b968a36f",
+    "tools/monero-feasibility/commands/test_watch.py": "2c3a850199d3781df3aa56e90fd1305a9a49d9888b033469d0665080605d566e",
+    "tools/monero-feasibility/commands/test_wire.py": "77450549e1b8b5bb75518d9e3a2343c689f25f81e250924a41b0ddd46c13d3fd",
+    "tools/monero-feasibility/commands/watch-key.c": "7426a2f95564f9a4f5e9fbdaffa4be527e61d855fd5dc93c1d6b0d96984208e9",
+    "tools/monero-feasibility/commands/watch-key.h": "f60a285d3a2d9b2ad4554a6b06f6e870ea6791513d93fabc985027321cf2c3c5",
+    "tools/monero-feasibility/commands-overlay.cmake": "fa402754959af26e244316f4cb395f4213b77c06dc3b27a65eae90056bdb76e5",
+    "tools/monero-feasibility/commands.py": "c7281294271b30fbc9ce574dcc5ca35deb4f9feb8806e8523b91acd9e1515eba",
+    "tools/monero-feasibility/core-reference.c": "bbd576aa4862b4d36d486607b260d60fab9a0ab4dc6da096256f544a1a4fad43",
+    "tools/monero-feasibility/emulator-overlay.cmake": "f9228a4fd97813ce5d8be6088c7e16be2f3c88f0d63590cc42258e64af88271b",
+    "tools/monero-feasibility/emulator-selftest.c": "9f9b3b2702eeddb95d03152d6a35e98b0c26f6f9c44b5903862c44bf5ec07172",
+    "tools/monero-feasibility/emulator.py": "faced0d1515d3a0e5954277735264fc04b745084aba84bc65381584c3ccf76ef",
+    "tools/monero-feasibility/firmware-overlay.cmake": "9bd491f77f30b01f849560b85f21386bf716ad64123b8036b9d2fcba9800e56c",
+    "tools/monero-feasibility/firmware.py": "a22fe89b57d4cef621fb05c58b8f64d798e3d293a66fb75a7d2382d76aad87ef",
+    "tools/monero-feasibility/hardware-overlay.cmake": "f6a89ac081983d71781ee6af87c0c1a7f5fc9ea0506a15505fd09f0676d09c58",
+    "tools/monero-feasibility/hardware-selftest.c": "6b62589445934044a8d60b9380573dea6371735a41a979dc89e98fe45ecb31c1",
+    "tools/monero-feasibility/hardware-stack.S": "9da171ab7da78d31f49460fe43a42e066c40de2417f09c8eaddbb31b2d7e342f",
+    "tools/monero-feasibility/hardware.py": "aa9b0a94b48f4f69237cac31a75a457626bc95130cc0d478de793b620834819a",
+    "tools/monero-feasibility/host-adapter.cpp": "3219809c6b800b496d848bb5b57814f22b74fc920723f71903cd92a8578063e6",
+    "tools/monero-feasibility/host_emulator.py": "3b77f18301c09c5813851da2838a545a304e956027b87366b3beaa1f63f2f3c7",
+    "tools/monero-feasibility/interop.py": "47bd647bc6d8061333c4996fa31a638fa03a5bbdc3db4909db1d0b1f31a1cdcf",
+    "tools/monero-feasibility/interoperability.c": "e2fa4aacc91d6b5bd732ef57a045cb6db5b262c4114c1033e5ff33007e505b8b",
+    "tools/monero-feasibility/prepare_host.py": "3fcb8ad30a06caaa0abad8d647373b054c3f95aebb43dae9c54de62578dc3aa2",
+    "tools/monero-feasibility/private_keystore.py": "a088b3c63ce9f2012b562d555fd7c0ac90a970f4096dd9f3b64d438244e20968",
+    "tools/monero-feasibility/private_mainnet.py": "5796aa07b9904094829a045b7881ad43e591e4393bceebb45b6d17dd754ccf89",
+    "tools/monero-feasibility/private_profile_io.py": "d4f32441b0d1caf2596dfc07898b7a54e32b0b46d4c633f80b02ab579deea573",
+    "tools/monero-feasibility/private_transport.py": "4c7919741aaa9170e14d44f4568f92a3ba1eb42c2535f986de69ad1120d0b9ed",
+    "tools/monero-feasibility/private_watch.py": "d1d2c684d43915b2ab955ac44009c21e13a1ff59526336490947bf1ca8e1d15c",
+    "tools/monero-feasibility/probe.c": "52a6b0e9884c313c0d6ffa7b95ce0f367017a25c6cf902132eee3aebfff11988",
+    "tools/monero-feasibility/reference.py": "c609810abb6924d4dc724bee8e63ffb200ddb929a37cab0839ef5f8e4147f1ac",
+    "tools/monero-feasibility/run.py": "8afd6b1d3f9d94a49c40f5890dae14bb634ace76324b68e395c4179f1625944e",
+    "tools/monero-feasibility/vectors.c": "bc4fa18e931f280b0391dc6ecf366248a36d70a8634a495171a22c1b059b63db",
+    "tools/monero-feasibility/verify_host_adapter.py": "e28b310ac19d8bd2f33ea3fab666d58b03d2a187cea4b6b2eccd68416fabde9d",
+    "tools/monero-feasibility/wallet_emulator.py": "fc979d868095d2e5365e87fececc53f41fe5755e4977607b6341714ddcff98e2"
+  },
+  "source_manifest_sha256": "57746b6d893557640d27506a4f174a6e849263ef0669eb6eb29ef2865a8fc326",
+  "submodules": {
+    "code-signing-keys": "a6470bd8598e5e9a7bfc38bf139a5e5a616f05ec",
+    "deps/crypto/trezor-firmware": "ad16f7fc3ffa6e0ee18ce684b35fe366a2c03c71",
+    "deps/device-protocol": "d47537b30938d7803a439839f3059b48264cd62e",
+    "deps/googletest": "7888184f28509dba839e3683409443e0b5bb8948",
+    "deps/python-keepkey": "4c0bb14f3fcfd29c84a6b783a2ad1490fe1f5197",
+    "deps/qrenc/QR-Code-generator": "6dfbfdad5d9303ed190d1c3cb7bec34b565b6ce8",
+    "deps/sca-hardening/SecAESSTM32": "71d356a1141624994cf613bd2d2583892e8e6d5a"
+  },
+  "runs": {
+    "full_signing": {
+      "status": "pass",
+      "stages": {
+        "addresses": {
+          "status": "pass",
+          "workflow_checks": 177
+        },
+        "watch": {
+          "status": "pass",
+          "workflow_checks": 163
+        },
+        "key-images": {
+          "status": "pass",
+          "workflow_checks": 384
+        },
+        "signing": {
+          "status": "pass",
+          "workflow_checks": 524,
+          "signed_transactions": 15
+        },
+        "crypto": {
+          "status": "pass"
+        },
+        "ordinary-addresses": {
+          "status": "pass"
+        },
+        "ordinary-watch": {
+          "status": "pass",
+          "workflow_checks": 2
+        },
+        "ordinary-key-images": {
+          "status": "pass",
+          "workflow_checks": 9
+        },
+        "ordinary-signing": {
+          "status": "pass"
+        }
+      },
+      "report_sha256": "e12392f8acb66fc23215376a707b28984c6938b1e7456f4ad523b6bd0df1db59",
+      "emulator_library_sha256": "e280c8c9a1bb4628e8c361b1b5b7b81827e6f1218347e86b995a19ca01624730",
+      "emulator_library_bytes": 1987040,
+      "signing_enabled": true,
+      "core_engine_sha256": "96289ef6f4d1e0cde90784bb628fcce855f1be7851688e16c79b863d6aa13e8a",
+      "independent_reference_sha256": "e06048c278b0557f52354daaabebc24ce3fa1c9e93650bc290821a1d05e67e07",
+      "runtime_dependency_note": "Requires pinned native Core bridge and platform dependencies; not a portable standalone library"
+    },
+    "vault_receive_only": {
+      "status": "pass",
+      "stages": {
+        "addresses": {
+          "status": "pass",
+          "workflow_checks": 177
+        },
+        "watch": {
+          "status": "pass",
+          "workflow_checks": 163
+        },
+        "key-images": {
+          "status": "pass",
+          "workflow_checks": 384
+        },
+        "research-signing-disabled": {
+          "status": "pass"
+        },
+        "crypto": {
+          "status": "pass"
+        },
+        "ordinary-addresses": {
+          "status": "pass"
+        },
+        "ordinary-watch": {
+          "status": "pass",
+          "workflow_checks": 2
+        },
+        "ordinary-key-images": {
+          "status": "pass",
+          "workflow_checks": 9
+        },
+        "ordinary-signing": {
+          "status": "pass"
+        }
+      },
+      "report_sha256": "ca743ef7215193abe5c33424879eb690de7dc12e2d547c92c0e5e571ee6e9e0b",
+      "emulator_library_sha256": "d7c529ea0c0887f889db9e491b90c81f6d10575b8770ad560b3a136c798582cd",
+      "emulator_library_bytes": 1967936,
+      "signing_enabled": false,
+      "core_engine_sha256": null,
+      "independent_reference_sha256": "e06048c278b0557f52354daaabebc24ce3fa1c9e93650bc290821a1d05e67e07",
+      "runtime_dependencies": [
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    }
+  },
+  "physical_device_accessed": false,
+  "mainnet_transactions_sent": 0,
+  "production_ready": false
+}

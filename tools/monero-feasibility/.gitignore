@@ -1,0 +1,17 @@
+# Local Python caches and compiled experiment output
+__pycache__/
+*.py[cod]
+*.dylib
+*.so
+*.o
+*.a
+*.elf
+
+# Fresh mainnet profiles belong outside the repository
+wallet.json
+wallet.enc
+wallet.backup.enc
+watch.enc
+mainnet-watch.json
+*.keys
+*.login

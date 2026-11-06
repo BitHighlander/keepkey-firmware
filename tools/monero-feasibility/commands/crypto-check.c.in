@@ -1,0 +1,108 @@
+/* Public reference fixtures only. Generated header is produced independently
+ * through the pinned Monero Core adapter, not the candidate crypto code. */
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "monero_research.h"
+#include "crypto-vectors.h"
+
+static unsigned checks;
+static unsigned failed_line;
+#define CHECK(condition) do { ++checks; if (!(condition)) { \
+  failed_line = __LINE__; goto failed; } } while (0)
+
+/* The tested address derivation is deterministic and must never request RNG. */
+void random_buffer(uint8_t* output, size_t size) {
+  (void)output;
+  (void)size;
+  abort();
+}
+
+static int all_zero(const void* memory, size_t size) {
+  const uint8_t* bytes = memory;
+  unsigned combined = 0;
+  for (size_t i = 0; i < size; ++i) combined |= bytes[i];
+  return combined == 0;
+}
+
+int main(void) {
+  char address[MONERO_RESEARCH_ADDRESS_CAPACITY];
+  unsigned address_cases = 0;
+  for (unsigned i = 0; i < MONERO_ADDRESS_CASES; ++i) {
+    const monero_address_case* vector = &monero_address_cases[i];
+    uint8_t original_key[32];
+    memcpy(original_key, vector->node_key, sizeof(original_key));
+    memset(address, 0xa5, sizeof(address));
+    CHECK(monero_research_get_address(vector->node_key, vector->network,
+                                       vector->major, vector->minor, address));
+    CHECK(address[MONERO_RESEARCH_ADDRESS_LENGTH] == '\0');
+    CHECK(strlen(address) == MONERO_RESEARCH_ADDRESS_LENGTH);
+    CHECK(!memcmp(address, vector->address, sizeof(address)));
+    CHECK(!memcmp(original_key, vector->node_key, sizeof(original_key)));
+    ++address_cases;
+  }
+
+  uint8_t zero[32] = {0};
+  /* The subgroup order also reduces to zero; reject it without an address. */
+  const uint8_t order[32] = {
+    0xed,0xd3,0xf5,0x5c,0x1a,0x63,0x12,0x58,
+    0xd6,0x9c,0xf7,0xa2,0xde,0xf9,0xde,0x14,
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x10
+  };
+  const uint8_t* rejected_keys[] = {NULL, zero, order};
+  for (unsigned i = 0; i < sizeof(rejected_keys)/sizeof(rejected_keys[0]); ++i) {
+    memset(address, 0xa5, sizeof(address));
+    CHECK(!monero_research_get_address(rejected_keys[i], 0, 0, 0, address));
+    CHECK(all_zero(address, sizeof(address)));
+  }
+  for (unsigned i = 0; i < 2; ++i) {
+    const uint32_t network = i == 0 ? 3u : UINT32_MAX;
+    memset(address, 0xa5, sizeof(address));
+    CHECK(!monero_research_get_address(monero_address_cases[0].node_key,
+                                       network, 0, 0, address));
+    CHECK(all_zero(address, sizeof(address)));
+    CHECK(monero_research_network_name(network) == NULL);
+  }
+  CHECK(!monero_research_get_address(monero_address_cases[0].node_key,
+                                     0, 0, 0, NULL));
+
+  uint32_t path[4] = {0x8000002cu, 0x80000080u, 0x80000000u, 0x80000000u};
+  CHECK(monero_research_path_valid(path, 3));
+  CHECK(!monero_research_path_valid(NULL, 3));
+  CHECK(!monero_research_path_valid(path, 0));
+  CHECK(!monero_research_path_valid(path, 2));
+  CHECK(!monero_research_path_valid(path, 4));
+  path[2] = UINT32_MAX;
+  CHECK(monero_research_path_valid(path, 3));
+  path[2] = 0;
+  CHECK(!monero_research_path_valid(path, 3));
+  path[2] = 0x80000000u;
+  path[0] = 44;
+  CHECK(!monero_research_path_valid(path, 3));
+  path[0] = 0x8000002du;
+  CHECK(!monero_research_path_valid(path, 3));
+  path[0] = 0x8000002cu;
+  path[1] = 128;
+  CHECK(!monero_research_path_valid(path, 3));
+  path[1] = 0x80000081u;
+  CHECK(!monero_research_path_valid(path, 3));
+  path[1] = 0x80000080u;
+  CHECK(monero_research_path_valid(path, 3));
+  CHECK(!strcmp(monero_research_network_name(0), "Mainnet"));
+  CHECK(!strcmp(monero_research_network_name(1), "Testnet"));
+  CHECK(!strcmp(monero_research_network_name(2), "Stagenet"));
+
+  /* A rejected request must not prevent a subsequent correct derivation. */
+  CHECK(monero_research_get_address(monero_address_cases[0].node_key,
+                                     0, 0, 0, address));
+  CHECK(!memcmp(address, monero_address_cases[0].address, sizeof(address)));
+  printf("{\"status\":\"pass\",\"address_cases\":%u,\"checks\":%u,\"failed_line\":0}\n",
+         address_cases, checks);
+  return 0;
+
+failed:
+  printf("{\"status\":\"fail\",\"address_cases\":%u,\"checks\":%u,\"failed_line\":%u}\n",
+         address_cases, checks, failed_line);
+  return 1;
+}

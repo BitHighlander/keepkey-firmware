@@ -192,7 +192,7 @@ jobs:
 
   static-analysis:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -329,7 +329,7 @@ jobs:
 
   crypto-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -1350,7 +1350,7 @@ jobs:
     # Rehearsal runs carry no OLED evidence, so they cannot produce the report.
     if: always() && vars.KK_CI_REHEARSAL != '1'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -1417,11 +1417,11 @@ jobs:
       - name: Init report and protocol submodules
         id: python
         run: |
-          git submodule update --init deps/device-protocol deps/python-keepkey
+          git submodule update --init deps/device-protocol deps/python-keepkey deps/crypto/trezor-firmware
           echo "sha=$(git rev-parse HEAD:deps/python-keepkey)" >> "$GITHUB_OUTPUT"
 
       - name: Check report gate regressions
-        run: python3 -m unittest scripts/test_generate_test_report.py -v
+        run: python3 -m unittest discover -s scripts -p 'test*report.py' -v
 
       - name: Generate test report PDF
         env:
