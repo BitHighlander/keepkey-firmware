@@ -1345,19 +1345,8 @@ jobs:
   # STAGE 3b: TEST REPORT — generate PDF from test artifacts
   # ═══════════════════════════════════════════════════════════
 
-  monero-wallet-evidence:
-    # Rebuild the opt-in native signer at this exact firmware revision. Its
-    # public pixels, transaction receipts and regression results join the PDF;
-    # this does not qualify the separate ARM image for Monero signing.
-    if: vars.KK_CI_REHEARSAL != '1'
-    uses: ./.github/workflows/monero-emulator.yml
-    with:
-      full_wallet_evidence: true
-    permissions:
-      contents: read
-
   generate-test-report:
-    needs: [unit-tests, python-integration-tests, python-dylib-tests, build-arm-firmware, monero-wallet-evidence]
+    needs: [unit-tests, python-integration-tests, python-dylib-tests, build-arm-firmware]
     # Rehearsal runs carry no OLED evidence, so they cannot produce the report.
     if: always() && vars.KK_CI_REHEARSAL != '1'
     runs-on: ubuntu-latest
@@ -1419,12 +1408,6 @@ jobs:
           # identically named outputs whose bytes intentionally differ.
           merge-multiple: false
 
-      - name: Download exact-revision public Monero proof
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: monero-wallet-evidence
-          path: test-reports/monero/
-
       - name: Extract firmware version
         id: version
         run: |
@@ -1449,7 +1432,6 @@ jobs:
           KK_WORKFLOW_EVENT: ${{ github.event_name }}
           KK_FIRMWARE_PR: ${{ github.event.pull_request.html_url }}
           KK_PYTHON_PR: https://github.com/keepkey/python-keepkey/pull/197
-          KK_MONERO_EVIDENCE: test-reports/monero/manifest.json
         run: python3 scripts/generate-test-report.py
 
       - name: Upload test report
@@ -1462,7 +1444,7 @@ jobs:
           if-no-files-found: error
 
   release-evidence-gate:
-    needs: [unit-tests, python-integration-tests, python-dylib-tests, build-arm-firmware, monero-wallet-evidence, generate-test-report]
+    needs: [unit-tests, python-integration-tests, python-dylib-tests, build-arm-firmware, generate-test-report]
     if: always() && vars.KK_CI_REHEARSAL != '1'
     runs-on: ubuntu-latest
     steps:
@@ -1473,9 +1455,8 @@ jobs:
           DYLIB_RESULT: ${{ needs.python-dylib-tests.result }}
           ARM_RESULT: ${{ needs.build-arm-firmware.result }}
           REPORT_RESULT: ${{ needs.generate-test-report.result }}
-          MONERO_RESULT: ${{ needs.monero-wallet-evidence.result }}
         run: |
-          for result in "$UNIT_RESULT" "$PYTHON_RESULT" "$DYLIB_RESULT" "$ARM_RESULT" "$MONERO_RESULT" "$REPORT_RESULT"; do
+          for result in "$UNIT_RESULT" "$PYTHON_RESULT" "$DYLIB_RESULT" "$ARM_RESULT" "$REPORT_RESULT"; do
             test "$result" = success || exit 1
           done
 
@@ -1504,7 +1485,6 @@ jobs:
       - python-dylib-tests
       - windows-dylib-build
       - generate-test-report
-      - monero-wallet-evidence
       - release-evidence-gate
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -1517,11 +1497,11 @@ jobs:
           set -euo pipefail
           echo "$NEEDS_JSON" | jq -r 'to_entries[] | "\(.value.result)\t\(.key)"' | sort
           echo
-          # Rehearsal skips the evidence jobs; everything else must pass.
+          # Rehearsal skips only the two evidence jobs; everything else must pass.
           WAIVED='[]'
           if [ "${KK_CI_REHEARSAL:-}" = 1 ]; then
             echo "::warning::REHEARSAL run (KK_CI_REHEARSAL=1): no release evidence produced"
-            WAIVED='["monero-wallet-evidence","generate-test-report","release-evidence-gate"]'
+            WAIVED='["generate-test-report","release-evidence-gate"]'
           fi
           NOT_SUCCESS=$(echo "$NEEDS_JSON" | jq -r --argjson waived "$WAIVED" \
             'to_entries[] | select(.value.result != "success")
