@@ -26,10 +26,10 @@
 #include "keepkey/firmware/authenticator.h"
 #include "keepkey/firmware/passkey.h"
 
-/* 20, not 18: alpha builds wrote 18 (clear-sign identity) and 19 (PIN-KDF),
- * so those numbers stay burned and are refused, never parsed as passkeys. */
+/* V21 adds duress metadata to V20's reserved area. Alpha builds wrote 18
+ * (clear-sign identity) and 19 (PIN-KDF); those numbers remain burned. */
 #define STORAGE_VERSION \
-  20 /* Must add case fallthrough in storage_fromFlash after increment*/
+  21 /* Must add case fallthrough in storage_fromFlash after increment*/
 
 /* The highest storage version written by any firmware that has SHIPPED in a
  * signed release.
@@ -184,6 +184,12 @@ bool storage_getPassphraseProtected(void);
 void storage_setPassphraseProtected(bool passphrase);
 void session_cachePassphrase(const char* passphrase);
 bool session_isPassphraseCached(void);
+
+bool storage_hasDuressPassphrase(void);
+/// Stage a new duress verifier; empty removes it. Requires PIN authorization.
+bool storage_setDuressPassphrase(const char* passphrase);
+/// Factory-reset on an exact match. Call before confirmation or caching.
+bool storage_wipeIfDuressPassphrase(const char* passphrase);
 
 /// \brief Set config mnemonic in shadow memory from words.
 void storage_setMnemonicFromWords(const char (*words)[12],

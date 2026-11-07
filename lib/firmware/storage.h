@@ -77,6 +77,12 @@ typedef struct _Storage {
     uint8_t authdata_fingerprint[32];
     /* V20 CTAP2 state, stored in the V17 reserved plaintext area. */
     PasskeyStorage passkeys;
+    /* V21, in the remaining reserved public bytes. Never store plaintext. */
+    struct {
+      uint8_t enabled;
+      uint8_t salt[16];
+      uint8_t verifier[32];
+    } duress;
   } pub;
 
   bool has_sec;
@@ -254,6 +260,8 @@ void storage_writeV11(char* flash, size_t len, const ConfigFlash* src);
 void storage_writeV16(char* flash, size_t len, const ConfigFlash* src);
 void storage_writeV17(char* flash, size_t len, const ConfigFlash* src);
 void storage_writeV20(char* flash, size_t len, const ConfigFlash* src);
+void storage_readV21(ConfigFlash* dst, const char* flash, size_t len);
+void storage_writeV21(char* flash, size_t len, const ConfigFlash* src);
 void storage_writeV19(char* flash, size_t len, const ConfigFlash* src);
 
 void storage_readMeta(Metadata* meta, const char* ptr, size_t len);

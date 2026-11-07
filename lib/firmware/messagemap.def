@@ -23,6 +23,7 @@
     MSG_IN(MessageType_MessageType_Ping,                            Ping,                        fsm_msgPing)
     MSG_IN(MessageType_MessageType_ChangePin,                       ChangePin,                   fsm_msgChangePin)
     MSG_IN(MessageType_MessageType_ChangeWipeCode,                  ChangeWipeCode,              fsm_msgChangeWipeCode)
+    MSG_IN(MessageType_MessageType_ChangeDuressPassphrase,          ChangeDuressPassphrase,      fsm_msgChangeDuressPassphrase)
     MSG_IN(MessageType_MessageType_WipeDevice,                      WipeDevice,                  fsm_msgWipeDevice)
     MSG_IN(MessageType_MessageType_FirmwareErase,                   FirmwareErase,               fsm_msgFirmwareErase)
     MSG_IN(MessageType_MessageType_FirmwareUpload,                  FirmwareUpload,              fsm_msgFirmwareUpload)

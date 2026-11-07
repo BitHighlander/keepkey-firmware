@@ -26,6 +26,7 @@ set(sources
     storage.cpp
     storage_cipher_probe.c
     storage_passphrase.cpp
+    duress_passphrase.cpp
     test_board.cpp
     transaction.cpp
     usb_rx.cpp

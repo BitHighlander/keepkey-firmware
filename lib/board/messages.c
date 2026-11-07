@@ -417,6 +417,31 @@ _Static_assert(sizeof(msg_tiny) >= sizeof(DebugLinkGetState),
                "msg_tiny too tiny");
 #endif
 
+/* Nanopb stores strings as C strings. Reject embedded NULs before decoding a
+ * passphrase, so a malformed input cannot become a shorter duress trigger. */
+static bool passphrase_wire_valid(const uint8_t* data, size_t len) {
+  pb_istream_t stream = pb_istream_from_buffer(data, len);
+  while (stream.bytes_left) {
+    pb_wire_type_t type;
+    uint32_t tag;
+    bool eof;
+    if (!pb_decode_tag(&stream, &type, &tag, &eof)) return false;
+    if (tag == 1) {
+      pb_istream_t value;
+      if (type != PB_WT_STRING || !pb_make_string_substream(&stream, &value))
+        return false;
+      while (value.bytes_left) {
+        uint8_t byte;
+        if (!pb_read(&value, &byte, 1) || byte == 0) return false;
+      }
+      if (!pb_close_string_substream(&stream, &value)) return false;
+    } else if (!pb_skip_field(&stream, type)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static void msg_read_tiny(const uint8_t* msg, size_t len) {
   msg_tiny_id = MSG_TINY_TYPE_ERROR;
   memzero(msg_tiny, sizeof(msg_tiny));
@@ -455,6 +480,11 @@ static void msg_read_tiny(const uint8_t* msg, size_t len) {
       fields = ButtonAck_fields;
       break;
     case MessageType_MessageType_PassphraseAck:
+      if (!passphrase_wire_valid(buf + 9, msgSize)) {
+        reject_tiny_message(FailureType_Failure_SyntaxError,
+                            "Malformed passphrase");
+        goto cleanup;
+      }
       fields = PassphraseAck_fields;
       break;
     case MessageType_MessageType_Cancel:

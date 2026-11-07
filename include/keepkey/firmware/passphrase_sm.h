@@ -56,5 +56,6 @@ typedef struct {
 } PassphraseInfo;
 
 bool passphrase_protect(void);
+bool passphrase_changeDuress(void);
 
 #endif
