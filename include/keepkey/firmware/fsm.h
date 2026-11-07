@@ -89,6 +89,7 @@ void fsm_msgGetCoinTable(GetCoinTable* msg);
 void fsm_msgPing(Ping* msg);
 void fsm_msgChangePin(ChangePin* msg);
 void fsm_msgChangeWipeCode(ChangeWipeCode* msg);
+void fsm_msgChangeDuressPassphrase(ChangeDuressPassphrase* msg);
 void fsm_msgWipeDevice(WipeDevice* msg);
 void fsm_msgFirmwareErase(FirmwareErase* msg);
 void fsm_msgFirmwareUpload(FirmwareUpload* msg);

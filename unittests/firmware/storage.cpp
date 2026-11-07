@@ -2054,10 +2054,10 @@ TEST(Storage, NewerStorageVersionRefusedNotWiped) {
   EXPECT_NE(storage_fromFlash(&session, &shadow, flash), SUS_TooNew);
 }
 
-/* 7.16 writes V20. 18 and 19 are burned alpha formats: refused (wiped), never
+/* V21 adds duress metadata. 18 and 19 are burned alpha formats: refused (wiped), never
  * parsed as passkey state, in both the normal and the bitcoin-only band. */
-TEST(Storage, WritesV20AndRefusesBurnedVersions) {
-  EXPECT_EQ(STORAGE_VERSION, 20);
+TEST(Storage, WritesV21AndRefusesBurnedVersions) {
+  EXPECT_EQ(STORAGE_VERSION, 21);
   EXPECT_EQ(STORAGE_VERSION_LAST_SHIPPED, 17);
   static char flash[STORAGE_SECTOR_LEN];
   memset(flash, 0, sizeof(flash));

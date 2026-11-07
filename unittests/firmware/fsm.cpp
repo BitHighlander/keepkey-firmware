@@ -734,6 +734,9 @@ TEST_P(IncompatibleStorage, SettingsRefuseBeforeMutationOrConfirmation) {
   wipe_code.has_remove = wipe_code.remove = true;
   ExpectRejected(MessageType_MessageType_ChangeWipeCode, ChangeWipeCode_fields,
                  &wipe_code);
+  ChangeDuressPassphrase duress = {};
+  ExpectRejected(MessageType_MessageType_ChangeDuressPassphrase,
+                 ChangeDuressPassphrase_fields, &duress);
 
   ApplySettings settings = {};
   settings.has_label = true;

@@ -1443,6 +1443,36 @@ void storage_readStorageV20(Storage* storage, const char* ptr, size_t len) {
   memcpy(&storage->pub.passkeys, ptr + PASSKEY_STORAGE_OFF,
          sizeof(storage->pub.passkeys));
   storage_validatePasskeyData(&storage->pub.passkeys);
+  memzero(&storage->pub.duress, sizeof(storage->pub.duress));
+}
+
+/* V21 fits in the existing record: the last 57 reserved public bytes follow
+ * the passkey metadata and precede encrypted_sec_version at offset 1497.
+ * V20's unused bytes are randomized, so only a V21 reader may interpret them.
+ */
+#define DURESS_STORAGE_OFF 1440
+
+void storage_readV21(ConfigFlash* dst, const char* flash, size_t len) {
+  if (len < 44 + V20_STORAGE_LEN) return;
+  storage_readV20(dst, flash, len);
+  memcpy(&dst->storage.pub.duress, flash + 44 + DURESS_STORAGE_OFF,
+         sizeof(dst->storage.pub.duress));
+  if (dst->storage.pub.duress.enabled != 1)
+    memzero(&dst->storage.pub.duress, sizeof(dst->storage.pub.duress));
+}
+
+void storage_writeV21(char* flash, size_t len, const ConfigFlash* src) {
+  if (len < 44 + V20_STORAGE_LEN) return;
+  _Static_assert(sizeof(src->storage.pub.duress) == 49,
+                 "V21 duress layout must remain byte-exact");
+  _Static_assert(
+      PASSKEY_STORAGE_OFF + sizeof(PasskeyStorage) <= DURESS_STORAGE_OFF,
+      "passkey and duress metadata overlap");
+  _Static_assert(DURESS_STORAGE_OFF + sizeof(src->storage.pub.duress) <= 1497,
+                 "duress metadata exceeds reserved public storage");
+  storage_writeV20(flash, len, src);
+  memcpy(flash + 44 + DURESS_STORAGE_OFF, &src->storage.pub.duress,
+         sizeof(src->storage.pub.duress));
 }
 
 void storage_writeStorageV19(char* ptr, size_t len, const Storage* storage) {
@@ -1635,6 +1665,12 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
       dst->storage.version = STORAGE_VERSION;
       // Erase legacy unauthenticated AdvancedMode bit 12 (even with no PIN).
       if (read_u32_le(flash + 44 + 4) & (1u << 12)) return SUS_Updated;
+      return SUS_Updated;
+
+    case StorageVersion_21:
+      storage_readV21(dst, flash, STORAGE_SECTOR_LEN);
+      dst->storage.version = STORAGE_VERSION;
+      if (read_u32_le(flash + 44 + 4) & (1u << 12)) return SUS_Updated;
       return SUS_Valid;
 
     case StorageVersion_BTC_ONLY:
@@ -1662,8 +1698,10 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
         storage_readV17(dst, flash, STORAGE_SECTOR_LEN);
       } else if (underlying == 18 || underlying == 19) {
         return SUS_Invalid; /* burned, as in the multi-chain arms */
-      } else {
+      } else if (underlying == 20) {
         storage_readV20(dst, flash, STORAGE_SECTOR_LEN);
+      } else {
+        storage_readV21(dst, flash, STORAGE_SECTOR_LEN);
       }
       dst->storage.version = STORAGE_VERSION_BTC_ONLY;
       if (read_u32_le(flash + 44 + 4) & (1u << 12)) return SUS_Updated;
@@ -2190,7 +2228,7 @@ void storage_commit(void) {
 
   /* Set before serializing, or find_active_storage() misses the commit. */
   memcpy(shadow_config.meta.magic, STORAGE_MAGIC_STR, STORAGE_MAGIC_LEN);
-  storage_writeV20(flash_temp, sizeof(flash_temp), &shadow_config);
+  storage_writeV21(flash_temp, sizeof(flash_temp), &shadow_config);
 
   const Allocation pending = next_storage(next_storage(storage_location));
   const uint32_t crc = storage_recordCrc(flash_temp);
@@ -2764,6 +2802,82 @@ void session_cachePassphrase(const char* passphrase) {
 }
 
 bool session_isPassphraseCached(void) { return session.passphraseCached; }
+
+bool storage_hasDuressPassphrase(void) {
+  return shadow_config.storage.pub.duress.enabled == 1;
+}
+
+static void storage_duressVerifier(const char* passphrase,
+                                   const uint8_t salt[16], uint8_t out[32]) {
+  /* A dedicated domain and fresh salt prevent cross-device/precomputed
+   * comparisons. This public verifier requires a strong, unique passphrase. */
+  uint8_t domain_salt[sizeof("KeepKey duress v1") - 1 + 16];
+  memcpy(domain_salt, "KeepKey duress v1", sizeof("KeepKey duress v1") - 1);
+  memcpy(domain_salt + sizeof("KeepKey duress v1") - 1, salt, 16);
+  pbkdf2_hmac_sha256((const uint8_t*)passphrase, strlen(passphrase),
+                     domain_salt, sizeof(domain_salt), 100000, out, 32);
+  memzero(domain_salt, sizeof(domain_salt));
+}
+
+bool storage_setDuressPassphrase(const char* passphrase) {
+  if (!passphrase || !storage_isInitialized() || !storage_hasPin() ||
+      !session_isPinCached() || storage_isFirmwareTooOld() ||
+      storage_isBitcoinOnlyLocked())
+    return false;
+  size_t len = strnlen(passphrase, PASSPHRASE_BUF);
+  if (len >= PASSPHRASE_BUF) return false;
+  if (len == 0) {
+    memzero(&shadow_config.storage.pub.duress,
+            sizeof(shadow_config.storage.pub.duress));
+    return true;
+  }
+  if (!storage_getPassphraseProtected()) return false;
+  uint8_t salt[16], verifier[32];
+  if (!random_buffer_checked(salt, sizeof(salt))) {
+    memzero(salt, sizeof(salt));
+    return false;
+  }
+  storage_duressVerifier(passphrase, salt, verifier);
+  memcpy(shadow_config.storage.pub.duress.salt, salt, sizeof(salt));
+  memcpy(shadow_config.storage.pub.duress.verifier, verifier, sizeof(verifier));
+  shadow_config.storage.pub.duress.enabled = 1;
+  memzero(salt, sizeof(salt));
+  memzero(verifier, sizeof(verifier));
+  return true;
+}
+
+bool storage_wipeIfDuressPassphrase(const char* passphrase) {
+  if (!storage_hasDuressPassphrase() || !passphrase || !*passphrase ||
+      strnlen(passphrase, PASSPHRASE_BUF) >= PASSPHRASE_BUF)
+    return false;
+  uint8_t verifier[32];
+  storage_duressVerifier(passphrase, shadow_config.storage.pub.duress.salt,
+                         verifier);
+  const bool matches =
+      memcmp_s(verifier, shadow_config.storage.pub.duress.verifier,
+               sizeof(verifier)) == 0;
+  memzero(verifier, sizeof(verifier));
+  if (!matches) return false;
+
+  /* Full factory reset, including every rotated flash copy and all volatile
+   * seed/signing/authenticator state. Never derive a wallet from this input. */
+  session_clear(true);
+  storage_wipe();
+  for (Allocation sector = FLASH_STORAGE1; sector <= FLASH_STORAGE3; ++sector) {
+    const volatile uint8_t* bytes =
+        (const volatile uint8_t*)flash_write_helper(sector);
+    for (size_t i = 0; i < STORAGE_SECTOR_LEN; ++i) {
+      if (bytes[i] != 0xff) {
+        layout_warning_static("Storage erase failed. Reboot device!");
+        shutdown();
+      }
+    }
+  }
+  storage_reset();
+  storage_resetUuid();
+  storage_commit();
+  return true;
+}
 
 void storage_setMnemonicFromWords(const char (*words)[12],
                                   unsigned int word_count) {

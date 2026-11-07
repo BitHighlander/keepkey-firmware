@@ -81,6 +81,10 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
   resp->has_passphrase_protection = true;
   resp->passphrase_protection = storage_getPassphraseProtected();
   resp->has_wipe_code_protection = storage_hasWipeCode();
+  resp->has_supports_duress_passphrase = true;
+  resp->supports_duress_passphrase = true;
+  resp->has_duress_passphrase_protection = true;
+  resp->duress_passphrase_protection = storage_hasDuressPassphrase();
 
 #ifdef SCM_REVISION
   // cppcheck-suppress sizeofwithnumericparameter
@@ -475,6 +479,10 @@ void fsm_msgPing(Ping* msg) {
 void fsm_msgChangePin(ChangePin* msg) {
   CHECK_STORAGE_WRITABLE
 
+  CHECK_PARAM(
+      !(msg->has_remove && msg->remove && storage_hasDuressPassphrase()),
+      "Remove the duress passphrase before removing the PIN");
+
   bool removal = msg->has_remove && msg->remove;
   bool confirmed = false;
 
@@ -596,6 +604,44 @@ void fsm_msgChangeWipeCode(ChangeWipeCode* msg) {
   fsm_sendSuccess("Wipe code function not available for this device");
   layoutHome();
 #endif
+}
+
+// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
+void fsm_msgChangeDuressPassphrase(ChangeDuressPassphrase* msg) {
+  CHECK_STORAGE_WRITABLE
+  CHECK_INITIALIZED
+  CHECK_PARAM(storage_hasPin(),
+              "Set a PIN before configuring a duress passphrase");
+  const bool removal = msg->has_remove && msg->remove;
+  CHECK_PARAM(removal || storage_getPassphraseProtected(),
+              "Enable passphrase protection first");
+  fsm_abort_workflows();
+  if (!confirm(
+          ButtonRequestType_ButtonRequest_Other,
+          removal ? "Remove Duress Passphrase" : "Set Duress Passphrase",
+          removal
+              ? "Remove duress wipe protection?"
+              : "Entering this passphrase will ERASE ALL wallets and settings "
+                "without confirmation. Keep a recovery backup. Continue?")) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    "Duress passphrase change cancelled");
+    layoutHome();
+    return;
+  }
+  CHECK_PIN_UNCACHED
+  const bool changed =
+      removal ? storage_setDuressPassphrase("") : passphrase_changeDuress();
+  if (!changed) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    "Duress passphrase change cancelled or entries invalid");
+    layoutHome();
+    return;
+  }
+  storage_commit();
+  session_clear(false);
+  fsm_sendSuccess(removal ? "Duress passphrase removed"
+                          : "Duress passphrase changed");
+  layoutHome();
 }
 
 /* Budget returned bytes, not requests. A confirmed factory wipe starts a new
@@ -783,6 +829,9 @@ void fsm_msgCancel(Cancel* msg) {
 
 void fsm_msgApplySettings(ApplySettings* msg) {
   CHECK_STORAGE_WRITABLE
+  CHECK_PARAM(!(msg->has_use_passphrase && !msg->use_passphrase &&
+                storage_hasDuressPassphrase()),
+              "Remove the duress passphrase before disabling passphrases");
 
   if (msg->has_label) {
     if (!confirm(ButtonRequestType_ButtonRequest_ChangeLabel, "Change Label",

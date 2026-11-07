@@ -21,6 +21,7 @@
 #include "keepkey/board/layout.h"
 #include "keepkey/board/messages.h"
 #include "keepkey/board/timer.h"
+#include "keepkey/board/memcmp_s.h"
 #include "keepkey/rand/rng.h"
 
 #include "keepkey/firmware/app_confirm.h"
@@ -140,7 +141,8 @@ static void run_passphrase_state(PassphraseState* passphrase_state,
  * OUTPUT
  *      true/false whether passphrase was received
  */
-static bool passphrase_request(PassphraseInfo* passphrase_info) {
+static bool passphrase_request(PassphraseInfo* passphrase_info,
+                               bool configuring) {
   bool ret = false;
   reset_msg_stack = false;
   PassphraseState passphrase_state = PASSPHRASE_REQUEST;
@@ -156,6 +158,13 @@ static bool passphrase_request(PassphraseInfo* passphrase_info) {
 
   /* Check for passphrase cancel */
   if (passphrase_info->passphrase_ack_msg == PASSPHRASE_ACK_RECEIVED) {
+    /* A duress input is never displayed, confirmed, cached, or derived. Setup
+     * uses its own two-entry ceremony so changing an existing value is safe. */
+    if (!configuring &&
+        storage_wipeIfDuressPassphrase(passphrase_info->passphrase)) {
+      memzero(passphrase_info, sizeof(*passphrase_info));
+      return false;
+    }
     /* This screen is the only place the user gets to see the passphrase their
      * keys will be derived from. review() used to discard its result and this
      * returned true regardless, so a host that answered the screen with a
@@ -201,10 +210,11 @@ static bool passphrase_request(PassphraseInfo* passphrase_info) {
       memzero(escaped, sizeof(escaped));
       return false;
     }
-    ret =
-        review(ButtonRequestType_ButtonRequest_Other, "passphrase confirmation",
-               "If this is wrong, unplug/replug Keepkey:\n%s",
-               pp_len == 0 ? PASSPHRASE_NONE_TEXT : escaped);
+    ret = review(ButtonRequestType_ButtonRequest_Other,
+                 configuring ? "Duress Passphrase" : "passphrase confirmation",
+                 configuring ? "This passphrase will ERASE this KeepKey:\n%s"
+                             : "If this is wrong, unplug/replug Keepkey:\n%s",
+                 pp_len == 0 ? PASSPHRASE_NONE_TEXT : escaped);
     memzero(escaped, sizeof(escaped));
   } else {
     if (passphrase_info->passphrase_ack_msg == PASSPHRASE_ACK_CANCEL_BY_INIT) {
@@ -250,7 +260,7 @@ bool passphrase_protect(void) {
 
   if (storage_getPassphraseProtected() && !session_isPassphraseCached()) {
     /* Get passphrase and cache */
-    if (passphrase_request(&passphrase_info)) {
+    if (passphrase_request(&passphrase_info, false)) {
       session_cachePassphrase(passphrase_info.passphrase);
       ret = true;
     }
@@ -260,4 +270,24 @@ bool passphrase_protect(void) {
 
   memzero(&passphrase_info, sizeof(passphrase_info));
   return (ret);
+}
+
+bool passphrase_changeDuress(void) {
+  static PassphraseInfo CONFIDENTIAL first, second;
+  bool result = false;
+  memzero(&first, sizeof(first));
+  memzero(&second, sizeof(second));
+  if (!passphrase_request(&first, true) || !first.passphrase[0]) goto done;
+  if (!review(ButtonRequestType_ButtonRequest_Other, "Repeat Duress Passphrase",
+              "Enter the same duress passphrase again."))
+    goto done;
+  if (!passphrase_request(&second, true)) goto done;
+  if (memcmp_s(first.passphrase, second.passphrase, sizeof(first.passphrase)) !=
+      0)
+    goto done;
+  result = storage_setDuressPassphrase(first.passphrase);
+done:
+  memzero(&first, sizeof(first));
+  memzero(&second, sizeof(second));
+  return result;
 }
