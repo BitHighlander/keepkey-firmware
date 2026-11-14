@@ -271,6 +271,11 @@ size_t erc7730_workflow_suffix(const Erc7730Workflow* workflow,
 /* The tier the provenance screen shows. An inner definition is never shown
  * as more trusted than the outer definition that led to it. */
 uint8_t erc7730_workflow_tier(const Erc7730Workflow* workflow);
+/* An approve() whose definition shows the second word only as an ERC-721
+ * token id grants one token, not an UNLIMITED allowance. The device cannot
+ * tell an ERC-721 contract from an ERC-20 one, so only a KeepKey-certified
+ * definition may make that claim; a runtime one is annotation only. */
+bool erc7730_workflow_token_id_exempt(const Erc7730Workflow* workflow);
 /* Every definition this review loaded is KeepKey-certified (D-007). */
 bool erc7730_workflow_certified(const Erc7730Workflow* workflow);
 bool erc7730_workflow_preserve_selected_string(Erc7730Workflow* workflow,
