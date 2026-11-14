@@ -202,7 +202,6 @@ typedef enum {
   EIP712_IDLE = 0,
   EIP712_WANT_STRUCT, /* a StructAck will arrive next */
   EIP712_WANT_VALUE,  /* a ValueAck will arrive next */
-  EIP712_FAILED,
 } Eip712Wait;
 
 /* What the machine wants next. The walk never writes a message: RESP_INIT uses

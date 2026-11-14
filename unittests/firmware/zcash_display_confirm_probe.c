@@ -1,5 +1,4 @@
-/* Exercise the dormant address flow without enabling any Zcash wire handlers.
- */
+/* Exercise the address flow without enabling any Zcash wire handlers. */
 #undef ZCASH_PRIVACY
 #define ZCASH_PRIVACY 1
 #include "keepkey/board/layout.h"

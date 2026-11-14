@@ -248,6 +248,11 @@ TEST(Thorchain, ThorchainGetAddress) {
       &secp256k1_info};
   char addr[46];
   ASSERT_TRUE(tendermint_getAddress(&node, "thor", addr));
+  /* This file was never in the build, so this vector was never checked. Its
+     old expectation, "...fn8nzm88u80q", is 42 characters and fails its own
+     bech32 checksum -- a 20-byte payload encodes to 43. The value below is
+     bech32(hrp="thor", ripemd160(sha256(pubkey))) computed independently of
+     this firmware; the device agrees with it. */
   EXPECT_EQ(std::string("thor1am058pdux3hyulcmfgj4m3hhrlfn8nzmpq9u6l"), addr);
 }
 

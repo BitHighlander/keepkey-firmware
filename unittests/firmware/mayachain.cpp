@@ -278,6 +278,10 @@ TEST(Mayachain, MayachainSignTx) {
   };
   ASSERT_TRUE(mayachain_signTxInit(&node, &msg));
 
+  /* "cacao" is the denomination this vector was recorded with: the third
+     parameter was added by 50164a2ee, which replaced a hardcoded "cacao" in
+     the JSON with a caller-supplied denom. Passing it reproduces the exact
+     bytes the expected signature below was computed over. */
   ASSERT_TRUE(mayachain_signTxUpdateMsgSend(
       100, "maya1g9el7lzjwh9yun2c4jjzhy09j98vkhfxfqkl5k", "cacao"));
 

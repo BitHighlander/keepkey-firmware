@@ -236,6 +236,7 @@ TEST(RngHealth, CheckedPermutationFailsClosedAndWipes) {
 
   const char zeros[sizeof(value) - 1] = {0};
   EXPECT_EQ(0, memcmp(value, zeros, sizeof(zeros)));
+  rng_health_force_verdict(true);
 }
 
 TEST(RngHealth, TransientHardwareFaultRemainsLatched) {
