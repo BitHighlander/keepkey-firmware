@@ -1030,6 +1030,10 @@ bool zcash_tx_version_supported(uint32_t version, uint32_t version_group_id) {
          (version == 6 && version_group_id == 0xD884B698);
 }
 
+bool zcash_branch_has_ironwood(uint32_t branch_id) {
+  return branch_id == 0x37A5165B || branch_id == 0x77190AD9;
+}
+
 bool zcash_v6_orchard_ironwood_digest_valid(bool present, size_t size,
                                             const uint8_t* digest) {
   if (!present) return true;
