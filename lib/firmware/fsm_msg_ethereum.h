@@ -70,14 +70,14 @@ static int process_ethereum_xfer(const CoinType* coin, EthereumSignTx* msg,
 
   uint8_t to_bytes[20];
   if (!hdnode_get_ethereum_pubkeyhash(node, to_bytes)) {
-    memzero((void*)node, sizeof(HDNode));
+    fsm_clearDerivedNode();
     return TXOUT_COMPILE_ERROR;
   }
 
   if (ethereum_isStandardERC20Transfer(msg)) {
     if (memcmp(msg->data_initial_chunk.bytes + 4 + (32 - 20), to_bytes, 20) !=
         0) {
-      memzero((void*)node, sizeof(HDNode));
+      fsm_clearDerivedNode();
       return TXOUT_COMPILE_ERROR;
     }
   } else {
@@ -86,7 +86,7 @@ static int process_ethereum_xfer(const CoinType* coin, EthereumSignTx* msg,
     memcpy(msg->to.bytes, to_bytes, sizeof(to_bytes));
   }
 
-  memzero((void*)node, sizeof(HDNode));
+  fsm_clearDerivedNode();
   return TXOUT_OK;
 }
 
@@ -197,10 +197,9 @@ static void send_erc7730_calldata_request(void) {
   size_t remaining = 0;
   if (!erc7730_workflow_calldata_waiting(erc7730_workflow_state(),
                                          &remaining)) {
-    erc7730_workflow_abort(erc7730_workflow_state());
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid ERC-7730 calldata state"));
-    layoutHome();
+    fail_erc7730_field(erc7730_workflow_state(),
+                       FailureType_Failure_SyntaxError,
+                       _("Invalid ERC-7730 calldata state"));
     return;
   }
   RESP_INIT(EthereumTxRequest);
@@ -449,12 +448,7 @@ static void show_erc7730_field(Erc7730Workflow* workflow,
                                const char* formatted) {
   const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
   if (ui != ERC7730_UI_OK) {
-    fail_erc7730_field(
-        workflow,
-        ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
-                                 : FailureType_Failure_ActionCancelled,
-        ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
-                                 : _("Signing cancelled by user"));
+    fail_erc7730_ui(workflow, ui);
     return;
   }
   bool confirmed;
@@ -936,12 +930,7 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
      * preloaded definition. */
     const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
     if (ui != ERC7730_UI_OK) {
-      fail_erc7730_field(
-          workflow,
-          ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
-                                   : FailureType_Failure_ActionCancelled,
-          ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
-                                   : _("Signing cancelled by user"));
+      fail_erc7730_ui(workflow, ui);
       return;
     }
     if (!erc7730_workflow_begin_fetch(workflow,
@@ -1254,12 +1243,7 @@ static void confirm_erc7730_intent_and_continue(EthereumSignTx* tx) {
   }
   const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
   if (ui != ERC7730_UI_OK) {
-    fail_erc7730_field(
-        workflow,
-        ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
-                                 : FailureType_Failure_ActionCancelled,
-        ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
-                                 : _("Signing cancelled by user"));
+    fail_erc7730_ui(workflow, ui);
     return;
   }
   if (workflow->display_stage == ERC7730_DISPLAY_ITERATION) {
@@ -1292,12 +1276,7 @@ static void finish_erc7730_calldata(Erc7730Workflow* workflow) {
     return;
   }
   if (ui != ERC7730_UI_OK) {
-    fail_erc7730_field(
-        workflow,
-        ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
-                                 : FailureType_Failure_ActionCancelled,
-        ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
-                                 : _("Signing cancelled by user"));
+    fail_erc7730_ui(workflow, ui);
     return;
   }
   /* Bytes the definition allows after the arguments: no field above
@@ -1809,14 +1788,7 @@ void fsm_msgEthereumClearSignDefinitionChunk(
       if (workflow->typed_data) {
         const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
         if (ui != ERC7730_UI_OK) {
-          erc7730_workflow_abort(workflow);
-          eip712_stream_abort();
-          fsm_sendFailure(
-              ui == ERC7730_UI_INVALID ? FailureType_Failure_SyntaxError
-                                       : FailureType_Failure_ActionCancelled,
-              ui == ERC7730_UI_INVALID ? _("Invalid ERC-7730 signer or intent")
-                                       : _("Signing cancelled by user"));
-          layoutHome();
+          fail_erc7730_ui(workflow, ui);
           return;
         }
         if (workflow->identity.settlement && !confirm_erc7730_settle(workflow))
@@ -2057,8 +2029,6 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
   /* Metadata during signing never reaches here: the dispatch hook refuses
    * it (see keepkey_before_message_dispatch()). */
 
-  RESP_INIT(EthereumMetadataAck);
-
   /* Range-check the uint32 wire value against the slot count BEFORE it is
    * narrowed to the uint8 slot index below: (uint8_t)256 would alias slot 0.
    * A slot that cannot exist is a malformed request, not an "Invalid"
@@ -2067,6 +2037,8 @@ void fsm_msgEthereumTxMetadata(const EthereumTxMetadata* msg) {
   CHECK_PARAM(!msg->has_key_id || msg->key_id < METADATA_MAX_KEYS ||
                   msg->key_id == METADATA_KEYID_DELEGATE,
               _("clearsign metadata key_id out of range"));
+
+  RESP_INIT(EthereumMetadataAck);
 
   /* One metadata message per transaction, the last one wins: a contact proof
    * replaces any contract description and vice versa, so a label can never

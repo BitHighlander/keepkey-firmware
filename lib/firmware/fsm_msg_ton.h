@@ -102,13 +102,9 @@ void fsm_msgTonSignTx(TonSignTx* msg) {
 
   /* AdvancedMode gate: to_address, amount and memo are display-only fields
    * that are NOT derived from or checked against raw_tx, so this handler can
-   * only ever blind-sign opaque bytes. Same fence as Solana/TRON opaque
-   * transaction signing, until the displayed fields are parsed out of raw_tx
-   * and verified against the bytes that actually get signed.
-   *
-   * Note this gate is NOT mirrored on fsm_msgTonSignMessage below: that path
-   * discloses every signed byte via confirm_bytes(), which is the stronger
-   * guarantee this gate is only standing in for. */
+   * only ever blind-sign opaque bytes. Same fence as fsm_msgTonSignMessage
+   * below, until the displayed fields are parsed out of raw_tx and verified
+   * against the bytes that actually get signed. */
   if (!storage_isPolicyEnabled("AdvancedMode")) {
     (void)review(ButtonRequestType_ButtonRequest_Other, "Blocked",
                  "TON transaction signing is blind-only. "
@@ -201,11 +197,13 @@ void fsm_msgTonSignMessage(const TonSignMessage* msg) {
   if (!node) return;
   hdnode_fill_public_key(node);
 
-  /* AdvancedMode permits the opaque primitive, but never permits a hidden
-   * suffix: review every signed byte using renderer-measured pages. */
-  if (!confirm_bytes(ButtonRequestType_ButtonRequest_ProtectCall,
-                     _("Sign TON Message"), msg->message.bytes,
-                     msg->message.size)) {
+  /* Bind consent to the raw signing scheme, then page every signed byte.
+   * A prefix-plus-length preview lets equal-length payloads with the same first
+   * 32 bytes produce identical approval screens and different signatures. */
+  if (!confirm(ButtonRequestType_ButtonRequest_ProtectCall, "TON Message",
+               "Format: raw Ed25519. Version: none. Domain: none.") ||
+      !confirm_bytes(ButtonRequestType_ButtonRequest_ProtectCall, "Raw Message",
+                     msg->message.bytes, msg->message.size)) {
     memzero(node, sizeof(*node));
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     _("Signing cancelled"));

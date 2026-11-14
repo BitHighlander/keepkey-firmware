@@ -40,10 +40,10 @@
  *              loaded, and the envelope signature must verify under it.
  * and bytes 1, 6..9 and 75..138 are ignored.
  *
- * Both tiers require AdvancedMode, and neither changes the raw-data review:
- * the tier selects only the provenance screen. The envelope signature covers
- * only the purpose tag and the Merkle root, which commits to the program; it
- * does not cover any certificate byte. */
+ * D-007: KEEPKEY needs no AdvancedMode and its review replaces the raw-data
+ * review; RUNTIME requires AdvancedMode and keeps the raw-data review. The
+ * envelope signature covers only the purpose tag and the Merkle root, which
+ * commits to the program; it does not cover any certificate byte. */
 #define ERC7730_DELEGATE_RECORD_LEN 139u
 #define ERC7730_DELEGATE_ALIAS_LEN 32u
 #define ERC7730_DELEGATE_PUBKEY_LEN 33u

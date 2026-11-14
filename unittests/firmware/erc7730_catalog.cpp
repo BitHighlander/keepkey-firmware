@@ -1018,6 +1018,10 @@ TEST(Erc7730Catalog, ValidatesCanonicalUtf8StringTableIncrementally) {
 
   p = programWithStrings({{'A', 0x0a, 'B'}});  // display control character
   EXPECT_EQ(feedAll(envelope(p), 17), ERC7730_CATALOG_BAD_PROGRAM);
+  p = programWithStrings({{'A', 0x7f}});  // DEL
+  EXPECT_EQ(feedAll(envelope(p), 17), ERC7730_CATALOG_BAD_PROGRAM);
+  p = programWithStrings({{0xf4, 0x90, 0x80, 0x80}});  // above U+10FFFF
+  EXPECT_EQ(feedAll(envelope(p), 17), ERC7730_CATALOG_BAD_PROGRAM);
 }
 
 TEST(Erc7730Catalog, ValidatesTypedPathsSlicesAndFullArraySteps) {

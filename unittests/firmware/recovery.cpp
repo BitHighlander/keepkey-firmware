@@ -367,9 +367,13 @@ TEST(Recovery, SpacesOnlyCeremonyIsRefusedAndCommitsNothing) {
                        /*u2f_counter=*/0, /*dry_run=*/false);
   ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
 
-  for (int i = 0; i < 12; i++) {
+  // The counter starts at one: eleven separators reach word twelve, and
+  // the twelfth separator finalizes. Pin both sides of that boundary.
+  for (int i = 0; i < 11; i++) {
     recovery_character(" ");
   }
+  ASSERT_TRUE(setup_isArmedAs(SETUP_RECOVERY));
+  recovery_character(" ");
 
   EXPECT_FALSE(storage_isInitialized())
       << "a ceremony that produced no words must not commit a seed";

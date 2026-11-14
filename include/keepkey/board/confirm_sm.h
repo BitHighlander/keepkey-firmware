@@ -25,6 +25,7 @@
 #include "keepkey/board/layout.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 
 /* implement a means to display debug information */
 #ifdef DEBUG_ON

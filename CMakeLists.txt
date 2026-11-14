@@ -23,15 +23,13 @@ option(KK_BUILD_BOOTLOADER_TOOLS
        "Build bootloader, bootloader updater, and bootstrap artifacts" OFF)
 option(KK_BUILD_FUZZERS "Build the fuzzers?" OFF)
 option(KK_BITCOIN_ONLY "Build Bitcoin-only firmware (strip all non-BTC coins)" OFF)
-# Zcash shielded/Orchard support is part of the regular firmware. It is an
-# internal compile selection, not a third release variant: bitcoin-only strips
-# the Zcash coin and privacy engine; every regular device/emulator build ships
-# both. The open constant-time Pallas audit finding remains a release gate for
-# RC18, but it must not silently change the product being audited.
+
+# Regular builds default to every supported chain, including Zcash Orchard.
+# Preserve an explicit OFF for builds that omit Zcash privacy support.
 if(KK_BITCOIN_ONLY)
   set(KK_ZCASH_PRIVACY OFF)
 else()
-  set(KK_ZCASH_PRIVACY ON)
+  option(KK_ZCASH_PRIVACY "Build Zcash privacy support" ON)
 endif()
 
 # When building the dylib, every static lib it links (kkfirmware, kkboard,
@@ -133,13 +131,6 @@ add_definitions(-DUSE_CARDANO=0)
 add_definitions(-DUSE_MONERO=0)
 add_definitions(-DUSE_NEM=0)
 
-# NOT a USE_* style on/off toggle despite sitting next to them: trezor-crypto's
-# rand.c tests this macro with #ifndef, so only its *definedness* matters. The
-# old -D...=0 spelling read as "off" while actually meaning "on", and the
-# insecure LCG random32() stayed out of the build purely by that double
-# negation. Define it bare, matching upstream trezor-core's SConscript.firmware,
-# so a future cleanup of an apparent "=0 means unused" define cannot silently
-# compile in the LCG. lib/rand/rng.c #errors if this ever goes missing.
 # trezor-crypto's rand.c tests only whether this macro is defined.  A value of
 # zero therefore did not disable anything; it excluded the library's insecure
 # test LCG by definedness.  Use the upstream spelling so that intent is clear,
@@ -245,7 +236,7 @@ add_subdirectory(deps/crypto)
 add_subdirectory(deps/qrenc)
 add_subdirectory(deps/sca-hardening)
 
-if(${KK_EMULATOR})
+if(${KK_EMULATOR} AND NOT WIN32)
   add_subdirectory(deps/googletest)
   add_subdirectory(unittests)
   if(${KK_BUILD_FUZZERS})

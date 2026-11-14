@@ -400,12 +400,6 @@ char usbTiny(char set) {
 
 #endif  // EMULATOR
 
-static msg_sent_callback_t msg_sent_callback;
-
-void msg_set_sent_callback(msg_sent_callback_t callback) {
-  msg_sent_callback = callback;
-}
-
 #ifdef EMULATOR
 __attribute__((weak)) void emulator_message_written(MessageType id,
                                                     const void* msg) {
@@ -458,7 +452,6 @@ bool msg_write(MessageType msg_id, const void* msg) {
 #endif
   }
 
-  if (msg_sent_callback) msg_sent_callback(msg_id);
   return true;
 }
 

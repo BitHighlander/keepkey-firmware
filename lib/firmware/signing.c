@@ -1138,6 +1138,7 @@ static bool signing_check_input(TxInputType* txinput) {
   uint8_t script_type_bytes[4];
   signing_encode_script_type(txinput->script_type, script_type_bytes);
   hasher_Update(&hasher_check, script_type_bytes, sizeof(script_type_bytes));
+  memzero(script_type_bytes, sizeof(script_type_bytes));
   return true;
 }
 
@@ -1616,6 +1617,7 @@ static bool signing_sign_segwit_input(TxInputType* txinput) {
         sig_with_hashtype[sig_len] = sighash;
         r += tx_serialize_script(sig_len + 1, sig_with_hashtype,
                                  resp.serialized.serialized_tx.bytes + r);
+        memzero(sig_with_hashtype, sizeof(sig_with_hashtype));
       }
       uint32_t script_len =
           compile_script_multisig(coin, &txinput->multisig, 0);
@@ -1962,6 +1964,7 @@ void signing_txack(TransactionType* tx) {
       signing_encode_script_type(tx->inputs[0].script_type, script_type_bytes);
       hasher_Update(&hasher_check, script_type_bytes,
                     sizeof(script_type_bytes));
+      memzero(script_type_bytes, sizeof(script_type_bytes));
       if (idx2 == idx1) {
         if (!compile_input_script_sig(&tx->inputs[0])) {
           fsm_sendFailure(FailureType_Failure_Other,

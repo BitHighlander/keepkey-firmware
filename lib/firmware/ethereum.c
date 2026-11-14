@@ -598,7 +598,7 @@ static void finalize_eip1559_and_send_signature(void) {
 
 /* Format a 256 bit number (amount in wei) into a human readable format
  * using standard ethereum units.
- * The buffer must be at least 25 bytes.
+ * The buffer must be at least 28 bytes so the overflow sentinel always fits.
  */
 bool ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
                           uint32_t cid, char* buf, int buflen) {

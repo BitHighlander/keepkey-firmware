@@ -23,10 +23,6 @@
 
 #ifdef EMULATOR
 #include "keepkey/emulator/emulator.h"
-#ifdef _WIN32
-#include <windows.h>
-#include <bcrypt.h>
-#endif
 #endif
 
 #ifndef EMULATOR
@@ -142,16 +138,6 @@ uint32_t random32(void) {
   }
   last = new;
   return new;
-#elif defined(_WIN32)
-  /* Windows has no POSIX random(); use the system CSPRNG (stronger than the
-   * macOS/Linux emulator's random() PRNG anyway). Resolves via the bcrypt link
-   * on kkemulator_dylib (tools/emulator/CMakeLists.txt). */
-  uint32_t v = 0;
-  if (BCryptGenRandom(NULL, (PUCHAR)&v, (ULONG)sizeof(v),
-                      BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0) {
-    abort();
-  }
-  return v;
 #else
   /* The host provider uses BCryptGenRandom on Windows and /dev/urandom on
    * POSIX. Both abort on failure rather than returning predictable bytes. */

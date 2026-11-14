@@ -111,10 +111,7 @@ void setup_abort(void) {
   memzero(&setup, sizeof(setup));
   memzero(int_entropy, sizeof(int_entropy));
   memzero(current_words, sizeof(current_words));
-  memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
-  memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
-  memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
-  memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
+  mnemonic_scratch_wipe();
   /* reset_entropy() receives its generated sentence from bip39.c's static
    * `mnemo` buffer.  A cancelled/error ceremony has no owner for that secret,
    * so the common abort path must clear it along with the setup scratch. */
@@ -495,6 +492,13 @@ char CONFIDENTIAL mnemonic_scratch_formatted[MAX_PAGES][FORMATTED_MNEMONIC_BUF];
 char CONFIDENTIAL mnemonic_scratch_display[FORMATTED_MNEMONIC_BUF];
 char CONFIDENTIAL mnemonic_scratch_word[MAX_WORD_LEN + ADDITIONAL_WORD_PAD];
 
+void mnemonic_scratch_wipe(void) {
+  memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
+  memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
+  memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
+  memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
+}
+
 /* Page \a mnemonic under one ButtonRequest per screen, retaining each screen's
  * words for ordinary reset diagnostics. Dice pages remain device-only. Used for
  * the backup words and, in the dice MIXED mode, for the device-entropy words
@@ -510,10 +514,7 @@ static bool show_mnemonic_pages(const char* mnemonic, const char* title_base,
       mnemonic_by_screen[MAX_PAGES][MNEMONIC_BY_SCREEN_BUF];
   bool ok = false;
 
-  memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
-  memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
-  memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
-  memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
+  mnemonic_scratch_wipe();
   memzero(mnemonic_by_screen, sizeof(mnemonic_by_screen));
 
   if (mnemonic == NULL) {
@@ -595,11 +596,8 @@ static bool show_mnemonic_pages(const char* mnemonic, const char* title_base,
   ok = true;
 
 done:
-  memzero(mnemonic_scratch_tokened, sizeof(mnemonic_scratch_tokened));
+  mnemonic_scratch_wipe();
   memzero(mnemonic_by_screen, sizeof(mnemonic_by_screen));
-  memzero(mnemonic_scratch_formatted, sizeof(mnemonic_scratch_formatted));
-  memzero(mnemonic_scratch_display, sizeof(mnemonic_scratch_display));
-  memzero(mnemonic_scratch_word, sizeof(mnemonic_scratch_word));
   return ok;
 }
 

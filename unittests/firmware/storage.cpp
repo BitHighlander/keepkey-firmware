@@ -1671,7 +1671,9 @@ TEST(Storage, StorageRoundTrip) {
 
   storage_secMigrate(&session, &start.storage, /*encrypt=*/true);
 
-  std::vector<uint8_t> flash(2570);
+  // storage_fromFlash validates against the full sector size. Keep the exact
+  // V16 prefix assertion below, but back it with a complete sector.
+  std::vector<uint8_t> flash(STORAGE_SECTOR_LEN);
 
   storage_writeV16((char *)&flash[0], flash.size(), &start);
 
@@ -1857,12 +1859,12 @@ TEST(Storage, StorageRoundTrip) {
   // clang-format on
 
   // If storage isn't correct, let's get an idea of where the failure is
-  for (size_t i = 0; i < sizeof(expected_flash) && i < flash.size(); i++) {
+  for (size_t i = 0; i < sizeof(expected_flash); i++) {
     if (flash[i] != expected_flash[i]) {
       printf("%zu\n %x %x\n", i, flash[i], expected_flash[i]);
     }
   }
-  EXPECT_TRUE(memcmp(&flash[0], expected_flash, flash.size()) == 0);
+  EXPECT_EQ(0, memcmp(&flash[0], expected_flash, sizeof(expected_flash)));
 
   ConfigFlash end;
   memset(&end, 0xCC, sizeof(end));

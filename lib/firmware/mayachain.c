@@ -49,10 +49,6 @@ static uint32_t msgs_remaining;
 static MayachainSignTx msg;
 static bool testnet;
 
-bool mayachain_isValidSigner(const char* signer) {
-  return tendermint_isValidSigner(signer, testnet ? "smaya" : "maya");
-}
-
 const MayachainSignTx* mayachain_getMayachainSignTx(void) { return &msg; }
 
 /* MsgSend carries the bare denom ("cacao"); MsgDeposit carries the pool

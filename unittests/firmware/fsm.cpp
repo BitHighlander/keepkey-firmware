@@ -2978,11 +2978,13 @@ TEST(Fsm, StaleAckTakesTheAbortedSignersScreenDown) {
   HDNode node = {};
   node.curve = &secp256k1_info;
 
-  TendermintSignTx cosmos = {};
+  CosmosSignTx cosmos = {};
   cosmos.has_msg_count = true;
   cosmos.msg_count = 1;
+  cosmos.has_account_number = true;
   cosmos.has_chain_id = true;
   std::strcpy(cosmos.chain_id, "cosmoshub-4");
+  cosmos.has_sequence = true;
   ASSERT_TRUE(tendermint_signTxInit(&node, &cosmos, sizeof(cosmos), "uatom",
                                     TENDERMINT_SIGNING_COSMOS));
   leave_home();  // its last approval screen is still up

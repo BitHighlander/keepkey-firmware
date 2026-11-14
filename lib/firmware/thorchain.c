@@ -49,10 +49,6 @@ static uint32_t msgs_remaining;
 static ThorchainSignTx msg;
 static bool testnet;
 
-bool thorchain_isValidSigner(const char* signer) {
-  return tendermint_isValidSigner(signer, testnet ? "tthor" : "thor");
-}
-
 const ThorchainSignTx* thorchain_getThorchainSignTx(void) { return &msg; }
 
 bool thorchain_formatAmount(uint64_t amount, const char* asset, char* out,
@@ -146,13 +142,6 @@ bool thorchain_signTxUpdateMsgSend(const uint64_t amount,
   const char testnetp[] = "tthor";
   const char* pfix;
   char buffer[64 + 1];
-
-  size_t decoded_len;
-  char hrp[BECH32_MAX_HRP_LEN + 1];
-  uint8_t decoded[BECH32_DECODED_MAX];
-  if (!bech32_decode(hrp, decoded, &decoded_len, to_address)) {
-    return false;
-  }
 
   char from_address[46];
 
@@ -694,8 +683,9 @@ ThorchainMemoResult thorchain_parseConfirmMemo(const char* swapStr,
     }
     if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                  "Thorchain withdraw liquidity",
-                 "Confirm withdraw %d.%02d%% of asset %s on chain %s",
-                 bps / 100, bps % 100, asset, chain)) {
+                 "Confirm withdraw %u.%02u%% of asset %s on chain %s",
+                 (unsigned)(bps / 100u), (unsigned)(bps % 100u), asset,
+                 chain)) {
       return THORCHAIN_MEMO_CANCELLED;
     }
     /* Field 4 is the ASYMMETRIC-withdrawal asset selector: WD:POOL:BPS:ASSET

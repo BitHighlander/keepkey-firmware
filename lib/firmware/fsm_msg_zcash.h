@@ -17,23 +17,13 @@
  * along with this library.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/* Zcash-specific headers — included here because fsm_msg_zcash.h
- * is #include'd inside fsm.c, not compiled separately. */
-#include <limits.h>
-
-#include "keepkey/firmware/zcash.h"
-/* The is_spend path draws T through random_buffer_checked() behind
- * rng_health_check(). Declared here, in the file that USES them, rather than
- * relying on fsm.c's include order. */
-#include "keepkey/rand/rng_health.h"
+/* Included here: this file is #include'd inside fsm.c. */
 #include "trezor/crypto/blake2b.h"
-#include "trezor/crypto/pallas.h"
 #include "trezor/crypto/redpallas.h"
 #include "trezor/crypto/memzero.h"
 
-/* Precomputed empty digest constants for shielded-only transactions.
- * These are BLAKE2b-256 with the respective personalizations over empty input.
- * Verified against Keystone3 test vectors. */
+/* Empty-component digests: BLAKE2b-256 of empty input under each
+ * personalization (verified against Keystone3 vectors). */
 static const uint8_t EMPTY_TRANSPARENT_DIGEST[32] = {
     0xc3, 0x3f, 0x2e, 0x95, 0x70, 0x5f, 0xaa, 0xb3, 0x5f, 0x8d, 0x53,
     0x3f, 0xa6, 0x1e, 0x95, 0xc3, 0xb7, 0xaa, 0xba, 0x07, 0x76, 0xb8,
@@ -44,9 +34,7 @@ static const uint8_t EMPTY_SAPLING_DIGEST[32] = {
     0xf4, 0xbe, 0xd7, 0x43, 0x91, 0xee, 0x0b, 0x5a, 0x69, 0x94, 0x5e,
     0x4c, 0xed, 0x8c, 0xa8, 0xa0, 0x95, 0x20, 0x6f, 0x00, 0xae};
 
-/* ZIP-229 v6 adds/changes the Orchard-protocol component
- * personalizations. Sapling's top-level personalization is unchanged from
- * v5, so the empty Sapling component continues to use the value above. */
+/* ZIP-229 v6 Orchard-protocol personalizations; Sapling's is unchanged. */
 static const uint8_t EMPTY_ORCHARD_DIGEST_V6[32] = {
     0xa3, 0x36, 0x7d, 0x2f, 0xde, 0xa2, 0x91, 0x01, 0x59, 0xfc, 0x50,
     0x26, 0xe9, 0xbf, 0x1f, 0xcc, 0xd3, 0xe2, 0x8c, 0xe5, 0xe6, 0xde,
@@ -152,9 +140,7 @@ static CONFIDENTIAL uint8_t zcash_memo[ZCASH_MEMO_SIZE];
 
 /* Public API; declared in keepkey/firmware/zcash.h. */
 void zcash_signing_abort(void) {
-  /* Centralized cleanup: stop the trickle progress animation here so every
-   * abort path (Cancel, ClearSession, failures) kills it even when the caller
-   * does not go through layoutHome()/layout_clear_animations(). */
+  /* Every abort path must stop the trickle animation. */
   layoutProgressTrickleStop();
   memzero(&zcash_signing, sizeof(zcash_signing));
   memzero(zcash_memo, sizeof(zcash_memo));
@@ -277,10 +263,8 @@ static void zcash_format_amount(uint64_t amount, char* out, size_t out_size) {
            (unsigned long long)(amount % 100000000ULL));
 }
 
-/* Determine account — require explicit account or strict ZIP-32 path
- * m/32'/133'/account' (all hardened, exactly 3 elements). Shared by
- * ZcashSignPCZT / ZcashGetOrchardFVK / ZcashDisplayAddress so a malformed
- * host path cannot silently resolve to an unintended account. */
+/* Account from an explicit field or strict m/32'/133'/account' (all
+ * hardened), so a malformed path cannot resolve to an unintended account. */
 static bool zcash_resolve_account(bool has_account, uint32_t account_field,
                                   const uint32_t* address_n,
                                   uint32_t address_n_count,
@@ -307,10 +291,8 @@ static bool zcash_resolve_account(bool has_account, uint32_t account_field,
   return false;
 }
 
-/* Optional seed_fingerprint binding (ZIP-32 §6.1). If the host asserts a
- * seed identity, verify it matches this device's seed before proceeding.
- * Catches "wrong device" attacks where the host accidentally targets a
- * different seed than the one it built the request against. */
+/* Optional seed_fingerprint (ZIP-32 §6.1): refuse a request built for a
+ * different seed. */
 static bool zcash_check_seed_fingerprint(bool has_expected,
                                          const uint8_t* expected,
                                          size_t expected_size) {
@@ -468,7 +450,7 @@ static bool zcash_verify_and_confirm_orchard_output(
   /* Two screens: a 106-char UA fills the 3-row body and draw_string silently
    * truncates, which would drop the amount -- the only place the user verifies
    * the Orchard output value. Amount first, then the address via confirm(),
-   * which paginates, so a longer user_address is never cut off either. */
+   * which paginates. */
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Zcash Output",
                "Send shielded ZEC?\nAmount: %s", amount_str)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
@@ -584,11 +566,8 @@ static void zcash_action_progress(uint32_t completed, uint32_t total,
   ZcashActionProgress* progress = (ZcashActionProgress*)context;
   if (!progress || total == 0) return;
 
-  /* completed/total is a public loop schedule: either the fixed scalar round
-   * count or the fixed-size PCZT note-commitment word count. It never depends
-   * on ask, the nonce, or a secret message bit. Update only when the visible
-   * permil changes to avoid redundant OLED transfers while preserving a smooth
-   * bar. */
+  /* completed/total is a public schedule, never dependent on ask, the nonce
+   * or secret bits (no timing side channel). Redraw only on permil change. */
   uint32_t permil = progress->base + (progress->span * completed) / total;
   if (permil != progress->last) {
     progress->last = permil;
@@ -604,11 +583,7 @@ static void zcash_send_action_ack(uint32_t next_index) {
   resp_ack->next_index = next_index;
   msg_write(MessageType_MessageType_ZcashPCZTActionAck, resp_ack);
 
-  /* The device now blocks until the host generates the (slow) Orchard proof for
-   * this action. Ease the progress bar from the milestone already reached
-   * toward the one this action will complete, so the screen keeps moving
-   * instead of looking stuck at a frozen value. Stopped again when the action
-   * arrives. */
+  /* Trickle the bar while the host builds the slow Orchard proof. */
   uint32_t n = zcash_signing.n_actions;
   if (n > 0) {
     int base = (int)((next_index * 1000) / n);
@@ -617,21 +592,17 @@ static void zcash_send_action_ack(uint32_t next_index) {
   }
 }
 
-static void zcash_send_transparent_output_ack(uint32_t next_index) {
+static void zcash_send_transparent_ack(bool output, uint32_t next_index) {
   note_workflow_progress();
   ZcashTransparentAck* resp = (ZcashTransparentAck*)msg_resp;
   memset(resp, 0, sizeof(ZcashTransparentAck));
-  resp->has_next_output_index = true;
-  resp->next_output_index = next_index;
-  msg_write(MessageType_MessageType_ZcashTransparentAck, resp);
-}
-
-static void zcash_send_transparent_input_ack(uint32_t next_index) {
-  note_workflow_progress();
-  ZcashTransparentAck* resp = (ZcashTransparentAck*)msg_resp;
-  memset(resp, 0, sizeof(ZcashTransparentAck));
-  resp->has_next_input_index = true;
-  resp->next_input_index = next_index;
+  if (output) {
+    resp->has_next_output_index = true;
+    resp->next_output_index = next_index;
+  } else {
+    resp->has_next_input_index = true;
+    resp->next_input_index = next_index;
+  }
   msg_write(MessageType_MessageType_ZcashTransparentAck, resp);
 }
 
@@ -1286,8 +1257,7 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
     }
   }
 
-  /* Approved — show the signing screen before Orchard key derivation, which
-   * is seconds of Pallas math with nothing else drawing. */
+  /* Draw before seconds of Orchard key derivation. */
   layoutProgress(_("Signing Zcash"), 0);
 
   if (!zcash_check_seed_fingerprint(msg->has_expected_seed_fingerprint,
@@ -1297,9 +1267,7 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
     return;
   }
 
-  /* Clear any stale state from a prior (possibly abandoned) session before
-   * starting a new one, so buffered transparent signatures or Orchard state
-   * from an earlier PCZT can never leak into this transaction. */
+  /* No state from an abandoned session may leak into this one. */
   zcash_signing_abort();
 
   /* Derive Orchard keys via storage; the seed never leaves storage.c. */
@@ -1325,7 +1293,6 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
   memzero(zcash_signing.keys.rivk, sizeof(zcash_signing.keys.rivk));
   memzero(zcash_signing.keys.dk, sizeof(zcash_signing.keys.dk));
 
-  /* Initialize signing state */
   zcash_signing.active = true;
   zcash_signing.account = account;
   zcash_signing.n_actions = msg->n_actions + n_ironwood_actions;
@@ -1342,8 +1309,7 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
   if (is_ironwood) {
     memcpy(zcash_signing.orchard_component_digest, EMPTY_ORCHARD_DIGEST_V6, 32);
   } else if (zcash_signing.transaction_v6) {
-    /* An Orchard-v6 request does not stream an Ironwood bundle. Bind the
-     * canonical empty component rather than zero-filled state or host data. */
+    /* Orchard-v6: bind the canonical empty Ironwood component. */
     memcpy(zcash_signing.ironwood_component_digest, EMPTY_IRONWOOD_DIGEST_V6,
            32);
   }
@@ -1392,17 +1358,14 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
   zcash_start_bundle(is_ironwood);
   zcash_signing.verify_orchard_digest = true;
 
-  /* Draw the initial static progress BEFORE requesting the first component:
-   * for the actions-only path zcash_send_action_ack() arms the trickle, and a
-   * layoutProgress() after it would clear the animation queue and freeze it. */
+  /* Static draw first: layoutProgress() after arming freezes the trickle. */
   layoutProgress(_("Signing Zcash"), 0);
 
-  /* Request the first plaintext component. Transparent outputs are reviewed
-   * before any transparent input or Orchard signature can be emitted. */
+  /* Transparent outputs are reviewed before any signature is emitted. */
   if (zcash_signing.n_transparent_outputs > 0) {
-    zcash_send_transparent_output_ack(0);
+    zcash_send_transparent_ack(true, 0);
   } else if (zcash_signing.n_transparent_inputs > 0) {
-    zcash_send_transparent_input_ack(0);
+    zcash_send_transparent_ack(false, 0);
   } else {
     zcash_send_action_ack(0);
   }
@@ -1443,7 +1406,6 @@ void fsm_msgZcashGetOrchardFVK(const ZcashGetOrchardFVK* msg) {
     return;
   }
 
-  /* Build response */
   resp->has_ak = true;
   resp->ak.size = 32;
   memcpy(resp->ak.bytes, keys.ak, 32);
@@ -1456,8 +1418,7 @@ void fsm_msgZcashGetOrchardFVK(const ZcashGetOrchardFVK* msg) {
   resp->rivk.size = 32;
   memcpy(resp->rivk.bytes, keys.rivk, 32);
 
-  /* Seed identity (ZIP-32 §6.1). Lets the host pin this FVK to a
-   * specific device-seed identity for later signing/display flows. */
+  /* Seed identity (ZIP-32 §6.1) for later host pinning. */
   uint8_t fp[32];
   if (storage_zcashSeedFingerprint(true, fp)) {
     resp->has_seed_fingerprint = true;
@@ -1531,7 +1492,6 @@ void fsm_msgZcashDisplayAddress(const ZcashDisplayAddress* msg) {
     return;
   }
 
-  /* User confirmed — return the address bound to this device's seed. */
   resp->has_address = true;
   strlcpy(resp->address, derived_address, sizeof(resp->address));
 
@@ -1556,9 +1516,7 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
     return;
   }
 
-  /* An action arrived: stop the trickle so the exact per-action milestone (and
-   * the fee confirm reached at completion) draws cleanly. Re-armed by the next
-   * zcash_send_action_ack() if more actions remain. */
+  /* Stop the trickle; the next ack re-arms it. */
   layoutProgressTrickleStop();
 
   /* A transparent-only session ends at its last input. */
@@ -1576,19 +1534,13 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
       ((zcash_signing.n_transparent_outputs > 0 ||
         zcash_signing.n_transparent_inputs > 0) &&
        !zcash_signing.transparent_digest_verified)) {
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
-                    _("Transparent data not yet complete"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_UnexpectedMessage,
+               _("Transparent data not yet complete"));
     return;
   }
 
-  /* Validate action index */
   if (!msg->has_index || msg->index != zcash_signing.current_action) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Unexpected action index"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError, _("Unexpected action index"));
     return;
   }
 
@@ -1613,18 +1565,14 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
       msg->has_enc_compact && msg->enc_compact.size == 52 &&
       msg->has_enc_memo && msg->enc_memo.size == 512 &&
       msg->has_enc_noncompact &&
-      /* 580-byte enc_ciphertext = compact(52) + memo(512) + noncompact(16);
-       * pin the exact size like every sibling field so a host serializer bug
-       * fails fast per-action instead of as an end-of-flow digest mismatch. */
+      /* 580 = compact(52) + memo(512) + noncompact(16). */
       msg->enc_noncompact.size == 16 && msg->has_cv_net &&
       msg->cv_net.size == 32 && msg->has_rk && msg->rk.size == 32 &&
       msg->has_out_ciphertext && msg->out_ciphertext.size == 80;
 
   if (!has_orchard_action_data) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Missing Orchard action data"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Missing Orchard action data"));
     return;
   }
 
@@ -1635,8 +1583,7 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
   ZcashActionProgress verification_progress = {
       action_base, action_target - action_base, action_base};
 
-  /* The 1086-bit Orchard note commitment takes 109 public Sinsemilla rounds.
-   * Draw their real progress instead of freezing the prior trickle at 0%. */
+  /* 1086-bit note commitment = 109 public Sinsemilla rounds. */
   layoutProgress(_("Signing Zcash"), action_base);
   if (!zcash_verify_and_confirm_orchard_output(msg, zcash_action_progress,
                                                &verification_progress)) {
@@ -1678,7 +1625,6 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
 
   zcash_signing.current_action++;
 
-  /* Update progress */
   uint32_t progress =
       (zcash_signing.current_action * 1000) / zcash_signing.n_actions;
   layoutProgress(_("Signing Zcash"), progress);
@@ -1695,7 +1641,6 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
   if (zcash_signing.current_action >= zcash_signing.n_actions) {
     zcash_final_gate();
   } else {
-    /* Request next action */
     zcash_send_action_ack(zcash_signing.current_action);
   }
 }
@@ -1709,58 +1654,39 @@ void fsm_msgZcashTransparentOutput(const ZcashTransparentOutput* msg) {
   }
 
   if (zcash_signing.n_transparent_outputs == 0) {
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
-                    _("No transparent outputs expected"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_UnexpectedMessage,
+               _("No transparent outputs expected"));
     return;
   }
 
   if (zcash_signing.current_transparent_input != 0) {
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
-                    _("Transparent outputs must come first"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_UnexpectedMessage,
+               _("Transparent outputs must come first"));
     return;
   }
 
-  /* Same invariant as the transparent input handler, and it has to be stated
-   * separately: this is a different array with its own free-running counter.
-   *
-   * After the declared outputs are stored, the dispatch below moves on to
-   * transparent inputs without incrementing current_transparent_input, which
-   * leaves this handler re-armed. A host that ignores the ack and keeps
-   * sending outputs walks current_transparent_output past
-   * n_transparent_outputs, and each extra message wrote a host-controlled
-   * amount and a 128-byte script_pubkey past the end of
-   * transparent_outputs[8] -- landing first on transparent_inputs[0] and then
-   * outside the struct entirely. */
+  /* Bound the free-running counter: a host can keep sending outputs past the
+   * declared count, which would write past transparent_outputs[8]. */
   if (msg->index >= zcash_signing.n_transparent_outputs ||
       msg->index >= ZCASH_MAX_TRANSPARENT_OUTPUTS ||
       zcash_signing.current_transparent_output >=
           zcash_signing.n_transparent_outputs) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Transparent output index out of range"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Transparent output index out of range"));
     return;
   }
 
   if (msg->index != zcash_signing.current_transparent_output) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Unexpected transparent output index"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Unexpected transparent output index"));
     return;
   }
 
   if (!msg->has_amount || !msg->has_script_pubkey ||
       msg->script_pubkey.size == 0 ||
       msg->script_pubkey.size > ZCASH_MAX_TRANSPARENT_SCRIPT_PUBKEY) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid transparent output script"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Invalid transparent output script"));
     return;
   }
 
@@ -1838,21 +1764,17 @@ void fsm_msgZcashTransparentOutput(const ZcashTransparentOutput* msg) {
 
   zcash_signing.current_transparent_output++;
 
-  /* Static draw before the dispatch: the actions transition below arms the
-   * trickle, and a layoutProgress() after it would clear and freeze it. */
+  /* Static draw before the dispatch arms the trickle. */
   layoutProgress(_("Signing Zcash"), 0);
 
   if (zcash_signing.current_transparent_output <
       zcash_signing.n_transparent_outputs) {
-    zcash_send_transparent_output_ack(zcash_signing.current_transparent_output);
+    zcash_send_transparent_ack(true, zcash_signing.current_transparent_output);
   } else if (zcash_signing.n_transparent_inputs > 0) {
-    zcash_send_transparent_input_ack(0);
+    zcash_send_transparent_ack(false, 0);
   } else {
     if (!zcash_finalize_transparent_digest()) {
-      fsm_sendFailure(FailureType_Failure_Other,
-                      _("Transparent digest mismatch"));
-      zcash_signing_abort();
-      layoutHome();
+      zcash_fail(FailureType_Failure_Other, _("Transparent digest mismatch"));
       return;
     }
     zcash_send_action_ack(0);
@@ -1870,55 +1792,38 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
   }
 
   if (zcash_signing.n_transparent_inputs == 0) {
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
-                    _("No transparent inputs expected"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_UnexpectedMessage,
+               _("No transparent inputs expected"));
     return;
   }
 
   if (zcash_signing.current_transparent_output <
       zcash_signing.n_transparent_outputs) {
-    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
-                    _("Transparent outputs not yet complete"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_UnexpectedMessage,
+               _("Transparent outputs not yet complete"));
     return;
   }
 
-  /* Bound the index against the array before it is used to address it.
-   *
-   * Matching current_transparent_input is not sufficient on its own. Nothing
-   * stops a host sending further ZcashTransparentInput messages after the
-   * declared count has been consumed: the ack loop simply stops asking, while
-   * current_transparent_input keeps incrementing past n_transparent_inputs on
-   * every extra message. Each one then wrote a fully host-controlled
-   * ZcashTransparentInputState -- amount, 32-byte txid, script_pubkey, the
-   * whole address_n array -- past the end of an 8-element static array. */
+  /* Bound the index before use: a host can keep sending inputs past the
+   * declared count, which would write past the 8-element array. */
   if (msg->index >= zcash_signing.n_transparent_inputs ||
       msg->index >= ZCASH_MAX_TRANSPARENT_INPUTS ||
       zcash_signing.current_transparent_input >=
           zcash_signing.n_transparent_inputs) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Transparent input index out of range"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Transparent input index out of range"));
     return;
   }
 
   if (msg->index != zcash_signing.current_transparent_input) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Unexpected transparent input index"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Unexpected transparent input index"));
     return;
   }
 
   if (msg->has_sighash) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Host transparent sighash rejected"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Host transparent sighash rejected"));
     return;
   }
 
@@ -1927,26 +1832,17 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
       !msg->has_sequence || !msg->has_script_pubkey ||
       msg->script_pubkey.size == 0 ||
       msg->script_pubkey.size > ZCASH_MAX_TRANSPARENT_SCRIPT_PUBKEY) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Invalid transparent input data"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Invalid transparent input data"));
     return;
   }
 
-  /* P2PKH only. The path enforcement below derives a BIP-44 secp256k1 key and
-   * the sighash uses this scriptPubKey as the scriptCode, which is right for
-   * P2PKH and wrong for P2SH -- a P2SH input needs the redeem script as the
-   * scriptCode and a key that satisfies it. Accepting P2SH here produced a
-   * signature no node would accept, after showing the user a P2SH address the
-   * device cannot actually spend. zcash_transparent_script_to_address() still
-   * renders P2SH, which is what OUTPUTS legitimately need. */
+  /* Inputs are P2PKH only: the scriptPubKey is used as scriptCode, which is
+   * wrong for P2SH (outputs may still be P2SH). */
   if (!zcash_script_is_p2pkh(msg->script_pubkey.bytes,
                              msg->script_pubkey.size)) {
-    fsm_sendFailure(FailureType_Failure_SyntaxError,
-                    _("Transparent inputs must be P2PKH"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_SyntaxError,
+               _("Transparent inputs must be P2PKH"));
     return;
   }
 
@@ -1990,16 +1886,13 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
 
   if (zcash_signing.current_transparent_input <
       zcash_signing.n_transparent_inputs) {
-    zcash_send_transparent_input_ack(zcash_signing.current_transparent_input);
+    zcash_send_transparent_ack(false, zcash_signing.current_transparent_input);
     layoutProgress(_("Signing Zcash"), 0);
     return;
   }
 
   if (!zcash_finalize_transparent_digest()) {
-    fsm_sendFailure(FailureType_Failure_Other,
-                    _("Transparent digest mismatch"));
-    zcash_signing_abort();
-    layoutHome();
+    zcash_fail(FailureType_Failure_Other, _("Transparent digest mismatch"));
     return;
   }
 
