@@ -1,3 +1,4 @@
+#include "kkconfirm_driver.h"
 #include "gtest/gtest.h"
 
 extern "C" {
@@ -142,7 +143,7 @@ TEST(USBRX, TinyAcknowledgementDoesNotReusePreviousSecret) {
   ASSERT_GE(fd, 0);
   struct sockaddr_in address = {};
   address.sin_family = AF_INET;
-  address.sin_port = htons(11044);
+  address.sin_port = htons(kkconfirm_main_port());
   address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   const char secret[] = "previous-passphrase-secret";
   uint8_t frame[64] = {'?', '#', '#'};
@@ -195,7 +196,7 @@ static void expectMalformedTinyPacketRejected(size_t packet_length) {
   ASSERT_GE(fd, 0);
   struct sockaddr_in address = {};
   address.sin_family = AF_INET;
-  address.sin_port = htons(11044);
+  address.sin_port = htons(kkconfirm_main_port());
   address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   uint8_t frame[64] = {'?', '#', '#'};
   frame[3] = MessageType_MessageType_PassphraseAck >> 8;
@@ -249,7 +250,7 @@ TEST(USBRX, PacketStorageIsWipedAfterCallback) {
   ASSERT_GE(fd, 0);
   struct sockaddr_in address = {};
   address.sin_family = AF_INET;
-  address.sin_port = htons(11044);
+  address.sin_port = htons(kkconfirm_main_port());
   address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   uint8_t frame[64];
   memset(frame, 0x5a, sizeof(frame));
@@ -280,7 +281,7 @@ TEST(USBRX, BlockingMalformedTinyPacketReturnsWithoutAnotherHostMessage) {
   ASSERT_GE(fd, 0);
   struct sockaddr_in address = {};
   address.sin_family = AF_INET;
-  address.sin_port = htons(11044);
+  address.sin_port = htons(kkconfirm_main_port());
   address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   uint8_t frame[64] = {'?', '#', '#'};
   frame[3] = MessageType_MessageType_PassphraseAck >> 8;
@@ -319,7 +320,7 @@ static void expectWrongAcknowledgementRejected(MessageType wrong, int handler) {
   ASSERT_GE(fd, 0);
   struct sockaddr_in address = {};
   address.sin_family = AF_INET;
-  address.sin_port = htons(11044);
+  address.sin_port = htons(kkconfirm_main_port());
   address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   for (MessageType type : {wrong, MessageType_MessageType_Cancel}) {
     uint8_t frame[64] = {'?', '#', '#'};
@@ -372,7 +373,7 @@ TEST(USBRX, MalformedTinyFrameUnwindsAndNextPollRecovers) {
   ASSERT_GE(fd, 0);
   struct sockaddr_in address = {};
   address.sin_family = AF_INET;
-  address.sin_port = htons(11044);
+  address.sin_port = htons(kkconfirm_main_port());
   address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 
   uint8_t frame[64] = {'?', '#', '#'};

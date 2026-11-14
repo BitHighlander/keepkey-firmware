@@ -1,3 +1,4 @@
+#include "kkconfirm_driver.h"
 extern "C" {
 #include "keepkey/board/messages.h"
 #include "keepkey/board/usb.h"
@@ -73,7 +74,7 @@ static bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload,
   struct sockaddr_in addr;
   memset(&addr, 0, sizeof(addr));
   addr.sin_family = AF_INET;
-  addr.sin_port = htons(11044);  // emulator main "usb" port
+  addr.sin_port = htons(kkconfirm_main_port());  // emulator main "usb" port
   addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   return sendto(fd, frame, sizeof(frame), 0, (struct sockaddr*)&addr,
                 sizeof(addr)) == (ssize_t)sizeof(frame);

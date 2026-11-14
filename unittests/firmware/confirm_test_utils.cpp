@@ -8,6 +8,7 @@ extern "C" {
 }
 
 #include <arpa/inet.h>
+#include <stdlib.h>
 #include <cstring>
 #include <functional>
 #include <string>
@@ -77,6 +78,19 @@ std::vector<std::string> kkconfirm_capture_finish(void) {
 
 static int kkconfirm_fd = -1;
 
+// The emulator's main "usb" port: KEEPKEY_UDP_PORT when set, as
+// emulatorSocketInit() reads it, else 11044. A hard-coded 11044 sent every
+// answer to whatever else held that port while the emulator under test
+// listened elsewhere, and the confirm under test then waited forever.
+uint16_t kkconfirm_main_port(void) {
+  const char* env_port = getenv("KEEPKEY_UDP_PORT");
+  if (env_port) {
+    int p = atoi(env_port);
+    if (p > 0 && p < 65535) return (uint16_t)p;
+  }
+  return 11044;
+}
+
 bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload, uint8_t len) {
   if (kkconfirm_fd < 0) kkconfirm_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   if (kkconfirm_fd < 0) return false;
@@ -93,7 +107,7 @@ bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload, uint8_t len) {
   struct sockaddr_in addr;
   memset(&addr, 0, sizeof(addr));
   addr.sin_family = AF_INET;
-  addr.sin_port = htons(11044);  // emulator main "usb" port
+  addr.sin_port = htons(kkconfirm_main_port());
   addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   return sendto(kkconfirm_fd, frame, sizeof(frame), 0, (struct sockaddr*)&addr,
                 sizeof(addr)) == (ssize_t)sizeof(frame);
@@ -294,7 +308,7 @@ bool kkconfirm_openDebugPeer(void) {
   struct sockaddr_in addr;
   memset(&addr, 0, sizeof(addr));
   addr.sin_family = AF_INET;
-  addr.sin_port = htons(11045);  // emulator debug "usb" port
+  addr.sin_port = htons(kkconfirm_main_port() + 1);  // debug "usb" port
   addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   static const char ping[] = {'P', 'I', 'N', 'G', 'P', 'I', 'N', 'G'};
   if (sendto(kkconfirm_debug_fd, ping, sizeof(ping), 0, (struct sockaddr*)&addr,
