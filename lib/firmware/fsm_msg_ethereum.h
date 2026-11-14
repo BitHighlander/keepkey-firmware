@@ -1057,7 +1057,7 @@ static bool erc7730_allowance_policy(Erc7730Workflow* workflow,
   return true;
 }
 
-static void confirm_erc7730_intent_and_continue(EthereumSignTx* tx) {
+static void confirm_erc7730_intent_and_continue(const EthereumSignTx* tx) {
   Erc7730Workflow* workflow = erc7730_workflow_state();
   if (!workflow->calldata_validated) {
     /* The first pass only checked the calldata and fixed its digest; every
