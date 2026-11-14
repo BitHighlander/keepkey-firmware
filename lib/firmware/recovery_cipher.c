@@ -319,8 +319,8 @@ void recovery_cipher_init(uint32_t _word_count, bool passphrase_protection,
 
   if (!dry_run) {
     if (!setup_stagePin(pin_protection)) {
+      /* setup_stagePin already sent the one terminal Failure. */
       setup_abort();
-      fsm_sendFailure(FailureType_Failure_ActionCancelled, "PINs do not match");
       layoutHome();
       return;
     }

@@ -1,3 +1,4 @@
+#include "kkconfirm_driver.h"
 extern "C" {
 #include "keepkey/board/keepkey_flash.h"
 #include "keepkey/board/messages.h"
@@ -60,7 +61,7 @@ class Block13Entropy : public ::testing::Test {
     ASSERT_GE(fd, 0);
     sockaddr_in address = {};
     address.sin_family = AF_INET;
-    address.sin_port = htons(11044);
+    address.sin_port = htons(kkconfirm_main_port());
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     ASSERT_EQ(
         0, connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)));

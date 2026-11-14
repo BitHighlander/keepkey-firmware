@@ -8,6 +8,12 @@
 #ifndef UNITTESTS_FIRMWARE_KKCONFIRM_DRIVER_H
 #define UNITTESTS_FIRMWARE_KKCONFIRM_DRIVER_H
 
+#include <stdint.h>
+
+// The emulator's main UDP "usb" port the firmware under test listens on:
+// KEEPKEY_UDP_PORT when set, else 11044. The debug port is this plus one.
+uint16_t kkconfirm_main_port(void);
+
 // Queue nYes accepted screens followed by nNo rejected screens. Performs the
 // one-time board/usb initialization on first use.
 bool kkconfirm_preload(int nYes, int nNo);

@@ -1077,6 +1077,11 @@ uint8_t erc7730_workflow_tier(const Erc7730Workflow* workflow) {
   return own < above ? own : above;
 }
 
+bool erc7730_workflow_token_id_exempt(const Erc7730Workflow* workflow) {
+  return workflow && workflow->identity.second_word_token_id &&
+         erc7730_workflow_tier(workflow) == METADATA_TIER_KEEPKEY;
+}
+
 bool erc7730_workflow_certified(const Erc7730Workflow* workflow) {
   return workflow && workflow->review_tier == METADATA_TIER_KEEPKEY &&
          (erc7730_workflow_active(workflow) ||

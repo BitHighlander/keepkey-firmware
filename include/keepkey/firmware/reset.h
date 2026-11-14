@@ -80,7 +80,7 @@ bool setup_stage(bool passphrase_protection, const char* language,
 
 /// Capture the PIN on-device into the staged settings; \a pin_protection
 /// false stages the empty PIN. \returns false if the two entries did not
-/// match or the host cancelled.
+/// match or the host cancelled; the terminal Failure is already sent.
 bool setup_stagePin(bool pin_protection);
 
 /// Arm the staged ceremony. Call exactly once, as the last statement before

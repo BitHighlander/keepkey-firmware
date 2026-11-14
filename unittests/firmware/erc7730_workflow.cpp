@@ -367,6 +367,36 @@ TEST(Erc7730Workflow, TypedDataIterationCountsThenCapturesEachElement) {
   EXPECT_STREQ(formatted, "42");
 }
 
+// The ERC-721 token-id exemption from the UNLIMITED warning is for
+// KeepKey-certified definitions only: a runtime definition that labels
+// approve()'s amount as an nftName token id still gets the warning, and so
+// does a certified inner definition reached through a runtime outer one.
+TEST(Erc7730Workflow, TokenIdExemptionNeedsACertifiedDefinition) {
+  const struct {
+    uint8_t outer, inner;
+    uint8_t depth;
+    bool token_id, exempt;
+  } cases[] = {
+      {METADATA_TIER_KEEPKEY, METADATA_TIER_KEEPKEY, 0, true, true},
+      {METADATA_TIER_RUNTIME, METADATA_TIER_RUNTIME, 0, true, false},
+      {METADATA_TIER_KEEPKEY, METADATA_TIER_KEEPKEY, 0, false, false},
+      {METADATA_TIER_KEEPKEY, METADATA_TIER_KEEPKEY, 1, true, true},
+      {METADATA_TIER_RUNTIME, METADATA_TIER_KEEPKEY, 1, true, false},
+      {METADATA_TIER_KEEPKEY, METADATA_TIER_RUNTIME, 1, true, false},
+  };
+  EXPECT_FALSE(erc7730_workflow_token_id_exempt(nullptr));
+  for (const auto& c : cases) {
+    SCOPED_TRACE(::testing::Message() << (int)c.outer << " " << (int)c.inner
+                                      << " depth " << (int)c.depth);
+    Erc7730Workflow workflow{};
+    workflow.identity.tier = c.depth ? c.inner : c.outer;
+    workflow.identity.second_word_token_id = c.token_id;
+    workflow.depth = c.depth;
+    if (c.depth) workflow.frames[0].tier = c.outer;
+    EXPECT_EQ(c.exempt, erc7730_workflow_token_id_exempt(&workflow));
+  }
+}
+
 TEST(Erc7730Workflow, InnerDefinitionIsNeverShownAboveItsOuterTier) {
   const struct {
     uint8_t outer, inner, shown;

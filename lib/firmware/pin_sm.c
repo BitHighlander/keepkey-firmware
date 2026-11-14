@@ -332,7 +332,11 @@ done:
 }
 
 bool change_pin_staged(char* out, size_t out_len) {
-  return request_new_pin(out, out_len) == PIN_CHANGE_OK;
+  const PinChangeResult result = request_new_pin(out, out_len);
+  /* A cancel or bad entry was already answered by pin_request(). */
+  if (result == PIN_CHANGE_MISMATCH)
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, "PINs do not match");
+  return result == PIN_CHANGE_OK;
 }
 
 bool change_pin(void) {
