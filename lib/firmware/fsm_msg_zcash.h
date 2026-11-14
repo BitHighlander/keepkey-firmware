@@ -1035,7 +1035,7 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
   if (is_ironwood &&
       (!msg->has_tx_version || msg->tx_version != 6 ||
        !msg->has_version_group_id || msg->version_group_id != 0xD884B698 ||
-       branch_id != 0x37A5165B)) {
+       !zcash_branch_has_ironwood(branch_id))) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Invalid Ironwood transaction"));
     layoutHome();
@@ -1043,13 +1043,13 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
   }
 
   /* ZIP 318 pool crossing: an Orchard bundle and an Ironwood bundle in one
-   * NU6.3 v6 transaction. Both are streamed and verified. */
+   * NU6.3-or-later v6 transaction. Both are streamed and verified. */
   const bool crossing = n_ironwood_actions > 0;
   if (crossing &&
-      (is_ironwood || msg->tx_version != 6 || branch_id != 0x37A5165B ||
-       !msg->has_ironwood_digest || msg->ironwood_digest.size != 32 ||
-       !msg->has_ironwood_flags || msg->ironwood_flags > 0xff ||
-       !msg->has_ironwood_value_balance)) {
+      (is_ironwood || msg->tx_version != 6 ||
+       !zcash_branch_has_ironwood(branch_id) || !msg->has_ironwood_digest ||
+       msg->ironwood_digest.size != 32 || !msg->has_ironwood_flags ||
+       msg->ironwood_flags > 0xff || !msg->has_ironwood_value_balance)) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Invalid pool-crossing transaction"));
     layoutHome();
@@ -1169,7 +1169,7 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
     layoutHome();
     return;
   }
-  if (!is_ironwood && branch_id == 0x37A5165B &&
+  if (!is_ironwood && zcash_branch_has_ironwood(branch_id) &&
       msg->orchard_value_balance < 0) {
     fsm_sendFailure(FailureType_Failure_SyntaxError,
                     _("Value cannot enter the Orchard pool"));
