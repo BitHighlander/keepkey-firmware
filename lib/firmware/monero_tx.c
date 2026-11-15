@@ -329,7 +329,7 @@ static MoneroTxResult plan_check(const MoneroTxInitRequest* m) {
     if (!dest_well_formed(d)) return MONERO_TX_ERR_REQUEST;
     if (d->has_is_integrated && d->is_integrated) {
       /* An integrated address is a standard address plus a payment ID. */
-      if (d->has_is_subaddress && d->is_subaddress)
+      if (d->amount == 0 || (d->has_is_subaddress && d->is_subaddress))
         return MONERO_TX_ERR_REQUEST;
       ++integrated;
     }

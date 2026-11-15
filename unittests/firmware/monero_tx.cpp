@@ -824,6 +824,27 @@ TEST_F(MoneroTx, IntegratedAddressIsEncodedWithItsPaymentId) {
   EXPECT_EQ(0, memcmp(review.payment_id, p.pid, 8));
 }
 
+TEST_F(MoneroTx, ZeroAmountIntegratedDestinationIsRejectedBeforeReview) {
+  const uint8_t* key = signer_wallet().key_seed;
+  for (unsigned recipient = 0; recipient < 2; ++recipient) {
+    Plan p = make_plan("zero-integrated", 0, other_address(0, 0), 0,
+                       999969000000ull, 31000000ull, 1 - recipient);
+    add_input(p, owned_input(0, 0, 1000000000000ull, 5, 1));
+    set_payment_id(p, recipient, 0x11);
+    MoneroTxReview review, zero_review = {};
+    MoneroTxInitAck ack, zero_ack = {};
+    memset(&review, 0xa5, sizeof(review));
+    memset(&ack, 0xa5, sizeof(ack));
+    replay_rng(p.name);
+    EXPECT_EQ(MONERO_TX_ERR_REQUEST, monero_tx_review(key, &p.init, &review));
+    EXPECT_EQ(0, memcmp(&review, &zero_review, sizeof(review)));
+    EXPECT_ENDED(MONERO_TX_ERR_REQUEST,
+                 monero_tx_begin(key, &p.init, review.digest, &ack));
+    EXPECT_EQ(0, memcmp(&ack, &zero_ack, sizeof(ack)));
+    EXPECT_EQ(0u, xmr_test_rng_draws());
+  }
+}
+
 TEST_F(MoneroTx, ChangeIsWhatTheDeviceDerivesNeverWhatTheHostDeclares) {
   const uint8_t* key = signer_wallet().key_seed;
   MoneroTxReview review;
