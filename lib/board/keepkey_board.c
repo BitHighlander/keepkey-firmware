@@ -54,7 +54,9 @@ void __attribute__((noreturn)) shutdown(void) { exit(1); }
  * OUTPUT
  *     none
  */
-__attribute__((noreturn)) void __stack_chk_fail(void) {
+/* used: with -flto the canary calls are emitted after LTO symbol resolution,
+ * so without it the IR-only definition is dropped and the calls go unresolved. */
+__attribute__((used, noreturn)) void __stack_chk_fail(void) {
   layout_warning_static("Error Detected.  Reboot Device!");
   shutdown();
 }
