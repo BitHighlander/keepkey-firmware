@@ -959,4 +959,27 @@ TEST_F(MoneroCrypto, ClsagRejectsNoncanonicalPointsBeforeRandomness) {
   }
 }
 
+TEST_F(MoneroCrypto, ClsagRejectsZeroSecretsBeforeRandomness) {
+  for (unsigned which = 0; which < 3; ++which) {
+    SCOPED_TRACE(::testing::Message() << "zero secret case=" << which);
+    Ring r(3, 6);
+    if (which != 1) {
+      memset(r.p, 0, sizeof(r.p));
+      scalar_point(r.P[6], r.p);  // P[l] = p G = identity
+    }
+    if (which != 0) {
+      memset(r.z, 0, sizeof(r.z));
+      memcpy(r.C[6], r.Coff, 32);  // C[l] - C_offset = z G = identity
+    }
+    xmr_clsag_sig s;
+    memset(&s, 0xa5, sizeof(s));
+    memset(&cws, 0xa5, sizeof(cws));
+    xmr_test_rng_replay(r.msg);
+    EXPECT_FALSE(sign(&s, r, 6));
+    EXPECT_EQ(0u, xmr_test_rng_draws());
+    EXPECT_TRUE(all_zero(&s, sizeof(s)));
+    EXPECT_TRUE(all_zero(&cws, sizeof(cws)));
+  }
+}
+
 }  // namespace

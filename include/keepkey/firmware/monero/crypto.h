@@ -183,10 +183,11 @@ typedef struct {
 #define XMR_CLSAG_WORKSPACE_BYTES 5408u
 
 /* CLSAG over ring (P[i], C_nonzero[i]), i < n, 2 <= n <= 16, pseudo-output
- * C_offset, real member l, spend secret p (P[l] = p*G) and commitment secret
- * z (C_nonzero[l] - C_offset = z*G). Both relations are checked first; any
- * mismatch or noncanonical point returns false before drawing randomness.
- * Returns false, with *sig zeroed, on any failure. */
+ * C_offset, real member l, nonzero spend secret p (P[l] = p*G) and nonzero
+ * commitment secret z (C_nonzero[l] - C_offset = z*G). Secrets, both relations
+ * and all supplied point encodings are checked before drawing randomness.
+ * Identity key images are refused. Returns false, with *sig zeroed, on any
+ * failure. */
 bool xmr_clsag_sign(xmr_clsag_sig *sig, const uint8_t message[32],
                     const uint8_t (*P)[32], const uint8_t (*C_nonzero)[32],
                     const uint8_t C_offset[32], size_t n, size_t real_index,
