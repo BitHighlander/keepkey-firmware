@@ -131,7 +131,14 @@ if(${KK_MONERO})
   list(APPEND sources monero.cpp monero_probe.c "${monero_vectors_h}")
   set_property(SOURCE monero.cpp APPEND PROPERTY OBJECT_DEPENDS
                "${monero_vectors_h}")
-  set_source_files_properties(monero_probe.c PROPERTIES COMPILE_OPTIONS
+  # monero_tx.cpp drives the streamed signer; monero_tx_vectors.h holds the
+  # digests of the transactions Monero Core verified
+  # (monero_tx_vectors_gen.sh).
+  list(APPEND sources monero_tx.cpp monero_tx_probe.c)
+  set_property(SOURCE monero_tx.cpp APPEND PROPERTY OBJECT_DEPENDS
+               "${monero_vectors_h}")
+  set_source_files_properties(monero_probe.c monero_tx_probe.c
+      PROPERTIES COMPILE_OPTIONS
       "-UUSE_MONERO;-DUSE_MONERO=1;-U__SSE__;-U__MMX__")
 endif()
 
