@@ -221,6 +221,14 @@ if(NOT ${KK_EMULATOR})
   # leaves less than the configured margin. See tools/firmware/keepkey.ld.
   add_compile_options(-fstack-usage)
 
+  # Link-time optimisation for the firmware image (about -26 KB): objects carry
+  # LTO IR plus normal code and only the firmware link uses the IR. Never in a
+  # bootloader-tools build, so the bootloader and updater images do not change.
+  if(NOT KK_BUILD_BOOTLOADER_TOOLS)
+    add_compile_options($<$<COMPILE_LANGUAGE:C>:-flto> $<$<COMPILE_LANGUAGE:C>:-ffat-lto-objects>
+                        $<$<COMPILE_LANGUAGE:CXX>:-flto> $<$<COMPILE_LANGUAGE:CXX>:-ffat-lto-objects>)
+  endif()
+
   # Dummy empty libraries for stack smashing protection support, since we
   # implement __stack_chk_guard and __stack_chk_fail ourselves.
   file(WRITE ${CMAKE_BINARY_DIR}/ssp.c "")

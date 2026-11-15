@@ -24,12 +24,9 @@ set(ARCH_FLAGS
     -fdata-sections \
     -fno-common \
     -fstack-usage \
-    -fstack-protector-strong \
-    -flto \
-    -ffat-lto-objects" CACHE STRING "")
-# -flto -ffat-lto-objects: every object carries LTO IR and normal code. Only
-# the firmware link uses the IR (about -26 KB); see CMAKE_EXE_LINKER_FLAGS.
-# gcc-ar/gcc-ranlib index the IR in the static libraries.
+    -fstack-protector-strong" CACHE STRING "")
+# gcc-ar/gcc-ranlib index the LTO IR in the static libraries (LTO: see the
+# top-level CMakeLists.txt).
 set(CMAKE_AR arm-none-eabi-gcc-ar CACHE FILEPATH "")
 set(CMAKE_RANLIB arm-none-eabi-gcc-ranlib CACHE FILEPATH "")
 # -strong, not -all: a canary on every function with a local array or an
@@ -93,6 +90,5 @@ set(CMAKE_EXE_LINKER_FLAGS
     -specs=nosys.specs \
     -Wl,--gc-sections \
     -fno-lto" CACHE STRING "")
-# -fno-lto: every device link uses the objects' normal code (bootloader,
-# updater, variants, display test stay byte-identical). The firmware link
+# -fno-lto: device links use the objects' normal code. The firmware link
 # alone appends -flto in tools/firmware/CMakeLists.txt; the later flag wins.

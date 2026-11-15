@@ -26,9 +26,11 @@ if(NOT ${KK_EMULATOR})
   set(CMAKE_EXE_LINKER_FLAGS
       "${CMAKE_EXE_LINKER_FLAGS} -Wl,--defsym=snprintf=sniprintf -Wl,--defsym=vsnprintf=vsniprintf")
 
-  # Link-time optimisation for the firmware image only; the objects carry IR
-  # from cmake/caches/device.cmake.
-  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -flto")
+  # Link-time optimisation for the firmware image only (see the top-level
+  # CMakeLists.txt; off in bootloader-tools builds).
+  if(NOT KK_BUILD_BOOTLOADER_TOOLS)
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -flto")
+  endif()
 
   set(LINK_FLAGS
       kkfirmware
