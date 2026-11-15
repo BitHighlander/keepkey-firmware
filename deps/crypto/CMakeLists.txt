@@ -66,8 +66,23 @@ if(${KK_ZCASH_PRIVACY})
       trezor-firmware/crypto/pallas_sinsemilla.c
       trezor-firmware/crypto/pallas_swu.c
       trezor-firmware/crypto/redpallas.c
-      trezor-firmware/crypto/zcash_zip316.c
-      # Orchard note-ciphertext check (AEAD_CHACHA20_POLY1305).
+      trezor-firmware/crypto/zcash_zip316.c)
+endif()
+
+# Monero primitives (full builds only): keys, base58 addresses, varints.
+# range_proof.c (Borromean proofs, unchecked xmr_random_scalar draws) is not
+# used.
+if(${KK_MONERO})
+  list(APPEND sources
+      trezor-firmware/crypto/monero/base58.c
+      trezor-firmware/crypto/monero/serialize.c
+      trezor-firmware/crypto/monero/xmr.c)
+endif()
+
+# AEAD_CHACHA20_POLY1305: the Orchard note-ciphertext check, and Monero's
+# encrypted key images.
+if(${KK_ZCASH_PRIVACY} OR ${KK_MONERO})
+  list(APPEND sources
       trezor-firmware/crypto/chacha20poly1305/chacha_merged.c
       trezor-firmware/crypto/chacha20poly1305/chacha20poly1305.c
       trezor-firmware/crypto/chacha20poly1305/poly1305-donna.c
@@ -83,14 +98,6 @@ if(${KK_ZCASH_PRIVACY})
       PROPERTIES COMPILE_OPTIONS "-U__SSE__;-U__MMX__")
 endif()
 
-# Monero primitives for the on-device signer. range_proof.c (Borromean proofs,
-# unchecked xmr_random_scalar draws) is not used.
-if(KK_MONERO)
-  list(APPEND sources
-      trezor-firmware/crypto/monero/serialize.c
-      trezor-firmware/crypto/monero/xmr.c)
-endif()
-
 
 include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR}/trezor-firmware/crypto
@@ -99,3 +106,9 @@ include_directories(
 
 
 add_library(trezorcrypto ${sources})
+
+# The Monero sources, and the ed25519-donna helper they call, are compiled
+# only with USE_MONERO=1.
+if(${KK_MONERO})
+  target_compile_options(trezorcrypto PRIVATE -UUSE_MONERO -DUSE_MONERO=1)
+endif()
