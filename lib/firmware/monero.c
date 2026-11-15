@@ -78,51 +78,112 @@ void monero_subaddress_scalar(bignum256modm out, const bignum256modm view,
   memzero(data, sizeof(data));
 }
 
+/* Reject noncanonical encodings, identity and torsion before multiplying a
+ * public input by a wallet or transaction secret. */
+bool monero_decode_public(ge25519* point, const uint8_t encoded[32]) {
+  static const uint8_t identity[32] = {1};
+  static const uint8_t order_bytes[32] = {
+      0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7,
+      0xa2, 0xde, 0xf9, 0xde, 0x14, 0,    0,    0,    0,    0,    0,
+      0,    0,    0,    0,    0,    0,    0,    0,    0,    0x10};
+  struct {
+    ge25519 check;
+    bignum256modm order;
+    uint8_t canonical[32];
+  } tmp = {0};
+  bool ok = false;
+  ge25519_set_neutral(point);
+  if (!ge25519_unpack_vartime(point, encoded)) goto done;
+  ge25519_pack(tmp.canonical, point);
+  if (memcmp(tmp.canonical, encoded, 32) || !memcmp(encoded, identity, 32))
+    goto done;
+  expand_raw256_modm(tmp.order, order_bytes);
+  ge25519_scalarmult(&tmp.check, point, tmp.order);
+  ge25519_pack(tmp.canonical, &tmp.check);
+  ok = memcmp(tmp.canonical, identity, 32) == 0;
+done:
+  memzero(&tmp, sizeof(tmp));
+  return ok;
+}
+
+bool monero_address_keys(const bignum256modm spend, const bignum256modm view,
+                         uint32_t major, uint32_t minor, uint8_t keys[64]) {
+  struct {
+    bignum256modm sub;
+    ge25519 B, D, C;
+  } scratch = {0};
+  static const uint8_t neutral[32] = {1};
+
+  /* B = bG. A subaddress has D = B + mG and C = aD; the primary address
+   * has D = B and C = aG. */
+  ge25519_scalarmult_base_wrapper(&scratch.B, spend);
+  if (major != 0 || minor != 0) {
+    monero_subaddress_scalar(scratch.sub, view, major, minor);
+    ge25519_scalarmult_base_wrapper(&scratch.D, scratch.sub);
+    ge25519_add(&scratch.D, &scratch.D, &scratch.B, 0);
+    ge25519_scalarmult(&scratch.C, &scratch.D, view);
+  } else {
+    ge25519_copy(&scratch.D, &scratch.B);
+    ge25519_scalarmult_base_wrapper(&scratch.C, view);
+  }
+  ge25519_pack(keys, &scratch.D);
+  ge25519_pack(keys + 32, &scratch.C);
+  memzero(&scratch, sizeof(scratch));
+  if (!memcmp(keys, neutral, 32) || !memcmp(keys + 32, neutral, 32)) {
+    memzero(keys, 64);
+    return false;
+  }
+  return true;
+}
+
+bool monero_encode_address(uint32_t network, MoneroAddressKind kind,
+                           const uint8_t keys[64], const uint8_t* payment_id,
+                           char* address, size_t capacity) {
+  static const uint8_t prefixes[3][3] = {
+      {18, 53, 24}, {42, 63, 36}, {19, 54, 25}};
+  uint8_t data[72] = {0};
+  const bool integrated = kind == MONERO_ADDRESS_INTEGRATED;
+  const size_t size = integrated ? 72u : 64u;
+  const size_t length = integrated ? 106u : MONERO_ADDRESS_LENGTH;
+  if (!address || capacity <= length) return false;
+  memzero(address, capacity);
+  if (network >= 3 || (unsigned)kind >= 3 || !keys ||
+      (integrated && !payment_id))
+    return false;
+  memcpy(data, keys, 64);
+  if (integrated) memcpy(data + 64, payment_id, 8);
+  const int written = xmr_base58_addr_encode_check(
+      prefixes[kind][network], data, size, address, capacity);
+  if (written != (int)length) {
+    memzero(address, capacity);
+    return false;
+  }
+  address[length] = '\0';
+  return true;
+}
+
 bool monero_get_address(const uint8_t node_key[32], uint32_t network,
                         uint32_t major, uint32_t minor,
                         char address[MONERO_ADDRESS_CAPACITY]) {
   struct {
-    bignum256modm spend, view, sub;
-    ge25519 B, D, C;
+    bignum256modm spend, view;
     uint8_t public_keys[64];
   } scratch = {0};
   bool ok = false;
   const bool is_subaddress = major != 0 || minor != 0;
-  static const uint8_t base_prefix[] = {18, 53, 24};
-  static const uint8_t sub_prefix[] = {42, 63, 36};
-  static const uint8_t neutral[32] = {1};
 
   if (!address) goto cleanup;
   memzero(address, MONERO_ADDRESS_CAPACITY);
   if (!node_key || network >= 3) goto cleanup;
   if (!monero_wallet_secrets(node_key, scratch.spend, scratch.view))
     goto cleanup;
-
-  /* B = bG. A subaddress has D = B + mG and C = aD; the primary address
-   * has D = B and C = aG. */
-  ge25519_scalarmult_base_wrapper(&scratch.B, scratch.spend);
-  if (is_subaddress) {
-    monero_subaddress_scalar(scratch.sub, scratch.view, major, minor);
-    ge25519_scalarmult_base_wrapper(&scratch.D, scratch.sub);
-    ge25519_add(&scratch.D, &scratch.D, &scratch.B, 0);
-    ge25519_scalarmult(&scratch.C, &scratch.D, scratch.view);
-  } else {
-    ge25519_copy(&scratch.D, &scratch.B);
-    ge25519_scalarmult_base_wrapper(&scratch.C, scratch.view);
-  }
-  ge25519_pack(scratch.public_keys, &scratch.D);
-  ge25519_pack(scratch.public_keys + 32, &scratch.C);
-  if (!memcmp(scratch.public_keys, neutral, 32) ||
-      !memcmp(scratch.public_keys + 32, neutral, 32))
+  if (!monero_address_keys(scratch.spend, scratch.view, major, minor,
+                           scratch.public_keys))
     goto cleanup;
-  const uint8_t prefix =
-      is_subaddress ? sub_prefix[network] : base_prefix[network];
-  const int written = xmr_base58_addr_encode_check(
-      prefix, scratch.public_keys, sizeof(scratch.public_keys), address,
-      MONERO_ADDRESS_CAPACITY);
-  if (written != (int)MONERO_ADDRESS_LENGTH) goto cleanup;
-  address[MONERO_ADDRESS_LENGTH] = '\0';
-  ok = true;
+  ok = monero_encode_address(
+      network,
+      is_subaddress ? MONERO_ADDRESS_SUBADDRESS : MONERO_ADDRESS_STANDARD,
+      scratch.public_keys, NULL, address, MONERO_ADDRESS_CAPACITY);
 
 cleanup:
   memzero(&scratch, sizeof(scratch));

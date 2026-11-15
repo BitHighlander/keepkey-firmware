@@ -52,12 +52,6 @@ typedef struct {
 _Static_assert(sizeof(KeyImageSession) <= MONERO_SESSION_BYTES,
                "key-image session exceeds the Monero arena share");
 
-static const uint8_t identity[32] = {1};
-static const uint8_t order_bytes[32] = {
-    0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7,
-    0xa2, 0xde, 0xf9, 0xde, 0x14, 0,    0,    0,    0,    0,    0,
-    0,    0,    0,    0,    0,    0,    0,    0,    0,    0x10};
-
 static KeyImageSession* session(void) {
   return (KeyImageSession*)signing_session_get(
       SIGNING_SESSION_MONERO_KEY_IMAGE);
@@ -73,29 +67,6 @@ bool monero_key_image_active(void) {
   if (s && (uint32_t)(getSysTime() - s->started) > KEY_IMAGE_SESSION_MS)
     monero_session_abort();
   return session() != NULL;
-}
-
-/* Reject noncanonical encodings, identity and torsion before multiplying a
- * public input by a wallet secret. */
-static bool decode_public(ge25519* point, const uint8_t encoded[32]) {
-  struct {
-    ge25519 check;
-    bignum256modm order;
-    uint8_t canonical[32];
-  } tmp = {0};
-  bool ok = false;
-  ge25519_set_neutral(point);
-  if (!ge25519_unpack_vartime(point, encoded)) goto done;
-  ge25519_pack(tmp.canonical, point);
-  if (memcmp(tmp.canonical, encoded, 32) || !memcmp(encoded, identity, 32))
-    goto done;
-  expand_raw256_modm(tmp.order, order_bytes);
-  ge25519_scalarmult(&tmp.check, point, tmp.order);
-  ge25519_pack(tmp.canonical, &tmp.check);
-  ok = memcmp(tmp.canonical, identity, 32) == 0;
-done:
-  memzero(&tmp, sizeof(tmp));
-  return ok;
 }
 
 bool monero_key_image_begin(const uint8_t node_key[32],
@@ -149,12 +120,12 @@ static bool owned_output(const KeyImageSession* s,
       (td->additional_tx_pub_keys_count > 1 &&
        td->internal_output_index >= td->additional_tx_pub_keys_count) ||
       td->has_sub_addr_major != td->has_sub_addr_minor ||
-      !decode_public(output, td->out_key.bytes) ||
-      !decode_public(&tmp.tx, td->tx_pub_key.bytes))
+      !monero_decode_public(output, td->out_key.bytes) ||
+      !monero_decode_public(&tmp.tx, td->tx_pub_key.bytes))
     goto done;
   for (pb_size_t i = 0; i < td->additional_tx_pub_keys_count; ++i)
     if (td->additional_tx_pub_keys[i].size != 32 ||
-        !decode_public(&tmp.tx, td->additional_tx_pub_keys[i].bytes))
+        !monero_decode_public(&tmp.tx, td->additional_tx_pub_keys[i].bytes))
       goto done;
   /* The output may be derived from R or from its additional key. */
   const unsigned derivations = td->additional_tx_pub_keys_count ? 2u : 1u;
@@ -165,7 +136,7 @@ static bool owned_output(const KeyImageSession* s,
           td->additional_tx_pub_keys_count == 1 ? 0 : td->internal_output_index;
       tx = td->additional_tx_pub_keys[index].bytes;
     }
-    if (!decode_public(&tmp.tx, tx)) goto done;
+    if (!monero_decode_public(&tmp.tx, tx)) goto done;
     xmr_generate_key_derivation(&tmp.derivation, &tmp.tx, s->view);
     ge25519_pack(tmp.encoded, &tmp.derivation);
     const int n =

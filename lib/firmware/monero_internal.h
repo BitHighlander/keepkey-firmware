@@ -34,4 +34,25 @@ bool monero_wallet_secrets(const uint8_t node_key[32], bignum256modm spend,
 void monero_subaddress_scalar(bignum256modm out, const bignum256modm view,
                               uint32_t major, uint32_t minor);
 
+/* False unless `encoded` is the canonical encoding of a point of prime
+ * order other than the identity. */
+bool monero_decode_public(ge25519* point, const uint8_t encoded[32]);
+
+/* keys = spend public || view public of subaddress (major, minor); (0, 0) is
+ * the primary address. False (keys wiped) if either is the identity. */
+bool monero_address_keys(const bignum256modm spend, const bignum256modm view,
+                         uint32_t major, uint32_t minor, uint8_t keys[64]);
+
+typedef enum {
+  MONERO_ADDRESS_STANDARD = 0,
+  MONERO_ADDRESS_SUBADDRESS = 1,
+  MONERO_ADDRESS_INTEGRATED = 2, /* standard keys plus an 8-byte payment ID */
+} MoneroAddressKind;
+
+/* base58 address for the network: 95 characters, 106 when integrated, NUL
+ * terminated. capacity must exceed that. Clears `address` on failure. */
+bool monero_encode_address(uint32_t network, MoneroAddressKind kind,
+                           const uint8_t keys[64], const uint8_t* payment_id,
+                           char* address, size_t capacity);
+
 #endif
