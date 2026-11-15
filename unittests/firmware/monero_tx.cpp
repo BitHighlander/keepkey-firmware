@@ -2,6 +2,7 @@ extern "C" {
 #include "keepkey/board/keepkey_button.h"
 #include "keepkey/board/memory.h"
 #include "keepkey/board/messages.h"
+#include "keepkey/board/timer.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/monero.h"
 #include "keepkey/firmware/monero_tx.h"
@@ -1679,6 +1680,84 @@ TEST_F(MoneroTx, EveryRevocationWipesTheSession) {
     Flow f(simple_plan());
     ASSERT_EQ(MONERO_TX_OK, f.begin());
     monero_session_abort();
+    EXPECT_FALSE(monero_tx_active());
+    EXPECT_TRUE(signing_session_is_zero());
+  }
+}
+
+TEST_F(MoneroTx, SessionExpiresTenMinutesAfterBegin) {
+  /* Ten minutes to the millisecond is still inside. */
+  {
+    Flow f(simple_plan());
+    ASSERT_EQ(MONERO_TX_OK, f.begin());
+    timer_poll_ticks(MONERO_TX_SESSION_MS);
+    EXPECT_TRUE(monero_tx_active());
+    EXPECT_TRUE(fsm_workflowInProgress());
+    EXPECT_EQ(MONERO_TX_OK, f.set_inputs());
+    fsm_abort_signing_workflows();
+  }
+  /* One more and the session is over, wherever it stood: the step that
+   * arrives is told so, and nothing of the session is left. */
+  enum Stage { BEGUN, INPUTS, OUTPUTS, ONE_SIGNED, SIGNED };
+  for (Stage stage : {BEGUN, INPUTS, OUTPUTS, ONE_SIGNED, SIGNED}) {
+    Flow f(two_input_plan());
+    ASSERT_EQ(MONERO_TX_OK, f.begin());
+    if (stage >= INPUTS) ASSERT_EQ(MONERO_TX_OK, f.set_inputs());
+    if (stage >= OUTPUTS) {
+      ASSERT_EQ(MONERO_TX_OK, f.vinis());
+      ASSERT_EQ(MONERO_TX_OK, f.outputs());
+    }
+    if (stage >= ONE_SIGNED) ASSERT_EQ(MONERO_TX_OK, f.sign(f.order[0]));
+    if (stage >= SIGNED) ASSERT_EQ(MONERO_TX_OK, f.sign(f.order[1]));
+    timer_poll_ticks(MONERO_TX_SESSION_MS + 1);
+    MoneroTxFinalAck final_ack;
+    switch (stage) {
+      case BEGUN:
+        EXPECT_ENDED(MONERO_TX_ERR_EXPIRED, f.set_inputs());
+        break;
+      case INPUTS:
+        EXPECT_ENDED(MONERO_TX_ERR_EXPIRED, f.vinis());
+        break;
+      case OUTPUTS:
+        EXPECT_ENDED(MONERO_TX_ERR_EXPIRED, f.sign(f.order[0]));
+        break;
+      case ONE_SIGNED:
+        EXPECT_ENDED(MONERO_TX_ERR_EXPIRED, f.sign(f.order[1]));
+        break;
+      case SIGNED:
+        /* Every input is signed, and still the key that opens the
+         * signatures is not released. */
+        EXPECT_ENDED(MONERO_TX_ERR_EXPIRED, monero_tx_final(&final_ack));
+        EXPECT_FALSE(final_ack.has_opening_key);
+        break;
+    }
+    EXPECT_FALSE(fsm_workflowInProgress()) << stage;
+  }
+  /* The dispatch gate finds it expired before any handler runs. The user
+   * is at the device, so this is the session's own limit, not the lock. */
+  {
+    Flow f(simple_plan());
+    ASSERT_EQ(MONERO_TX_OK, f.to_signing());
+    timer_poll_ticks(MONERO_TX_SESSION_MS + 1);
+    keepkey_user_activity();
+    EXPECT_FALSE(keepkey_before_message_dispatch(
+        MessageType_MessageType_MoneroTxSignInputRequest));
+    EXPECT_FALSE(monero_tx_active());
+    EXPECT_TRUE(signing_session_is_zero());
+  }
+  /* A status request does not extend it either. */
+  {
+    Flow f(simple_plan());
+    ASSERT_EQ(MONERO_TX_OK, f.begin());
+    timer_poll_ticks(MONERO_TX_SESSION_MS / 2);
+    keepkey_user_activity();
+    EXPECT_TRUE(
+        keepkey_before_message_dispatch(MessageType_MessageType_GetFeatures));
+    EXPECT_EQ(MONERO_TX_OK, f.set_inputs());
+    timer_poll_ticks(MONERO_TX_SESSION_MS / 2 + 1);
+    keepkey_user_activity();
+    EXPECT_TRUE(
+        keepkey_before_message_dispatch(MessageType_MessageType_GetFeatures));
     EXPECT_FALSE(monero_tx_active());
     EXPECT_TRUE(signing_session_is_zero());
   }
