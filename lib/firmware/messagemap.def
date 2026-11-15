@@ -206,6 +206,21 @@
     MSG_OUT(MessageType_MessageType_ZcashTransparentAck,           ZcashTransparentAck,         NO_PROCESS_FUNC)
     MSG_OUT(MessageType_MessageType_ZcashAddress,                  ZcashAddress,                NO_PROCESS_FUNC)
 #endif
+    /* Monero (full builds only). MESSAGEMAP_WITHOUT_MONERO lets fsm.c size
+       the responses of everything else. */
+#if MONERO_SIGNING && !defined(MESSAGEMAP_WITHOUT_MONERO)
+    MSG_IN(MessageType_MessageType_MoneroGetAddress,               MoneroGetAddress,            fsm_msgMoneroGetAddress)
+    MSG_IN(MessageType_MessageType_MoneroGetWatchKey,              MoneroGetWatchKey,           fsm_msgMoneroGetWatchKey)
+    MSG_IN(MessageType_MessageType_MoneroKeyImageExportInitRequest, MoneroKeyImageExportInitRequest, fsm_msgMoneroKeyImageExportInit)
+    MSG_IN(MessageType_MessageType_MoneroKeyImageSyncStepRequest,  MoneroKeyImageSyncStepRequest, fsm_msgMoneroKeyImageSyncStep)
+    MSG_IN(MessageType_MessageType_MoneroKeyImageSyncFinalRequest, MoneroKeyImageSyncFinalRequest, fsm_msgMoneroKeyImageSyncFinal)
+
+    MSG_OUT(MessageType_MessageType_MoneroAddress,                 MoneroAddress,               NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_MoneroWatchKey,                MoneroWatchKey,              NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_MoneroKeyImageExportInitAck,   MoneroKeyImageExportInitAck, NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_MoneroKeyImageSyncStepAck,     MoneroKeyImageSyncStepAck,   NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_MoneroKeyImageSyncFinalAck,    MoneroKeyImageSyncFinalAck,  NO_PROCESS_FUNC)
+#endif
 #if !BITCOIN_ONLY
     /* Hive */
     MSG_IN(MessageType_MessageType_HiveGetPublicKey,               HiveGetPublicKey,            fsm_msgHiveGetPublicKey)

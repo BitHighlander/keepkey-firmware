@@ -105,6 +105,7 @@
 #include "messages-hive.pb.h"
 #if MONERO_SIGNING
 #include "messages-monero.pb.h"
+#include "keepkey/firmware/monero.h"
 #endif
 
 #ifdef KK_MONERO_EMULATOR_RESEARCH
@@ -350,6 +351,16 @@ typedef union {
 #include "messagemap.def"
 } FsmResponse;
 
+#if MONERO_SIGNING
+/* The same union without the Monero rows: the Monero responses must fit the
+ * buffer the other messages already size, so the signer never grows it. */
+#define MESSAGEMAP_WITHOUT_MONERO
+typedef union {
+#include "messagemap.def"
+} FsmResponseWithoutMonero;
+#undef MESSAGEMAP_WITHOUT_MONERO
+#endif
+
 /* Each generated member contributes to the union's compile-time bound. */
 #undef MSG_OUT
 #define MSG_OUT(ID, STRUCT_NAME, PROCESS_FUNC)                 \
@@ -360,18 +371,14 @@ typedef union {
 static uint8_t msg_resp[sizeof(FsmResponse)] __attribute__((aligned(8)));
 
 #if MONERO_SIGNING
-/* Monero wire budget. No Monero handler is registered yet, so these bound the
- * schema directly: each request must decode into decode_buffer, and each
- * response must fit the response buffer that the other registered messages
- * already size, so the signer grows neither. Once the handlers are in
- * messagemap.def the MSG_IN asserts above cover the requests, but a Monero
- * response then sizes FsmResponse itself: keep the response check against a
- * union of the non-Monero responses, or it can no longer fail. */
+/* Monero wire budget, registered or not: each request must decode into
+ * decode_buffer, and each response must fit the response buffer that the
+ * other messages already size, so the signer grows neither. */
 #define MONERO_REQUEST_FITS(STRUCT_NAME)                 \
   _Static_assert(sizeof(STRUCT_NAME) <= MAX_DECODE_SIZE, \
                  #STRUCT_NAME " exceeds decode_buffer")
-#define MONERO_RESPONSE_FITS(STRUCT_NAME)                    \
-  _Static_assert(sizeof(STRUCT_NAME) <= sizeof(FsmResponse), \
+#define MONERO_RESPONSE_FITS(STRUCT_NAME)                                 \
+  _Static_assert(sizeof(STRUCT_NAME) <= sizeof(FsmResponseWithoutMonero), \
                  #STRUCT_NAME " exceeds msg_resp")
 MONERO_REQUEST_FITS(MoneroGetAddress);
 MONERO_RESPONSE_FITS(MoneroAddress);
@@ -501,6 +508,9 @@ bool fsm_workflowInProgress(void) {
 #ifdef KK_MONERO_KEY_IMAGE_PROTOCOL
   if (monero_key_image_active()) return true;
 #endif
+#if MONERO_SIGNING
+  if (monero_key_image_active()) return true;
+#endif
   if (setup_isArmed() || signing_is_active()) return true;
 #if !BITCOIN_ONLY
   if (ethereum_signing_isInProgress() ||
@@ -533,6 +543,9 @@ void fsm_init(void) {
 #endif
 #ifdef KK_MONERO_KEY_IMAGE_PROTOCOL
   monero_key_image_abort();
+#endif
+#if MONERO_SIGNING
+  monero_session_abort();
 #endif
   entropy_audit_approved_remaining = 0;
   msg_map_init(MessagesMap, sizeof(MessagesMap) / sizeof(MessagesMap_t));
@@ -577,6 +590,20 @@ static bool fsm_dispatchGate(MessageType msg_id) {
   if (msg_id != MessageType_MessageType_GetFeatures &&
       msg_id != MessageType_MessageType_GetCoinTable) {
     monero_key_image_abort();
+  }
+#endif
+#if MONERO_SIGNING
+  /* Key-image sync survives only its own steps and the read-only status
+   * requests. Anything else, Ping included, ends it and wipes it. */
+  if (msg_id == MessageType_MessageType_MoneroKeyImageSyncStepRequest ||
+      msg_id == MessageType_MessageType_MoneroKeyImageSyncFinalRequest) {
+    if (!monero_key_image_active())
+      return reject_stale_continuation("Monero key-image sync not in progress");
+    return true;
+  }
+  if (msg_id != MessageType_MessageType_GetFeatures &&
+      msg_id != MessageType_MessageType_GetCoinTable) {
+    monero_session_abort();
   }
 #endif
   switch (msg_id) {
@@ -835,6 +862,9 @@ static void abort_signing_engines(void) {
 #ifdef KK_MONERO_KEY_IMAGE_PROTOCOL
   monero_key_image_abort();
 #endif
+#if MONERO_SIGNING
+  monero_session_abort();
+#endif
   signing_abort();
 #if !BITCOIN_ONLY
   ethereum_signing_abort();
@@ -931,6 +961,9 @@ void tendermint_signAbort(void) {}
 void eos_signingAbort(void) {}
 void signed_metadata_clear_signers(void) {}
 #endif  // !BITCOIN_ONLY
+#if MONERO_SIGNING
+#include "fsm_msg_monero.h"
+#endif
 #if ZCASH_PRIVACY
 #include "fsm_msg_zcash.h"
 #else

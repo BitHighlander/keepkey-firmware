@@ -60,6 +60,9 @@
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/u2f.h"
 #include "keepkey/firmware/zcash.h"
+#if MONERO_SIGNING
+#include "keepkey/firmware/monero.h"
+#endif
 #include "keepkey/rand/rng.h"
 #include "keepkey/rand/rng_health.h"
 #include "keepkey/transport/interface.h"
@@ -2039,6 +2042,9 @@ void session_clear(bool clear_pin) {
    * and the PIN-failure path (pin_sm.c) both tear the session down without
    * going through Initialize or ClearSession, and both left the key live. */
   zcash_signing_abort();
+#if MONERO_SIGNING
+  monero_session_abort(); /* holds the wallet's spend and view keys */
+#endif
   signing_abort();
   setup_abort();
   authenticator_clear_cache();
