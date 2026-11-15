@@ -47,14 +47,13 @@ typedef enum {
 #include "keepkey/firmware/zcash_signing_state.h"
 #endif
 
-/* The Monero share of the arena: the key-image sync session now, the
- * streamed signing session next (one at a time). Sized for the signing
- * session in SIGNER-DESIGN 3.2: public part ~1,650 B (state and counters,
- * R, sums and fee, two Keccak contexts, outPk[16], change keys, classification,
- * last key image, PID, prefix and message hashes) plus secrets ~312 B (b, a,
- * K, Kmac, Kopen, mask sums, two gamma/amount pairs). Each Monero session
- * static-asserts that it fits. On builds with Zcash this is smaller than the
- * Zcash session, so Monero adds no RAM (asserted in signing_session.c). */
+/* The Monero share of the arena: the key-image sync session or the streamed
+ * signing session, one at a time. The signing session (monero_tx.c) is
+ * 1,440 B on the device: two Keccak contexts, the wallet keys, the session
+ * keys, the input order, the mask sums and the two outputs' masks, amounts
+ * and commitments. Each Monero session static-asserts that it fits. On
+ * builds with Zcash this is smaller than the Zcash session, so Monero adds
+ * no RAM (asserted in signing_session.c). */
 #define MONERO_SESSION_BYTES 2048u
 
 typedef union {

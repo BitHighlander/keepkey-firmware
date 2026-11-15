@@ -4432,6 +4432,9 @@ TEST(Fsm, FeaturesReportExactlyTheStagedCapabilities) {
       Features_Capability_CAPABILITY_ERC7730_TYPED_SETTLEMENT,
       Features_Capability_CAPABILITY_SAFE_TYPED_CALLS,
 #endif
+#if MONERO_SIGNING
+      Features_Capability_CAPABILITY_MONERO_SIGNING,
+#endif
   };
   EXPECT_EQ(expected, std::vector<Features_Capability>(
                           features.capabilities,
