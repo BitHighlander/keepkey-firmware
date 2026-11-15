@@ -102,6 +102,12 @@ else()
   list(APPEND sources bitcoin_only.cpp)
 endif()
 
+# Monero signing crypto. monero_test_rng.c replaces the module's RNG entry
+# point in this binary only (see lib/firmware/monero/crypto_rng.c).
+if(${KK_MONERO})
+  list(APPEND sources monero_crypto.cpp monero_test_rng.c)
+endif()
+
 # zcash.cpp exercises the Orchard engine (lib/firmware/zcash.c), which is only
 # compiled into kkfirmware when the privacy flag is on.
 if(${KK_ZCASH_PRIVACY})
