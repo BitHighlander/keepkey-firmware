@@ -130,6 +130,8 @@ add_definitions(-DUSE_GRAPHENE=0)
 add_definitions(-DUSE_CARDANO=0)
 add_definitions(-DUSE_MONERO=0)
 add_definitions(-DUSE_NEM=0)
+# Groestlcoin was dropped in 7.17: no coin uses Groestl hashing any more.
+add_definitions(-DUSE_GROESTL=0)
 
 # trezor-crypto's rand.c tests only whether this macro is defined.  A value of
 # zero therefore did not disable anything; it excluded the library's insecure

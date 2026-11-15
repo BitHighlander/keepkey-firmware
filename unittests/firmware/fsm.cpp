@@ -538,7 +538,7 @@ TEST(Fsm, TaprootPublicKeyRefusesCoinsWithoutTaproot) {
 #endif
 
 // Groestlcoin left the coin table in 7.17. Every coin_name handler must answer
-// a clean Failure, never fall back to Bitcoin.
+// a clean Failure, never fall back to Bitcoin, and the curve is gone too.
 TEST(Fsm, RetiredGroestlcoinIsRefusedByEveryCoinHandler) {
   kk_test_board_init();
   fsm_init();
@@ -617,6 +617,21 @@ TEST(Fsm, RetiredGroestlcoinIsRefusedByEveryCoinHandler) {
     EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
     EXPECT_STREQ("Invalid coin name", fsm_test_lastFailureMessage());
   }
+
+  // Asking for the Groestl curve by name under Bitcoin is refused as well.
+  GetPublicKey curve = {};
+  curve.has_coin_name = true;
+  std::strcpy(curve.coin_name, "Bitcoin");
+  std::memcpy(curve.address_n, path, 3 * sizeof(path[0]));
+  curve.address_n_count = 3;
+  curve.has_ecdsa_curve_name = true;
+  std::strcpy(curve.ecdsa_curve_name, "secp256k1-groestl");
+  fsm_test_clearLastFailure();
+  receiveMessage(MessageType_MessageType_GetPublicKey, GetPublicKey_fields,
+                 &curve);
+  EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+  EXPECT_STREQ("Unknown ecdsa curve", fsm_test_lastFailureMessage());
+  EXPECT_TRUE(fsm_test_derivedNodeIsZero());
 }
 
 LoadDevice allLoad() {
