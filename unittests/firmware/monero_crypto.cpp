@@ -909,7 +909,7 @@ TEST_F(MoneroCrypto, ClsagRejectsBadArgumentsAndForeignKeys) {
   Ring nc(3, 6);
   memset(nc.p, 0xff, 32);
   EXPECT_FALSE(sign(&s, nc, 6));
-  // Undecodable C_offset, and an undecodable decoy (found mid-ring).
+  // Undecodable C_offset, and an undecodable decoy.
   undecodable(bad);
   Ring off(3, 6);
   memcpy(off.Coff, bad, 32);
@@ -919,6 +919,44 @@ TEST_F(MoneroCrypto, ClsagRejectsBadArgumentsAndForeignKeys) {
   EXPECT_FALSE(sign(&s, decoy, 6));
   EXPECT_TRUE(all_zero(&s, sizeof(s)));
   EXPECT_TRUE(all_zero(&cws, sizeof(cws))) << "workspace wiped on failure";
+}
+
+TEST_F(MoneroCrypto, ClsagRejectsNoncanonicalPointsBeforeRandomness) {
+  uint8_t bad[2][32] = {{1}};
+  bad[0][31] = 0x80;  // identity with negative-zero x
+  memset(bad[1], 0xff, 32);
+  bad[1][0] = 0xee;  // identity with y = 2^255 - 18
+  bad[1][31] = 0x7f;
+  for (unsigned encoding = 0; encoding < 2; ++encoding) {
+    for (unsigned which = 0; which < 4; ++which) {
+      SCOPED_TRACE(::testing::Message() << "encoding=" << encoding
+                                      << " point=" << which);
+      Ring r(3, 6);
+      if (which == 0) {
+        memcpy(r.P[11], bad[encoding], 32);
+      } else if (which == 1) {
+        memcpy(r.C[11], bad[encoding], 32);
+      } else if (which == 2) {
+        // C[l] = identity, C_offset = -z G: ownership still holds.
+        uint8_t minus_z[32];
+        Sc::load(r.z).neg().store(minus_z);
+        scalar_point(r.Coff, minus_z);
+        memcpy(r.C[6], bad[encoding], 32);
+      } else {
+        // C_offset = identity, C[l] = z G: ownership still holds.
+        memcpy(r.Coff, bad[encoding], 32);
+        scalar_point(r.C[6], r.z);
+      }
+      xmr_clsag_sig s;
+      memset(&s, 0xa5, sizeof(s));
+      memset(&cws, 0xa5, sizeof(cws));
+      xmr_test_rng_replay(r.p);
+      EXPECT_FALSE(sign(&s, r, 6));
+      EXPECT_EQ(0u, xmr_test_rng_draws());
+      EXPECT_TRUE(all_zero(&s, sizeof(s)));
+      EXPECT_TRUE(all_zero(&cws, sizeof(cws)));
+    }
+  }
 }
 
 }  // namespace

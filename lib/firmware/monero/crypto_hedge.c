@@ -148,6 +148,18 @@ bool xmr_eq32(const uint8_t a[32], const uint8_t b[32]) {
   return d == 0;
 }
 
+bool xmr_point_load_canonical(ge25519 *point, const uint8_t encoded[32]) {
+  uint8_t canonical[32];
+  bool ok = ge25519_unpack_vartime(point, encoded) != 0;
+  if (ok) {
+    ge25519_pack(canonical, point);
+    ok = xmr_eq32(canonical, encoded);
+  }
+  memzero(canonical, sizeof(canonical));
+  if (!ok) memzero(point, sizeof(*point));
+  return ok;
+}
+
 bool xmr_sc_load_canonical(bignum256modm r, const uint8_t b[32]) {
   uint8_t c[32];
   expand256_modm(r, b, 32);
