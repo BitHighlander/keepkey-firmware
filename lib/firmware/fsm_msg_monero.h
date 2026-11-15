@@ -284,3 +284,330 @@ void fsm_msgMoneroKeyImageSyncFinal(const MoneroKeyImageSyncFinalRequest* msg) {
   FSM_SCRUB_OBJ(*resp);
   layoutHome();
 }
+
+/* ---------------------------------------------------------------------
+ * Streamed transaction signing (1810-1825). The engine is monero_tx.c;
+ * these handlers add the review, the progress display, the shared-arena
+ * wiring and the wire replies.
+ *
+ * FRAME ARENA. The range proof and each CLSAG need 5-7 KB of scratch, lent
+ * from frame_arena (lib/board/messages.c) through frame_arena_scratch().
+ * It is idle for exactly as long as it is lent:
+ *  - The request is already out of it: usb_rx_helper() reassembles into
+ *    frame_arena.rx and dispatch() decodes that into decode_buffer before it
+ *    calls the handler.
+ *  - Nothing is encoded into it until the handler replies: msg_write() and
+ *    msg_debug_write() are the only frame_arena_tx() callers (lib/board/
+ *    usb.c), and the handler makes no confirm, ButtonRequest or reply while
+ *    the scratch is live. The whole review happens in TxInit, which uses no
+ *    scratch.
+ *  - No new frame lands in it while the handler computes: usbPoll() runs
+ *    only where it is called (no USB interrupt), and the one place a proving
+ *    step calls it is check_for_tiny_msg(), where handle_usb_rx() and
+ *    handle_debug_usb_rx() route every packet to msg_read_tiny() and its own
+ *    64-byte buffer.
+ *  - A tiny packet that is refused does touch the arena:
+ *    msg_reject_short_tiny_packet() resets it and reject_tiny_message()
+ *    answers through msg_write(). Both set msg_handler_rejected().
+ * So monero_proving_step() below ends the proof the moment a poll reports
+ * anything at all, or a rejection: the prover then returns without reading
+ * or writing the scratch again (monero/crypto.h, ABORT CONTRACT), the engine
+ * ends and wipes the session, and the handler wipes the arena. A message in
+ * the middle of a proof therefore always ends the whole signing session;
+ * nothing half-done survives. */
+
+#include "keepkey/firmware/monero_tx.h"
+
+static void monero_tx_fail(MoneroTxResult result) {
+  FailureType code = FailureType_Failure_SyntaxError;
+  if (result == MONERO_TX_ERR_STEP || result == MONERO_TX_ERR_EXPIRED)
+    code = FailureType_Failure_UnexpectedMessage;
+  else if (result >= MONERO_TX_ERR_NOT_OWNED)
+    code = FailureType_Failure_Other;
+  fsm_sendFailure(code, monero_tx_result_text(result));
+  layoutHome();
+}
+
+/* "1.234567890123 XMR": all 12 decimals, never rounded. */
+static bool monero_format_amount(uint64_t amount, char* out, size_t size) {
+  return bn_format_uint64(amount, NULL, " XMR", 12, 0, true, out, size) != 0;
+}
+
+/* Every screen names a network other than mainnet. */
+static const char* monero_tx_title(uint32_t network, const char* mainnet,
+                                   const char* testnet, const char* stagenet) {
+  return network == MoneroNetworkType_MONERO_NETWORK_TESTNET    ? testnet
+         : network == MoneroNetworkType_MONERO_NETWORK_STAGENET ? stagenet
+                                                                : mainnet;
+}
+
+/* The one review of the whole transaction, before any signing step: the
+ * recipient with its complete address, the payment ID, the change (shown as
+ * change only because the device classified it), any lock, then the fee and
+ * the total. Everything shown was derived or re-encoded on the device. */
+static bool monero_tx_confirm(const MoneroTxReview* review) {
+  char amount[40] = {0}, total[40] = {0};
+  for (unsigned j = 0; j < MONERO_TX_OUTPUTS; ++j) {
+    const MoneroTxReviewOutput* out = &review->outputs[j];
+    if (!monero_format_amount(out->amount, amount, sizeof(amount)))
+      return false;
+    if (out->is_change) {
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   monero_tx_title(review->network, _("Monero change"),
+                                   _("Monero TESTNET change"),
+                                   _("Monero STAGENET change")),
+                   _("Change %s returns to this wallet (account %lu), to "
+                     "your address\n%s"),
+                   amount, (unsigned long)review->account, out->address))
+        return false;
+      continue;
+    }
+    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                 monero_tx_title(review->network, _("Monero send"),
+                                 _("Monero TESTNET send"),
+                                 _("Monero STAGENET send")),
+                 _("Send %s to %s\n%s"), amount,
+                 out->is_integrated   ? _("integrated address")
+                 : out->is_subaddress ? _("subaddress")
+                                      : _("standard address"),
+                 out->address))
+      return false;
+    if (out->is_integrated) {
+      char payment_id[17] = {0};
+      data2hex(review->payment_id, 8, payment_id);
+      if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   monero_tx_title(review->network, _("Monero payment ID"),
+                                   _("Monero TESTNET payment ID"),
+                                   _("Monero STAGENET payment ID")),
+                   _("Payment ID %s is sent with this payment."), payment_id))
+        return false;
+    }
+  }
+  if (review->unlock_time) {
+    /* Unusual, but the user's to decide: shown, then signed. */
+    char unlock[24] = {0};
+    if (!bn_format_uint64(review->unlock_time, NULL, NULL, 0, 0, false, unlock,
+                          sizeof(unlock)) ||
+        !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                 monero_tx_title(review->network, _("Monero WARNING"),
+                                 _("Monero TESTNET WARNING"),
+                                 _("Monero STAGENET WARNING")),
+                 _("These funds are locked: nobody can spend them before "
+                   "block or time %s."),
+                 unlock))
+      return false;
+  }
+  if (!monero_format_amount(review->fee, amount, sizeof(amount)) ||
+      !monero_format_amount(review->total, total, sizeof(total)))
+    return false;
+  return confirm(
+      ButtonRequestType_ButtonRequest_SignTx,
+      monero_tx_title(review->network, _("Sign Monero"),
+                      _("Sign Monero TESTNET"), _("Sign Monero STAGENET")),
+      _("Fee %s\nTotal %s\n%lu input(s), ring size 16. Signing "
+        "takes about 20 seconds."),
+      amount, total, (unsigned long)review->num_inputs);
+}
+
+/* Progress, in thousandths of the whole session: inputs 0-50, their order
+ * 50-60, the first output 70, the range proof 70-850, each CLSAG a share of
+ * 850-990. */
+static void monero_tx_show_progress(const char* text, uint32_t permil) {
+  note_workflow_progress();
+  layoutProgress(text, (int)permil);
+}
+
+typedef struct {
+  const char* text;
+  uint32_t base, span, last;
+  bool interrupted;
+} MoneroProving;
+
+/* The crypto module's progress callback: redraw, and poll the host. Any
+ * message at all ends the proof (see FRAME ARENA above). */
+static bool monero_proving_step(void* context, uint32_t done, uint32_t total) {
+  MoneroProving* proving = (MoneroProving*)context;
+  uint8_t tiny[MSG_TINY_BFR_SZ];
+  const MessageType message = check_for_tiny_msg(tiny);
+  memzero(tiny, sizeof(tiny));
+  if (message != MSG_TINY_TYPE_ERROR || msg_handler_rejected()) {
+    if (message == MessageType_MessageType_Initialize) reset_msg_stack = true;
+    proving->interrupted = true;
+    return false;
+  }
+  const uint32_t permil =
+      proving->base + (total ? proving->span * done / total : 0);
+  if (permil != proving->last) {
+    proving->last = permil;
+    layoutProgress(proving->text, (int)permil);
+  }
+  return true;
+}
+
+/* After a proving step that failed: the session is already gone. */
+static void monero_tx_fail_proving(MoneroTxResult result,
+                                   const MoneroProving* proving) {
+  frame_arena_scratch_wipe();
+  if (proving->interrupted) {
+    /* A refused packet was already answered; fsm_sendFailure then stays
+     * silent. Otherwise this is the host's Cancel or Initialize. */
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    _("Monero signing cancelled"));
+    layoutHome();
+    return;
+  }
+  monero_tx_fail(result);
+}
+
+void fsm_msgMoneroTxInit(const MoneroTxInitRequest* msg) {
+  monero_session_abort();
+  CHECK_INITIALIZED
+  if (!monero_check_request(msg->address_n, msg->address_n_count,
+                            msg->has_network_type, msg->network_type))
+    return;
+
+  CHECK_PIN
+
+  HDNode* node = fsm_getDerivedNode(ED25519_NAME, msg->address_n,
+                                    msg->address_n_count, NULL);
+  if (!node) return;
+  /* Public data only: nothing secret is held across the review. */
+  MoneroTxReview review;
+  MoneroTxResult result = monero_tx_review(node->private_key, msg, &review);
+  FSM_SCRUB_OBJ(*node);
+  if (result != MONERO_TX_OK) {
+    monero_tx_fail(result);
+    return;
+  }
+  if (!monero_tx_confirm(&review)) {
+    memzero(&review, sizeof(review));
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    _("Monero signing cancelled"));
+    layoutHome();
+    return;
+  }
+
+  /* Recheck authorization and rederive after consent; the session opens
+   * only for the plan whose digest was just approved. */
+  uint8_t approved[32];
+  memcpy(approved, review.digest, sizeof(approved));
+  memzero(&review, sizeof(review));
+  CHECK_PIN
+  node = fsm_getDerivedNode(ED25519_NAME, msg->address_n, msg->address_n_count,
+                            NULL);
+  if (!node) return;
+  RESP_INIT(MoneroTxInitAck);
+  result = monero_tx_begin(node->private_key, msg, approved, resp);
+  FSM_SCRUB_OBJ(*node);
+  if (result != MONERO_TX_OK) {
+    monero_tx_fail(result);
+    return;
+  }
+  monero_tx_show_progress(_("Signing Monero"), 0);
+  msg_write(MessageType_MessageType_MoneroTxInitAck, resp);
+}
+
+void fsm_msgMoneroTxSetInput(const MoneroTxSetInputRequest* msg) {
+  RESP_INIT(MoneroTxSetInputAck);
+  const MoneroTxResult result = monero_tx_set_input(msg, resp);
+  if (result != MONERO_TX_OK) {
+    monero_tx_fail(result);
+    return;
+  }
+  monero_tx_show_progress(_("Signing Monero"), 25);
+  msg_write(MessageType_MessageType_MoneroTxSetInputAck, resp);
+}
+
+void fsm_msgMoneroTxInputVini(const MoneroTxInputViniRequest* msg) {
+  const MoneroTxResult result = monero_tx_input_vini(msg);
+  if (result != MONERO_TX_OK) {
+    monero_tx_fail(result);
+    return;
+  }
+  monero_tx_show_progress(_("Signing Monero"), 50);
+  RESP_INIT(MoneroTxInputViniAck);
+  msg_write(MessageType_MessageType_MoneroTxInputViniAck, resp);
+}
+
+void fsm_msgMoneroTxAllInputsSet(const MoneroTxAllInputsSetRequest* msg) {
+  (void)msg;
+  const MoneroTxResult result = monero_tx_all_inputs_set();
+  if (result != MONERO_TX_OK) {
+    monero_tx_fail(result);
+    return;
+  }
+  monero_tx_show_progress(_("Signing Monero"), 60);
+  RESP_INIT(MoneroTxAllInputsSetAck);
+  msg_write(MessageType_MessageType_MoneroTxAllInputsSetAck, resp);
+}
+
+void fsm_msgMoneroTxSetOutput(const MoneroTxSetOutputRequest* msg) {
+  MoneroProving proving = {_("Monero: range proof"), 70, 780, 0, false};
+  void* scratch = NULL;
+  if (monero_tx_next_output_proves()) {
+    scratch = frame_arena_scratch(MONERO_TX_BPP_SCRATCH_BYTES);
+    layoutProgress(proving.text, (int)proving.base);
+  }
+  RESP_INIT(MoneroTxSetOutputAck);
+  const MoneroTxResult result =
+      monero_tx_set_output(msg, resp, scratch, MONERO_TX_BPP_SCRATCH_BYTES,
+                           monero_proving_step, &proving);
+  if (result != MONERO_TX_OK) {
+    monero_tx_fail_proving(result, &proving);
+    return;
+  }
+  if (scratch) frame_arena_scratch_wipe();
+  monero_tx_show_progress(_("Signing Monero"), scratch ? 850 : 70);
+  msg_write(MessageType_MessageType_MoneroTxSetOutputAck, resp);
+}
+
+void fsm_msgMoneroTxAllOutSet(const MoneroTxAllOutSetRequest* msg) {
+  (void)msg;
+  RESP_INIT(MoneroTxAllOutSetAck);
+  const MoneroTxResult result = monero_tx_all_out_set(resp);
+  if (result != MONERO_TX_OK) {
+    monero_tx_fail(result);
+    return;
+  }
+  monero_tx_show_progress(_("Signing Monero"), 850);
+  msg_write(MessageType_MessageType_MoneroTxAllOutSetAck, resp);
+}
+
+void fsm_msgMoneroTxSignInput(const MoneroTxSignInputRequest* msg) {
+  uint32_t inputs = 1, position = 0;
+  char text[40] = "Signing Monero";
+  if (monero_tx_progress(&inputs, &position) && inputs)
+    snprintf(text, sizeof(text), _("Monero: signing input %lu/%lu"),
+             (unsigned long)(position + 1), (unsigned long)inputs);
+  else
+    inputs = 1;
+  MoneroProving proving = {text, 850 + 140 * position / inputs, 140 / inputs, 0,
+                           false};
+  void* scratch = frame_arena_scratch(MONERO_TX_CLSAG_SCRATCH_BYTES);
+  RESP_INIT(MoneroTxSignInputAck);
+  const MoneroTxResult result =
+      monero_tx_sign_input(msg, resp, scratch, MONERO_TX_CLSAG_SCRATCH_BYTES,
+                           monero_proving_step, &proving);
+  if (result != MONERO_TX_OK) {
+    monero_tx_fail_proving(result, &proving);
+    return;
+  }
+  frame_arena_scratch_wipe();
+  monero_tx_show_progress(text, 850 + 140 * (position + 1) / inputs);
+  msg_write(MessageType_MessageType_MoneroTxSignInputAck, resp);
+  /* The encoder has copied the sealed signature out. */
+  FSM_SCRUB_OBJ(*resp);
+}
+
+void fsm_msgMoneroTxFinal(const MoneroTxFinalRequest* msg) {
+  (void)msg;
+  RESP_INIT(MoneroTxFinalAck);
+  const MoneroTxResult result = monero_tx_final(resp);
+  if (result != MONERO_TX_OK) {
+    monero_tx_fail(result);
+    return;
+  }
+  msg_write(MessageType_MessageType_MoneroTxFinalAck, resp);
+  FSM_SCRUB_OBJ(*resp);
+  layoutHome();
+}

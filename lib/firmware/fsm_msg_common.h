@@ -183,6 +183,9 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
       Features_Capability_CAPABILITY_ERC7730_TYPED_SETTLEMENT,
       Features_Capability_CAPABILITY_SAFE_TYPED_CALLS,
 #endif
+#if MONERO_SIGNING
+      Features_Capability_CAPABILITY_MONERO_SIGNING,
+#endif
   };
   _Static_assert(sizeof(capabilities) <= sizeof(resp->capabilities),
                  "raise Features.capabilities max_count in messages.options");

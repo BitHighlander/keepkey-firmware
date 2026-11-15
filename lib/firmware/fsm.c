@@ -106,6 +106,7 @@
 #if MONERO_SIGNING
 #include "messages-monero.pb.h"
 #include "keepkey/firmware/monero.h"
+#include "keepkey/firmware/monero_tx.h"
 #endif
 
 #ifdef KK_MONERO_EMULATOR_RESEARCH
@@ -509,7 +510,7 @@ bool fsm_workflowInProgress(void) {
   if (monero_key_image_active()) return true;
 #endif
 #if MONERO_SIGNING
-  if (monero_key_image_active()) return true;
+  if (monero_key_image_active() || monero_tx_active()) return true;
 #endif
   if (setup_isArmed() || signing_is_active()) return true;
 #if !BITCOIN_ONLY
@@ -600,6 +601,23 @@ static bool fsm_dispatchGate(MessageType msg_id) {
     if (!monero_key_image_active())
       return reject_stale_continuation("Monero key-image sync not in progress");
     return true;
+  }
+  /* The same for a signing session: only its own continuations reach it,
+   * and only while it is live. The engine then accepts each one in exactly
+   * one step and ends the session on anything else. */
+  switch (msg_id) {
+    case MessageType_MessageType_MoneroTxSetInputRequest:
+    case MessageType_MessageType_MoneroTxInputViniRequest:
+    case MessageType_MessageType_MoneroTxAllInputsSetRequest:
+    case MessageType_MessageType_MoneroTxSetOutputRequest:
+    case MessageType_MessageType_MoneroTxAllOutSetRequest:
+    case MessageType_MessageType_MoneroTxSignInputRequest:
+    case MessageType_MessageType_MoneroTxFinalRequest:
+      if (!monero_tx_active())
+        return reject_stale_continuation("Monero signing not in progress");
+      return true;
+    default:
+      break;
   }
   if (msg_id != MessageType_MessageType_GetFeatures &&
       msg_id != MessageType_MessageType_GetCoinTable) {
@@ -737,6 +755,9 @@ static bool fsm_dispatchGate(MessageType msg_id) {
 #endif
 #if ZCASH_PRIVACY
         case MessageType_MessageType_ZcashSignPCZT:
+#endif
+#if MONERO_SIGNING
+        case MessageType_MessageType_MoneroTxInitRequest:
 #endif
         {
           const bool was_armed = setup_isArmed();
