@@ -92,8 +92,8 @@ endif()
 # Monero: full builds only. The Monero sources need the trezor-crypto Monero
 # primitives, which are compiled only with USE_MONERO=1.
 if(${KK_MONERO})
-  list(APPEND sources monero.c monero_key_image.c)
-  set_source_files_properties(monero.c monero_key_image.c
+  list(APPEND sources monero.c monero_key_image.c monero_tx.c)
+  set_source_files_properties(monero.c monero_key_image.c monero_tx.c
       PROPERTIES COMPILE_OPTIONS "-UUSE_MONERO;-DUSE_MONERO=1;-U__SSE__;-U__MMX__")
 endif()
 
