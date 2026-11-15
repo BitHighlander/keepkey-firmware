@@ -83,6 +83,14 @@ if(${KK_ZCASH_PRIVACY})
       PROPERTIES COMPILE_OPTIONS "-U__SSE__;-U__MMX__")
 endif()
 
+# Monero primitives for the on-device signer. range_proof.c (Borromean proofs,
+# unchecked xmr_random_scalar draws) is not used.
+if(KK_MONERO)
+  list(APPEND sources
+      trezor-firmware/crypto/monero/serialize.c
+      trezor-firmware/crypto/monero/xmr.c)
+endif()
+
 
 include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR}/trezor-firmware/crypto
