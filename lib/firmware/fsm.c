@@ -103,6 +103,9 @@
 #include "messages-solana.pb.h"
 #include "messages-zcash.pb.h"
 #include "messages-hive.pb.h"
+#if MONERO_SIGNING
+#include "messages-monero.pb.h"
+#endif
 
 #ifdef KK_MONERO_EMULATOR_RESEARCH
 #ifndef EMULATOR
@@ -355,6 +358,50 @@ typedef union {
 #include "messagemap.def"
 
 static uint8_t msg_resp[sizeof(FsmResponse)] __attribute__((aligned(8)));
+
+#if MONERO_SIGNING
+/* Monero wire budget. No Monero handler is registered yet, so these bound the
+ * schema directly: each request must decode into decode_buffer, and each
+ * response must fit the response buffer that the other registered messages
+ * already size, so the signer grows neither. Once the handlers are in
+ * messagemap.def the MSG_IN asserts above cover the requests, but a Monero
+ * response then sizes FsmResponse itself: keep the response check against a
+ * union of the non-Monero responses, or it can no longer fail. */
+#define MONERO_REQUEST_FITS(STRUCT_NAME)                 \
+  _Static_assert(sizeof(STRUCT_NAME) <= MAX_DECODE_SIZE, \
+                 #STRUCT_NAME " exceeds decode_buffer")
+#define MONERO_RESPONSE_FITS(STRUCT_NAME)                    \
+  _Static_assert(sizeof(STRUCT_NAME) <= sizeof(FsmResponse), \
+                 #STRUCT_NAME " exceeds msg_resp")
+MONERO_REQUEST_FITS(MoneroGetAddress);
+MONERO_RESPONSE_FITS(MoneroAddress);
+MONERO_REQUEST_FITS(MoneroGetWatchKey);
+MONERO_RESPONSE_FITS(MoneroWatchKey);
+MONERO_REQUEST_FITS(MoneroKeyImageExportInitRequest);
+MONERO_RESPONSE_FITS(MoneroKeyImageExportInitAck);
+MONERO_REQUEST_FITS(MoneroKeyImageSyncStepRequest);
+MONERO_RESPONSE_FITS(MoneroKeyImageSyncStepAck);
+MONERO_REQUEST_FITS(MoneroKeyImageSyncFinalRequest);
+MONERO_RESPONSE_FITS(MoneroKeyImageSyncFinalAck);
+MONERO_REQUEST_FITS(MoneroTxInitRequest);
+MONERO_RESPONSE_FITS(MoneroTxInitAck);
+MONERO_REQUEST_FITS(MoneroTxSetInputRequest);
+MONERO_RESPONSE_FITS(MoneroTxSetInputAck);
+MONERO_REQUEST_FITS(MoneroTxInputViniRequest);
+MONERO_RESPONSE_FITS(MoneroTxInputViniAck);
+MONERO_REQUEST_FITS(MoneroTxAllInputsSetRequest);
+MONERO_RESPONSE_FITS(MoneroTxAllInputsSetAck);
+MONERO_REQUEST_FITS(MoneroTxSetOutputRequest);
+MONERO_RESPONSE_FITS(MoneroTxSetOutputAck);
+MONERO_REQUEST_FITS(MoneroTxAllOutSetRequest);
+MONERO_RESPONSE_FITS(MoneroTxAllOutSetAck);
+MONERO_REQUEST_FITS(MoneroTxSignInputRequest);
+MONERO_RESPONSE_FITS(MoneroTxSignInputAck);
+MONERO_REQUEST_FITS(MoneroTxFinalRequest);
+MONERO_RESPONSE_FITS(MoneroTxFinalAck);
+#undef MONERO_REQUEST_FITS
+#undef MONERO_RESPONSE_FITS
+#endif
 #if DEBUG_LINK
 uint8_t* fsm_test_responseArena(size_t* size) {
   *size = sizeof(msg_resp);

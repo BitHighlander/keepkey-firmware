@@ -32,6 +32,15 @@ else()
   option(KK_ZCASH_PRIVACY "Build Zcash privacy support" ON)
 endif()
 
+# Monero ships in regular builds only, never Bitcoin-only. The emulator
+# research overlay (tools/monero-feasibility) reuses the Monero message names
+# with its own schema, so a research build leaves the signer schema out.
+if(KK_BITCOIN_ONLY OR KK_MONERO_EMULATOR_RESEARCH)
+  set(KK_MONERO OFF)
+else()
+  option(KK_MONERO "Build the Monero on-device signer" ON)
+endif()
+
 # When building the dylib, every static lib it links (kkfirmware, kkboard,
 # trezorcrypto, kkrand, kktransport, qrcodegenerator, SecAESSTM32, ...) must
 # itself be compiled with -fPIC. macOS happens to be lenient and will produce
@@ -181,6 +190,12 @@ if(${KK_ZCASH_PRIVACY})
   add_definitions(-DAES_SMALL_TABLES)
 else()
   add_definitions(-DZCASH_PRIVACY=0)
+endif()
+
+if(${KK_MONERO})
+  add_definitions(-DMONERO_SIGNING=1)
+else()
+  add_definitions(-DMONERO_SIGNING=0)
 endif()
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
