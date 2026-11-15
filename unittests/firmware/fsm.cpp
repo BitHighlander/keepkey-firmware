@@ -537,6 +537,88 @@ TEST(Fsm, TaprootPublicKeyRefusesCoinsWithoutTaproot) {
 }
 #endif
 
+// Groestlcoin left the coin table in 7.17. Every coin_name handler must answer
+// a clean Failure, never fall back to Bitcoin.
+TEST(Fsm, RetiredGroestlcoinIsRefusedByEveryCoinHandler) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  std::strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  storage_loadDevice(&load);
+  storage_commit();
+  const uint32_t path[] = {0x80000000u | 44, 0x80000000u | 17, 0x80000000u, 0,
+                           0};
+
+  for (const char* name : {"Groestlcoin", "GRS Testnet"}) {
+    SCOPED_TRACE(name);
+
+    GetAddress address = {};
+    address.has_coin_name = true;
+    std::strcpy(address.coin_name, name);
+    std::memcpy(address.address_n, path, sizeof(path));
+    address.address_n_count = 5;
+    fsm_test_clearLastFailure();
+    receiveMessage(MessageType_MessageType_GetAddress, GetAddress_fields,
+                   &address);
+    EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+    EXPECT_STREQ("Invalid coin name", fsm_test_lastFailureMessage());
+    EXPECT_TRUE(fsm_test_derivedNodeIsZero());
+
+    GetPublicKey pub = {};
+    pub.has_coin_name = true;
+    std::strcpy(pub.coin_name, name);
+    std::memcpy(pub.address_n, path, 3 * sizeof(path[0]));
+    pub.address_n_count = 3;
+    fsm_test_clearLastFailure();
+    receiveMessage(MessageType_MessageType_GetPublicKey, GetPublicKey_fields,
+                   &pub);
+    EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+    EXPECT_STREQ("Invalid coin name", fsm_test_lastFailureMessage());
+
+    SignTx sign = {};
+    sign.has_coin_name = true;
+    std::strcpy(sign.coin_name, name);
+    sign.inputs_count = 1;
+    sign.outputs_count = 1;
+    fsm_test_clearLastFailure();
+    receiveMessage(MessageType_MessageType_SignTx, SignTx_fields, &sign);
+    EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+    EXPECT_STREQ("Invalid coin name", fsm_test_lastFailureMessage());
+    EXPECT_FALSE(signing_is_active());
+
+    SignMessage sm = {};
+    sm.has_coin_name = true;
+    std::strcpy(sm.coin_name, name);
+    std::memcpy(sm.address_n, path, sizeof(path));
+    sm.address_n_count = 5;
+    sm.message.size = 5;
+    std::memcpy(sm.message.bytes, "hello", 5);
+    fsm_test_clearLastFailure();
+    receiveMessage(MessageType_MessageType_SignMessage, SignMessage_fields,
+                   &sm);
+    EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+    EXPECT_STREQ("Invalid coin name", fsm_test_lastFailureMessage());
+
+    VerifyMessage vm = {};
+    vm.has_coin_name = true;
+    std::strcpy(vm.coin_name, name);
+    vm.has_address = true;
+    std::strcpy(vm.address, "FtM4zAn9aVYgHgxmamWBgWPyZsb6RhvkA9");
+    vm.has_message = true;
+    vm.message.size = 5;
+    std::memcpy(vm.message.bytes, "hello", 5);
+    vm.has_signature = true;
+    vm.signature.size = 65;
+    fsm_test_clearLastFailure();
+    receiveMessage(MessageType_MessageType_VerifyMessage, VerifyMessage_fields,
+                   &vm);
+    EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+    EXPECT_STREQ("Invalid coin name", fsm_test_lastFailureMessage());
+  }
+}
+
 LoadDevice allLoad() {
   LoadDevice load = {};
   load.has_mnemonic = true;

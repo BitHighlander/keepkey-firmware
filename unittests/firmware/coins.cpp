@@ -122,6 +122,17 @@ TEST(Coins, DigiByteTaprootIsEnabledForFirmware717) {
   EXPECT_STREQ(coin->bech32_prefix, "dgb");
 }
 
+TEST(Coins, GroestlcoinIsRetiredForFirmware717) {
+  for (const char *name : {"Groestlcoin", "GRS Testnet"})
+    EXPECT_EQ(nullptr, coinByName(name)) << name;
+  for (const char *ticker : {"GRS", "tGRS"})
+    EXPECT_EQ(nullptr, coinByShortcut(ticker)) << ticker;
+  EXPECT_EQ(nullptr, coinBySlip44(0x80000011));
+  for (int i = 0; i < COINS_COUNT; ++i)
+    EXPECT_STRNE("secp256k1-groestl", coins[i].curve_name)
+        << coins[i].coin_name;
+}
+
 TEST(Coins, BIP32AccountName) {
   struct {
     const char *coin_name;
