@@ -924,7 +924,10 @@ static void promptRegister(bool request, const U2F_REGISTER_REQ* req) {
   }
 }
 
-void u2f_register(const APDU* a) {
+/* noinline: under LTO this frame inlines into u2fhid_read_start, the
+ * deepest stack path in the firmware (+3.4 KB). Kept separate it stays at
+ * about 15 KB of the 18.9 KB reserve. */
+__attribute__((noinline)) void u2f_register(const APDU* a) {
   static U2F_REGISTER_REQ last_req;
   const U2F_REGISTER_REQ* req = (U2F_REGISTER_REQ*)a->data;
 
@@ -1037,7 +1040,8 @@ static void promptAuthenticate(bool request, const U2F_AUTHENTICATE_REQ* req) {
                   appname);
 }
 
-void u2f_authenticate(const APDU* a) {
+/* noinline: see u2f_register(). */
+__attribute__((noinline)) void u2f_authenticate(const APDU* a) {
   const U2F_AUTHENTICATE_REQ* req = (U2F_AUTHENTICATE_REQ*)a->data;
   static U2F_AUTHENTICATE_REQ last_req;
 

@@ -25,6 +25,10 @@ set(ARCH_FLAGS
     -fno-common \
     -fstack-usage \
     -fstack-protector-strong" CACHE STRING "")
+# gcc-ar/gcc-ranlib index the LTO IR in the static libraries (LTO: see the
+# top-level CMakeLists.txt).
+set(CMAKE_AR arm-none-eabi-gcc-ar CACHE FILEPATH "")
+set(CMAKE_RANLIB arm-none-eabi-gcc-ranlib CACHE FILEPATH "")
 # -strong, not -all: a canary on every function with a local array or an
 # address-taken local, which are the functions a stack overflow can start in
 # (812 of the 1,920 that -all instruments). It frees about 50 KB of flash;
@@ -84,4 +88,7 @@ set(CMAKE_EXE_LINKER_FLAGS
     -nostartfiles \
     -msoft-float \
     -specs=nosys.specs \
-    -Wl,--gc-sections" CACHE STRING "")
+    -Wl,--gc-sections \
+    -fno-lto" CACHE STRING "")
+# -fno-lto: device links use the objects' normal code. The firmware link
+# alone appends -flto in tools/firmware/CMakeLists.txt; the later flag wins.
