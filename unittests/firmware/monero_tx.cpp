@@ -1,5 +1,7 @@
 extern "C" {
 #include "keepkey/board/keepkey_button.h"
+#include "keepkey/board/memory.h"
+#include "keepkey/board/messages.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/monero.h"
 #include "keepkey/firmware/monero_tx.h"
@@ -18,6 +20,7 @@ bool keepkey_before_message_dispatch(MessageType msg_id);
 #include "monero_tx_vectors.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -1748,4 +1751,389 @@ TEST_F(MoneroTx, SessionFitsTheSharedArenaWithOneOwner) {
   EXPECT_EQ(nullptr, signing_session_claim(SIGNING_SESSION_ZCASH));
 #endif
   EXPECT_TRUE(monero_tx_active());
+}
+
+/* ------------------------------------------------------------------
+ * The same transaction through the wire handlers (lib/firmware/
+ * fsm_msg_monero.h): the review screens, the progress polls and the
+ * frame-arena scratch are real here. */
+
+bool kkconfirm_preload(int, int);
+bool kkconfirm_preload_no_sentinel(int, int);
+bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload, uint8_t len);
+int kkconfirm_drain(void);
+void kkconfirm_capture_start(void);
+std::vector<std::string> kkconfirm_capture_finish(void);
+std::vector<std::string> kkconfirm_captured_titles(void);
+void kk_test_set_message_hook(
+    std::function<void(MessageType, const void*)> hook);
+
+namespace {
+
+class MoneroTxHandlers : public ::testing::Test {
+ protected:
+  std::vector<uint8_t> flash = std::vector<uint8_t>(FLASH_TOTAL_SIZE, 0xff);
+  uint8_t* previous = nullptr;
+  MessageType last = (MessageType)0;
+  std::vector<MessageType> written;
+
+  void SetUp() override {
+    ASSERT_TRUE(kkconfirm_preload(0, 0));
+    ASSERT_EQ(0, kkconfirm_drain());
+    previous = emulator_flash_base;
+    emulator_flash_base = flash.data();
+    storage_init();
+    LoadDevice load = {};
+    load.has_mnemonic = true;
+    /* The "abandon" fixture wallet: key_seed is its node at m/44'/128'/0'. */
+    strcpy(load.mnemonic,
+           "abandon abandon abandon abandon abandon abandon abandon abandon "
+           "abandon abandon abandon about");
+    storage_loadDevice(&load);
+    keepkey_user_activity();
+    fsm_test_clearLastFailure();
+    replay_rng("default");
+  }
+  void TearDown() override {
+    kk_test_set_message_hook(nullptr);
+    fsm_abort_workflows();
+    kkconfirm_drain();
+    storage_wipe();
+    storage_reset();
+    emulator_flash_base = previous;
+    xmr_test_rng_checked();
+  }
+
+  /* Calls a handler and copies its reply out of the response buffer. */
+  template <class Ack>
+  bool reply(MessageType id, Ack* ack, const std::function<void()>& call) {
+    bool got = false;
+    kk_test_set_message_hook([&](MessageType type, const void* msg) {
+      written.push_back(type);
+      last = type;
+      if (type == id) {
+        memcpy(ack, msg, sizeof(Ack));
+        got = true;
+      }
+    });
+    call();
+    kk_test_set_message_hook(nullptr);
+    return got;
+  }
+
+  /* The review as the user pages through it. */
+  std::vector<std::string> titles, bodies;
+  bool init(Flow& f, int accept, int reject = 0) {
+    EXPECT_TRUE(reject ? kkconfirm_preload(accept, reject)
+                       : kkconfirm_preload_no_sentinel(accept, 0));
+    kkconfirm_capture_start();
+    const bool ok =
+        reply(MessageType_MessageType_MoneroTxInitAck, &f.init_ack,
+              [&] { fsm_msgMoneroTxInit(&f.plan.init); });
+    titles = kkconfirm_captured_titles();
+    bodies = kkconfirm_capture_finish();
+    if (getenv("KK_XMR_SHOW_SCREENS"))
+      for (size_t i = 0; i < bodies.size(); ++i)
+        printf("--- %s ---\n%s\n", titles[i].c_str(), bodies[i].c_str());
+    return ok;
+  }
+
+  /* How many screens the review of this plan has. */
+  int review_screens(const Plan& plan) {
+    Flow f(plan);
+    EXPECT_TRUE(kkconfirm_preload(40, 0));
+    kkconfirm_capture_start();
+    fsm_msgMoneroTxInit(&f.plan.init);
+    const int screens = (int)kkconfirm_capture_finish().size();
+    fsm_abort_workflows();
+    kkconfirm_drain();
+    fsm_test_clearLastFailure();
+    return screens;
+  }
+
+  bool inputs_and_first_output(Flow& f) {
+    for (const Input& in : f.plan.inputs) {
+      MoneroTxSetInputRequest req = {};
+      req.has_src = true;
+      req.src = in.src;
+      MoneroTxSetInputAck ack = {};
+      if (!reply(MessageType_MessageType_MoneroTxSetInputAck, &ack,
+                 [&] { fsm_msgMoneroTxSetInput(&req); }))
+        return false;
+      f.in_acks.push_back(ack);
+    }
+    for (uint32_t i = 0; i < f.in_acks.size(); ++i) f.order.push_back(i);
+    std::sort(f.order.begin(), f.order.end(), [&](uint32_t a, uint32_t b) {
+      return memcmp(f.key_image(a), f.key_image(b), 32) > 0;
+    });
+    for (uint32_t index : f.order) {
+      const MoneroTxInputViniRequest req = f.vini_request(index);
+      MoneroTxInputViniAck ack;
+      if (!reply(MessageType_MessageType_MoneroTxInputViniAck, &ack,
+                 [&] { fsm_msgMoneroTxInputVini(&req); }))
+        return false;
+    }
+    MoneroTxAllInputsSetRequest all_in = {};
+    MoneroTxAllInputsSetAck all_in_ack;
+    if (!reply(MessageType_MessageType_MoneroTxAllInputsSetAck, &all_in_ack,
+               [&] { fsm_msgMoneroTxAllInputsSet(&all_in); }))
+      return false;
+    return output(f, 0);
+  }
+
+  bool output(Flow& f, unsigned j) {
+    const MoneroTxSetOutputRequest req = f.output_request(j);
+    return reply(MessageType_MessageType_MoneroTxSetOutputAck, &f.out_acks[j],
+                 [&] { fsm_msgMoneroTxSetOutput(&req); });
+  }
+
+  bool all_out(Flow& f) {
+    MoneroTxAllOutSetRequest req = {};
+    return reply(MessageType_MessageType_MoneroTxAllOutSetAck, &f.all_out,
+                 [&] { fsm_msgMoneroTxAllOutSet(&req); });
+  }
+
+  bool sign(Flow& f, uint32_t index) {
+    const MoneroTxSignInputRequest req = f.sign_request(index);
+    MoneroTxSignInputAck ack = {};
+    if (!reply(MessageType_MessageType_MoneroTxSignInputAck, &ack,
+               [&] { fsm_msgMoneroTxSignInput(&req); }))
+      return false;
+    f.sign_acks.push_back(ack);
+    return true;
+  }
+
+  void expect_wiped() {
+    EXPECT_FALSE(monero_tx_active());
+    EXPECT_EQ(SIGNING_SESSION_FREE, signing_session_owner());
+    EXPECT_TRUE(signing_session_is_zero());
+    EXPECT_FALSE(fsm_workflowInProgress());
+  }
+};
+
+/* Every page of the screens with this title, joined; pages break the
+ * address anywhere, so spaces and newlines are dropped. */
+std::string joined(const std::vector<std::string>& titles,
+                   const std::vector<std::string>& bodies,
+                   const std::string& title) {
+  std::string all;
+  for (size_t i = 0; i < bodies.size(); ++i)
+    if (titles[i].compare(0, title.size(), title) == 0)
+      for (char c : bodies[i])
+        if (!isspace((unsigned char)c)) all += c;
+  return all;
+}
+
+}  // namespace
+
+TEST_F(MoneroTxHandlers, ReviewThenSignTheCoreVerifiedTransaction) {
+  const Plan plan = simple_plan();
+  const int screens = review_screens(plan);
+  ASSERT_GT(screens, 3);
+
+  replay_rng(plan.name);
+  Flow f(plan);
+  ASSERT_TRUE(init(f, screens));
+  ASSERT_EQ((size_t)screens, bodies.size());
+  EXPECT_TRUE(monero_tx_active());
+  EXPECT_TRUE(fsm_workflowInProgress());
+
+  /* The recipient: full address, never shortened, and the exact amount. */
+  const std::string send = joined(titles, bodies, "Monero send");
+  EXPECT_NE(std::string::npos, send.find(other_wallet().address)) << send;
+  EXPECT_NE(std::string::npos, send.find("Send1.500000000000XMR")) << send;
+  EXPECT_NE(std::string::npos, send.find("standardaddress")) << send;
+  /* Change, shown as change, with the wallet's own full address. */
+  const std::string change = joined(titles, bodies, "Monero change");
+  EXPECT_NE(std::string::npos, change.find(signer_wallet().address)) << change;
+  EXPECT_NE(std::string::npos, change.find("Change0.499969000000XMR"))
+      << change;
+  EXPECT_EQ(std::string::npos, send.find(signer_wallet().address));
+  /* Fee and total on the last screen, which is the one that is held. */
+  EXPECT_EQ("Sign Monero", titles.back()); /* one page: not split */
+  EXPECT_NE(std::string::npos,
+            bodies.back().find("1 input(s), ring 16, about 20 s"))
+      << bodies.back();
+  const std::string last_screen = joined(titles, bodies, "Sign Monero");
+  EXPECT_NE(std::string::npos, last_screen.find("Fee0.000031000000XMR"))
+      << last_screen;
+  EXPECT_NE(std::string::npos, last_screen.find("Total1.500031000000XMR"))
+      << last_screen;
+  /* No address is ever abbreviated. */
+  for (const std::string& body : bodies)
+    EXPECT_EQ(std::string::npos, body.find("...")) << body;
+
+  ASSERT_TRUE(inputs_and_first_output(f));
+  ASSERT_TRUE(output(f, 1));
+  EXPECT_EQ(642u, f.out_acks[1].bp_plus.size);
+  ASSERT_TRUE(all_out(f));
+  for (uint32_t index : f.order) ASSERT_TRUE(sign(f, index));
+  MoneroTxFinalRequest fin = {};
+  ASSERT_TRUE(reply(MessageType_MessageType_MoneroTxFinalAck, &f.final_ack,
+                    [&] { fsm_msgMoneroTxFinal(&fin); }));
+  ASSERT_FALSE(::testing::Test::HasFailure());
+
+  /* Byte for byte the transaction Monero Core verified for this plan. */
+  const Bytes tx = f.assemble();
+  const Bytes digest = keccak(tx);
+  bool found = false;
+  for (size_t i = 0; i < MONERO_TX_VECTOR_COUNT; ++i) {
+    if (plan.name != monero_tx_vectors[i].name) continue;
+    found = true;
+    EXPECT_EQ(hex(monero_tx_vectors[i].keccak, 32), hex(digest.data(), 32));
+  }
+  EXPECT_TRUE(found);
+  expect_wiped();
+  EXPECT_EQ(0, kkconfirm_drain() + 2); /* no confirmation left over */
+}
+
+TEST_F(MoneroTxHandlers, TestnetAndWarningsAreOnTheScreens) {
+  Plan plan = make_plan("review-only", 0, other_address(0, 0), 250000000000ull,
+                        749950000000ull, 50000000ull, 1);
+  add_input(plan, owned_input(0, 0, 1000000000000ull, 9, 4));
+  set_payment_id(plan, 0, 0xa5);
+  plan.init.has_network_type = true;
+  plan.init.network_type = MoneroNetworkType_MONERO_NETWORK_TESTNET;
+  plan.init.tsx_data.has_unlock_time = true;
+  plan.init.tsx_data.unlock_time = 3500000;
+  const int screens = review_screens(plan);
+  Flow f(plan);
+  ASSERT_TRUE(init(f, screens));
+  /* Every screen names the network. */
+  for (const std::string& title : titles)
+    EXPECT_NE(std::string::npos, title.find("TESTNET")) << title;
+  const std::string send = joined(titles, bodies, "Monero TESTNET send");
+  EXPECT_NE(std::string::npos, send.find("integratedaddress")) << send;
+  const std::string pid = joined(titles, bodies, "Monero TESTNET payment ID");
+  EXPECT_NE(std::string::npos, pid.find("01a5a5a5a5a5a5a5")) << pid;
+  const std::string warning = joined(titles, bodies, "Monero TESTNET WARNING");
+  EXPECT_NE(std::string::npos, warning.find("3500000")) << warning;
+  /* The integrated address, complete (106 characters). */
+  MoneroTxReview review;
+  ASSERT_EQ(MONERO_TX_OK,
+            monero_tx_review(signer_wallet().key_seed, &plan.init, &review));
+  EXPECT_EQ(106u, strlen(review.outputs[0].address));
+  EXPECT_NE(std::string::npos, send.find(review.outputs[0].address)) << send;
+}
+
+TEST_F(MoneroTxHandlers, DecliningAnyReviewScreenOpensNoSession) {
+  const Plan plan = simple_plan();
+  const int screens = review_screens(plan);
+  for (int accepted = 0; accepted < screens; ++accepted) {
+    Flow f(plan);
+    fsm_test_clearLastFailure();
+    EXPECT_FALSE(init(f, accepted, 1)) << accepted;
+    EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode())
+        << accepted;
+    EXPECT_EQ(0u, f.init_ack.dst_hmacs_count);
+    EXPECT_FALSE(monero_tx_active());
+    EXPECT_TRUE(signing_session_is_zero());
+    kkconfirm_drain();
+  }
+}
+
+TEST_F(MoneroTxHandlers, RefusalsAreClearFailuresBeforeAnyScreen) {
+  Plan plan = simple_plan();
+  plan.init.tsx_data.outputs_count = 3;
+  plan.init.tsx_data.outputs[2] = destination(other_address(0, 2), 1);
+  Flow f(plan);
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  kkconfirm_capture_start();
+  EXPECT_FALSE(reply(MessageType_MessageType_MoneroTxInitAck, &f.init_ack,
+                     [&] { fsm_msgMoneroTxInit(&f.plan.init); }));
+  EXPECT_TRUE(kkconfirm_capture_finish().empty());
+  EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+  EXPECT_NE(nullptr,
+            strstr(fsm_test_lastFailureMessage(), "exactly 2 outputs"));
+  EXPECT_FALSE(monero_tx_active());
+
+  /* A continuation with no session, straight at the handler. */
+  fsm_test_clearLastFailure();
+  MoneroTxAllOutSetRequest req = {};
+  fsm_msgMoneroTxAllOutSet(&req);
+  EXPECT_EQ(FailureType_Failure_UnexpectedMessage, fsm_test_lastFailureCode());
+
+  /* An uninitialized device signs nothing. */
+  storage_wipe();
+  storage_reset();
+  fsm_test_clearLastFailure();
+  Flow g(simple_plan());
+  fsm_msgMoneroTxInit(&g.plan.init);
+  EXPECT_EQ(FailureType_Failure_NotInitialized, fsm_test_lastFailureCode());
+  EXPECT_FALSE(monero_tx_active());
+}
+
+TEST_F(MoneroTxHandlers, CancelDuringTheRangeProofEndsTheSession) {
+  const Plan plan = simple_plan();
+  const int screens = review_screens(plan);
+  Flow f(plan);
+  ASSERT_TRUE(init(f, screens));
+  ASSERT_TRUE(inputs_and_first_output(f));
+  /* The host cancels while the device proves. */
+  ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_Cancel, NULL, 0));
+  fsm_test_clearLastFailure();
+  EXPECT_FALSE(output(f, 1));
+  EXPECT_EQ(MessageType_MessageType_Failure, last);
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  EXPECT_FALSE(f.out_acks[1].has_bp_plus);
+  expect_wiped();
+  /* Nothing half-done: the next step is stale. */
+  EXPECT_FALSE(keepkey_before_message_dispatch(
+      MessageType_MessageType_MoneroTxAllOutSetRequest));
+}
+
+TEST_F(MoneroTxHandlers, AnyOtherMessageDuringAProofEndsTheSession) {
+  const Plan plan = simple_plan();
+  const int screens = review_screens(plan);
+  /* A message the tiny reader refuses (it answers through the arena), one
+   * it accepts, and a stray acknowledgement: all end the proof. */
+  const uint16_t strays[] = {MessageType_MessageType_Ping,
+                             MessageType_MessageType_ButtonAck,
+                             MessageType_MessageType_MoneroTxFinalRequest};
+  for (uint16_t stray : strays) {
+    replay_rng("stray");
+    Flow f(plan);
+    ASSERT_TRUE(init(f, screens));
+    ASSERT_TRUE(inputs_and_first_output(f));
+    ASSERT_TRUE(kkconfirm_sendTiny(stray, NULL, 0));
+    written.clear();
+    EXPECT_FALSE(output(f, 1)) << stray;
+    /* Exactly one reply, and it is a Failure. */
+    ASSERT_EQ(1u, written.size()) << stray;
+    EXPECT_EQ(MessageType_MessageType_Failure, written[0]) << stray;
+    expect_wiped();
+    kkconfirm_drain();
+  }
+
+  /* The same while a CLSAG is being made. */
+  for (uint16_t stray : strays) {
+    replay_rng("stray");
+    Flow f(plan);
+    ASSERT_TRUE(init(f, screens));
+    ASSERT_TRUE(inputs_and_first_output(f));
+    ASSERT_TRUE(output(f, 1));
+    ASSERT_TRUE(all_out(f));
+    ASSERT_TRUE(kkconfirm_sendTiny(stray, NULL, 0));
+    written.clear();
+    EXPECT_FALSE(sign(f, f.order[0])) << stray;
+    ASSERT_EQ(1u, written.size()) << stray;
+    EXPECT_EQ(MessageType_MessageType_Failure, written[0]) << stray;
+    expect_wiped();
+    kkconfirm_drain();
+  }
+}
+
+TEST_F(MoneroTxHandlers, InitializeDuringAProofResetsTheDevice) {
+  const Plan plan = simple_plan();
+  const int screens = review_screens(plan);
+  Flow f(plan);
+  ASSERT_TRUE(init(f, screens));
+  ASSERT_TRUE(inputs_and_first_output(f));
+  ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_Initialize, NULL, 0));
+  written.clear();
+  EXPECT_FALSE(output(f, 1));
+  /* Initialize is answered with Features, as from any other prompt. */
+  ASSERT_EQ(1u, written.size());
+  EXPECT_EQ(MessageType_MessageType_Features, written[0]);
+  expect_wiped();
 }

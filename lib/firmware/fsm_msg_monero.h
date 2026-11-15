@@ -373,8 +373,12 @@ static bool monero_tx_confirm(const MoneroTxReview* review) {
                  out->address))
       return false;
     if (out->is_integrated) {
+      /* Lowercase hex, as Monero wallets show a payment ID. */
       char payment_id[17] = {0};
-      data2hex(review->payment_id, 8, payment_id);
+      for (unsigned i = 0; i < 16; ++i)
+        payment_id[i] =
+            "0123456789abcdef"[(review->payment_id[i / 2] >> (i % 2 ? 0 : 4)) &
+                               15];
       if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                    monero_tx_title(review->network, _("Monero payment ID"),
                                    _("Monero TESTNET payment ID"),
@@ -400,13 +404,15 @@ static bool monero_tx_confirm(const MoneroTxReview* review) {
   if (!monero_format_amount(review->fee, amount, sizeof(amount)) ||
       !monero_format_amount(review->total, total, sizeof(total)))
     return false;
+  /* The range proof takes most of it (13-21 s), each CLSAG a second or two.
+   * One screen: this is the one that is held to approve. */
   return confirm(
       ButtonRequestType_ButtonRequest_SignTx,
       monero_tx_title(review->network, _("Sign Monero"),
                       _("Sign Monero TESTNET"), _("Sign Monero STAGENET")),
-      _("Fee %s\nTotal %s\n%lu input(s), ring size 16. Signing "
-        "takes about 20 seconds."),
-      amount, total, (unsigned long)review->num_inputs);
+      _("Fee %s\nTotal %s\n%lu input(s), ring 16, about %lu s"), amount, total,
+      (unsigned long)review->num_inputs,
+      18ul + 2ul * (unsigned long)review->num_inputs);
 }
 
 /* Progress, in thousandths of the whole session: inputs 0-50, their order
