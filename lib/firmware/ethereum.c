@@ -61,12 +61,6 @@ bool ethereum_typed_hash_policy_allows(bool advanced_mode) {
  * AdvancedMode requirement of the precomputed-hash endpoint. */
 bool ethereum_streamed_eip712_enabled(void) { return true; }
 
-/* The legacy JSON parser cannot guarantee that every displayed value is the
- * canonical value hashed by EIP-712. Keep the protocol symbol for compatibility
- * but fail closed in the FSM until the complete parser hardening is backported.
- */
-bool ethereum_structured_eip712_enabled(void) { return false; }
-
 /* Exact match, never a prefix. The legacy test was
  *   strncmp(primeType, "EIP712Domain", strlen(primeType))
  * whose length came from the HOST-supplied string, so every prefix -- "" and
