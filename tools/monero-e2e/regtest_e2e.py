@@ -15,6 +15,10 @@ mine it and credit the recipient:
   5. from account 1 (three inputs on three subaddresses; the change returns
      to subaddress (1, 0))
 
+Two more plans record what does not go through: the stock wallet's send-max
+(no change output; the device refuses it) and a transfer with an unlock
+time (the device signs it after a warning; the daemon does not relay it).
+
 Nothing leaves 127.0.0.1; the chain is a fresh fakechain; no USB device is
 opened. The wallets are the published test mnemonics (the emulator:
 "abandon ... about"; the recipient: "alcohol woman ...").
@@ -500,6 +504,31 @@ def main():
               not daemon.post('/get_transaction_pool', {}).get(
                   'transactions') and
               client.monero_get_address(path).decode() == address)
+
+        # ---- a locked transfer. Monero v0.18.5.4 wallets no longer build
+        # one and its own cold signer refuses one, so the lock is set here
+        # on a plan the stock wallet built. The device signs it after a
+        # warning; the daemon does not relay a nonzero unlock time. ----
+        print('locked transfer (unlock_time set by the host)', flush=True)
+        transfer = watch.call('transfer', {
+            'destinations': [{'address': recipient_address, 'amount': XMR}],
+            'account_index': 0, 'ring_size': 16, 'priority': 1,
+            'do_not_relay': True})
+        plan = adapter('plan', exported, transfer['unsigned_txset'])
+        plan['unlock_time'] = 1000
+        with xmr.Screens(client) as screens:
+            signed = monero_stream.sign(client, path, plan)
+        check('locked: device warned before signing', any(
+            title == 'Monero WARNING' and 'block or time 1000' in body
+            for title, body in screens.confirmations()))
+        relay = daemon.post('/send_raw_transaction', {
+            'tx_as_hex': signed.blob.hex(), 'do_not_relay': False})
+        report['locked'] = {'tx_hash': signed.tx_hash.hex(), 'reply': relay}
+        check('locked: the daemon refuses a nonzero unlock time',
+              relay.get('status') != 'OK' and relay.get(
+                  'nonzero_unlock_time') and
+              not daemon.post('/get_transaction_pool', {}).get(
+                  'transactions'), reply=relay)
 
         report['status'] = 'pass'
         if args.fixtures:
