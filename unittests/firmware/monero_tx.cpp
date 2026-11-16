@@ -1589,11 +1589,75 @@ TEST_F(MoneroTx, OpeningKeyIsReleasedOnlyAfterEveryInputIsSigned) {
   MoneroTxFinalAck ack;
   EXPECT_ENDED(MONERO_TX_ERR_STEP, monero_tx_final(&ack));
   EXPECT_FALSE(ack.has_opening_key);
+  EXPECT_FALSE(ack.has_tx_key);
+  EXPECT_EQ(0u, ack.additional_tx_keys_count);
   /* Without the key the sealed CLSAG is opaque: it authenticates under no
    * key the host has. */
   uint8_t plain[18 * 32], zero_key[32] = {0};
   EXPECT_FALSE(monero_tx_probe_open(zero_key, 0, f.sign_acks[0].clsag_enc.bytes,
                                     f.sign_acks[0].clsag_enc.size, plain));
+}
+
+TEST_F(MoneroTx, FinalReleasesTransactionKeysMatchingExtra) {
+  const std::vector<Plan> plans = {simple_plan(), two_input_plan(), sweep_plan(1)};
+  for (size_t kind = 0; kind < plans.size(); ++kind) {
+    Flow f(plans[kind]);
+    ASSERT_EQ(MONERO_TX_OK, f.to_signing());
+    ASSERT_EQ(MONERO_TX_OK, f.signs());
+    ASSERT_EQ(MONERO_TX_OK, monero_tx_final(&f.final_ack));
+    const auto& ack = f.final_ack;
+    ASSERT_TRUE(ack.has_opening_key);
+    ASSERT_TRUE(ack.has_tx_key);
+    ASSERT_EQ(32u, ack.tx_key.size);
+    uint8_t pub[32];
+    const uint8_t* base = kind == 1 ? f.plan.to[1].keys : nullptr;
+    ASSERT_TRUE(monero_tx_probe_key_public(ack.tx_key.bytes, base, pub));
+    ASSERT_GE(f.all_out.extra.size, 33u);
+    EXPECT_EQ(0, memcmp(pub, f.all_out.extra.bytes + 1, 32));
+    const unsigned count = kind == 2 ? MONERO_TX_OUTPUTS : 0;
+    ASSERT_EQ(count, ack.additional_tx_keys_count);
+    if (count) {
+      ASSERT_GE(f.all_out.extra.size, 35u + count * 32u);
+      EXPECT_EQ(4, f.all_out.extra.bytes[33]);
+      EXPECT_EQ(count, f.all_out.extra.bytes[34]);
+    }
+    for (unsigned j = 0; j < count; ++j) {
+      ASSERT_EQ(32u, ack.additional_tx_keys[j].size);
+      base = f.plan.init.tsx_data.outputs[j].is_subaddress
+                 ? f.plan.to[j].keys
+                 : nullptr;
+      ASSERT_TRUE(monero_tx_probe_key_public(
+          ack.additional_tx_keys[j].bytes, base, pub));
+      EXPECT_EQ(0, memcmp(pub, f.all_out.extra.bytes + 35 + j * 32, 32));
+    }
+    EXPECT_TRUE(signing_session_is_zero());
+    EXPECT_EQ(SIGNING_SESSION_FREE, signing_session_owner());
+  }
+}
+
+TEST_F(MoneroTx, TransactionKeysAreWithheldUntilEveryInputIsSigned) {
+  for (unsigned signed_inputs : {0u, 1u}) {
+    Flow f(two_input_plan());
+    ASSERT_EQ(MONERO_TX_OK, f.to_signing());
+    if (signed_inputs) ASSERT_EQ(MONERO_TX_OK, f.sign(f.order[0]));
+    MoneroTxFinalAck ack;
+    memset(&ack, 0xa5, sizeof(ack));
+    EXPECT_ENDED(MONERO_TX_ERR_STEP, monero_tx_final(&ack));
+    const MoneroTxFinalAck zero = {};
+    EXPECT_EQ(0, memcmp(&ack, &zero, sizeof(ack)));
+  }
+}
+
+TEST_F(MoneroTx, AbortedSessionNeverReleasesTransactionKeys) {
+  Flow f(two_input_plan());
+  ASSERT_EQ(MONERO_TX_OK, f.to_signing());
+  ASSERT_EQ(MONERO_TX_OK, f.signs());
+  monero_session_abort();
+  MoneroTxFinalAck ack;
+  memset(&ack, 0xa5, sizeof(ack));
+  EXPECT_ENDED(MONERO_TX_ERR_STEP, monero_tx_final(&ack));
+  const MoneroTxFinalAck zero = {};
+  EXPECT_EQ(0, memcmp(&ack, &zero, sizeof(ack)));
 }
 
 /* ------------------------------------------------- order and replay */
@@ -1816,6 +1880,8 @@ TEST_F(MoneroTx, AbortedClsagEndsTheSessionAndLeavesTheArenaAlone) {
       MoneroTxFinalAck ack;
       EXPECT_ENDED(MONERO_TX_ERR_STEP, monero_tx_final(&ack));
       EXPECT_FALSE(ack.has_opening_key);
+      EXPECT_FALSE(ack.has_tx_key);
+      EXPECT_EQ(0u, ack.additional_tx_keys_count);
     }
   }
 }
@@ -1944,6 +2010,8 @@ TEST_F(MoneroTx, SessionExpiresTenMinutesAfterBegin) {
          * signatures is not released. */
         EXPECT_ENDED(MONERO_TX_ERR_EXPIRED, monero_tx_final(&final_ack));
         EXPECT_FALSE(final_ack.has_opening_key);
+        EXPECT_FALSE(final_ack.has_tx_key);
+        EXPECT_EQ(0u, final_ack.additional_tx_keys_count);
         break;
     }
     EXPECT_FALSE(fsm_workflowInProgress()) << stage;
@@ -2267,6 +2335,15 @@ TEST_F(MoneroTxHandlers, ReviewThenSignTheCoreVerifiedTransaction) {
   ASSERT_TRUE(reply(MessageType_MessageType_MoneroTxFinalAck, &f.final_ack,
                     [&] { fsm_msgMoneroTxFinal(&fin); }));
   ASSERT_FALSE(::testing::Test::HasFailure());
+
+  ASSERT_TRUE(f.final_ack.has_tx_key);
+  uint8_t pub[32];
+  ASSERT_TRUE(monero_tx_probe_key_public(f.final_ack.tx_key.bytes, nullptr, pub));
+  EXPECT_EQ(0, memcmp(pub, f.all_out.extra.bytes + 1, 32));
+  size_t response_size = 0;
+  const uint8_t* response = fsm_test_responseArena(&response_size);
+  ASSERT_GE(response_size, sizeof(MoneroTxFinalAck));
+  for (size_t i = 0; i < sizeof(MoneroTxFinalAck); ++i) EXPECT_EQ(0, response[i]);
 
   /* Byte for byte the transaction Monero Core verified for this plan. */
   const Bytes tx = f.assemble();

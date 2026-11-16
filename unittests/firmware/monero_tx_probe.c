@@ -28,6 +28,24 @@ void monero_tx_probe_point(uint8_t out[32], const char* label, uint32_t ctr) {
   ge25519_pack(out, &P);
 }
 
+bool monero_tx_probe_key_public(const uint8_t key[32], const uint8_t* base,
+                                uint8_t out[32]) {
+  bignum256modm scalar;
+  ge25519 point, product;
+  uint8_t canonical[32];
+  expand256_modm(scalar, key, 32);
+  contract256_modm(canonical, scalar);
+  if (memcmp(key, canonical, 32) || iszero256_modm(scalar)) return false;
+  if (base) {
+    if (!ge25519_unpack_vartime(&point, base)) return false;
+    ge25519_scalarmult(&product, &point, scalar);
+  } else {
+    ge25519_scalarmult_base_wrapper(&product, scalar);
+  }
+  ge25519_pack(out, &product);
+  return true;
+}
+
 static void subaddress_scalar(bignum256modm m, const bignum256modm view,
                               uint32_t major, uint32_t minor) {
   uint8_t data[48] = {'S', 'u', 'b', 'A', 'd', 'd', 'r', 0};

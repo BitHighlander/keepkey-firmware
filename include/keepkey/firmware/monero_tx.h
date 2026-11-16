@@ -34,8 +34,10 @@
  * every CLSAG. The host stores only public pieces, each with a device MAC.
  *
  * SECRETS. The spend and view keys, the per-transaction master K, the
- * transaction secret r, the output masks and the pseudo-output masks never
- * leave the device. Everything secret is derived from K:
+ * output masks and pseudo-output masks never leave the device. Only final,
+ * after every input is signed, releases the per-transaction secret r and
+ * additional transaction keys for payment proofs. Wallet keys never leave
+ * through signing. Everything secret is derived from K:
  *
  *   K     = Keccak(pad32("KKXMR-K") || b || T || rng32)   (xmr_hedge_key)
  *   r     = Hs("KKXMR-r" || K)
@@ -177,6 +179,7 @@ MoneroTxResult monero_tx_sign_input(const MoneroTxSignInputRequest* request,
                                     size_t scratch_size,
                                     xmr_progress_fn progress,
                                     void* progress_ctx);
+/* Releases Kopen and payment-proof transaction keys only after all inputs. */
 MoneroTxResult monero_tx_final(MoneroTxFinalAck* ack);
 
 /* Inputs and position, for the progress display. False without a session. */

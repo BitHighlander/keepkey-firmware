@@ -94,6 +94,14 @@ _Static_assert(sizeof(((MoneroTxSignInputAck*)0)->clsag_enc.bytes) >=
                    CLSAG_PLAIN_BYTES + 16u,
                "encrypted CLSAG does not fit its field");
 
+_Static_assert(
+    sizeof(((MoneroTxFinalAck*)0)->tx_key.bytes) == 32u &&
+        sizeof(((MoneroTxFinalAck*)0)->additional_tx_keys[0].bytes) == 32u &&
+        sizeof(((MoneroTxFinalAck*)0)->additional_tx_keys) /
+                sizeof(((MoneroTxFinalAck*)0)->additional_tx_keys[0]) >=
+            MONERO_TX_OUTPUTS,
+    "Final must hold every payment-proof key");
+
 typedef struct {
   xmr_clsag_workspace ws;
   uint8_t P[MONERO_TX_RING_SIZE][32];
@@ -1210,6 +1218,7 @@ fail:
 }
 
 MoneroTxResult monero_tx_final(MoneroTxFinalAck* ack) {
+  bignum256modm key = {0};
   MoneroTxResult result = MONERO_TX_ERR_STEP;
   TxSession* s = session_in(STEP_FINAL, &result);
   if (ack) memzero(ack, sizeof(*ack));
@@ -1217,10 +1226,25 @@ MoneroTxResult monero_tx_final(MoneroTxFinalAck* ack) {
     ack->has_opening_key = true;
     ack->opening_key.size = 32;
     memcpy(ack->opening_key.bytes, s->open_key, 32);
+    /* Release payment-proof keys only at the same final gate as Kopen.
+     * Re-derive them from the session master; never retain extra key copies. */
+    kdf_scalar(key, s->master, "KKXMR-r", 0);
+    ack->has_tx_key = true;
+    ack->tx_key.size = 32;
+    contract256_modm(ack->tx_key.bytes, key);
+    if (s->additional_keys) {
+      ack->additional_tx_keys_count = MONERO_TX_OUTPUTS;
+      for (unsigned j = 0; j < MONERO_TX_OUTPUTS; ++j) {
+        kdf_scalar(key, s->master, "KKXMR-ra", j);
+        ack->additional_tx_keys[j].size = 32;
+        contract256_modm(ack->additional_tx_keys[j].bytes, key);
+      }
+    }
     result = MONERO_TX_OK;
   } else if (s) {
     result = MONERO_TX_ERR_REQUEST;
   }
+  memzero(key, sizeof(key));
   monero_session_abort();
   return result;
 }

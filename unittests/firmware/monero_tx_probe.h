@@ -49,6 +49,10 @@ void monero_tx_probe_owned(const uint8_t spend[32], const uint8_t view[32],
                            const char* label, uint32_t ctr,
                            MoneroTxProbeOwned* out);
 
+/* Public point of a canonical nonzero secret: key*G, or key*base. */
+bool monero_tx_probe_key_public(const uint8_t key[32], const uint8_t* base,
+                                uint8_t out[32]);
+
 /* Opens a sealed CLSAG with the key TxFinal released. */
 bool monero_tx_probe_open(const uint8_t key[32], uint32_t position,
                           const uint8_t* sealed, size_t size, uint8_t* plain);
