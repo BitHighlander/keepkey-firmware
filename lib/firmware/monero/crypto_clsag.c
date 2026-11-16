@@ -129,11 +129,12 @@ bool xmr_clsag_sign(xmr_clsag_sig *sig, const uint8_t message[32],
                     const uint8_t p[32], const uint8_t z[32],
                     xmr_clsag_workspace *ws, xmr_progress_fn progress,
                     void *progress_ctx) {
+  static const uint8_t identity[32] = {1};
   const size_t l = real_index;
   bignum256modm ps, zs, a, mu[2], c, cp, cc, si, t;
   ge25519 Hl, I, D, Coff, Pi, Ci, Hi, X, G;
   uint8_t Lb[32], Rb[32], nk[32], tr[33], secret[64];
-  bool ok = false, ws_dirty = false, aborted = false;
+  bool ok = false, aborted = false;
 
   if (sig == NULL) return false;
   memzero(sig, sizeof(*sig));
@@ -143,14 +144,21 @@ bool xmr_clsag_sign(xmr_clsag_sig *sig, const uint8_t message[32],
     return false;
   }
   if (!xmr_sc_load_canonical(ps, p) || !xmr_sc_load_canonical(zs, z) ||
-      !ge25519_unpack_vartime(&Coff, C_offset) ||
-      !check_real_member(P[l], C_nonzero[l], &Coff, ps, zs)) {
+      iszero256_modm(ps) || iszero256_modm(zs) ||
+      !xmr_point_load_canonical(&Coff, C_offset)) {
     goto done;
   }
+  /* Validate every supplied encoding before hedging, including decoys. */
+  for (size_t i = 0; i < n; i++) {
+    if (!xmr_point_load_canonical(&Pi, P[i]) ||
+        !xmr_point_load_canonical(&Ci, C_nonzero[i])) {
+      goto done;
+    }
+  }
+  if (!check_real_member(P[l], C_nonzero[l], &Coff, ps, zs)) goto done;
   ge25519_set_base(&G);
 
   /* round-hash prefix: domain, P, C_nonzero, C_offset, message */
-  ws_dirty = true;
   keccak_256_Init(&ws->prefix);
   dom(&ws->prefix, "CLSAG_round");
   for (size_t i = 0; i < n; i++) keccak_Update(&ws->prefix, P[i], 32);
@@ -178,6 +186,7 @@ bool xmr_clsag_sign(xmr_clsag_sig *sig, const uint8_t message[32],
   ge25519_pack(sig->I, &I);
   expand256_modm(t, xmr_inv_eight, 32);
   scalarmult_packed(sig->D, &D, t);
+  if (xmr_eq32(sig->I, identity) || xmr_eq32(sig->D, identity)) goto done;
   base_packed(Lb, a);
   scalarmult_packed(Rb, &Hl, a);
 
@@ -258,7 +267,7 @@ done:
   memzero(&X, sizeof(X));
   memzero(&D, sizeof(D));
   /* An aborted call must not touch the workspace (see crypto.h). */
-  if (ws_dirty && !aborted) memzero(ws, sizeof(*ws));
+  if (!aborted) memzero(ws, sizeof(*ws));
   if (!ok) memzero(sig, sizeof(*sig));
   return ok;
 }

@@ -25,6 +25,7 @@
 
 #include <string.h>
 
+#include "keepkey/firmware/monero/crypto.h"
 #include "monero_internal.h"
 #include "trezor/crypto/memzero.h"
 
@@ -93,9 +94,7 @@ bool monero_decode_public(ge25519* point, const uint8_t encoded[32]) {
   } tmp = {0};
   bool ok = false;
   ge25519_set_neutral(point);
-  if (!ge25519_unpack_vartime(point, encoded)) goto done;
-  ge25519_pack(tmp.canonical, point);
-  if (memcmp(tmp.canonical, encoded, 32) || !memcmp(encoded, identity, 32))
+  if (!xmr_point_load_canonical(point, encoded) || !memcmp(encoded, identity, 32))
     goto done;
   expand_raw256_modm(tmp.order, order_bytes);
   ge25519_scalarmult(&tmp.check, point, tmp.order);

@@ -329,7 +329,7 @@ static MoneroTxResult plan_check(const MoneroTxInitRequest* m) {
     if (!dest_well_formed(d)) return MONERO_TX_ERR_REQUEST;
     if (d->has_is_integrated && d->is_integrated) {
       /* An integrated address is a standard address plus a payment ID. */
-      if (d->has_is_subaddress && d->is_subaddress)
+      if (d->amount == 0 || (d->has_is_subaddress && d->is_subaddress))
         return MONERO_TX_ERR_REQUEST;
       ++integrated;
     }
@@ -671,9 +671,7 @@ static MoneroTxResult input_open(const TxSession* s,
       const uint8_t* keys[2] = {src->ring[i].dest.bytes,
                                 src->ring[i].commitment.bytes};
       for (unsigned k = 0; k < 2; ++k) {
-        if (!ge25519_unpack_vartime(&tmp.point, keys[k])) goto done;
-        ge25519_pack(tmp.check, &tmp.point);
-        if (memcmp(tmp.check, keys[k], 32)) goto done;
+        if (!xmr_point_load_canonical(&tmp.point, keys[k])) goto done;
       }
     }
   }
