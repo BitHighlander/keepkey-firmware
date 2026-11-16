@@ -90,6 +90,7 @@ typedef enum {
   MONERO_TX_ERR_STEP,         /* wrong step, or no session */
   MONERO_TX_ERR_EXPIRED,      /* session older than MONERO_TX_SESSION_MS */
   MONERO_TX_ERR_REQUEST,      /* path, network or a missing field */
+  MONERO_TX_ERR_UNLOCK_TIME,  /* relay requires unlock_time == 0 */
   MONERO_TX_ERR_OUTPUT_COUNT, /* not exactly 2 outputs */
   MONERO_TX_ERR_RING_SIZE,    /* ring size is not 16 */
   MONERO_TX_ERR_HARD_FORK,    /* hard fork below 16 */

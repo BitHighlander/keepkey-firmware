@@ -123,6 +123,8 @@ const char* monero_tx_result_text(MoneroTxResult result) {
       return "Monero signing session expired";
     case MONERO_TX_ERR_REQUEST:
       return "Invalid Monero signing request";
+    case MONERO_TX_ERR_UNLOCK_TIME:
+      return "Monero unlock time must be zero";
     case MONERO_TX_ERR_OUTPUT_COUNT:
       return "Monero: only transactions with exactly 2 outputs are supported";
     case MONERO_TX_ERR_RING_SIZE:
@@ -317,6 +319,8 @@ static MoneroTxResult plan_check(const MoneroTxInitRequest* m) {
       !m->has_tsx_data)
     return MONERO_TX_ERR_REQUEST;
   const MoneroTxData* t = &m->tsx_data;
+  if (t->has_unlock_time && t->unlock_time != 0)
+    return MONERO_TX_ERR_UNLOCK_TIME;
   if (t->outputs_count != MONERO_TX_OUTPUTS) return MONERO_TX_ERR_OUTPUT_COUNT;
   if (!t->has_ring_size || t->ring_size != MONERO_TX_RING_SIZE)
     return MONERO_TX_ERR_RING_SIZE;

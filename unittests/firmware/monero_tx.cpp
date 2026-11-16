@@ -801,30 +801,32 @@ TEST_F(MoneroTx, SubaddressAccountChangeVerifiesWithMoneroCore) {
                       f.plan.to[0].keys, nullptr);
 }
 
-TEST_F(MoneroTx, SendToOwnAddressWithLockVerifiesWithMoneroCore) {
-  /* Both outputs pay the wallet's own address. Exactly one is change (the
-   * one with the declared change amount); the other is shown as a recipient.
-   * Core derives both with a*R and encrypts the dummy payment ID to the
-   * wallet's own view key. */
+TEST_F(MoneroTx, SendToOwnAddressWithLockIsRefused) {
   Plan p = make_plan("1in-2out-self-locked", 0, own_address(0), 111ull,
                      999999999889ull - 20000000ull, 20000000ull, 1);
   add_input(p, owned_input(0, 1, 999999999999ull + 1ull, 2, 8));
-  p.init.tsx_data.has_unlock_time = true;
-  p.init.tsx_data.unlock_time = 3500000;
-  memcpy(p.pid_view_secret, signer_wallet().view_secret, 32);
-  const Flow f = signed_flow(p);
-  ASSERT_FALSE(::testing::Test::HasFailure());
-  EXPECT_FALSE(f.review.outputs[0].is_change);
-  EXPECT_TRUE(f.review.outputs[1].is_change);
-  EXPECT_EQ(111ull + 20000000ull, f.review.total);
-  EXPECT_EQ(3500000ull, f.review.unlock_time);
-  expect_core_verified(f, f.assemble());
+  for (uint64_t unlock : std::vector<uint64_t>{1, 3500000, UINT64_MAX}) {
+    p.init.tsx_data.has_unlock_time = true;
+    p.init.tsx_data.unlock_time = unlock;
+    Flow f(p);
+    auto result = monero_tx_review(signer_wallet().key_seed, &p.init, &f.review);
+    EXPECT_NE(MONERO_TX_OK, result);
+    EXPECT_STREQ("Monero unlock time must be zero", monero_tx_result_text(result));
+    memset(&f.init_ack, 0xa5, sizeof(f.init_ack));
+    result = monero_tx_begin(signer_wallet().key_seed, &p.init,
+                             f.review.digest, &f.init_ack);
+    EXPECT_NE(MONERO_TX_OK, result);
+    EXPECT_STREQ("Monero unlock time must be zero", monero_tx_result_text(result));
+    EXPECT_EQ(0u, f.init_ack.dst_hmacs_count);
+    EXPECT_TRUE(signing_session_is_zero());
+    EXPECT_EQ(SIGNING_SESSION_FREE, signing_session_owner());
+  }
 }
 
 TEST_F(MoneroTx, EveryVectorWasVerifiedByMoneroCore) {
   /* The header is written only by monero_tx_vectors_gen.sh, and only after
    * Core agreed with every record. */
-  EXPECT_EQ(15u, (unsigned)MONERO_TX_VECTOR_COUNT);
+  EXPECT_EQ(14u, (unsigned)MONERO_TX_VECTOR_COUNT);
   EXPECT_STREQ("v0.18.5.4", MONERO_TX_VECTORS_CORE);
   EXPECT_EQ(7u, (unsigned)MONERO_TX_VECTORS_CORE_REJECTED);
   EXPECT_EQ(6u, (unsigned)MONERO_TX_ADDRESS_VECTOR_COUNT);
@@ -1224,7 +1226,7 @@ TEST_F(MoneroTx, BeginOpensOnlyThePlanThatWasReviewed) {
   for (size_t i = 0; i < changes.size(); ++i) {
     Plan changed = simple_plan();
     changes[i](changed.init);
-    EXPECT_ENDED(MONERO_TX_ERR_APPROVAL,
+    EXPECT_ENDED(i == 2 ? MONERO_TX_ERR_UNLOCK_TIME : MONERO_TX_ERR_APPROVAL,
                  monero_tx_begin(key, &changed.init, review.digest, &ack))
         << "change " << i;
   }
@@ -2309,15 +2311,13 @@ TEST_F(MoneroTxHandlers, SweepReviewShowsBothFullAddressesAndZeroAmountLabel) {
   }
 }
 
-TEST_F(MoneroTxHandlers, TestnetAndWarningsAreOnTheScreens) {
+TEST_F(MoneroTxHandlers, TestnetAndPaymentIdAreOnTheScreens) {
   Plan plan = make_plan("review-only", 0, other_address(0, 0), 250000000000ull,
                         749950000000ull, 50000000ull, 1);
   add_input(plan, owned_input(0, 0, 1000000000000ull, 9, 4));
   set_payment_id(plan, 0, 0xa5);
   plan.init.has_network_type = true;
   plan.init.network_type = MoneroNetworkType_MONERO_NETWORK_TESTNET;
-  plan.init.tsx_data.has_unlock_time = true;
-  plan.init.tsx_data.unlock_time = 3500000;
   const int screens = review_screens(plan);
   Flow f(plan);
   ASSERT_TRUE(init(f, screens));
@@ -2328,8 +2328,6 @@ TEST_F(MoneroTxHandlers, TestnetAndWarningsAreOnTheScreens) {
   EXPECT_NE(std::string::npos, send.find("integratedaddress")) << send;
   const std::string pid = joined(titles, bodies, "Monero TESTNET payment ID");
   EXPECT_NE(std::string::npos, pid.find("01a5a5a5a5a5a5a5")) << pid;
-  const std::string warning = joined(titles, bodies, "Monero TESTNET WARNING");
-  EXPECT_NE(std::string::npos, warning.find("3500000")) << warning;
   /* The integrated address, complete (106 characters). */
   MoneroTxReview review;
   ASSERT_EQ(MONERO_TX_OK,
@@ -2471,4 +2469,22 @@ TEST_F(MoneroTxHandlers, ExpiryDuringTheRangeProofStopsBeforeReturningProof) {
   EXPECT_FALSE(output(f, 1));
   EXPECT_FALSE(f.out_acks[1].has_bp_plus);
   expect_wiped();
+}
+
+TEST_F(MoneroTxHandlers, NonzeroUnlockTimeFailsBeforeAnyScreen) {
+  for (uint64_t unlock : std::vector<uint64_t>{1, 3500000, UINT64_MAX}) {
+    Flow f(simple_plan());
+    f.plan.init.tsx_data.has_unlock_time = true;
+    f.plan.init.tsx_data.unlock_time = unlock;
+    ASSERT_TRUE(kkconfirm_preload(0, 0));
+    kkconfirm_capture_start();
+    EXPECT_FALSE(reply(MessageType_MessageType_MoneroTxInitAck, &f.init_ack,
+                       [&] { fsm_msgMoneroTxInit(&f.plan.init); }));
+    EXPECT_TRUE(kkconfirm_capture_finish().empty());
+    EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+    EXPECT_STREQ("Monero unlock time must be zero", fsm_test_lastFailureMessage());
+    EXPECT_TRUE(signing_session_is_zero());
+    EXPECT_EQ(SIGNING_SESSION_FREE, signing_session_owner());
+    kkconfirm_drain();
+  }
 }

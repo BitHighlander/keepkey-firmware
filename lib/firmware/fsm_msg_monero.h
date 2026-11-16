@@ -400,20 +400,6 @@ static bool monero_tx_confirm(const MoneroTxReview* review) {
         return false;
     }
   }
-  if (review->unlock_time) {
-    /* Unusual, but the user's to decide: shown, then signed. */
-    char unlock[24] = {0};
-    if (!bn_format_uint64(review->unlock_time, NULL, NULL, 0, 0, false, unlock,
-                          sizeof(unlock)) ||
-        !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
-                 monero_tx_title(review->network, _("Monero WARNING"),
-                                 _("Monero TESTNET WARNING"),
-                                 _("Monero STAGENET WARNING")),
-                 _("These funds are locked: nobody can spend them before "
-                   "block or time %s."),
-                 unlock))
-      return false;
-  }
   if (!monero_format_amount(review->fee, amount, sizeof(amount)) ||
       !monero_format_amount(review->total, total, sizeof(total)))
     return false;
@@ -484,6 +470,12 @@ static void monero_tx_fail_proving(MoneroTxResult result,
 void fsm_msgMoneroTxInit(const MoneroTxInitRequest* msg) {
   monero_session_abort();
   CHECK_INITIALIZED
+  /* Refuse unrelayable transactions before even a PIN prompt. */
+  if (msg->has_tsx_data && msg->tsx_data.has_unlock_time &&
+      msg->tsx_data.unlock_time != 0) {
+    monero_tx_fail(MONERO_TX_ERR_UNLOCK_TIME);
+    return;
+  }
   if (!monero_check_request(msg->address_n, msg->address_n_count,
                             msg->has_network_type, msg->network_type))
     return;
