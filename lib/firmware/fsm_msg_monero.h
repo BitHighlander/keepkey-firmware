@@ -486,15 +486,15 @@ void fsm_msgMoneroTxInit(const MoneroTxInitRequest* msg) {
                                     msg->address_n_count, NULL);
   if (!node) return;
   /* Public data only: nothing secret is held across the review. */
-  MoneroTxReview review;
-  MoneroTxResult result = monero_tx_review(node->private_key, msg, &review);
+  MoneroTxReview plan;
+  MoneroTxResult result = monero_tx_review(node->private_key, msg, &plan);
   FSM_SCRUB_OBJ(*node);
   if (result != MONERO_TX_OK) {
     monero_tx_fail(result);
     return;
   }
-  if (!monero_tx_confirm(&review)) {
-    memzero(&review, sizeof(review));
+  if (!monero_tx_confirm(&plan)) {
+    memzero(&plan, sizeof(plan));
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
                     _("Monero signing cancelled"));
     layoutHome();
@@ -504,8 +504,8 @@ void fsm_msgMoneroTxInit(const MoneroTxInitRequest* msg) {
   /* Recheck authorization and rederive after consent; the session opens
    * only for the plan whose digest was just approved. */
   uint8_t approved[32];
-  memcpy(approved, review.digest, sizeof(approved));
-  memzero(&review, sizeof(review));
+  memcpy(approved, plan.digest, sizeof(approved));
+  memzero(&plan, sizeof(plan));
   CHECK_PIN
   node = fsm_getDerivedNode(ED25519_NAME, msg->address_n, msg->address_n_count,
                             NULL);

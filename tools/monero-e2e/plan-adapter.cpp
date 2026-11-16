@@ -173,7 +173,7 @@ void plan_reply(const tools::wallet2 &wallet, const std::vector<Exported> &owned
   bool integrated = false;
   for (const auto &d : tx.splitted_dsts) {
     outputs.PushBack(destination_json(d, a), a);
-    integrated |= d.is_integrated;
+    integrated = integrated || d.is_integrated;
     out += d.amount;
   }
   require(in >= out, "outputs exceed inputs");
