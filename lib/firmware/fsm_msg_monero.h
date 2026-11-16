@@ -342,9 +342,10 @@ static const char* monero_tx_title(uint32_t network, const char* mainnet,
 }
 
 /* The one review of the whole transaction, before any signing step: the
- * recipient with its complete address, the payment ID, the change (shown as
- * change only because the device classified it), any lock, then the fee and
- * the total. Everything shown was derived or re-encoded on the device. */
+ * recipients with their complete addresses, the payment ID, any change
+ * (shown as change only because the device classified it), any lock, then the
+ * fee and the total. Everything shown was derived or re-encoded on the device.
+ */
 static bool monero_tx_confirm(const MoneroTxReview* review) {
   char amount[40] = {0}, total[40] = {0};
   for (unsigned j = 0; j < MONERO_TX_OUTPUTS; ++j) {
@@ -359,6 +360,18 @@ static bool monero_tx_confirm(const MoneroTxReview* review) {
                    _("Change %s returns to this wallet (account %lu), to "
                      "your address\n%s"),
                    amount, (unsigned long)review->account, out->address))
+        return false;
+      continue;
+    }
+    if (out->amount == 0) {
+      if (!confirm(
+              ButtonRequestType_ButtonRequest_ConfirmOutput,
+              monero_tx_title(review->network, _("Monero zero-amount output"),
+                              _("Monero TESTNET zero-amount output"),
+                              _("Monero STAGENET zero-amount output")),
+              _("Zero-amount output: %s to %s\n%s"), amount,
+              out->is_subaddress ? _("subaddress") : _("standard address"),
+              out->address))
         return false;
       continue;
     }

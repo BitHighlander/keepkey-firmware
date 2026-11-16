@@ -44,8 +44,8 @@ enum {
 };
 
 #define TX_OUT_BYTES 35u
-#define EXTRA_BYTES 44u /* 01 R | 02 09 01 encrypted payment ID */
-#define DEST_BYTES 73u  /* le64 amount | spend | view | flags */
+#define EXTRA_BYTES 110u /* 01 R | optional 04 02 R0 R1 | optional nonce */
+#define DEST_BYTES 73u   /* le64 amount | spend | view | flags */
 #define VINI_MIN_BYTES 35u
 #define VINI_MAX_BYTES 200u
 #define CLSAG_PLAIN_BYTES ((MONERO_TX_RING_SIZE + 2u) * 32u)
@@ -55,7 +55,8 @@ typedef struct {
   uint8_t step;
   uint8_t n_inputs;
   uint8_t in_pos, vini_pos, out_pos, sign_pos;
-  uint8_t out_self[MONERO_TX_OUTPUTS]; /* own address: derive with a*R */
+  uint8_t
+      out_self[MONERO_TX_OUTPUTS]; /* declared own address: derive with a*R */
   uint32_t account;
   uint64_t fee, sum_in, sum_out;
   uint64_t seen;                       /* plan indices with a vini accepted */
@@ -67,6 +68,8 @@ typedef struct {
   uint64_t out_amount[MONERO_TX_OUTPUTS];
   uint8_t out_commit[MONERO_TX_OUTPUTS][32];
   uint8_t extra[EXTRA_BYTES];
+  uint8_t extra_size;
+  bool additional_keys;
   uint8_t last_ki[32];
   uint8_t bp_hash[32];
   uint8_t message[32];
@@ -80,6 +83,8 @@ _Static_assert(MONERO_TX_MAX_INPUTS <= 64, "seen is a 64-bit set");
 _Static_assert(MONERO_TX_BPP_SCRATCH_BYTES <= XMR_FRAME_ARENA_FLOOR_BYTES &&
                    MONERO_TX_CLSAG_SCRATCH_BYTES <= XMR_FRAME_ARENA_FLOOR_BYTES,
                "proving scratch must fit the frame arena");
+_Static_assert(sizeof(((MoneroTxAllOutSetAck*)0)->extra.bytes) >= EXTRA_BYTES,
+               "tx extra does not fit its field");
 _Static_assert(sizeof(((MoneroTxSetInputAck*)0)->vini.bytes) >= VINI_MAX_BYTES,
                "vini does not fit its field");
 _Static_assert(sizeof(((MoneroTxSetOutputAck*)0)->bp_plus.bytes) >=
@@ -294,9 +299,12 @@ bool monero_tx_next_output_proves(void) {
 
 typedef struct {
   uint8_t own[64];      /* the wallet's (account, 0) spend and view keys */
-  uint8_t change_index; /* the one output classified as change */
+  uint8_t change_index; /* MONERO_TX_OUTPUTS when no change is declared */
   bool self[MONERO_TX_OUTPUTS];
-  bool tx_key_on_spend; /* R = r*D: the one recipient is a subaddress */
+  bool tx_key_on_spend; /* R = r*D: the sole distinct recipient is a subaddress
+                         */
+  bool additional_keys; /* mixed standard/subaddress or distinct subaddresses */
+  bool has_pid_view;
   uint8_t tx_key_base[32];
   uint8_t pid_view[32]; /* view key the payment ID is encrypted to */
   uint8_t digest[32];
@@ -339,20 +347,22 @@ static MoneroTxResult plan_check(const MoneroTxInitRequest* m) {
   if ((integrated == 1) != t->has_payment_id) return MONERO_TX_ERR_PAYMENT_ID;
 
   const MoneroTxChange* c = &t->change_dts;
-  if (!t->has_change_dts || !c->has_amount || !c->has_spend_public_key ||
-      c->spend_public_key.size != 32 || !c->has_view_public_key ||
-      c->view_public_key.size != 32 ||
-      (c->has_major ? c->major : 0u) != (t->has_account ? t->account : 0u) ||
-      (c->has_minor && c->minor != 0))
+  if (t->has_change_dts &&
+      (!c->has_amount || !c->has_spend_public_key ||
+       c->spend_public_key.size != 32 || !c->has_view_public_key ||
+       c->view_public_key.size != 32 ||
+       (c->has_major ? c->major : 0u) != (t->has_account ? t->account : 0u) ||
+       (c->has_minor && c->minor != 0)))
     return MONERO_TX_ERR_CHANGE;
   return MONERO_TX_OK;
 }
 
 /* Classifies the outputs with the wallet's own keys. The change output is
  * the one that pays the device-derived (account, 0) address the declared
- * change amount; the other one is a recipient, whatever the host calls it.
- * Derivation follows Core: every output to the own address uses a*R, and the
- * own address is left out when Core counts destinations. */
+ * change amount, only when change is declared. Every other output is a
+ * recipient, including zero-amount outputs. With declared change, Core uses
+ * a*R for every output to the own address and excludes that address from its
+ * destination counts; without it every output uses recipient derivation. */
 static MoneroTxResult plan_build(const bignum256modm spend,
                                  const bignum256modm view,
                                  const MoneroTxInitRequest* m, TxPlan* plan) {
@@ -367,8 +377,9 @@ static MoneroTxResult plan_build(const bignum256modm spend,
 
   if (!monero_address_keys(spend, view, account, 0, plan->own))
     return MONERO_TX_ERR_INTERNAL;
-  if (memcmp(t->change_dts.spend_public_key.bytes, plan->own, 32) ||
-      memcmp(t->change_dts.view_public_key.bytes, plan->own + 32, 32))
+  if (t->has_change_dts &&
+      (memcmp(t->change_dts.spend_public_key.bytes, plan->own, 32) ||
+       memcmp(t->change_dts.view_public_key.bytes, plan->own + 32, 32)))
     return MONERO_TX_ERR_CHANGE;
 
   int change = -1;
@@ -377,33 +388,63 @@ static MoneroTxResult plan_build(const bignum256modm spend,
     if (!monero_decode_public(&point, d->spend_public_key.bytes) ||
         !monero_decode_public(&point, d->view_public_key.bytes))
       return MONERO_TX_ERR_POINT;
-    plan->self[j] = !memcmp(d->spend_public_key.bytes, plan->own, 32) &&
-                    !memcmp(d->view_public_key.bytes, plan->own + 32, 32);
+    const bool own = !memcmp(d->spend_public_key.bytes, plan->own, 32) &&
+                     !memcmp(d->view_public_key.bytes, plan->own + 32, 32);
+    plan->self[j] = t->has_change_dts && own;
     const bool integrated = d->has_is_integrated && d->is_integrated;
     /* The device knows what kind of address its own one is. */
-    if (plan->self[j] &&
-        (d->has_is_subaddress && d->is_subaddress) != (account != 0))
+    if (own && (d->has_is_subaddress && d->is_subaddress) != (account != 0))
       return MONERO_TX_ERR_REQUEST;
     if (change < 0 && plan->self[j] && !integrated &&
         d->amount == t->change_dts.amount)
       change = (int)j;
   }
-  if (change < 0) return MONERO_TX_ERR_CHANGE;
-  plan->change_index = (uint8_t)change;
+  if (t->has_change_dts && change < 0) return MONERO_TX_ERR_CHANGE;
+  plan->change_index = change < 0 ? MONERO_TX_OUTPUTS : (uint8_t)change;
 
-  /* Core's classify_addresses and get_destination_view_key_pub for one
-   * recipient plus change. */
-  const unsigned other = 1u - plan->change_index;
-  const MoneroTxDestination* recipient = &t->outputs[other];
-  if (!plan->self[other] && recipient->has_is_subaddress &&
-      recipient->is_subaddress) {
-    plan->tx_key_on_spend = true;
-    memcpy(plan->tx_key_base, recipient->spend_public_key.bytes, 32);
+  /* Core's classify_addresses counts distinct destinations, including zero
+   * amounts. get_destination_view_key_pub counts only nonzero payments.
+   * These are deliberately separate: a standard dummy in a subaddress
+   * sweep requires additional tx keys, but never selects the payment ID key. */
+  unsigned standard = 0, subaddresses = 0, paid = 0;
+  const MoneroTxDestination* single_subaddress = NULL;
+  const MoneroTxDestination* paid_to = NULL;
+  for (unsigned j = 0; j < MONERO_TX_OUTPUTS; ++j) {
+    const MoneroTxDestination* d = &t->outputs[j];
+    if (plan->self[j]) continue;
+    const bool duplicate = j != 0 && !plan->self[0] &&
+                           !memcmp(d->spend_public_key.bytes,
+                                   t->outputs[0].spend_public_key.bytes, 32) &&
+                           !memcmp(d->view_public_key.bytes,
+                                   t->outputs[0].view_public_key.bytes, 32);
+    if (!duplicate) {
+      if (d->has_is_subaddress && d->is_subaddress) {
+        ++subaddresses;
+        single_subaddress = d;
+      } else {
+        ++standard;
+      }
+    }
+    if (d->amount && (!paid_to ||
+                      memcmp(d->spend_public_key.bytes,
+                             paid_to->spend_public_key.bytes, 32) ||
+                      memcmp(d->view_public_key.bytes,
+                             paid_to->view_public_key.bytes, 32))) {
+      ++paid;
+      paid_to = d;
+    }
   }
-  if (!plan->self[other] && recipient->amount != 0)
-    memcpy(plan->pid_view, recipient->view_public_key.bytes, 32);
-  else
+  plan->additional_keys = subaddresses && (standard || subaddresses > 1);
+  if (subaddresses == 1 && standard == 0) {
+    plan->tx_key_on_spend = true;
+    memcpy(plan->tx_key_base, single_subaddress->spend_public_key.bytes, 32);
+  }
+  plan->has_pid_view = paid == 1 || (paid == 0 && t->has_change_dts);
+  if (paid == 1)
+    memcpy(plan->pid_view, paid_to->view_public_key.bytes, 32);
+  else if (paid == 0 && t->has_change_dts)
     memcpy(plan->pid_view, plan->own + 32, 32);
+  if (t->has_payment_id && !plan->has_pid_view) return MONERO_TX_ERR_PAYMENT_ID;
 
   /* T: the device's canonical encoding of what is reviewed. */
   static const char domain[16] = "KKXMR-init-v1";
@@ -427,7 +468,7 @@ static MoneroTxResult plan_build(const bignum256modm spend,
     keccak_Update(&hash, field, 4);
   }
   const uint64_t wide[] = {t->fee, t->has_unlock_time ? t->unlock_time : 0u,
-                           t->change_dts.amount};
+                           t->has_change_dts ? t->change_dts.amount : 0u};
   for (unsigned i = 0; i < sizeof(wide) / sizeof(wide[0]); ++i) {
     put_le64(field, wide[i]);
     keccak_Update(&hash, field, 8);
@@ -500,10 +541,11 @@ done:
 /* ---------------------------------------------------------------- begin */
 
 /* R and the encrypted payment ID, then the tx extra Core would write:
- * 01 R | 02 09 01 pid. Core adds the dummy (zero) payment ID itself when a
- * two-output transaction has none. */
+ * 01 R | optional 04 02 R0 R1 | optional 02 09 01 pid. Core adds a dummy
+ * zero payment ID only when there is a unique nonzero destination view key.
+ * Additional keys let mixed destinations scan their own outputs. */
 static bool build_extra(TxSession* s, const TxPlan* plan,
-                        const uint8_t* payment_id) {
+                        const MoneroTxData* t) {
   struct {
     bignum256modm r;
     ge25519 point, product;
@@ -521,17 +563,41 @@ static bool build_extra(TxSession* s, const TxPlan* plan,
   }
   ge25519_pack(s->extra + 1, &tmp.product);
 
-  if (!monero_decode_public(&tmp.point, plan->pid_view)) goto done;
-  xmr_generate_key_derivation(&tmp.product, &tmp.point, tmp.r);
-  ge25519_pack(tmp.data, &tmp.product);
-  tmp.data[32] = 0x8d; /* HASH_KEY_ENCRYPTED_PAYMENT_ID */
-  keccak_256(tmp.data, sizeof(tmp.data), tmp.hash);
-  s->extra[33] = 0x02; /* nonce */
-  s->extra[34] = 0x09;
-  s->extra[35] = 0x01; /* encrypted payment ID */
-  for (unsigned i = 0; i < 8; ++i)
-    s->extra[36 + i] =
-        (uint8_t)((payment_id ? payment_id[i] : 0) ^ tmp.hash[i]);
+  s->extra_size = 33;
+  s->additional_keys = plan->additional_keys;
+  if (plan->additional_keys) {
+    s->extra[s->extra_size++] = 0x04; /* additional tx public keys */
+    s->extra[s->extra_size++] = MONERO_TX_OUTPUTS;
+    for (unsigned j = 0; j < MONERO_TX_OUTPUTS; ++j) {
+      const MoneroTxDestination* d = &t->outputs[j];
+      kdf_scalar(tmp.r, s->master, "KKXMR-ra", j);
+      if (iszero256_modm(tmp.r)) goto done;
+      if (d->has_is_subaddress && d->is_subaddress) {
+        if (!monero_decode_public(&tmp.point, d->spend_public_key.bytes))
+          goto done;
+        ge25519_scalarmult(&tmp.product, &tmp.point, tmp.r);
+      } else {
+        ge25519_scalarmult_base_wrapper(&tmp.product, tmp.r);
+      }
+      ge25519_pack(s->extra + s->extra_size, &tmp.product);
+      s->extra_size += 32;
+    }
+  }
+  if (plan->has_pid_view) {
+    kdf_scalar(tmp.r, s->master, "KKXMR-r", 0);
+    if (!monero_decode_public(&tmp.point, plan->pid_view)) goto done;
+    xmr_generate_key_derivation(&tmp.product, &tmp.point, tmp.r);
+    ge25519_pack(tmp.data, &tmp.product);
+    tmp.data[32] = 0x8d; /* HASH_KEY_ENCRYPTED_PAYMENT_ID */
+    keccak_256(tmp.data, sizeof(tmp.data), tmp.hash);
+    s->extra[s->extra_size++] = 0x02; /* nonce */
+    s->extra[s->extra_size++] = 0x09;
+    s->extra[s->extra_size++] = 0x01; /* encrypted payment ID */
+    for (unsigned i = 0; i < 8; ++i)
+      s->extra[s->extra_size++] =
+          (uint8_t)((t->has_payment_id ? t->payment_id.bytes[i] : 0) ^
+                    tmp.hash[i]);
+  }
   ok = true;
 done:
   memzero(&tmp, sizeof(tmp));
@@ -579,8 +645,7 @@ MoneroTxResult monero_tx_begin(const uint8_t node_key[32],
   s->fee = t->fee;
   for (unsigned j = 0; j < MONERO_TX_OUTPUTS; ++j)
     s->out_self[j] = plan.self[j];
-  if (!build_extra(s, &plan, t->has_payment_id ? t->payment_id.bytes : NULL))
-    goto done;
+  if (!build_extra(s, &plan, t)) goto done;
 
   /* tx prefix: version 2, unlock time, then the inputs. */
   keccak_256_Init(&s->prefix);
@@ -893,7 +958,10 @@ MoneroTxResult monero_tx_set_output(const MoneroTxSetOutputRequest* request,
   } else {
     if (!monero_decode_public(&tmp.point, dst->view_public_key.bytes))
       goto fail;
-    kdf_scalar(tmp.scalar, s->master, "KKXMR-r", 0);
+    if (s->additional_keys && dst->has_is_subaddress && dst->is_subaddress)
+      kdf_scalar(tmp.scalar, s->master, "KKXMR-ra", j);
+    else
+      kdf_scalar(tmp.scalar, s->master, "KKXMR-r", 0);
     xmr_generate_key_derivation(&tmp.derivation, &tmp.point, tmp.scalar);
   }
   /* encoded = "view_tag" | derivation | varint(j) */
@@ -998,8 +1066,8 @@ MoneroTxResult monero_tx_all_out_set(MoneroTxAllOutSetAck* ack) {
 
   for (unsigned j = 0; j < MONERO_TX_OUTPUTS; ++j)
     keccak_Update(&s->rct_base, s->out_commit[j], 32);
-  hash_varint(&s->prefix, EXTRA_BYTES);
-  keccak_Update(&s->prefix, s->extra, EXTRA_BYTES);
+  hash_varint(&s->prefix, s->extra_size);
+  keccak_Update(&s->prefix, s->extra, s->extra_size);
   /* CLSAG message = Keccak(prefix hash | rctSigBase hash | proof hash). */
   keccak_Final(&s->prefix, hashes);
   keccak_Final(&s->rct_base, hashes + 32);
@@ -1007,8 +1075,8 @@ MoneroTxResult monero_tx_all_out_set(MoneroTxAllOutSetAck* ack) {
   keccak_256(hashes, sizeof(hashes), s->message);
 
   ack->has_extra = true;
-  ack->extra.size = EXTRA_BYTES;
-  memcpy(ack->extra.bytes, s->extra, EXTRA_BYTES);
+  ack->extra.size = s->extra_size;
+  memcpy(ack->extra.bytes, s->extra, s->extra_size);
   ack->has_tx_prefix_hash = true;
   ack->tx_prefix_hash.size = 32;
   memcpy(ack->tx_prefix_hash.bytes, hashes, 32);

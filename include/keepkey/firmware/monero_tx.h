@@ -39,6 +39,7 @@
  *
  *   K     = Keccak(pad32("KKXMR-K") || b || T || rng32)   (xmr_hedge_key)
  *   r     = Hs("KKXMR-r" || K)
+ *   r_j   = Hs("KKXMR-ra" || K || j)       additional tx key when needed
  *   Kmac  = Keccak("KKXMR-mac" || K), Kopen = Keccak("KKXMR-open" || K)
  *   p_i   = Hs("KKXMR-pa" || K || i)        pseudo-output mask of input i
  *   tag   = HMAC-SHA256(Kmac, purpose[12] || le32(index) || canonical data)
@@ -53,12 +54,14 @@
  * the shared CONFIDENTIAL signing-session arena (signing_session.h, owner
  * SIGNING_SESSION_MONERO_TX) and expires MONERO_TX_SESSION_MS after begin.
  *
- * SCOPE (7.17). Exactly 2 outputs, of which exactly one is change: the
- * wallet's own (account, 0) address with the declared change amount, as the
- * device derives it. The other output is a recipient and is always shown.
+ * SCOPE (7.17). Exactly 2 outputs. Change is optional; when declared,
+ * exactly one output must pay the device-derived own (account, 0) address
+ * the declared amount. Every other output is shown as a recipient, even
+ * when its amount is zero. Without declared change both are recipients.
  * Ring size 16, 1..64 inputs, at most one integrated destination with an
- * 8-byte payment ID. With one recipient and one change output Core never
- * needs additional tx keys, so none are produced. */
+ * 8-byte payment ID. Additional tx keys are produced when distinct
+ * recipients include both standard addresses and subaddresses, or more
+ * than one subaddress. */
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -96,7 +99,7 @@ typedef enum {
   MONERO_TX_ERR_INTEGRATED,   /* more than one integrated destination */
   MONERO_TX_ERR_POINT,        /* a key is not a canonical prime-order point */
   MONERO_TX_ERR_SCALAR,       /* a scalar is not canonical */
-  MONERO_TX_ERR_CHANGE,       /* no output is the wallet's own change */
+  MONERO_TX_ERR_CHANGE,       /* declared change is not the wallet's own */
   MONERO_TX_ERR_AMOUNT,       /* amounts overflow 64 bits */
   MONERO_TX_ERR_RING,         /* ring unsorted, duplicated or malformed */
   MONERO_TX_ERR_NOT_OWNED,    /* the real output is not this wallet's */
