@@ -27,6 +27,7 @@
 
 #include "keepkey/firmware/monero/crypto.h"
 #include "monero_internal.h"
+#include "trezor/crypto/hasher.h"
 #include "trezor/crypto/memzero.h"
 
 bool monero_path_valid(const uint32_t* path, size_t count) {
@@ -141,20 +142,26 @@ bool monero_encode_address(uint32_t network, MoneroAddressKind kind,
                            char* address, size_t capacity) {
   static const uint8_t prefixes[3][3] = {
       {18, 53, 24}, {42, 63, 36}, {19, 54, 25}};
-  uint8_t data[72] = {0};
+  /* prefix | keys | payment id | Keccak checksum. Built here in a fixed
+   * buffer: trezor-crypto's xmr_base58_addr_encode_check() sizes its copy
+   * with a variable-length array, which the SRAM gate cannot bound. Every
+   * prefix is below 128, so its varint is the byte itself. */
+  uint8_t data[1 + 72 + HASHER_DIGEST_LENGTH] = {0};
   const bool integrated = kind == MONERO_ADDRESS_INTEGRATED;
-  const size_t size = integrated ? 72u : 64u;
+  const size_t size = 1u + (integrated ? 72u : 64u);
   const size_t length = integrated ? 106u : MONERO_ADDRESS_LENGTH;
   if (!address || capacity <= length) return false;
   memzero(address, capacity);
   if (network >= 3 || (unsigned)kind >= 3 || !keys ||
       (integrated && !payment_id))
     return false;
-  memcpy(data, keys, 64);
-  if (integrated) memcpy(data + 64, payment_id, 8);
-  const int written = xmr_base58_addr_encode_check(
-      prefixes[kind][network], data, size, address, capacity);
-  if (written != (int)length) {
+  data[0] = prefixes[kind][network];
+  memcpy(data + 1, keys, 64);
+  if (integrated) memcpy(data + 65, payment_id, 8);
+  hasher_Raw(HASHER_SHA3K, data, size, data + size);
+  size_t written = capacity;
+  if (!xmr_base58_encode(address, &written, data, size + 4) ||
+      written != length) {
     memzero(address, capacity);
     return false;
   }
