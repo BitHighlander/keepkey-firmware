@@ -94,7 +94,8 @@ bool monero_decode_public(ge25519* point, const uint8_t encoded[32]) {
   } tmp = {0};
   bool ok = false;
   ge25519_set_neutral(point);
-  if (!xmr_point_load_canonical(point, encoded) || !memcmp(encoded, identity, 32))
+  if (!xmr_point_load_canonical(point, encoded) ||
+      !memcmp(encoded, identity, 32))
     goto done;
   expand_raw256_modm(tmp.order, order_bytes);
   ge25519_scalarmult(&tmp.check, point, tmp.order);
