@@ -30,6 +30,12 @@ if(NOT ${KK_EMULATOR})
   # CMakeLists.txt; off in bootloader-tools builds).
   if(NOT KK_BUILD_BOOTLOADER_TOOLS)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -flto")
+    # Under LTO the -fstack-usage records (.su) are written at link time, into
+    # the linker's temp directory. Keep that inside the build tree so the SRAM
+    # gate (tools/check_sram_budget.py) still finds them.
+    file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/lto-su)
+    set(CMAKE_C_LINK_EXECUTABLE
+        "${CMAKE_COMMAND} -E env TMPDIR=${CMAKE_BINARY_DIR}/lto-su ${CMAKE_C_LINK_EXECUTABLE}")
   endif()
 
   set(LINK_FLAGS
