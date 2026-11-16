@@ -454,6 +454,9 @@ static bool monero_proving_step(void* context, uint32_t done, uint32_t total) {
     proving->interrupted = true;
     return false;
   }
+  /* The handler still owns its arena pointer. Stop before crypto reads it
+   * again; the engine wipes the expired session after unwinding. */
+  if (!monero_tx_active()) return false;
   const uint32_t permil =
       proving->base + (total ? proving->span * done / total : 0);
   if (permil != proving->last) {

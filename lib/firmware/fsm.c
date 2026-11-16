@@ -809,6 +809,9 @@ static bool fsm_dispatchGate(MessageType msg_id) {
  * "not in progress"; after, so the request that just ended a workflow runs
  * on a locked session. */
 bool keepkey_before_message_dispatch(MessageType msg_id) {
+#if MONERO_SIGNING
+  monero_session_expire();
+#endif
   if (msg_id != MessageType_MessageType_GetEntropy &&
       msg_id != MessageType_MessageType_GetFeatures) {
     entropy_audit_approved_remaining = 0;

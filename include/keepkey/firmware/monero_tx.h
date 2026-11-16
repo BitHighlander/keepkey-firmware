@@ -137,6 +137,7 @@ typedef struct {
   uint8_t digest[32]; /* binds begin to exactly this review */
 } MoneroTxReview;
 
+/* Read-only, including when expired; safe from activity interrupts. */
 bool monero_tx_active(void);
 
 /* Validates the plan, classifies the outputs and fills what the user must

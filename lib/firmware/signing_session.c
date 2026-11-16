@@ -29,15 +29,31 @@ _Static_assert(MONERO_SESSION_BYTES <= sizeof(ZcashSigningState),
 SigningSessionArena CONFIDENTIAL signing_session_arena;
 
 /* Not secret, and in ordinary .bss so it is FREE at every boot. */
-static uint8_t owner_tag;
+static volatile uint8_t owner_tag;
+static uint8_t reserved_owner;
+
+void* signing_session_prepare(SigningSessionOwner owner) {
+  if (owner == SIGNING_SESSION_FREE) return NULL;
+  if (reserved_owner != SIGNING_SESSION_FREE &&
+      reserved_owner != (uint8_t)owner)
+    return NULL;
+  owner_tag = SIGNING_SESSION_FREE;
+  reserved_owner = (uint8_t)owner;
+  memzero(&signing_session_arena, sizeof(signing_session_arena));
+  return &signing_session_arena;
+}
+
+void signing_session_publish(SigningSessionOwner owner) {
+  if (owner == SIGNING_SESSION_FREE || reserved_owner != (uint8_t)owner) return;
+  /* Finish every arena write before an interrupt can observe this owner. */
+  __asm__ volatile("" ::: "memory");
+  owner_tag = (uint8_t)owner;
+}
 
 void* signing_session_claim(SigningSessionOwner owner) {
-  if (owner == SIGNING_SESSION_FREE) return NULL;
-  if (owner_tag != SIGNING_SESSION_FREE && owner_tag != (uint8_t)owner)
-    return NULL;
-  memzero(&signing_session_arena, sizeof(signing_session_arena));
-  owner_tag = (uint8_t)owner;
-  return &signing_session_arena;
+  void* arena = signing_session_prepare(owner);
+  if (arena) signing_session_publish(owner);
+  return arena;
 }
 
 void* signing_session_get(SigningSessionOwner owner) {
@@ -46,9 +62,11 @@ void* signing_session_get(SigningSessionOwner owner) {
 }
 
 void signing_session_release(SigningSessionOwner owner) {
-  if (owner == SIGNING_SESSION_FREE || owner_tag != (uint8_t)owner) return;
-  memzero(&signing_session_arena, sizeof(signing_session_arena));
+  if (owner == SIGNING_SESSION_FREE || reserved_owner != (uint8_t)owner) return;
   owner_tag = SIGNING_SESSION_FREE;
+  __asm__ volatile("" ::: "memory");
+  memzero(&signing_session_arena, sizeof(signing_session_arena));
+  reserved_owner = SIGNING_SESSION_FREE;
 }
 
 SigningSessionOwner signing_session_owner(void) {

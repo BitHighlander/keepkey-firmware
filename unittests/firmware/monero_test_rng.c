@@ -17,6 +17,7 @@ typedef enum { MODE_CHECKED, MODE_REPLAY, MODE_FAIL } rng_mode;
 static rng_mode mode = MODE_CHECKED;
 static uint8_t replay_seed[32];
 static uint32_t draws;
+void (*xmr_test_rng_interrupt)(void);
 
 void xmr_test_rng_checked(void) {
   mode = MODE_CHECKED;
@@ -50,6 +51,11 @@ void xmr_test_stream(uint8_t out[32], const char *label,
 
 bool xmr_crypto_rng32(uint8_t out[32]) {
   uint32_t k = draws++;
+  if (xmr_test_rng_interrupt) {
+    void (*hook)(void) = xmr_test_rng_interrupt;
+    xmr_test_rng_interrupt = 0;
+    hook();
+  }
   switch (mode) {
     case MODE_REPLAY:
       xmr_test_stream(out, "KKXMR-test-rng-v1", replay_seed, k);

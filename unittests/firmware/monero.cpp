@@ -6,6 +6,8 @@ extern "C" {
 #include "keepkey/firmware/storage.h"
 #include "keepkey/firmware/zcash.h"
 #include "monero_probe.h"
+#include "monero_session_probe.h"
+#include "keepkey/board/timer.h"
 
 bool keepkey_before_message_dispatch(MessageType msg_id);
 }
@@ -411,3 +413,92 @@ TEST_F(MoneroSession, DispatchGateKeepsOnlyStatusRequestsAndOwnSteps) {
   EXPECT_FALSE(monero_key_image_active());
   EXPECT_TRUE(signing_session_is_zero());
 }
+
+TEST_F(MoneroSession, BeginPublishesOnlyInitializedState) {
+  const auto& c = monero_core_cases[0];
+  auto init = init_request({transfer(c, true)});
+  timer_poll_ticks(120001);
+  monero_session_interrupt = [] {
+    EXPECT_EQ(SIGNING_SESSION_FREE, signing_session_owner());
+    keepkey_user_activity();
+    EXPECT_FALSE(fsm_workflowInProgress());
+  };
+  const bool ok = probe_monero_key_image_begin(c.key_seed, &init);
+  monero_session_interrupt = nullptr;
+  ASSERT_TRUE(ok);
+  EXPECT_TRUE(monero_key_image_active());
+  monero_session_abort();
+  EXPECT_TRUE(signing_session_is_zero());
+}
+
+TEST_F(MoneroSession, ActivityDuringAnExpiringStepCannotWipeItsCountOrKeys) {
+  const auto& c = monero_core_cases[0];
+  const auto td = transfer(c, true);
+  auto init = init_request({td});
+  ASSERT_TRUE(monero_key_image_begin(c.key_seed, &init));
+  monero_session_interrupt = [] {
+    timer_poll_ticks(120001);
+    const auto before = signing_session_arena;
+    EXPECT_FALSE(monero_key_image_active());
+    keepkey_user_activity();
+    EXPECT_EQ(SIGNING_SESSION_MONERO_KEY_IMAGE, signing_session_owner());
+    EXPECT_EQ(0, memcmp(&before, &signing_session_arena, sizeof(before)));
+    monero_session_interrupt = nullptr;
+  };
+  MoneroKeyImageSyncStepRequest step = {};
+  step.tdis_count = 1;
+  step.tdis[0] = td;
+  MoneroKeyImageSyncStepAck ack = {};
+  uint32_t permil = 0;
+  ASSERT_TRUE(probe_monero_key_image_step(&step, &ack, &permil));
+  monero_session_interrupt = nullptr;
+  EXPECT_EQ(1000u, permil);
+  uint8_t key[32];
+  memset(key, 0xa5, sizeof(key));
+  EXPECT_FALSE(monero_key_image_finish(key));
+  EXPECT_TRUE(signing_session_is_zero());
+  EXPECT_EQ(SIGNING_SESSION_FREE, signing_session_owner());
+  for (auto b : key) EXPECT_EQ(0, b);
+}
+
+TEST_F(MoneroSession, DispatchExpiresAnIdleKeyImageSession) {
+  const auto& c = monero_core_cases[0];
+  auto init = init_request({transfer(c, true)});
+  ASSERT_TRUE(monero_key_image_begin(c.key_seed, &init));
+  timer_poll_ticks(120001);
+  keepkey_user_activity();
+  EXPECT_EQ(SIGNING_SESSION_MONERO_KEY_IMAGE, signing_session_owner());
+  EXPECT_TRUE(keepkey_before_message_dispatch(MessageType_MessageType_GetFeatures));
+  EXPECT_EQ(SIGNING_SESSION_FREE, signing_session_owner());
+  EXPECT_TRUE(signing_session_is_zero());
+}
+
+TEST(SigningSession, UnpublishedReservationIsExclusiveAndCanBeWiped) {
+  fsm_abort_signing_workflows();
+  auto* arena = signing_session_prepare(SIGNING_SESSION_MONERO_TX);
+  ASSERT_NE(nullptr, arena);
+  memset(arena, 0xa5, sizeof(signing_session_arena));
+  EXPECT_EQ(SIGNING_SESSION_FREE, signing_session_owner());
+  EXPECT_EQ(nullptr, signing_session_get(SIGNING_SESSION_MONERO_TX));
+  EXPECT_EQ(nullptr, signing_session_claim(SIGNING_SESSION_ZCASH));
+  monero_session_abort();
+  EXPECT_TRUE(signing_session_is_zero());
+  EXPECT_NE(nullptr, signing_session_claim(SIGNING_SESSION_ZCASH));
+  fsm_abort_signing_workflows();
+}
+
+#if ZCASH_PRIVACY
+TEST(SigningSession, ZcashActivityPredicateDoesNotModifyTheArena) {
+  fsm_abort_signing_workflows();
+  ASSERT_NE(nullptr, signing_session_claim(SIGNING_SESSION_ZCASH));
+  signing_session_arena.zcash.active = true;
+  const auto before = signing_session_arena;
+  timer_poll_ticks(MONERO_TX_SESSION_MS + 1);
+  keepkey_user_activity();
+  EXPECT_TRUE(zcash_signing_is_active());
+  EXPECT_TRUE(fsm_workflowInProgress());
+  EXPECT_EQ(0, memcmp(&before, &signing_session_arena, sizeof(before)));
+  fsm_abort_signing_workflows();
+}
+
+#endif

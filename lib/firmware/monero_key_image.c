@@ -28,6 +28,7 @@
 
 #include "keepkey/board/timer.h"
 #include "keepkey/firmware/monero.h"
+#include "keepkey/firmware/monero_tx.h"
 #include "keepkey/firmware/signing_session.h"
 #include "keepkey/rand/rng_health.h"
 #include "monero_internal.h"
@@ -64,9 +65,17 @@ void monero_session_abort(void) {
 
 bool monero_key_image_active(void) {
   const KeyImageSession* s = session();
-  if (s && (uint32_t)(getSysTime() - s->started) > KEY_IMAGE_SESSION_MS)
+  return s && (uint32_t)(getSysTime() - s->started) <= KEY_IMAGE_SESSION_MS;
+}
+
+/* Handler/dispatch safe point. Activity predicates never revoke a handler's
+ * retained arena pointer; continuations clean up before using one. */
+void monero_session_expire(void) {
+  if ((signing_session_owner() == SIGNING_SESSION_MONERO_KEY_IMAGE &&
+       !monero_key_image_active()) ||
+      (signing_session_owner() == SIGNING_SESSION_MONERO_TX &&
+       !monero_tx_active()))
     monero_session_abort();
-  return session() != NULL;
 }
 
 bool monero_key_image_begin(const uint8_t node_key[32],
@@ -77,7 +86,8 @@ bool monero_key_image_begin(const uint8_t node_key[32],
       request->hash.size != 32 || request->subs_count > 4 ||
       (request->has_network_type && request->network_type > 2))
     return false;
-  KeyImageSession* s = signing_session_claim(SIGNING_SESSION_MONERO_KEY_IMAGE);
+  KeyImageSession* s =
+      signing_session_prepare(SIGNING_SESSION_MONERO_KEY_IMAGE);
   if (!s) return false;
   for (pb_size_t i = 0; i < request->subs_count; ++i) {
     const MoneroSubAddressIndicesList* list = &request->subs[i];
@@ -97,6 +107,7 @@ bool monero_key_image_begin(const uint8_t node_key[32],
   s->count = (uint32_t)request->num;
   hasher_Init(&s->transcript, HASHER_SHA3K);
   s->started = getSysTime();
+  signing_session_publish(SIGNING_SESSION_MONERO_KEY_IMAGE);
   return true;
 failure:
   monero_session_abort();

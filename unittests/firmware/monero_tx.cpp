@@ -11,6 +11,7 @@ extern "C" {
 #include "monero_probe.h"
 #include "monero_test_rng.h"
 #include "monero_tx_probe.h"
+#include "monero_session_probe.h"
 
 bool keepkey_before_message_dispatch(MessageType msg_id);
 }
@@ -1863,6 +1864,40 @@ TEST_F(MoneroTx, EveryRevocationWipesTheSession) {
   }
 }
 
+TEST_F(MoneroTx, BeginPublishesOnlyInitializedState) {
+  timer_poll_ticks(MONERO_TX_SESSION_MS + 1);
+  keepkey_user_activity();
+  Flow f(simple_plan());
+  ASSERT_EQ(MONERO_TX_OK, monero_tx_review(signer_wallet().key_seed,
+                                         &f.plan.init, &f.review));
+  monero_session_interrupt = [] {
+    EXPECT_EQ(SIGNING_SESSION_FREE, signing_session_owner());
+    keepkey_user_activity();
+    EXPECT_FALSE(fsm_workflowInProgress());
+  };
+  const auto result = probe_monero_tx_begin(signer_wallet().key_seed,
+      &f.plan.init, f.review.digest, &f.init_ack);
+  monero_session_interrupt = nullptr;
+  ASSERT_EQ(MONERO_TX_OK, result);
+  EXPECT_EQ(SIGNING_SESSION_MONERO_TX, signing_session_owner());
+  EXPECT_EQ(MONERO_TX_OK, f.set_inputs());
+  monero_session_abort();
+  EXPECT_TRUE(signing_session_is_zero());
+}
+
+TEST_F(MoneroTx, ExpiredActivityPredicateNeverWipesTheHandlerState) {
+  Flow f(simple_plan());
+  ASSERT_EQ(MONERO_TX_OK, f.begin());
+  const auto before = signing_session_arena;
+  timer_poll_ticks(MONERO_TX_SESSION_MS + 1);
+  EXPECT_FALSE(monero_tx_active());
+  keepkey_user_activity();
+  EXPECT_FALSE(fsm_workflowInProgress());
+  EXPECT_EQ(SIGNING_SESSION_MONERO_TX, signing_session_owner());
+  EXPECT_EQ(0, memcmp(&before, &signing_session_arena, sizeof(before)));
+  EXPECT_ENDED(MONERO_TX_ERR_EXPIRED, f.set_inputs());
+}
+
 TEST_F(MoneroTx, SessionExpiresTenMinutesAfterBegin) {
   /* Ten minutes to the millisecond is still inside. */
   {
@@ -2058,6 +2093,7 @@ class MoneroTxHandlers : public ::testing::Test {
     storage_wipe();
     storage_reset();
     emulator_flash_base = previous;
+    xmr_test_rng_interrupt = nullptr;
     xmr_test_rng_checked();
   }
 
@@ -2421,5 +2457,18 @@ TEST_F(MoneroTxHandlers, InitializeDuringAProofResetsTheDevice) {
   /* Initialize is answered with Features, as from any other prompt. */
   ASSERT_EQ(1u, written.size());
   EXPECT_EQ(MessageType_MessageType_Features, written[0]);
+  expect_wiped();
+}
+
+TEST_F(MoneroTxHandlers, ExpiryDuringTheRangeProofStopsBeforeReturningProof) {
+  Flow f(simple_plan());
+  ASSERT_TRUE(init(f, review_screens(f.plan)));
+  ASSERT_TRUE(inputs_and_first_output(f));
+  xmr_test_rng_interrupt = [] {
+    timer_poll_ticks(MONERO_TX_SESSION_MS + 1);
+    keepkey_user_activity();
+  };
+  EXPECT_FALSE(output(f, 1));
+  EXPECT_FALSE(f.out_acks[1].has_bp_plus);
   expect_wiped();
 }

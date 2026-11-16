@@ -262,15 +262,14 @@ static TxSession* session(void) {
 
 bool monero_tx_active(void) {
   const TxSession* s = session();
-  if (s && (uint32_t)(getSysTime() - s->started) > MONERO_TX_SESSION_MS)
-    monero_session_abort();
-  return session() != NULL;
+  return s && (uint32_t)(getSysTime() - s->started) <= MONERO_TX_SESSION_MS;
 }
 
 /* The session if it is live and in `step`; otherwise NULL and the reason. */
 static TxSession* session_in(uint8_t step, MoneroTxResult* why) {
   const bool had = session() != NULL;
   if (!monero_tx_active()) {
+    if (had) monero_session_abort();
     *why = had ? MONERO_TX_ERR_EXPIRED : MONERO_TX_ERR_STEP;
     return NULL;
   }
@@ -625,7 +624,7 @@ MoneroTxResult monero_tx_begin(const uint8_t node_key[32],
   if (!ct_equal(plan.digest, approved_digest, 32)) goto done;
 
   result = MONERO_TX_ERR_INTERNAL;
-  s = signing_session_claim(SIGNING_SESSION_MONERO_TX);
+  s = signing_session_prepare(SIGNING_SESSION_MONERO_TX);
   if (!s) goto done;
   const MoneroTxData* t = &request->tsx_data;
   /* K: hedged with the spend key and the reviewed plan, so even a repeated
@@ -668,6 +667,7 @@ MoneroTxResult monero_tx_begin(const uint8_t node_key[32],
   ack->rsig_mode = 0;
   s->step = STEP_INPUT;
   s->started = getSysTime();
+  signing_session_publish(SIGNING_SESSION_MONERO_TX);
   result = MONERO_TX_OK;
 done:
   memzero(spend, sizeof(spend));

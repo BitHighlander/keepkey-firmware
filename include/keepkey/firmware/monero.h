@@ -59,7 +59,10 @@ bool monero_get_watch_key(const uint8_t node_key[32], uint32_t network,
  * (owner SIGNING_SESSION_MONERO_KEY_IMAGE) and expires 120 s after it began.
  * Every failure ends it and wipes it; only a complete, correctly bound
  * transcript releases the encryption key. */
+/* Read-only, including when expired; safe from activity interrupts. */
 bool monero_key_image_active(void);
+/* Expire idle sessions only at dispatch entry in normal handler context. */
+void monero_session_expire(void);
 bool monero_key_image_begin(const uint8_t node_key[32],
                             const MoneroKeyImageExportInitRequest* request);
 /* permil: outputs done so far, in thousandths of the total. */

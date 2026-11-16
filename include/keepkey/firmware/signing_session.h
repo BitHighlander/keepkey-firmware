@@ -74,7 +74,13 @@ extern SigningSessionArena signing_session_arena;
  * as the current owner wipes and restarts. */
 void* signing_session_claim(SigningSessionOwner owner);
 
-/* The arena if `owner` holds it, else NULL. */
+/* Reserve a wiped arena without publishing it to activity/interrupt readers.
+ * Release also wipes a reservation if initialization fails. Only normal
+ * handler context may prepare, publish or release. */
+void* signing_session_prepare(SigningSessionOwner owner);
+void signing_session_publish(SigningSessionOwner owner);
+
+/* The arena if `owner` holds a published session, else NULL. */
 void* signing_session_get(SigningSessionOwner owner);
 
 /* Wipe and free the arena if `owner` holds it; otherwise leave it alone. */

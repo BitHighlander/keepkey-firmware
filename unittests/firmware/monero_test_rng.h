@@ -16,6 +16,8 @@ void xmr_test_rng_checked(void);
 void xmr_test_rng_replay(const uint8_t seed[32]);
 /* Every draw fails (returns false with the buffer zeroed). */
 void xmr_test_rng_fail(void);
+/* One-shot hook inside a proving RNG draw, to simulate elapsed time. */
+extern void (*xmr_test_rng_interrupt)(void);
 /* Draws made since the last mode change. */
 uint32_t xmr_test_rng_draws(void);
 
