@@ -24,7 +24,9 @@ mkdir -p "$OUT"
 rm -f "$OUT/tx_records.bin"
 
 # The tests write a record per transaction instead of comparing it with the
-# committed digest; Core decides below.
+# committed digest; Core decides below. This includes the no-change sweep
+# and two-recipient cases; regenerate with this Core harness after changes,
+# never insert transaction digests by hand.
 KK_XMR_TX_RECORDS="$OUT/tx_records.bin" \
   KEEPKEY_UDP_PORT=${KEEPKEY_UDP_PORT:-22050} \
   GTEST_FILTER='MoneroTx.*VerifiesWithMoneroCore' "$UNIT" \

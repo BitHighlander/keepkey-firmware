@@ -32,6 +32,14 @@ void monero_tx_probe_address_keys(const uint8_t spend[32],
                                   const uint8_t view[32], uint32_t major,
                                   uint32_t minor, uint8_t keys[64]);
 
+/* Discrete log of a subaddress public view key C = a*(b+m)*G. The public
+ * test wallet knows b, so Core can check its dummy ID encrypted with r*C
+ * even when a mixed-destination transaction publishes R=r*G. */
+void monero_tx_probe_subaddress_view_secret(const uint8_t spend[32],
+                                            const uint8_t view[32],
+                                            uint32_t major, uint32_t minor,
+                                            uint8_t secret[32]);
+
 /* Pays `amount` to (major, minor) of the wallet as output `index` of a
  * transaction, as Core would: R = r*G, or r*D for a subaddress. With
  * via_additional the output hangs off an additional key and R is unrelated. */

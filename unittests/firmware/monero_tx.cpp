@@ -280,6 +280,36 @@ Plan two_input_plan() {
   return p;
 }
 
+/* Core's sweep_all: a recipient plus a standard, zero-amount dummy, with
+ * change_dts absent on the wire. Both destinations have known view keys so
+ * the Core harness can scan even the dummy output. */
+Recipient dummy_address() {
+  Recipient r;
+  uint8_t spend[32];
+  monero_tx_probe_scalar(spend, "sweep-dummy-spend", 0);
+  monero_tx_probe_scalar(r.view_secret, "sweep-dummy-view", 0);
+  monero_tx_probe_address_keys(spend, r.view_secret, 0, 0, r.keys);
+  return r;
+}
+
+Plan sweep_plan(unsigned kind = 0, unsigned recipient = 0) {
+  Plan p = make_plan(
+      "sweep-" + std::to_string(kind) + "-" + std::to_string(recipient), 0,
+      other_address(0, kind == 1 ? 1 : 0), 1999969000000ull, 0, 31000000ull,
+      1 - recipient);
+  p.init.tsx_data.has_change_dts = false;
+  p.init.tsx_data.change_dts = {};
+  p.to[1 - recipient] = dummy_address();
+  p.init.tsx_data.outputs[1 - recipient] = destination(p.to[1 - recipient], 0);
+  if (kind == 1)
+    monero_tx_probe_subaddress_view_secret(other_wallet().spend_secret,
+                                           other_wallet().view_secret, 0, 1,
+                                           p.pid_view_secret);
+  if (kind == 2) set_payment_id(p, recipient, 0x11);
+  add_input(p, owned_input(0, 0, 2000000000000ull, 5, 1));
+  return p;
+}
+
 struct Flow {
   Plan plan;
   MoneroTxReview review = {};
@@ -637,6 +667,63 @@ TEST_F(MoneroTx, OneInputTwoOutputsVerifiesWithMoneroCore) {
   write_record(f, "1in-tampered-pseudo-out", bad, false);
 }
 
+TEST_F(MoneroTx, NoChangeSweepVerifiesWithMoneroCore) {
+  for (unsigned kind = 0; kind < 3; ++kind) {
+    for (unsigned recipient = 0; recipient < 2; ++recipient) {
+      const Plan p = sweep_plan(kind, recipient);
+      SCOPED_TRACE(p.name);
+      const Flow f = signed_flow(p);
+      ASSERT_FALSE(::testing::Test::HasFailure());
+      const Bytes tx = f.assemble(); /* also authenticates every CLSAG */
+      EXPECT_EQ(hex(keccak(f.prefix()).data(), 32),
+                hex(f.all_out.tx_prefix_hash.bytes, 32));
+      EXPECT_EQ(MONERO_TX_RCT_TYPE, f.all_out.rct_type);
+      EXPECT_EQ(p.init.tsx_data.fee, f.all_out.fee);
+      EXPECT_EQ(642u, f.out_acks[1].bp_plus.size);
+      EXPECT_EQ(2000000000000ull, f.review.total);
+      EXPECT_FALSE(f.review.outputs[0].is_change);
+      EXPECT_FALSE(f.review.outputs[1].is_change);
+      EXPECT_EQ(0u, f.review.outputs[1 - recipient].amount);
+      expect_core_verified(f, tx);
+      EXPECT_FALSE(monero_tx_active());
+      EXPECT_TRUE(signing_session_is_zero());
+    }
+  }
+}
+
+TEST_F(MoneroTx, TwoPaidRecipientsWithoutChangeVerifiesWithMoneroCore) {
+  for (unsigned kind = 0; kind < 3; ++kind) {
+    Plan p = sweep_plan(kind == 0 ? 0 : 1);
+    p.name = "two-recipients-" + std::to_string(kind);
+    p.to[1] = kind == 2 ? other_address(0, 2) : dummy_address();
+    p.init.tsx_data.outputs[0].amount -= 1;
+    p.init.tsx_data.outputs[1] = destination(p.to[1], 1);
+    memset(p.pid_view_secret, 0, sizeof(p.pid_view_secret)); /* no dummy ID */
+    const Flow f = signed_flow(p);
+    ASSERT_FALSE(::testing::Test::HasFailure());
+    EXPECT_EQ(2000000000000ull, f.review.total);
+    expect_core_verified(f, f.assemble());
+  }
+}
+
+TEST_F(MoneroTx, OwnAddressWithoutDeclaredChangeVerifiesWithMoneroCore) {
+  Plan p = sweep_plan();
+  p.name = "sweep-own-account1";
+  p.init.tsx_data.account = 1;
+  p.to[0] = own_address(1);
+  p.init.tsx_data.outputs[0] = destination(p.to[0], 1999969000000ull);
+  p.inputs.clear();
+  add_input(p, owned_input(1, 0, 2000000000000ull, 5, 1));
+  monero_tx_probe_subaddress_view_secret(signer_wallet().spend_secret,
+                                         signer_wallet().view_secret, 1, 0,
+                                         p.pid_view_secret);
+  const Flow f = signed_flow(p);
+  ASSERT_FALSE(::testing::Test::HasFailure());
+  EXPECT_FALSE(f.review.outputs[0].is_change);
+  EXPECT_FALSE(f.review.outputs[1].is_change);
+  expect_core_verified(f, f.assemble());
+}
+
 TEST_F(MoneroTx, TwoInputsTwoOutputsVerifiesWithMoneroCore) {
   const Flow f = signed_flow(two_input_plan());
   ASSERT_FALSE(::testing::Test::HasFailure());
@@ -736,7 +823,7 @@ TEST_F(MoneroTx, SendToOwnAddressWithLockVerifiesWithMoneroCore) {
 TEST_F(MoneroTx, EveryVectorWasVerifiedByMoneroCore) {
   /* The header is written only by monero_tx_vectors_gen.sh, and only after
    * Core agreed with every record. */
-  EXPECT_EQ(5u, (unsigned)MONERO_TX_VECTOR_COUNT);
+  EXPECT_EQ(15u, (unsigned)MONERO_TX_VECTOR_COUNT);
   EXPECT_STREQ("v0.18.5.4", MONERO_TX_VECTORS_CORE);
   EXPECT_EQ(7u, (unsigned)MONERO_TX_VECTORS_CORE_REJECTED);
   EXPECT_EQ(6u, (unsigned)MONERO_TX_ADDRESS_VECTOR_COUNT);
@@ -846,6 +933,81 @@ TEST_F(MoneroTx, ZeroAmountIntegratedDestinationIsRejectedBeforeReview) {
   }
 }
 
+TEST_F(MoneroTx, NoChangeReviewIncludesEveryOutputEvenOwnOrZeroAmount) {
+  for (unsigned recipient = 0; recipient < 2; ++recipient) {
+    Plan p = sweep_plan(0, recipient);
+    MoneroTxReview review;
+    ASSERT_EQ(MONERO_TX_OK,
+              monero_tx_review(signer_wallet().key_seed, &p.init, &review));
+    EXPECT_FALSE(review.outputs[0].is_change);
+    EXPECT_FALSE(review.outputs[1].is_change);
+    EXPECT_STREQ(other_wallet().address, review.outputs[recipient].address);
+    EXPECT_EQ(95u, strlen(review.outputs[1 - recipient].address));
+    EXPECT_EQ(1999969000000ull, review.outputs[recipient].amount);
+    EXPECT_EQ(0u, review.outputs[1 - recipient].amount);
+    EXPECT_EQ(31000000ull, review.fee);
+    EXPECT_EQ(2000000000000ull, review.total);
+
+    /* Absent fields have no semantics; even a payment to our own address
+     * remains a recipient unless change was explicitly declared. */
+    p = simple_plan();
+    p.init.tsx_data.has_change_dts = false;
+    ASSERT_EQ(MONERO_TX_OK,
+              monero_tx_review(signer_wallet().key_seed, &p.init, &review));
+    EXPECT_FALSE(review.outputs[1].is_change);
+    EXPECT_EQ(2000000000000ull, review.total);
+  }
+}
+
+TEST_F(MoneroTx, SweepCannotDeclareForeignChangeOrAZeroIntegratedDummy) {
+  for (unsigned recipient = 0; recipient < 2; ++recipient) {
+    for (bool integrated : {false, true}) {
+      Plan p = sweep_plan(0, recipient);
+      MoneroTxData& t = p.init.tsx_data;
+      if (integrated) {
+        set_payment_id(p, 1 - recipient, 0x11);
+      } else {
+        t.has_change_dts = true;
+        t.change_dts.has_amount = true;
+        t.change_dts.has_spend_public_key = true;
+        t.change_dts.has_view_public_key = true;
+        t.change_dts.spend_public_key.size = 32;
+        t.change_dts.view_public_key.size = 32;
+        memcpy(t.change_dts.spend_public_key.bytes, p.to[1 - recipient].keys,
+               32);
+        memcpy(t.change_dts.view_public_key.bytes,
+               p.to[1 - recipient].keys + 32, 32);
+      }
+      const MoneroTxResult expected =
+          integrated ? MONERO_TX_ERR_REQUEST : MONERO_TX_ERR_CHANGE;
+      MoneroTxReview review, zero_review = {};
+      MoneroTxInitAck ack, zero_ack = {};
+      memset(&review, 0xa5, sizeof(review));
+      memset(&ack, 0xa5, sizeof(ack));
+      EXPECT_EQ(expected,
+                monero_tx_review(signer_wallet().key_seed, &p.init, &review));
+      EXPECT_EQ(0, memcmp(&review, &zero_review, sizeof(review)));
+      EXPECT_ENDED(expected, monero_tx_begin(signer_wallet().key_seed, &p.init,
+                                             review.digest, &ack));
+      EXPECT_EQ(0, memcmp(&ack, &zero_ack, sizeof(ack)));
+      EXPECT_EQ(0u, xmr_test_rng_draws());
+    }
+  }
+}
+
+TEST_F(MoneroTx, ChangeDeclarationIsBoundToReview) {
+  Plan p = simple_plan();
+  p.init.tsx_data.has_change_dts = false;
+  MoneroTxReview review;
+  ASSERT_EQ(MONERO_TX_OK,
+            monero_tx_review(signer_wallet().key_seed, &p.init, &review));
+  p.init.tsx_data.has_change_dts = true;
+  MoneroTxInitAck ack = {};
+  EXPECT_ENDED(
+      MONERO_TX_ERR_APPROVAL,
+      monero_tx_begin(signer_wallet().key_seed, &p.init, review.digest, &ack));
+}
+
 TEST_F(MoneroTx, ChangeIsWhatTheDeviceDerivesNeverWhatTheHostDeclares) {
   const uint8_t* key = signer_wallet().key_seed;
   MoneroTxReview review;
@@ -856,11 +1018,6 @@ TEST_F(MoneroTx, ChangeIsWhatTheDeviceDerivesNeverWhatTheHostDeclares) {
   memcpy(p.init.tsx_data.change_dts.view_public_key.bytes, p.to[0].keys + 32,
          32);
   p.init.tsx_data.change_dts.amount = p.init.tsx_data.outputs[0].amount;
-  EXPECT_EQ(MONERO_TX_ERR_CHANGE, monero_tx_review(key, &p.init, &review));
-
-  /* No change declared at all. */
-  p = simple_plan();
-  p.init.tsx_data.has_change_dts = false;
   EXPECT_EQ(MONERO_TX_ERR_CHANGE, monero_tx_review(key, &p.init, &review));
 
   /* Change declared for another account or a minor index. */
@@ -2085,6 +2242,35 @@ TEST_F(MoneroTxHandlers, ReviewThenSignTheCoreVerifiedTransaction) {
   EXPECT_TRUE(found);
   expect_wiped();
   EXPECT_EQ(0, kkconfirm_drain() + 2); /* no confirmation left over */
+}
+
+TEST_F(MoneroTxHandlers, SweepReviewShowsBothFullAddressesAndZeroAmountLabel) {
+  for (unsigned recipient = 0; recipient < 2; ++recipient) {
+    const Plan plan = sweep_plan(0, recipient);
+    MoneroTxReview review;
+    ASSERT_EQ(MONERO_TX_OK,
+              monero_tx_review(signer_wallet().key_seed, &plan.init, &review));
+    const int screens = review_screens(plan);
+    ASSERT_GT(screens, 3); /* full addresses require paging */
+    Flow f(plan);
+    ASSERT_TRUE(init(f, screens));
+    const std::string send = joined(titles, bodies, "Monero send");
+    EXPECT_NE(std::string::npos, send.find(review.outputs[recipient].address));
+    EXPECT_NE(std::string::npos, send.find("Send1.999969000000XMR"));
+    const std::string zero =
+        joined(titles, bodies, "Monero zero-amount output");
+    EXPECT_NE(std::string::npos, zero.find("0.000000000000XMR"));
+    EXPECT_NE(std::string::npos,
+              zero.find(review.outputs[1 - recipient].address));
+    EXPECT_TRUE(joined(titles, bodies, "Monero change").empty());
+    const std::string total = joined(titles, bodies, "Sign Monero");
+    EXPECT_NE(std::string::npos, total.find("Fee0.000031000000XMR"));
+    EXPECT_NE(std::string::npos, total.find("Total2.000000000000XMR"));
+    for (const std::string& body : bodies)
+      EXPECT_EQ(std::string::npos, body.find("..."));
+    fsm_abort_workflows();
+    kkconfirm_drain();
+  }
 }
 
 TEST_F(MoneroTxHandlers, TestnetAndWarningsAreOnTheScreens) {

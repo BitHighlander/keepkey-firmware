@@ -7,7 +7,8 @@
 //   as the device reported them, le64 fee, inputs in transaction order (ring
 //   of 16 x {le64 global index, key, commitment}, then the spend secret x of
 //   the real member), 2 outputs (le64 amount, recipient view secret, address
-//   spend key), payment ID and the view secret of who decrypts it.
+//   spend key), payment ID and the view secret of who decrypts it (all zero
+//   when distinct paid recipients mean Core omits the dummy payment ID).
 //
 //   'A', expect, name, network, address string, spend and view keys,
 //   is_subaddress, is_integrated, payment ID: an address the device showed.
@@ -19,7 +20,8 @@
 // verRctSemanticsSimple (range proof, balance) and verRctNonSemanticsSimple
 // (every CLSAG over the ring); have key images sorted as consensus needs and
 // equal to Core's own for each spend secret; carry a sorted, parseable extra
-// with one tx key, no additional keys and the encrypted payment ID; and each
+// with one main tx key, optional additional keys and an encrypted payment ID
+// when a unique paid recipient exists; and each
 // output must scan for its recipient: Core's derivation gives the output
 // key and the view tag, and decodeRctSimple opens the commitment to the
 // expected amount. A record expected to fail must fail Core's parse or
@@ -145,7 +147,7 @@ static bool verify(const std::string &blob, const rct::key &prefix_hash,
     REQUIRE(member, "real member in ring");
   }
 
-  // Extra: sorted, one tx key, no additional keys, an encrypted payment ID.
+  // Extra: sorted, one main key, optional per-output keys and payment ID.
   std::vector<cryptonote::tx_extra_field> fields;
   std::vector<uint8_t> sorted;
   REQUIRE(cryptonote::parse_tx_extra(tx.extra, fields), "parse extra");
@@ -153,18 +155,24 @@ static bool verify(const std::string &blob, const rct::key &prefix_hash,
           "extra is in Core's order");
   const crypto::public_key R = cryptonote::get_tx_pub_key_from_extra(tx);
   REQUIRE(R != crypto::null_pkey, "tx public key");
-  REQUIRE(cryptonote::get_additional_tx_pub_keys_from_extra(tx).empty(),
-          "no additional keys");
+  const auto additional = cryptonote::get_additional_tx_pub_keys_from_extra(tx);
+  REQUIRE(additional.empty() || additional.size() == outputs.size(),
+          "additional key count");
   cryptonote::tx_extra_nonce nonce;
   crypto::hash8 pid8;
-  REQUIRE(cryptonote::find_tx_extra_field_by_type(fields, nonce), "nonce");
-  REQUIRE(cryptonote::get_encrypted_payment_id_from_tx_extra_nonce(
-              nonce.nonce, pid8),
-          "encrypted payment ID");
-  crypto::secret_key pid_sec;
-  memcpy((void *)&pid_sec, pid_view_secret.bytes, 32);
-  REQUIRE(hwdev.decrypt_payment_id(pid8, R, pid_sec), "decrypt payment ID");
-  REQUIRE(pid8 == payment_id, "payment ID");
+  const bool has_nonce = cryptonote::find_tx_extra_field_by_type(fields, nonce);
+  if (pid_view_secret == rct::key{}) {
+    REQUIRE(!has_nonce, "no dummy ID for distinct paid recipients");
+  } else {
+    REQUIRE(has_nonce, "nonce");
+    REQUIRE(cryptonote::get_encrypted_payment_id_from_tx_extra_nonce(
+                nonce.nonce, pid8),
+            "encrypted payment ID");
+    crypto::secret_key pid_sec;
+    memcpy((void*)&pid_sec, pid_view_secret.bytes, 32);
+    REQUIRE(hwdev.decrypt_payment_id(pid8, R, pid_sec), "decrypt payment ID");
+    REQUIRE(pid8 == payment_id, "payment ID");
+  }
 
   // Each output, scanned as its recipient would.
   for (size_t j = 0; j < outputs.size(); j++) {
@@ -182,6 +190,12 @@ static bool verify(const std::string &blob, const rct::key &prefix_hash,
             "derive output key");
     REQUIRE(cryptonote::get_output_public_key(tx.vout[j], actual),
             "output key");
+    if (actual != expected && !additional.empty()) {
+      REQUIRE(crypto::generate_key_derivation(additional[j], view, derivation),
+              "additional derivation");
+      REQUIRE(crypto::derive_public_key(derivation, j, spend, expected),
+              "derive output key with additional key");
+    }
     REQUIRE(actual == expected, "output key is the recipient's");
     crypto::derive_view_tag(derivation, j, tag);
     const boost::optional<crypto::view_tag> on_chain =

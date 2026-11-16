@@ -57,6 +57,19 @@ void monero_tx_probe_address_keys(const uint8_t spend[32],
   ge25519_pack(keys + 32, &C);
 }
 
+void monero_tx_probe_subaddress_view_secret(const uint8_t spend[32],
+                                            const uint8_t view[32],
+                                            uint32_t major, uint32_t minor,
+                                            uint8_t secret[32]) {
+  bignum256modm b, a, m;
+  expand256_modm(b, spend, 32);
+  expand256_modm(a, view, 32);
+  subaddress_scalar(m, a, major, minor);
+  add256_modm(b, b, m);
+  mul256_modm(a, a, b);
+  contract256_modm(secret, a);
+}
+
 void monero_tx_probe_owned(const uint8_t spend[32], const uint8_t view[32],
                            uint32_t major, uint32_t minor, uint32_t index,
                            uint64_t amount, bool via_additional,
