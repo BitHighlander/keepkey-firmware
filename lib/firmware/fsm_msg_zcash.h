@@ -1209,6 +1209,7 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
 
   /* Derive Orchard keys via storage; the seed never leaves storage.c. */
   if (!storage_zcashOrchardKeys(account, true, &zcash_signing.keys)) {
+    zcash_signing_abort();
     fsm_sendFailure(FailureType_Failure_Other,
                     _("Orchard key derivation failed"));
     layoutHome();
