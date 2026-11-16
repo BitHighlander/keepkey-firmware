@@ -56,83 +56,11 @@ static void zcash_empty_orchard_digest(bool transaction_v6, uint8_t out[32]) {
   blake2b_Final(&ctx, out, 32);
 }
 
-#define ZCASH_MAX_ACTIONS 16
-#define ZCASH_MAX_TRANSPARENT_INPUTS 8
-#define ZCASH_MAX_TRANSPARENT_OUTPUTS 8
-#define ZCASH_MAX_TRANSPARENT_SCRIPT_PUBKEY 128
+#include "keepkey/firmware/signing_session.h"
 
-typedef struct {
-  bool received;
-  uint8_t prevout_txid[32];
-  uint32_t prevout_index;
-  uint32_t sequence;
-  uint64_t amount;
-  uint8_t script_pubkey[ZCASH_MAX_TRANSPARENT_SCRIPT_PUBKEY];
-  size_t script_pubkey_size;
-  uint32_t address_n[8];
-  uint32_t address_n_count;
-} ZcashTransparentInputState;
-
-typedef struct {
-  bool received;
-  uint64_t amount;
-  uint8_t script_pubkey[ZCASH_MAX_TRANSPARENT_SCRIPT_PUBKEY];
-  size_t script_pubkey_size;
-} ZcashTransparentOutputState;
-
-/* Zcash shielded signing state */
-static CONFIDENTIAL struct {
-  bool active;
-  uint32_t account;
-  uint32_t n_actions;
-  uint32_t current_action;
-  uint64_t fee;
-  uint32_t branch_id;
-  ZcashOrchardKeys keys;
-  /* The account's internal-scope (change) ivk, and the value of the outputs
-   * proven to pay it: shown once, at the final gate. */
-  uint8_t ivk_internal[32];
-  uint64_t change_value;
-  uint8_t header_digest[32];
-  uint8_t sighash[32];
-  bool transaction_v6;
-  /* The pool of the actions being streamed. A crossing transaction (ZIP 318)
-   * streams n_orchard_actions Orchard actions, then the Ironwood ones. */
-  bool is_ironwood;
-  uint32_t n_orchard_actions;
-  uint8_t orchard_component_digest[32];
-  uint8_t ironwood_component_digest[32];
-  /* Set only at the final gate, from device-computed digests. */
-  bool has_device_sighash;
-  /* Phase 2b: incremental orchard digest verification */
-  bool verify_orchard_digest;
-  BLAKE2B_CTX compact_ctx;
-  BLAKE2B_CTX memos_ctx;
-  BLAKE2B_CTX noncompact_ctx;
-  /* Per bundle, indexed by pool (0 Orchard, 1 Ironwood). */
-  uint8_t expected_bundle_digest[2][32];
-  uint8_t bundle_flags[2];
-  int64_t bundle_value_balance[2];
-  uint8_t orchard_anchor[32];
-  /* One slot per REAL spend; dummies are never signed here. While streaming a
-   * slot holds alpha || rk, at the final gate the 64-byte signature. */
-  uint8_t signatures[ZCASH_MAX_ACTIONS][64];
-  uint32_t signature_count;
-  /* Phase 3: transparent shielding state */
-  bool has_expected_transparent_digest;
-  uint8_t expected_transparent_digest[32];
-  bool transparent_digest_verified;
-  uint32_t n_transparent_outputs;
-  uint32_t current_transparent_output;
-  uint32_t n_transparent_inputs;
-  uint32_t current_transparent_input;
-  ZcashTransparentOutputState
-      transparent_outputs[ZCASH_MAX_TRANSPARENT_OUTPUTS];
-  ZcashTransparentInputState transparent_inputs[ZCASH_MAX_TRANSPARENT_INPUTS];
-  /* Deferred transparent ECDSA sigs — buffered until Orchard/fee final gate */
-  bool has_pending_transparent;
-  ZcashTransparentSigned pending_transparent;
-} zcash_signing;
+/* The session lives in the shared arena, which Monero also uses. Access is
+ * gated by zcash_signing_is_active(), which checks the owner tag. */
+#define zcash_signing (signing_session_arena.zcash)
 
 /* The decrypted memo of the output under review. Static because 512 bytes
  * are too many for the handler's stack; wiped with the session. */
@@ -142,11 +70,14 @@ static CONFIDENTIAL uint8_t zcash_memo[ZCASH_MEMO_SIZE];
 void zcash_signing_abort(void) {
   /* Every abort path must stop the trickle animation. */
   layoutProgressTrickleStop();
-  memzero(&zcash_signing, sizeof(zcash_signing));
+  signing_session_release(SIGNING_SESSION_ZCASH);
   memzero(zcash_memo, sizeof(zcash_memo));
 }
 
-bool zcash_signing_is_active(void) { return zcash_signing.active; }
+bool zcash_signing_is_active(void) {
+  return signing_session_owner() == SIGNING_SESSION_ZCASH &&
+         zcash_signing.active;
+}
 
 #if DEBUG_LINK
 static uint32_t zcash_test_sign_operations;
@@ -1269,9 +1200,16 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
 
   /* No state from an abandoned session may leak into this one. */
   zcash_signing_abort();
+  /* The dispatch gate has ended every other engine, so the arena is free. */
+  if (!signing_session_claim(SIGNING_SESSION_ZCASH)) {
+    fsm_sendFailure(FailureType_Failure_Other, _("Signing session busy"));
+    layoutHome();
+    return;
+  }
 
   /* Derive Orchard keys via storage; the seed never leaves storage.c. */
   if (!storage_zcashOrchardKeys(account, true, &zcash_signing.keys)) {
+    zcash_signing_abort();
     fsm_sendFailure(FailureType_Failure_Other,
                     _("Orchard key derivation failed"));
     layoutHome();
@@ -1509,7 +1447,7 @@ void fsm_msgZcashDisplayAddress(const ZcashDisplayAddress* msg) {
 }
 
 void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
-  if (!zcash_signing.active) {
+  if (!zcash_signing_is_active()) {
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
                     _("Not in Zcash signing mode"));
     layoutHome();
@@ -1646,7 +1584,7 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
 }
 
 void fsm_msgZcashTransparentOutput(const ZcashTransparentOutput* msg) {
-  if (!zcash_signing.active) {
+  if (!zcash_signing_is_active()) {
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
                     _("Not in Zcash signing mode"));
     layoutHome();
@@ -1784,7 +1722,7 @@ void fsm_msgZcashTransparentOutput(const ZcashTransparentOutput* msg) {
 /* Phase 3: transparent outputs then inputs are streamed and checked; ECDSA
  * signing waits for the final gate. */
 void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
-  if (!zcash_signing.active) {
+  if (!zcash_signing_is_active()) {
     fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
                     _("Not in Zcash signing mode"));
     layoutHome();

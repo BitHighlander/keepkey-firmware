@@ -137,6 +137,11 @@ const pb_field_t* message_fields(MessageMapType type, MessageType msg_id,
  * contract in messages.c. Single-threaded transport only. */
 TrezorFrameBuffer* frame_arena_tx(void);
 uint16_t* frame_arena_scratch2049(void);
+/* The whole arena as 8-byte aligned scratch for a handler's long
+ * computation, or NULL if `size` does not fit. See the contract at the
+ * definition: stop using it once a tiny-message poll reports anything. */
+void* frame_arena_scratch(size_t size);
+void frame_arena_scratch_wipe(void);
 
 /* A handler may reuse its decoded request storage for a large response after
  * copying every request field it still needs. The transport does not dispatch

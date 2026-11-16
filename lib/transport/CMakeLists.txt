@@ -93,11 +93,30 @@ set(protoc_pb_sources_moved
     ${CMAKE_BINARY_DIR}/lib/transport/messages-hive.proto
     ${CMAKE_BINARY_DIR}/lib/transport/messages.proto)
 
+if(KK_MONERO)
+  list(APPEND protoc_pb_sources ${DEVICE_PROTOCOL}/messages-monero.proto)
+  list(APPEND protoc_pb_options
+    ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-monero.options)
+  list(APPEND protoc_c_sources ${CMAKE_BINARY_DIR}/lib/transport/messages-monero.pb.c)
+  list(APPEND protoc_c_headers ${CMAKE_BINARY_DIR}/include/messages-monero.pb.h)
+  list(APPEND protoc_pb_sources_moved
+    ${CMAKE_BINARY_DIR}/lib/transport/messages-monero.proto)
+endif()
+
 # The plugin next to the configured nanopb, else the one on PATH: some builds
 # pass a placeholder NANOPB_DIR and put the generator on PATH.
 find_program(PROTOC_GEN_NANOPB_EXECUTABLE protoc-gen-nanopb
     HINTS "${NANOPB_DIR}/generator"
     DOC "nanopb protoc plugin executable")
+
+set(monero_protoc_command)
+if(KK_MONERO)
+  set(monero_protoc_command
+    COMMAND
+      ${PROTOC_BINARY} -I. -I/usr/include
+        --plugin=protoc-gen-nanopb=${PROTOC_GEN_NANOPB_EXECUTABLE}
+        "--nanopb_out=-fmessages-monero.options:." messages-monero.proto)
+endif()
 
 add_custom_command(
   OUTPUT
@@ -178,6 +197,7 @@ add_custom_command(
     ${PROTOC_BINARY} -I. -I/usr/include
       --plugin=protoc-gen-nanopb=${PROTOC_GEN_NANOPB_EXECUTABLE}
       "--nanopb_out=-fmessages-hive.options:." messages-hive.proto
+  ${monero_protoc_command}
   COMMAND
     ${PROTOC_BINARY} -I. -I/usr/include
       --plugin=protoc-gen-nanopb=${PROTOC_GEN_NANOPB_EXECUTABLE}

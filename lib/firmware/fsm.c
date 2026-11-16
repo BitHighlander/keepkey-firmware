@@ -103,6 +103,11 @@
 #include "messages-solana.pb.h"
 #include "messages-zcash.pb.h"
 #include "messages-hive.pb.h"
+#if MONERO_SIGNING
+#include "messages-monero.pb.h"
+#include "keepkey/firmware/monero.h"
+#include "keepkey/firmware/monero_tx.h"
+#endif
 
 #ifdef KK_MONERO_EMULATOR_RESEARCH
 #ifndef EMULATOR
@@ -347,6 +352,16 @@ typedef union {
 #include "messagemap.def"
 } FsmResponse;
 
+#if MONERO_SIGNING
+/* The same union without the Monero rows: the Monero responses must fit the
+ * buffer the other messages already size, so the signer never grows it. */
+#define MESSAGEMAP_WITHOUT_MONERO
+typedef union {
+#include "messagemap.def"
+} FsmResponseWithoutMonero;
+#undef MESSAGEMAP_WITHOUT_MONERO
+#endif
+
 /* Each generated member contributes to the union's compile-time bound. */
 #undef MSG_OUT
 #define MSG_OUT(ID, STRUCT_NAME, PROCESS_FUNC)                 \
@@ -355,6 +370,46 @@ typedef union {
 #include "messagemap.def"
 
 static uint8_t msg_resp[sizeof(FsmResponse)] __attribute__((aligned(8)));
+
+#if MONERO_SIGNING
+/* Monero wire budget, registered or not: each request must decode into
+ * decode_buffer, and each response must fit the response buffer that the
+ * other messages already size, so the signer grows neither. */
+#define MONERO_REQUEST_FITS(STRUCT_NAME)                 \
+  _Static_assert(sizeof(STRUCT_NAME) <= MAX_DECODE_SIZE, \
+                 #STRUCT_NAME " exceeds decode_buffer")
+#define MONERO_RESPONSE_FITS(STRUCT_NAME)                                 \
+  _Static_assert(sizeof(STRUCT_NAME) <= sizeof(FsmResponseWithoutMonero), \
+                 #STRUCT_NAME " exceeds msg_resp")
+MONERO_REQUEST_FITS(MoneroGetAddress);
+MONERO_RESPONSE_FITS(MoneroAddress);
+MONERO_REQUEST_FITS(MoneroGetWatchKey);
+MONERO_RESPONSE_FITS(MoneroWatchKey);
+MONERO_REQUEST_FITS(MoneroKeyImageExportInitRequest);
+MONERO_RESPONSE_FITS(MoneroKeyImageExportInitAck);
+MONERO_REQUEST_FITS(MoneroKeyImageSyncStepRequest);
+MONERO_RESPONSE_FITS(MoneroKeyImageSyncStepAck);
+MONERO_REQUEST_FITS(MoneroKeyImageSyncFinalRequest);
+MONERO_RESPONSE_FITS(MoneroKeyImageSyncFinalAck);
+MONERO_REQUEST_FITS(MoneroTxInitRequest);
+MONERO_RESPONSE_FITS(MoneroTxInitAck);
+MONERO_REQUEST_FITS(MoneroTxSetInputRequest);
+MONERO_RESPONSE_FITS(MoneroTxSetInputAck);
+MONERO_REQUEST_FITS(MoneroTxInputViniRequest);
+MONERO_RESPONSE_FITS(MoneroTxInputViniAck);
+MONERO_REQUEST_FITS(MoneroTxAllInputsSetRequest);
+MONERO_RESPONSE_FITS(MoneroTxAllInputsSetAck);
+MONERO_REQUEST_FITS(MoneroTxSetOutputRequest);
+MONERO_RESPONSE_FITS(MoneroTxSetOutputAck);
+MONERO_REQUEST_FITS(MoneroTxAllOutSetRequest);
+MONERO_RESPONSE_FITS(MoneroTxAllOutSetAck);
+MONERO_REQUEST_FITS(MoneroTxSignInputRequest);
+MONERO_RESPONSE_FITS(MoneroTxSignInputAck);
+MONERO_REQUEST_FITS(MoneroTxFinalRequest);
+MONERO_RESPONSE_FITS(MoneroTxFinalAck);
+#undef MONERO_REQUEST_FITS
+#undef MONERO_RESPONSE_FITS
+#endif
 #if DEBUG_LINK
 uint8_t* fsm_test_responseArena(size_t* size) {
   *size = sizeof(msg_resp);
@@ -454,6 +509,9 @@ bool fsm_workflowInProgress(void) {
 #ifdef KK_MONERO_KEY_IMAGE_PROTOCOL
   if (monero_key_image_active()) return true;
 #endif
+#if MONERO_SIGNING
+  if (monero_key_image_active() || monero_tx_active()) return true;
+#endif
   if (setup_isArmed() || signing_is_active()) return true;
 #if !BITCOIN_ONLY
   if (ethereum_signing_isInProgress() ||
@@ -486,6 +544,9 @@ void fsm_init(void) {
 #endif
 #ifdef KK_MONERO_KEY_IMAGE_PROTOCOL
   monero_key_image_abort();
+#endif
+#if MONERO_SIGNING
+  monero_session_abort();
 #endif
   entropy_audit_approved_remaining = 0;
   msg_map_init(MessagesMap, sizeof(MessagesMap) / sizeof(MessagesMap_t));
@@ -530,6 +591,37 @@ static bool fsm_dispatchGate(MessageType msg_id) {
   if (msg_id != MessageType_MessageType_GetFeatures &&
       msg_id != MessageType_MessageType_GetCoinTable) {
     monero_key_image_abort();
+  }
+#endif
+#if MONERO_SIGNING
+  /* Key-image sync survives only its own steps and the read-only status
+   * requests. Anything else, Ping included, ends it and wipes it. */
+  if (msg_id == MessageType_MessageType_MoneroKeyImageSyncStepRequest ||
+      msg_id == MessageType_MessageType_MoneroKeyImageSyncFinalRequest) {
+    if (!monero_key_image_active())
+      return reject_stale_continuation("Monero key-image sync not in progress");
+    return true;
+  }
+  /* The same for a signing session: only its own continuations reach it,
+   * and only while it is live. The engine then accepts each one in exactly
+   * one step and ends the session on anything else. */
+  switch (msg_id) {
+    case MessageType_MessageType_MoneroTxSetInputRequest:
+    case MessageType_MessageType_MoneroTxInputViniRequest:
+    case MessageType_MessageType_MoneroTxAllInputsSetRequest:
+    case MessageType_MessageType_MoneroTxSetOutputRequest:
+    case MessageType_MessageType_MoneroTxAllOutSetRequest:
+    case MessageType_MessageType_MoneroTxSignInputRequest:
+    case MessageType_MessageType_MoneroTxFinalRequest:
+      if (!monero_tx_active())
+        return reject_stale_continuation("Monero signing not in progress");
+      return true;
+    default:
+      break;
+  }
+  if (msg_id != MessageType_MessageType_GetFeatures &&
+      msg_id != MessageType_MessageType_GetCoinTable) {
+    monero_session_abort();
   }
 #endif
   switch (msg_id) {
@@ -664,6 +756,9 @@ static bool fsm_dispatchGate(MessageType msg_id) {
 #if ZCASH_PRIVACY
         case MessageType_MessageType_ZcashSignPCZT:
 #endif
+#if MONERO_SIGNING
+        case MessageType_MessageType_MoneroTxInitRequest:
+#endif
         {
           const bool was_armed = setup_isArmed();
           setup_abort();
@@ -714,6 +809,9 @@ static bool fsm_dispatchGate(MessageType msg_id) {
  * "not in progress"; after, so the request that just ended a workflow runs
  * on a locked session. */
 bool keepkey_before_message_dispatch(MessageType msg_id) {
+#if MONERO_SIGNING
+  monero_session_expire();
+#endif
   if (msg_id != MessageType_MessageType_GetEntropy &&
       msg_id != MessageType_MessageType_GetFeatures) {
     entropy_audit_approved_remaining = 0;
@@ -787,6 +885,9 @@ static void abort_signing_engines(void) {
 #endif
 #ifdef KK_MONERO_KEY_IMAGE_PROTOCOL
   monero_key_image_abort();
+#endif
+#if MONERO_SIGNING
+  monero_session_abort();
 #endif
   signing_abort();
 #if !BITCOIN_ONLY
@@ -884,6 +985,9 @@ void tendermint_signAbort(void) {}
 void eos_signingAbort(void) {}
 void signed_metadata_clear_signers(void) {}
 #endif  // !BITCOIN_ONLY
+#if MONERO_SIGNING
+#include "fsm_msg_monero.h"
+#endif
 #if ZCASH_PRIVACY
 #include "fsm_msg_zcash.h"
 #else

@@ -39,6 +39,9 @@
 #include "messages-solana.pb.h"
 #include "messages-zcash.pb.h"
 #include "messages-hive.pb.h"
+#if MONERO_SIGNING
+#include "messages-monero.pb.h"
+#endif
 
 #include "types.pb.h"
 #include "trezor_transport.h"

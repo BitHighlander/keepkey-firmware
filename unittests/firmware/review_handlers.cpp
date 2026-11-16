@@ -19,6 +19,7 @@ extern "C" {
 #include "trezor/crypto/sha3.h"
 #if ZCASH_PRIVACY
 #include "keepkey/firmware/zcash.h"
+#include "keepkey/firmware/signing_session.h"
 #include "trezor/crypto/blake2b.h"
 #include "keepkey/rand/rng_health.h"
 #include "trezor/crypto/bip32.h"
@@ -51,6 +52,8 @@ extern "C" {
 
 extern "C" bool keepkey_before_message_dispatch(MessageType msg_id);
 bool kkconfirm_preload(int, int);
+bool kkconfirm_preload_no_sentinel(int, int);
+bool kkconfirm_sendCancel(void);
 bool kkconfirm_readResponse(uint16_t expected, const pb_field_t* fields,
                             void* result);
 std::vector<uint16_t> kkconfirm_readResponseIds(void);
@@ -920,6 +923,44 @@ ZcashSignPCZT zcashSignRequest(uint32_t n_actions, const uint8_t digest[32],
   return msg;
 }
 }  // namespace
+
+TEST_F(ReviewHandlers, ZcashSeedFailureReleasesTheArena) {
+  LoadDevice load = {};
+  load.has_node = true;  // initialized, imported xprv; no mnemonic seed
+  load.node.has_private_key = true;
+  load.node.private_key.size = load.node.chain_code.size = 32;
+  load.node.private_key.bytes[31] = 1;
+  storage_loadDevice(&load);
+  ASSERT_TRUE(storage_isInitialized());
+  uint8_t digest[32] = {};
+  auto msg = zcashSignRequest(1, digest, 0, 0);
+  ASSERT_TRUE(kkconfirm_preload(1, 0));
+  fsm_msgZcashSignPCZT(&msg);
+  EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+  EXPECT_STREQ("Orchard key derivation failed", fsm_test_lastFailureMessage());
+  EXPECT_FALSE(zcash_signing_is_active());
+  EXPECT_EQ(SIGNING_SESSION_FREE, signing_session_owner());
+  EXPECT_TRUE(signing_session_is_zero());
+}
+
+TEST_F(ReviewHandlers, ZcashPassphraseCancelReleasesTheArena) {
+  LoadDevice load = {};
+  load.has_mnemonic = true;
+  strcpy(load.mnemonic, "all all all all all all all all all all all all");
+  load.has_passphrase_protection = load.passphrase_protection = true;
+  storage_loadDevice(&load);
+  session_clear(false);
+  uint8_t digest[32] = {};
+  auto msg = zcashSignRequest(1, digest, 0, 0);
+  ASSERT_TRUE(kkconfirm_preload_no_sentinel(1, 0));
+  ASSERT_TRUE(kkconfirm_sendCancel());
+  fsm_msgZcashSignPCZT(&msg);
+  EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+  EXPECT_STREQ("Orchard key derivation failed", fsm_test_lastFailureMessage());
+  EXPECT_FALSE(zcash_signing_is_active());
+  EXPECT_EQ(SIGNING_SESSION_FREE, signing_session_owner());
+  EXPECT_TRUE(signing_session_is_zero());
+}
 
 // Handler-level walk of a whole shielded-only session: summary, one streamed
 // output action, the recomputed bundle digest, then the final fee gate. A
