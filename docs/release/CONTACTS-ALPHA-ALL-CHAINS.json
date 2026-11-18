@@ -41,7 +41,8 @@
     "TON v4r2 hash reconstruction before any verified recipient or contact label",
     "EOS successful signing-session completion",
     "explicit shared-arena access for the unchanged Pallas API boundary gate",
-    "fork-master dependency reconciliation"
+    "fork-master dependency reconciliation",
+    "initialize exact analyzer input headers and reject missing dependencies"
   ],
   "checks": [
     "focused native and wire tests per changed entry path",

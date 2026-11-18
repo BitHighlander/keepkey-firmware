@@ -119,6 +119,11 @@ https://github.com/BitHighlander/keepkey-vault/pull/6 at
   explicit consent to that complete recipient. The corrected test checks the
   actual warning pixels, historical signature and cancellation on both 7.15
   and alpha; no firmware policy changes or new test skips are needed.
+* `ALPHA-STATIC-001`: hosted static analysis left crypto headers uninitialized,
+  so its missing array typedefs produced 19 spurious Monero input warnings.
+  Initializing the exact crypto/protocol pins reproduces zero warnings without
+  source or suppression changes. The shared invocation now refuses missing
+  headers before analysis; a regression covers each missing dependency.
 * `CONTACT-HOST-001`: match the pinned hdwallet API's decimal-string XRP tags
   and byte/base58 Solana owner hints. Tag zero stays distinct from no tag, and
   a bare contact cannot displace a routed contact. Tests cover the real Ripple
