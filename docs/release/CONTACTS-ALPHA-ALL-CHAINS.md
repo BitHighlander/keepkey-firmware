@@ -91,7 +91,7 @@ The host companion is based on the audited modern Vault tree
 `8014db143f104a79898ea397b5038f7c9e5e09d5`; the old fork master is a different
 application history and must not be merged to publish this companion. Review:
 https://github.com/BitHighlander/keepkey-vault/pull/6 at
-`dfa726e5453ed2ccf52039dc16f2b9b9707aea6d` (82 focused tests pass).
+`36f46b8d855b3c0ffeb5810052f66e0556160249` (85 focused tests pass).
 
 ## Necessary prerequisites and review findings
 
@@ -114,6 +114,11 @@ https://github.com/BitHighlander/keepkey-vault/pull/6 at
   explicit consent to that complete recipient. The corrected test checks the
   actual warning pixels, historical signature and cancellation on both 7.15
   and alpha; no firmware policy changes or new test skips are needed.
+* `CONTACT-HOST-001`: match the pinned hdwallet API's decimal-string XRP tags
+  and byte/base58 Solana owner hints. Tag zero stays distinct from no tag, and
+  a bare contact cannot displace a routed contact. Tests cover the real Ripple
+  adapter; a JS-to-emulator control certifies the host's request and verifies
+  its proof, OLED name, unchanged signature and one-attempt consumption.
 
 Qualification evidence records the exact source, dependency trees, containers,
 test counts, skips, ARM ELF/binary hashes and memory gates. The full product's
