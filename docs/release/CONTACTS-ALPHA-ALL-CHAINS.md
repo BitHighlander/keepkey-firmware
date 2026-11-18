@@ -73,7 +73,7 @@ boundaries.
 | MAYAChain | `fsm_msg_mayachain.h` | `test_mayachain_send` |
 | XRP and destination tag | `fsm_msg_ripple.h` | `test_xrp_and_destination_tag_binding` |
 | EOS token transfers | `eos.c`, `eosio.token.c` | `test_eos_transfer` |
-| Nano/Banano send link | `nano.c` | `test_nano_send` (Nano), shared coin adapter |
+| Nano send link | `nano.c` | `test_nano_send` |
 | Solana native | `fsm_msg_solana.h` | `test_solana_system_transfer` |
 | Solana checked tokens/ATA | same | `test_solana_checked_token_account_and_verified_owner` |
 | Solana nonce/close destinations | same | `test_solana_nonce_withdrawal_and_account_close` |
@@ -86,6 +86,10 @@ boundaries.
 | Hive transfer/streamed value operations | `fsm_msg_hive.h` | `test_hive_transfer`, `test_hive_streamed_value_operations` |
 | Existing EVM | unchanged destination encoding | `test_msg_ethereum_certified_contacts.py`, legacy native vectors |
 | Maximum request/proof and malformed text | `contact_book.c`, attestor | `test_maximum_text_book_and_proof_validation` |
+
+Banano has no active `CoinType` row in this selected alpha product. A direct
+wire probe returns `Failure_InvalidCoinName` before any review or signature.
+Its namespace mapping is reserved only and is not a supported-chain claim.
 
 The host companion is based on the audited modern Vault tree
 `8014db143f104a79898ea397b5038f7c9e5e09d5`; the old fork master is a different
