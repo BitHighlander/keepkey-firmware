@@ -91,7 +91,7 @@ The host companion is based on the audited modern Vault tree
 `8014db143f104a79898ea397b5038f7c9e5e09d5`; the old fork master is a different
 application history and must not be merged to publish this companion. Review:
 https://github.com/BitHighlander/keepkey-vault/pull/6 at
-`36f46b8d855b3c0ffeb5810052f66e0556160249` (85 focused tests pass).
+`01765ed9d87209ba3733c9b8da7ad8cf3b500b0e` (86 focused tests pass).
 
 ## Necessary prerequisites and review findings
 
@@ -119,6 +119,12 @@ https://github.com/BitHighlander/keepkey-vault/pull/6 at
   a bare contact cannot displace a routed contact. Tests cover the real Ripple
   adapter; a JS-to-emulator control certifies the host's request and verifies
   its proof, OLED name, unchanged signature and one-attempt consumption.
+* `CONTACT-HOST-002`: Desktop accepts raw TON addresses, while the wire field
+  is bounded to friendly encoding. The capability-gated host adapter converts
+  only that presentation, derives an omitted destination workchain, and keeps
+  the signed hash and explicit workchain claims intact. Real SDK packets from
+  Desktop's builder pass on both workchains with AdvancedMode disabled; the
+  prior raw packets reproduce the bounded-protobuf rejection.
 
 Qualification evidence records the exact source, dependency trees, containers,
 test counts, skips, ARM ELF/binary hashes and memory gates. The full product's
