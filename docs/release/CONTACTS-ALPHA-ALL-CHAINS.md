@@ -109,6 +109,11 @@ https://github.com/BitHighlander/keepkey-vault/pull/6 at
 * `ALPHA-PINS-001`: reconcile the firmware-pinned protocol/Python features into
   fork master, preserve the fork's other applicable test fixes, and pin exact
   resulting masters. No upstream dependency PR or develop branch is changed.
+* `ALPHA-PYK-001`: the inherited Uniswap external-recipient test incorrectly
+  expected refusal on the pinned 7.15 candidate. Its source already requires
+  explicit consent to that complete recipient. The corrected test checks the
+  actual warning pixels, historical signature and cancellation on both 7.15
+  and alpha; no firmware policy changes or new test skips are needed.
 
 Qualification evidence records the exact source, dependency trees, containers,
 test counts, skips, ARM ELF/binary hashes and memory gates. The full product's
