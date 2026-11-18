@@ -726,6 +726,9 @@ jobs:
       - name: Load emulator image
         run: docker load -i /tmp/emu-image.tar
 
+      - name: Size native-test UDP receive queues
+        run: sudo sysctl -w net.core.rmem_max=4194304
+
       - name: Run unit tests (${{ matrix.variant }})
         run: |
           # make xunit returns non-zero if any test fails — capture

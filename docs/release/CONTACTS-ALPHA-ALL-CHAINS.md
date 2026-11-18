@@ -106,7 +106,8 @@ https://github.com/BitHighlander/keepkey-vault/pull/6 at
   raw signing retains its AdvancedMode gate and never displays a contact name.
 * `ALPHA-NATIVE-001`: apply the same Monero compiler flags to every native probe.
 * `ALPHA-UDP-001`: size the emulator/test receive queues for bounded preloaded
-  review frames. The full suite runs without the audit's LD_PRELOAD shim.
+  review frames. Both standalone and composed native CI jobs raise the host
+  receive-buffer ceiling. The full suite runs without the audit's LD_PRELOAD shim.
 * `ALPHA-PALLAS-001`: use the shared Zcash arena member directly. The source
   boundary gate can then guard its identifier without permitting macro aliases.
   Its operation requirements and adversarial alias checks remain enforced.
