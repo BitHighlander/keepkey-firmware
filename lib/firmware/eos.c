@@ -17,6 +17,7 @@
  * along with this library.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "keepkey/firmware/contact_book.h"
 #include "keepkey/firmware/eos.h"
 
 #include "eos.h"
@@ -42,6 +43,7 @@ CONFIDENTIAL Hasher hasher_preimage;
 CONFIDENTIAL Hasher hasher_unknown;
 
 static bool inited = false;
+static uint8_t contact_chain[16];
 static CONFIDENTIAL HDNode node;
 static CONFIDENTIAL HDNode root;
 static uint32_t address_n[8];
@@ -285,6 +287,7 @@ void eos_signingInit(const uint8_t* chain_id, uint32_t num_actions,
                      const EosTxHeader* _header, const HDNode* _root,
                      const uint32_t _address_n[8], size_t _address_n_count) {
   hasher_Init(&hasher_preimage, HASHER_SHA2);
+  memcpy(contact_chain, chain_id, sizeof(contact_chain));
 
   memcpy(&header, _header, sizeof(header));
   memzero(&node, sizeof(node));
@@ -326,6 +329,7 @@ uint32_t eos_actionsRemaining(void) { return actions_remaining; }
 
 void eos_signingAbort(void) {
   inited = false;
+  memzero(contact_chain, sizeof(contact_chain));
   memzero(&hasher_preimage, sizeof(hasher_preimage));
   memzero(&hasher_unknown, sizeof(hasher_unknown));
   memzero(&header, sizeof(header));
@@ -692,4 +696,9 @@ bool eos_signTx(EosSignedTx* tx) {
   memcpy(tx->signature_s.bytes, sig + 32, 32);
 
   return true;
+}
+
+bool eos_confirmContact(const char* receiver) {
+  return contact_book_confirm_chain_hash("eos", contact_chain,
+                                         sizeof(contact_chain), receiver);
 }

@@ -18,6 +18,7 @@
  * along with this library.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "keepkey/firmware/contact_book.h"
 #include "keepkey/firmware/transaction.h"
 
 #include "keepkey/board/confirm_sm.h"
@@ -592,7 +593,8 @@ int compile_output(const CoinType* coin, const HDNode* root, TxOutputType* in,
       prefix_len = 0;
     }
 
-    if (!confirm_transaction_output(
+    if (!contact_book_confirm_coin(coin->coin_name, in->address) ||
+        !confirm_transaction_output(
             ButtonRequestType_ButtonRequest_ConfirmOutput, amount_str,
             prefix_len + in->address)) {
       return -1;  // user aborted

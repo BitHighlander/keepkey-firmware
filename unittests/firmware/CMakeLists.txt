@@ -72,6 +72,7 @@ if(NOT ${KK_BITCOIN_ONLY})
       solana.cpp
       thorchain.cpp
       tron.cpp
+      ton.cpp
       hive.cpp
       contact_book.cpp)
 
@@ -139,6 +140,7 @@ if(${KK_MONERO})
   set_property(SOURCE monero_tx.cpp APPEND PROPERTY OBJECT_DEPENDS
                "${monero_vectors_h}")
   set_source_files_properties(monero_probe.c monero_tx_probe.c
+      monero_tx_session_probe.c monero_key_image_session_probe.c
       PROPERTIES COMPILE_OPTIONS
       "-UUSE_MONERO;-DUSE_MONERO=1;-U__SSE__;-U__MMX__")
 endif()

@@ -65,6 +65,10 @@ void ton_formatAmount(char* buf, size_t len, uint64_t amount);
  */
 bool ton_signTx(const HDNode* node, const TonSignTx* msg, TonSignedTx* resp);
 
+/* Reconstruct the supported WalletV4R2 single-transfer body and bind every
+ * reviewed field to raw_tx. Returns the canonical workchain:hash recipient. */
+bool ton_verify_transfer(const TonSignTx* msg, char recipient[70]);
+
 /**
  * Sign an arbitrary message with raw Ed25519 (no domain separation).
  *

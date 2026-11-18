@@ -210,7 +210,9 @@ void fsm_msgMayachainMsgAck(const MayachainMsgAck* msg) {
           layoutHome();
           return;
         }
-        if (!confirm_transaction_output(
+        if (!contact_book_confirm_chain("cosmos", sign_tx->chain_id,
+                                        msg->send.to_address) ||
+            !confirm_transaction_output(
                 ButtonRequestType_ButtonRequest_ConfirmOutput, amount_str,
                 msg->send.to_address)) {
           mayachain_signAbort();

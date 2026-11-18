@@ -208,6 +208,7 @@ void fsm_msgEosTxActionAck(const EosTxActionAck* msg) {
 
   if (!eos_signTx(resp)) return;
 
+  eos_signingAbort();
   layoutHome();
   msg_write(MessageType_MessageType_EosSignedTx, resp);
   return;

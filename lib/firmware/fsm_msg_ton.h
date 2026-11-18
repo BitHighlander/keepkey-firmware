@@ -100,12 +100,17 @@ void fsm_msgTonSignTx(TonSignTx* msg) {
     return;
   }
 
-  /* AdvancedMode gate: to_address, amount and memo are display-only fields
-   * that are NOT derived from or checked against raw_tx, so this handler can
-   * only ever blind-sign opaque bytes. Same fence as fsm_msgTonSignMessage
-   * below, until the displayed fields are parsed out of raw_tx and verified
-   * against the bytes that actually get signed. */
-  if (!storage_isPolicyEnabled("AdvancedMode")) {
+  const bool claims_transfer = msg->has_to_address || msg->has_amount ||
+                               msg->has_seqno || msg->has_expire_at ||
+                               msg->has_bounce || msg->has_memo;
+  char recipient[70];
+  if (claims_transfer && !ton_verify_transfer(msg, recipient)) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    _("TON transfer fields do not match signed hash"));
+    layoutHome();
+    return;
+  }
+  if (!claims_transfer && !storage_isPolicyEnabled("AdvancedMode")) {
     (void)review(ButtonRequestType_ButtonRequest_Other, "Blocked",
                  "TON transaction signing is blind-only. "
                  "Enable AdvancedMode in device settings.");
@@ -128,19 +133,37 @@ void fsm_msgTonSignTx(TonSignTx* msg) {
     return;
   }
 
-  /* Never render to_address/amount/memo here: they are unbound to the signed
-   * bytes, so a hostile host can show one recipient on the OLED and get a
-   * completely different transaction signed. Name only what the device can
-   * actually verify -- how many bytes it is about to sign. */
-  char blind_msg[48];
-  snprintf(blind_msg, sizeof(blind_msg), "Sign %u-byte TON transaction?",
-           (unsigned)msg->raw_tx.size);
-  if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "TON Blind Sign", "%s",
-               blind_msg)) {
-    memzero(node, sizeof(*node));
-    fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
-    layoutHome();
-    return;
+  if (claims_transfer) {
+    char amount[40];
+    ton_formatAmount(amount, sizeof(amount), msg->amount);
+    if (!contact_book_confirm_address("ton:-239", recipient) ||
+        !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "TON Fees",
+                 "Fees are additional. Send mode 3 ignores action errors.") ||
+        !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "TON Transfer",
+                 "Send %s to\n%s?", amount, recipient) ||
+        !confirm(ButtonRequestType_ButtonRequest_SignTx, "TON WalletV4R2",
+                 "Seqno: %lu\nExpires: %lu\nBounce: %s",
+                 (unsigned long)msg->seqno, (unsigned long)msg->expire_at,
+                 (!msg->has_bounce || msg->bounce) ? "yes" : "no") ||
+        (msg->has_memo && msg->memo[0] &&
+         !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "TON Memo",
+                  "%s", msg->memo))) {
+      memzero(node, sizeof(*node));
+      fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
+      layoutHome();
+      return;
+    }
+  } else {
+    char blind_msg[48];
+    snprintf(blind_msg, sizeof(blind_msg), "Sign %u-byte TON transaction?",
+             (unsigned)msg->raw_tx.size);
+    if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "TON Blind Sign", "%s",
+                 blind_msg)) {
+      memzero(node, sizeof(*node));
+      fsm_sendFailure(FailureType_Failure_ActionCancelled, "Signing cancelled");
+      layoutHome();
+      return;
+    }
   }
 
   // Sign the transaction with Ed25519

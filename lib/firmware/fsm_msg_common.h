@@ -179,6 +179,7 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
       Features_Capability_CAPABILITY_PERMIT2_REVIEW,
       Features_Capability_CAPABILITY_SOLANA_CERTIFIED_REVIEW,
       Features_Capability_CAPABILITY_CERTIFIED_CONTACTS,
+      Features_Capability_CAPABILITY_CERTIFIED_CONTACTS_ALL_CHAINS,
       Features_Capability_CAPABILITY_ERC7730_TYPED_ITERATION,
       Features_Capability_CAPABILITY_ERC7730_TYPED_SETTLEMENT,
       Features_Capability_CAPABILITY_SAFE_TYPED_CALLS,

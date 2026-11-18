@@ -1,0 +1,68 @@
+{
+  "owner_instruction": "Finish the all-chain certified-contact epic on alpha",
+  "base": "66df3e24ce5a90dac790e89cc031d3cec82e9d15",
+  "state": "DEFINED",
+  "state_note": "This immutable contract defines the unit; qualification and promotion states are recorded in its exact-head receipt.",
+  "scope": "One certified-contact feature across the native signing families, with compatible EVM certificates and host proof delivery",
+  "invariants": [
+    "Only destinations derived from the bytes being signed can acquire a certified name",
+    "A name adds a confirmation; the full raw destination and existing amount, fee and memo reviews remain mandatory",
+    "Wrong network, destination, wallet, routing tag or proof never acquires a name",
+    "No contact proof changes a signature or lifts a blind-signing policy",
+    "Proof state survives only its one selected signing workflow and is scrubbed on completion, failure, cancellation, lock or unrelated requests",
+    "Existing EVM v1 request/root/proof vectors remain compatible"
+  ],
+  "foundation": [
+    "bounded printable address-text destination type",
+    "5550-byte maximum certification request within the existing 26 KiB decode arena",
+    "proof lifecycle for native signing requests",
+    "per-family canonical network mapping"
+  ],
+  "families": [
+    "UTXO",
+    "Cosmos",
+    "Osmosis",
+    "THORChain",
+    "MAYAChain",
+    "XRP",
+    "EOS",
+    "Nano",
+    "Solana",
+    "TRON",
+    "TON",
+    "Zcash shielded",
+    "Monero",
+    "Hive",
+    "existing EVM"
+  ],
+  "necessary_prerequisites": [
+    "native Monero test-probe compiler options",
+    "reliable bounded native-test UDP queues",
+    "TON v4r2 hash reconstruction before any verified recipient or contact label",
+    "EOS successful signing-session completion",
+    "explicit shared-arena access for the unchanged Pallas API boundary gate",
+    "fork-master dependency reconciliation"
+  ],
+  "checks": [
+    "focused native and wire tests per changed entry path",
+    "independent certificate/signature and signed-digest controls",
+    "malformed and cross-chain negative cases",
+    "cancellation/session isolation in normal and shuffled order",
+    "full and bitcoin-only builds",
+    "ARM ROM/SRAM budgets",
+    "OLED evidence",
+    "exact-head hosted confirmation before alpha promotion"
+  ],
+  "exclusions": [
+    "production signing or release publication",
+    "upstream/develop merges",
+    "revocation or rollback redesign",
+    "names on opaque or unsupported contract actions"
+  ],
+  "coverage_ledger": "CONTACTS-ALPHA-ALL-CHAINS.md",
+  "profiles": [
+    "full (default Monero signing and Zcash privacy)",
+    "bitcoin-only"
+  ],
+  "host_base": "8014db143f104a79898ea397b5038f7c9e5e09d5"
+}

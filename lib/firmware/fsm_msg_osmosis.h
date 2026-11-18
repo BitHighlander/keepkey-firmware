@@ -206,7 +206,9 @@ void fsm_msgOsmosisMsgAck(const OsmosisMsgAck* msg) {
 
     // Amount and destination are independent renderer-measured disclosures.
     // A single wrapped "Send ... to ..." body could hide the destination.
-    if (!confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmOutput,
+    if (!contact_book_confirm_chain("cosmos", sign_tx->chain_id,
+                                    msg->send.to_address) ||
+        !confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmOutput,
                        "Send Amount", (const uint8_t*)amount_str,
                        strlen(amount_str)) ||
         !confirm_bytes(ButtonRequestType_ButtonRequest_ConfirmOutput, "Send To",

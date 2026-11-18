@@ -48,6 +48,15 @@ static int socket_setup(int port) {
     perror("Failed to create socket");
     exit(1);
   }
+  /* Native review tests preload USB frames while the emulated CPU is stopped.
+   * A maximum-size review exceeds Linux's default UDP receive queue. Losing a
+   * decision here hangs confirmation rather than reporting a test failure. */
+  const int receive_buffer = 4 * 1024 * 1024;
+  if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer,
+                 sizeof(receive_buffer)) != 0) {
+    perror("Failed to size emulator receive queue");
+    exit(1);
+  }
 
   struct sockaddr_in addr;
   addr.sin_family = AF_INET;

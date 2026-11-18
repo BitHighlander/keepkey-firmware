@@ -156,6 +156,6 @@ Bip85Mnemonic.mnemonic max_size:241
 # 14-byte header plus 16 EVM contacts, each with 4 framing bytes, a 63-byte
 # network, a 20-byte address and a 24-byte label.
 ClearsignAttestorPublicKey.public_key   max_size:33
-ClearsignAttestorSign.payload           max_size:1790
+ClearsignAttestorSign.payload           max_size:5550
 ClearsignAttestorSignature.signature    max_size:64
 ClearsignAttestorSignature.public_key   max_size:33

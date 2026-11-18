@@ -111,4 +111,6 @@ bool eos_compilePermissionLevel(const EosPermissionLevel* auth);
 
 bool eos_signTx(EosSignedTx* tx);
 
+bool eos_confirmContact(const char* receiver);
+
 #endif

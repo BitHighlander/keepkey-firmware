@@ -26,7 +26,7 @@
  * Also certifies KKABREQ1 address books (no AdvancedMode: a fully parsed,
  * user-reviewed list of the user's own contacts). The device recomputes the
  * Merkle root, shows every label, network and address, and signs only the
- * 46-byte KKABRT01 root manifest. EVM addresses only for now.
+ * 46-byte KKABRT01 root manifest. EVM bytes and printable canonical addresses.
  */
 
 #include "keepkey/firmware/contact_book.h"
@@ -136,16 +136,18 @@ static void attestor_certifyContacts(const ClearsignAttestorSign* msg) {
   _Static_assert(
       sizeof(msg->payload.bytes) >=
           14 + CONTACT_BOOK_MAX_ENTRIES *
-                   (4 + CONTACT_BOOK_NETWORK_MAX + 20 + CONTACT_BOOK_LABEL_MAX),
+                   (4 + CONTACT_BOOK_NETWORK_MAX +
+                    CONTACT_BOOK_DESTINATION_MAX + CONTACT_BOOK_LABEL_MAX),
       "Contact certification exceeds the wire payload bound");
   ContactBookEntry entries[CONTACT_BOOK_MAX_ENTRIES];
   ContactBookManifest manifest;
   bool ok = contact_book_parse_request(msg->payload.bytes, msg->payload.size,
                                        &manifest, entries, NULL);
   for (uint8_t i = 0; ok && i < manifest.count; i++) {
-    ok = entries[i].destination_type == CONTACT_BOOK_DEST_EVM_ADDRESS &&
-         entries[i].destination_len == 20 &&
-         strncmp(entries[i].network, "eip155:", 7) == 0;
+    ok = (entries[i].destination_type == CONTACT_BOOK_DEST_EVM_ADDRESS &&
+          entries[i].destination_len == 20 &&
+          strncmp(entries[i].network, "eip155:", 7) == 0) ||
+         entries[i].destination_type == CONTACT_BOOK_DEST_ADDRESS_TEXT;
   }
   if (!ok) {
     memzero(entries, sizeof(entries));
@@ -159,8 +161,13 @@ static void attestor_certifyContacts(const ClearsignAttestorSign* msg) {
               "Approve %u contacts?\nRevision %lu", (unsigned)manifest.count,
               (unsigned long)manifest.revision);
   for (uint8_t i = 0; confirmed && i < manifest.count; i++) {
-    char address[43] = "0x";
-    ethereum_address_checksum(entries[i].destination, address + 2, false, 0);
+    char address[CONTACT_BOOK_DESTINATION_MAX + 1] = {0};
+    if (entries[i].destination_type == CONTACT_BOOK_DEST_EVM_ADDRESS) {
+      memcpy(address, "0x", 2);
+      ethereum_address_checksum(entries[i].destination, address + 2, false, 0);
+    } else {
+      memcpy(address, entries[i].destination, entries[i].destination_len);
+    }
     confirmed =
         confirm(ButtonRequestType_ButtonRequest_SignTx, "Certify Contact",
                 "%s\n%s", entries[i].label, entries[i].network) &&

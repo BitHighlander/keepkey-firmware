@@ -1,0 +1,15 @@
+{
+  "oracle": "@ton/core",
+  "version": "0.63.1",
+  "integrity": "sha512-hDWMjlKzc18W2E4OeV3hUP8ohRJNHPD4Wd1+AQJj8zshZyCRT0usrvnExgbNUTo/vntDqCGMzgYWbXxyaA+L4g==",
+  "resolved": "https://registry.npmjs.org/@ton/core/-/core-0.63.1.tgz",
+  "generator": "unittests/firmware/ton_vectors_gen.js",
+  "format": "clang-format 20.1.8",
+  "cases": 96,
+  "properties": [
+    "amount 0, 1 TON and uint64 max",
+    "workchains 0 and -1",
+    "both bounce flags",
+    "empty, inline, referenced and maximum 120-byte comments"
+  ]
+}

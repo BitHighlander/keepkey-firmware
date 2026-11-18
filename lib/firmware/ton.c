@@ -255,6 +255,124 @@ bool ton_signTx(const HDNode* node, const TonSignTx* msg, TonSignedTx* resp) {
   return true;
 }
 
+/* Ordinary level-zero cells only. The supported transfer has at most one
+ * reference per cell and a bounded (120-byte) comment; no exotic cells,
+ * plugins, arbitrary send modes, extra currencies or recipient StateInit are
+ * inferred. */
+typedef struct {
+  uint8_t data[128];
+  size_t bits;
+} TonBits;
+
+static void ton_bits(TonBits* cell, uint64_t value, unsigned bits) {
+  for (unsigned i = bits; i > 0; i--) {
+    if ((value >> (i - 1)) & 1)
+      cell->data[cell->bits / 8] |= (uint8_t)(0x80 >> (cell->bits % 8));
+    cell->bits++;
+  }
+}
+
+static void ton_cell_hash(const TonBits* cell, const uint8_t* ref,
+                          uint16_t ref_depth, uint8_t out[32]) {
+  uint8_t repr[164] = {0};
+  const size_t bytes = (cell->bits + 7) / 8;
+  repr[0] = ref ? 1 : 0;
+  repr[1] = (uint8_t)(cell->bits / 8 + bytes);
+  memcpy(repr + 2, cell->data, bytes);
+  if (cell->bits % 8) repr[1 + bytes] |= (uint8_t)(0x80 >> (cell->bits % 8));
+  size_t len = 2 + bytes;
+  if (ref) {
+    repr[len++] = (uint8_t)(ref_depth >> 8);
+    repr[len++] = (uint8_t)ref_depth;
+    memcpy(repr + len, ref, 32);
+    len += 32;
+  }
+  sha256_Raw(repr, len, out);
+}
+
+static bool ton_decode_recipient(const char* address, uint8_t raw[36]) {
+  if (strlen(address) != 48) return false;
+  for (size_t i = 0; i < 12; i++) {
+    uint32_t word = 0;
+    for (size_t j = 0; j < 4; j++) {
+      char c = address[i * 4 + j];
+      if (c == '+') c = '-';
+      if (c == '/') c = '_';
+      const char* p = strchr(base64_url_alphabet, c);
+      if (!p) return false;
+      word = (word << 6) | (uint32_t)(p - base64_url_alphabet);
+    }
+    raw[i * 3] = (uint8_t)(word >> 16);
+    raw[i * 3 + 1] = (uint8_t)(word >> 8);
+    raw[i * 3 + 2] = (uint8_t)word;
+  }
+  /* Testnet-friendly addresses are not eligible for this mainnet adapter. */
+  return (raw[0] == 0x11 || raw[0] == 0x51) &&
+         (raw[1] == 0 || raw[1] == 0xff) &&
+         ton_crc16(raw, 34) == ((uint16_t)raw[34] << 8 | raw[35]);
+}
+
+bool ton_verify_transfer(const TonSignTx* msg, char recipient[70]) {
+  uint8_t address[36];
+  if (!msg || !recipient || !msg->has_raw_tx || msg->raw_tx.size != 32 ||
+      !msg->has_to_address || !msg->has_amount || !msg->has_expire_at ||
+      !msg->has_seqno || !ton_decode_recipient(msg->to_address, address))
+    return false;
+  int32_t workchain = address[1] == 0xff ? -1 : 0;
+  if (msg->has_workchain && msg->workchain != workchain) return false;
+  const size_t memo_len = msg->has_memo ? strlen(msg->memo) : 0;
+  if (memo_len > 120) return false;
+  /* The text review cannot safely render control bytes or invisible Unicode. */
+  for (size_t i = 0; i < memo_len; i++)
+    if ((uint8_t)msg->memo[i] < 0x20 || (uint8_t)msg->memo[i] > 0x7e)
+      return false;
+
+  TonBits body = {{0}, 0};
+  if (memo_len) {
+    ton_bits(&body, 0, 32); /* text comment opcode */
+    for (size_t i = 0; i < memo_len; i++)
+      ton_bits(&body, (uint8_t)msg->memo[i], 8);
+  }
+  TonBits internal = {{0}, 0};
+  ton_bits(&internal, 0, 1); /* internal message */
+  ton_bits(&internal, 1, 1); /* IHR disabled */
+  ton_bits(&internal, !msg->has_bounce || msg->bounce, 1);
+  ton_bits(&internal, 0, 3); /* not bounced; source addr_none */
+  ton_bits(&internal, 4, 3); /* destination addr_std, no anycast */
+  ton_bits(&internal, address[1], 8);
+  for (size_t i = 2; i < 34; i++) ton_bits(&internal, address[i], 8);
+  unsigned amount_bytes = 0;
+  for (uint64_t n = msg->amount; n; n >>= 8) amount_bytes++;
+  ton_bits(&internal, amount_bytes, 4);
+  ton_bits(&internal, msg->amount, amount_bytes * 8);
+  ton_bits(&internal, 0, 9);  /* no other currencies; two zero fees */
+  ton_bits(&internal, 0, 64); /* created_lt */
+  ton_bits(&internal, 0, 32); /* created_at */
+  ton_bits(&internal, 0, 1);  /* no StateInit on recipient message */
+  bool body_ref = internal.bits + 1 + body.bits > 1023;
+  ton_bits(&internal, body_ref, 1);
+  uint8_t body_hash[32], internal_hash[32], hash[32];
+  if (!body_ref) {
+    for (size_t i = 0; i < body.bits; i++)
+      ton_bits(&internal, (body.data[i / 8] >> (7 - i % 8)) & 1, 1);
+  } else {
+    ton_cell_hash(&body, NULL, 0, body_hash);
+  }
+  ton_cell_hash(&internal, body_ref ? body_hash : NULL, 0, internal_hash);
+  TonBits wallet = {{0}, 0};
+  ton_bits(&wallet, V4R2_WALLET_ID, 32);
+  ton_bits(&wallet, msg->expire_at, 32);
+  ton_bits(&wallet, msg->seqno, 32);
+  ton_bits(&wallet, 0, 8); /* standard transfer operation */
+  ton_bits(&wallet, 3, 8); /* pay gas separately; ignore action errors */
+  ton_cell_hash(&wallet, internal_hash, body_ref ? 1 : 0, hash);
+  if (memcmp(hash, msg->raw_tx.bytes, 32) != 0) return false;
+  int len = snprintf(recipient, 70, "%ld:", (long)workchain);
+  for (size_t i = 0; i < 32; i++)
+    snprintf(recipient + len + 2 * i, 3, "%02x", address[i + 2]);
+  return true;
+}
+
 /**
  * Sign an arbitrary message with raw Ed25519.
  *

@@ -115,6 +115,7 @@ static bool tron_confirmParsed(const TronParsedTx* p, const TronToken* token) {
     case TRON_TX_TRANSFER:
       tron_formatAmount(amount_str, sizeof(amount_str), p->amount);
       return tron_addressFromBytes(p->to, to_str, sizeof(to_str)) &&
+             contact_book_confirm_address("tron:0x2b6653dc", to_str) &&
              confirm(ButtonRequestType_ButtonRequest_SignTx, "TRON",
                      "Send %s to %s?", amount_str, to_str);
     case TRON_TX_FREEZE_V2:
@@ -144,6 +145,9 @@ static bool tron_confirmParsed(const TronParsedTx* p, const TronToken* token) {
                  "Token contract %s", contract_str))
       return false;
   }
+  if (!approve && token &&
+      !contact_book_confirm_address("tron:0x2b6653dc", to_str))
+    return false;
   const char* asset = token ? token->symbol : "tokens";
   if (approve && ethereum_allowanceAmountIsUnlimited(p->trc20_amount)) {
     return confirm(ButtonRequestType_ButtonRequest_SignTx, "UNLIMITED approval",

@@ -1,6 +1,9 @@
 #include "keepkey/firmware/contact_book.h"
 
 #include <string.h>
+#include <stdio.h>
+
+#include "keepkey/board/confirm_sm.h"
 
 #include "trezor/crypto/ecdsa.h"
 #include "trezor/crypto/memzero.h"
@@ -13,7 +16,15 @@
 #define CONTACT_BOOK_VERSION 1
 
 static bool proof_available;
+static bool proof_consuming;
 static ContactBookEntry proof_entry;
+
+static bool address_text_valid(const uint8_t* address, size_t len) {
+  if (!address || !len || len > CONTACT_BOOK_DESTINATION_MAX) return false;
+  for (size_t i = 0; i < len; i++)
+    if (address[i] < 0x21 || address[i] > 0x7e) return false;
+  return true;
+}
 
 static uint32_t read_be32(const uint8_t* p) {
   return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
@@ -131,10 +142,12 @@ bool contact_book_parse_request(
     entries[i].destination_type = data[off++];
     entries[i].destination_len = data[off++];
     if (entries[i].destination_type == 0 || entries[i].destination_len == 0 ||
-        entries[i].destination_len > CONTACT_BOOK_DESTINATION_MAX ||
         off + entries[i].destination_len + 1 > data_len)
       return false;
     memcpy(entries[i].destination, data + off, entries[i].destination_len);
+    if (entries[i].destination_type == CONTACT_BOOK_DEST_ADDRESS_TEXT &&
+        !address_text_valid(entries[i].destination, entries[i].destination_len))
+      return false;
     off += entries[i].destination_len;
     uint8_t len = data[off++];
     if (off + len > data_len || !label_valid(data + off, len)) return false;
@@ -203,10 +216,12 @@ bool contact_book_process_proof(const uint8_t* data, size_t data_len,
   entry.destination_type = data[off++];
   entry.destination_len = data[off++];
   if (entry.destination_type == 0 || entry.destination_len == 0 ||
-      entry.destination_len > CONTACT_BOOK_DESTINATION_MAX ||
       off + entry.destination_len + 1 > data_len)
     return false;
   memcpy(entry.destination, data + off, entry.destination_len);
+  if (entry.destination_type == CONTACT_BOOK_DEST_ADDRESS_TEXT &&
+      !address_text_valid(entry.destination, entry.destination_len))
+    return false;
   off += entry.destination_len;
   uint8_t label_len = data[off++];
   if (off + label_len + 2 > data_len || !label_valid(data + off, label_len))
@@ -269,5 +284,67 @@ const char* contact_book_label(void) {
 
 void contact_book_clear(void) {
   proof_available = false;
+  proof_consuming = false;
   memzero(&proof_entry, sizeof(proof_entry));
+}
+
+void contact_book_begin(void) {
+  if (proof_consuming) contact_book_clear();
+  proof_consuming = proof_available;
+}
+
+bool contact_book_consuming(void) { return proof_consuming; }
+
+bool contact_book_confirm_address(const char* network, const char* address) {
+  if (!address || !contact_book_match(network, CONTACT_BOOK_DEST_ADDRESS_TEXT,
+                                      (const uint8_t*)address, strlen(address)))
+    return true;
+  return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                 "Certified contact", "%s\n%s", proof_entry.label, network);
+}
+
+bool contact_book_confirm_chain(const char* family, const char* chain,
+                                const char* address) {
+  if (!family || !chain) return true;
+  char network[CONTACT_BOOK_NETWORK_MAX + 1];
+  const int n = snprintf(network, sizeof(network), "%s:%s", family, chain);
+  if (n < 0 || (size_t)n >= sizeof(network)) return true;
+  return contact_book_confirm_address(network, address);
+}
+
+bool contact_book_confirm_chain_hash(const char* family, const uint8_t* chain,
+                                     size_t chain_size, const char* address) {
+  if (!chain || !chain_size || chain_size > 28) return true;
+  static const char hex[] = "0123456789abcdef";
+  char reference[57];
+  for (size_t i = 0; i < chain_size; i++) {
+    reference[2 * i] = hex[chain[i] >> 4];
+    reference[2 * i + 1] = hex[chain[i] & 15];
+  }
+  reference[2 * chain_size] = 0;
+  return contact_book_confirm_chain(family, reference, address);
+}
+
+bool contact_book_confirm_coin(const char* coin, const char* address) {
+  static const struct {
+    const char* coin;
+    const char* network;
+  } networks[] = {{"Bitcoin", "bip122:000000000019d6689c085ae165831e93"},
+                  {"Testnet", "bip122:000000000933ea01ad0ee984209779ba"},
+                  {"BitcoinCash", "bip122:000000000000000000651ef99cb9fcbe"},
+                  {"Litecoin", "bip122:12a765e31ffd4059bada1e25190f6e98"},
+                  {"Dogecoin", "bip122:00000000001a91e3dace36e2be3bf030"},
+                  {"Dash", "bip122:000007d91d1254d60e2dd1ae58038307"},
+                  {"DigiByte", "bip122:4da631f2ac1bed857bd968c67c913978"},
+                  {"Zcash", "bip122:00040fe8ec8471911baa1db1266ea15d"},
+                  {"Nano", "nano:mainnet"},
+                  {"Banano", "banano:mainnet"}};
+  if (!coin) return true;
+  for (size_t i = 0; i < sizeof(networks) / sizeof(networks[0]); i++)
+    if (!strcmp(coin, networks[i].coin))
+      return contact_book_confirm_address(networks[i].network, address);
+  /* Private CAIP namespace for firmware coins without a registered mapping.
+   * Hex of the exact coin name is reversible and cannot alias spaces/case. */
+  return contact_book_confirm_chain_hash("keepkey", (const uint8_t*)coin,
+                                         strlen(coin), address);
 }

@@ -1023,8 +1023,10 @@ struct PinResponder {
       if (id == MessageType_MessageType_ButtonRequest && approve_confirmation) {
         ++confirmations;
         static const uint8_t yes[] = {0x08, 0x01};
-        EXPECT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_ButtonAck, nullptr, 0));
-        EXPECT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_DebugLinkDecision, yes, 2));
+        EXPECT_TRUE(
+            kkconfirm_sendTiny(MessageType_MessageType_ButtonAck, nullptr, 0));
+        EXPECT_TRUE(kkconfirm_sendTiny(
+            MessageType_MessageType_DebugLinkDecision, yes, 2));
       }
     });
     kk_test_set_poll_hook([this] {
@@ -1224,9 +1226,9 @@ TEST(Fsm, HostOnlyMessagesDoNotRenewTheAutoLockDeadline) {
   kk_test_board_init();
   ScopedFlash flash;
   fsm_init();
-  for (auto id : {MessageType_MessageType_Ping,
-                  MessageType_MessageType_GetFeatures,
-                  MessageType_MessageType_Initialize}) {
+  for (auto id :
+       {MessageType_MessageType_Ping, MessageType_MessageType_GetFeatures,
+        MessageType_MessageType_Initialize}) {
     SCOPED_TRACE((int)id);
     loadAllWallet();
     storage_setPin("1234");
@@ -2053,9 +2055,10 @@ TEST_F(AutoLockProgress, DryRunRecoveryPastTheDeadlineServesNoPinGatedRead) {
 
   EXPECT_EQ(FailureType_Failure_UnexpectedMessage, requestPublicKey())
       << "an xpub was served beside a dry run past the deadline";
-  EXPECT_STREQ("Device is in the middle of setup. Send Initialize or Cancel "
-               "first.",
-               fsm_test_lastFailureMessage());
+  EXPECT_STREQ(
+      "Device is in the middle of setup. Send Initialize or Cancel "
+      "first.",
+      fsm_test_lastFailureMessage());
 
   Ping auth = {};
   auth.has_message = true;
@@ -3392,7 +3395,8 @@ TEST(Fsm, FiniteApprovalHasNoUnlimitedWarning) {
 // A THORChain deposit of an unlisted token shows the raw amount. The largest
 // one, 2^256 - 1 (78 digits), renders in full and the transaction signs.
 TEST(Fsm, ThorchainDepositOfAnUnknownTokenSignsTheLargestAmount) {
-  static const char kMemo[] = "=:ETH.ETH:0x41e5560054824ea6b0732e656e3ad64e20e94e45:0";
+  static const char kMemo[] =
+      "=:ETH.ETH:0x41e5560054824ea6b0732e656e3ad64e20e94e45:0";
   const size_t memo_len = sizeof(kMemo) - 1;
   EthereumSignTx msg = {};
   msg.has_chain_id = true;
@@ -4005,14 +4009,14 @@ TEST_F(ContactBookSigning, MaximumContactBookReachesEveryReviewOverUsb) {
   };
 
   for (const auto& network : {std::string("eip155:1313161554"),
-                             std::string("eip155:") + std::string(56, '1')}) {
+                              std::string("eip155:") + std::string(56, '1')}) {
     SCOPED_TRACE(network);
-    std::vector<uint8_t> request = {'K', 'K', 'A', 'B', 'R', 'E', 'Q', '1',
-                                    1, 0, 0, 0, 1, 16};
+    std::vector<uint8_t> request = {'K', 'K', 'A', 'B', 'R', 'E', 'Q',
+                                    '1', 1,   0,   0,   0,   1,   16};
     std::vector<std::string> labels;
     for (uint8_t i = 0; i < 16; i++) {
-      const std::string label = std::string(22, 'L') +
-                                char('0' + i / 10) + char('0' + i % 10);
+      const std::string label =
+          std::string(22, 'L') + char('0' + i / 10) + char('0' + i % 10);
       labels.push_back(label);
       request.push_back(network.size());
       request.insert(request.end(), network.begin(), network.end());
@@ -4037,13 +4041,12 @@ TEST_F(ContactBookSigning, MaximumContactBookReachesEveryReviewOverUsb) {
       EXPECT_EQ(labels[i] + "\n" + network, screens[1 + 2 * i]);
 
     if (request.size() == 1790) {
-      request.push_back(0);  // One byte beyond the supported envelope.
+      request.push_back(0);  // Trailing data inside the expanded wire envelope.
       fsm_test_clearLastFailure();
       kkconfirm_capture_start();
       send_request(request);
       EXPECT_TRUE(kkconfirm_capture_finish().empty());
-      EXPECT_EQ(FailureType_Failure_UnexpectedMessage,
-                fsm_test_lastFailureCode());
+      EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
     }
   }
 }
@@ -4428,6 +4431,7 @@ TEST(Fsm, FeaturesReportExactlyTheStagedCapabilities) {
       Features_Capability_CAPABILITY_PERMIT2_REVIEW,
       Features_Capability_CAPABILITY_SOLANA_CERTIFIED_REVIEW,
       Features_Capability_CAPABILITY_CERTIFIED_CONTACTS,
+      Features_Capability_CAPABILITY_CERTIFIED_CONTACTS_ALL_CHAINS,
       Features_Capability_CAPABILITY_ERC7730_TYPED_ITERATION,
       Features_Capability_CAPABILITY_ERC7730_TYPED_SETTLEMENT,
       Features_Capability_CAPABILITY_SAFE_TYPED_CALLS,
@@ -4461,8 +4465,8 @@ TEST(Fsm, PinChangeCancellationAndMismatchSendExactlyOneFailure) {
       ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_PinMatrixAck,
                                      second, sizeof(second)));
     } else {
-      ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_Cancel, nullptr,
-                                     0));
+      ASSERT_TRUE(
+          kkconfirm_sendTiny(MessageType_MessageType_Cancel, nullptr, 0));
     }
     ChangePin change = {};
     receiveMessage(MessageType_MessageType_ChangePin, ChangePin_fields,
@@ -4593,18 +4597,20 @@ TEST(Fsm, DebugLinkConfirmationTextTracksEveryPage) {
     });
     kkconfirm_capture_start();
     const bool ok = constant_power
-        ? confirm_constant_power_paged(ButtonRequestType_ButtonRequest_Other,
-                                       "Page", "1. abandon\n2. ability\n3. able\n4. about\n"
-                                       "5. above\n6. absent\n7. absorb\n8. abstract")
-        : confirm(ButtonRequestType_ButtonRequest_Other, "Page", "%s",
-                  body.c_str());
+                        ? confirm_constant_power_paged(
+                              ButtonRequestType_ButtonRequest_Other, "Page",
+                              "1. abandon\n2. ability\n3. able\n4. about\n"
+                              "5. above\n6. absent\n7. absorb\n8. abstract")
+                        : confirm(ButtonRequestType_ButtonRequest_Other, "Page",
+                                  "%s", body.c_str());
     kk_test_set_poll_hook({});
     const auto displayed = kkconfirm_capture_finish();
     ASSERT_TRUE(ok);
     ASSERT_GT(displayed.size(), 1u);
     EXPECT_EQ(displayed, reported_bodies);
     EXPECT_EQ(kkconfirm_capture_titles(), reported_titles);
-    if (!constant_power) EXPECT_NE(std::string::npos, reported_titles[0].find("1/"));
+    if (!constant_power)
+      EXPECT_NE(std::string::npos, reported_titles[0].find("1/"));
     kkconfirm_drain();
   }
 }

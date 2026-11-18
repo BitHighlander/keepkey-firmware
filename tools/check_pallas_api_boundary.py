@@ -459,12 +459,12 @@ def main():
                         (spend_signer, "Orchard spend signer")):
         forbid(body, "redpallas_sign_digest_for_rk(", where)
     check_signing_sites(zcash_fsm)
-    require(action_handler, "signatures[zcash_signing.signature_count]",
+    require(action_handler, "signatures[signing_session_arena.zcash.signature_count]",
             "compact PCZT signature collection")
-    require(action_handler, "zcash_signing.signature_count++",
+    require(action_handler, "signing_session_arena.zcash.signature_count++",
             "compact PCZT signature collection")
     require(final_gate,
-            "resp_signed->signatures_count = zcash_signing.signature_count",
+            "resp_signed->signatures_count = signing_session_arena.zcash.signature_count",
             "compact PCZT signature response")
     output_verification = code_only(function_body(
         zcash_fsm, "zcash_verify_and_confirm_orchard_output"))

@@ -405,6 +405,7 @@ def firmware_version_tuple():
 # Every Features.Capability the firmware can report (device-protocol), as the
 # names capability-gated python-keepkey tests skip with.
 KNOWN_CAPABILITIES = frozenset((
+    "certified-contacts-all-chains",
     "certified-contacts", "eip712-chunked-values", "entropy-audit-budget", "erc20-unlimited-approve-review",
     "erc20-unlimited-permit-review", "erc7730-runtime-review",
     "erc7730-typed-iteration", "erc7730-typed-settlement",

@@ -791,6 +791,29 @@ static bool fsm_dispatchGate(MessageType msg_id) {
         case MessageType_MessageType_EthereumSignTx:
           /* The preload's own chunks and its consumers keep it. */
           abort_signing_engines();
+          contact_book_begin();
+          break;
+        case MessageType_MessageType_SignTx:
+        case MessageType_MessageType_CosmosSignTx:
+        case MessageType_MessageType_OsmosisSignTx:
+        case MessageType_MessageType_ThorchainSignTx:
+        case MessageType_MessageType_MayachainSignTx:
+        case MessageType_MessageType_RippleSignTx:
+        case MessageType_MessageType_EosSignTx:
+        case MessageType_MessageType_NanoSignTx:
+        case MessageType_MessageType_SolanaSignTx:
+        case MessageType_MessageType_TronSignTx:
+        case MessageType_MessageType_TonSignTx:
+        case MessageType_MessageType_HiveSignTx:
+        case MessageType_MessageType_HiveSignOperations:
+#if ZCASH_PRIVACY
+        case MessageType_MessageType_ZcashSignPCZT:
+#endif
+#if MONERO_SIGNING
+        case MessageType_MessageType_MoneroTxInitRequest:
+#endif
+          abort_signing_engines();
+          contact_book_begin();
           break;
 #endif
         default:
@@ -823,6 +846,10 @@ bool keepkey_before_message_dispatch(MessageType msg_id) {
 }
 
 void keepkey_after_message_dispatch(void) {
+#if !BITCOIN_ONLY
+  if (contact_book_consuming() && !fsm_workflowInProgress())
+    contact_book_clear();
+#endif
   fsm_clearDerivedNode();
   /* Administrative handlers can change the layout without ending setup.
    * Restore active recovery input after they unwind, without new progress. */
@@ -848,6 +875,9 @@ void fsm_sendSuccess(const char* text) {
 }
 
 void fsm_sendFailure(FailureType code, const char* text) {
+#if !BITCOIN_ONLY
+  if (contact_book_consuming()) contact_book_clear();
+#endif
   if (msg_handler_rejected()) return;
   if (reset_msg_stack) {
     fsm_msgInitialize((Initialize*)0);

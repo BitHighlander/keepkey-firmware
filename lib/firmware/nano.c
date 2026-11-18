@@ -1,3 +1,4 @@
+#include "keepkey/firmware/contact_book.h"
 #include "keepkey/firmware/nano.h"
 
 #include "keepkey/board/confirm_sm.h"
@@ -354,7 +355,8 @@ bool nano_signTx(const NanoSignTx* msg, HDNode* node, NanoSignedTx* resp) {
       }
     } else if (is_send) {
       // Regular transfer
-      if (!confirm(ButtonRequestType_ButtonRequest_SignTx, "Send",
+      if (!contact_book_confirm_coin(coin->coin_name, recipient_address) ||
+          !confirm(ButtonRequestType_ButtonRequest_SignTx, "Send",
                    "Send %s %s to %s?", amount_string, coin->coin_shortcut,
                    recipient_address)) {
         fsm_sendFailure(FailureType_Failure_ActionCancelled,

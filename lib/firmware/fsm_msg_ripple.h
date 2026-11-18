@@ -146,7 +146,17 @@ void fsm_msgRippleSignTx(RippleSignTx* msg) {
   }
 
   if (needs_confirm) {
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Send",
+    char contact_destination[sizeof(msg->payment.destination) + 16];
+    if (msg->payment.has_destination_tag)
+      snprintf(contact_destination, sizeof(contact_destination),
+               "%s?dt=%" PRIu32, msg->payment.destination,
+               msg->payment.destination_tag);
+    else
+      strlcpy(contact_destination, msg->payment.destination,
+              sizeof(contact_destination));
+    if (!contact_book_confirm_address("ripple:4109c6f2045fc7eff4cde8f9905d19c2",
+                                      contact_destination) ||
+        !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Send",
                  msg->payment.has_destination_tag
                      ? "Send %s to %s, with destination tag %" PRIu32 "?"
                      : "Send %s to %s?",

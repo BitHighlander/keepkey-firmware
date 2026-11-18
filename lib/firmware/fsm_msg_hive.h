@@ -208,6 +208,15 @@ void fsm_msgHiveSignTx(const HiveSignTx* msg) {
   bn_format_uint64(msg->amount, NULL, suffix, prec, 0, false, amount_str,
                    sizeof(amount_str));
 
+  const uint8_t contact_mainnet[32] = HIVE_CHAIN_ID;
+  if ((!msg->has_chain_id ||
+       memcmp(msg->chain_id.bytes, contact_mainnet, 32) == 0) &&
+      !contact_book_confirm_address("hive:beeab0de", msg->to)) {
+    memzero(node, sizeof(*node));
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, NULL);
+    layoutHome();
+    return;
+  }
   if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Send Hive",
                "Send %s to @%s?", amount_str, msg->to)) {
     memzero(node, sizeof(*node));
@@ -736,6 +745,10 @@ void fsm_msgHiveSignOperations(const HiveSignOperations* msg) {
   hdnode_fill_public_key(node);
 
   // Confirm operation summaries and payloads, then show a final sign prompt.
+  const uint8_t contact_mainnet_id[32] = HIVE_CHAIN_ID;
+  const bool contact_mainnet =
+      !msg->has_chain_id ||
+      memcmp(msg->chain_id.bytes, contact_mainnet_id, 32) == 0;
   for (uint8_t i = 0; i < parsed.num_ops; i++) {
     const HiveTxOp* op = &parsed.ops[i];
     char name[17];  // hive account names are <= 16 chars, length-validated
@@ -823,6 +836,10 @@ void fsm_msgHiveSignOperations(const HiveSignOperations* msg) {
         char amount[40], target[17];
         hive_format_asset(op->assets[0], amount, sizeof(amount));
         hive_copy_slice(target, sizeof(target), op->target, op->target_len);
+        if (contact_mainnet &&
+            !contact_book_confirm_address("hive:beeab0de",
+                                          op->target_len ? target : name))
+          break;
         approved =
             op->target_len == 0
                 ? confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
@@ -915,6 +932,9 @@ void fsm_msgHiveSignOperations(const HiveSignOperations* msg) {
         bool deposit = (op->op_type == HIVE_OP_TRANSFER_TO_SAVINGS);
         hive_format_asset(op->assets[0], amount, sizeof(amount));
         hive_copy_slice(target, sizeof(target), op->target, op->target_len);
+        if (contact_mainnet &&
+            !contact_book_confirm_address("hive:beeab0de", target))
+          break;
         // One variable per row. A 16-character account name sharing a row
         // with a label can wrap into a fourth row, which the display drops
         // silently — and here that row carries the destination account.
@@ -953,6 +973,9 @@ void fsm_msgHiveSignOperations(const HiveSignOperations* msg) {
         char amount[40], target[17];
         hive_format_asset(op->assets[0], amount, sizeof(amount));
         hive_copy_slice(target, sizeof(target), op->target, op->target_len);
+        if (contact_mainnet && hive_assetAmount(op->assets[0]) > 0 &&
+            !contact_book_confirm_address("hive:beeab0de", target))
+          break;
         approved =
             hive_assetAmount(op->assets[0]) == 0
                 ? confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,

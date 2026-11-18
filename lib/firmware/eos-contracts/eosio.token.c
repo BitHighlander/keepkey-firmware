@@ -17,6 +17,7 @@
  * along with this library.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "keepkey/firmware/contact_book.h"
 #include "keepkey/firmware/eos-contracts/eosio.token.h"
 
 #include "eos.h"
@@ -71,7 +72,8 @@ bool eos_compileActionTransfer(const EosActionCommon* common,
   CHECK_PARAM_RET(eos_formatName(action->receiver, receiver), "Invalid name",
                   false);
 
-  if (!confirm(ButtonRequestType_ButtonRequest_ConfirmEosAction, "Transfer",
+  if (!eos_confirmContact(receiver) ||
+      !confirm(ButtonRequestType_ButtonRequest_ConfirmEosAction, "Transfer",
                "Do you want to send %s from %s to %s?", asset, sender,
                receiver)) {
     fsm_sendFailure(FailureType_Failure_ActionCancelled, "Action Cancelled");

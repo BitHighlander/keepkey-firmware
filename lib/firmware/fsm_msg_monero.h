@@ -375,7 +375,14 @@ static bool monero_tx_confirm(const MoneroTxReview* review) {
         return false;
       continue;
     }
-    if (!confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+    const char* contact_network =
+        review->network == MoneroNetworkType_MONERO_NETWORK_TESTNET
+            ? "monero:testnet"
+        : review->network == MoneroNetworkType_MONERO_NETWORK_STAGENET
+            ? "monero:stagenet"
+            : "monero:418015bb9ae982a1975da7d79277c270";
+    if (!contact_book_confirm_address(contact_network, out->address) ||
+        !confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                  monero_tx_title(review->network, _("Monero send"),
                                  _("Monero TESTNET send"),
                                  _("Monero STAGENET send")),

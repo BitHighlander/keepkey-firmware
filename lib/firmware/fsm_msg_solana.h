@@ -65,6 +65,15 @@ static bool solana_confirm_account(const char* title, const char* label,
                  label, s);
 }
 
+static bool solana_confirm_contact(const uint8_t key[SOL_PUBKEY_SIZE]) {
+  if (solana_isHostLutKey(solana_review_host_lut, key)) return true;
+  char address[45];
+  size_t len = sizeof(address);
+  return !solana_base58_encode(key, SOL_PUBKEY_SIZE, address, &len) ||
+         contact_book_confirm_address("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+                                      address);
+}
+
 /* Priority fee (ceil(cu_price * cu_limit / 1e6) lamports) is charged even on
  * failure, and CU fields show no units, so disclose the MAXIMUM fee in SOL
  * (the derived default limit when none is set; never an understatement). */
@@ -119,6 +128,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
 
   switch (pi->type) {
     case SOL_INSTR_SYSTEM_TRANSFER: {
+      if (!solana_confirm_contact(pi->to)) return false;
       if (!solana_confirm_account(title, "Transfer from", pi->from)) {
         return false;
       }
@@ -151,6 +161,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
       return solana_confirm_account(title, "Advance nonce account", pi->from);
 
     case SOL_INSTR_SYSTEM_WITHDRAW_NONCE: {
+      if (!solana_confirm_contact(pi->to)) return false;
       /* Withdrawing the full balance can destroy the nonce account. */
       if (!solana_confirm_account(title, "Nonce account", pi->from)) {
         return false;
@@ -261,7 +272,8 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
           solana_findTokenRecipientOwner(msg, pi->program_id, pi->mint, pi->to,
                                          recipient_owner);
       if (recipient_verified) {
-        if (!solana_confirm_account(title, "Verified recipient owner",
+        if (!solana_confirm_contact(recipient_owner) ||
+            !solana_confirm_account(title, "Verified recipient owner",
                                     recipient_owner)) {
           return false;
         }
@@ -272,6 +284,8 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
           return false;
         }
       }
+
+      if (!recipient_verified && !solana_confirm_contact(pi->to)) return false;
 
       /* Aliases are host-chosen and not unique; the fingerprint identifies the
        * attesting key. symbol_verified implies the signer is loaded, and that
@@ -329,6 +343,7 @@ static bool solana_confirmInstruction(const SolanaParsedInstruction* pi,
                                     pi->from);
 
     case SOL_INSTR_TOKEN_CLOSE_ACCOUNT: {
+      if (!solana_confirm_contact(pi->to)) return false;
       /* Closing sweeps the ENTIRE lamport balance (invisible to the device). */
       if (!solana_confirm_account(title, "Close token account", pi->from)) {
         return false;

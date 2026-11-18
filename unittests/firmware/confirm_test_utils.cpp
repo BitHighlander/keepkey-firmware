@@ -9,6 +9,7 @@ extern "C" {
 
 #include <arpa/inet.h>
 #include <stdlib.h>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 #include <string>
@@ -92,7 +93,29 @@ uint16_t kkconfirm_main_port(void) {
 }
 
 bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload, uint8_t len) {
-  if (kkconfirm_fd < 0) kkconfirm_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (kkconfirm_fd < 0) {
+    kkconfirm_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    const int receive_buffer = 4 * 1024 * 1024;
+    if (kkconfirm_fd >= 0 &&
+        setsockopt(kkconfirm_fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer,
+                   sizeof(receive_buffer)) != 0) {
+      close(kkconfirm_fd);
+      kkconfirm_fd = -1;
+      return false;
+    }
+    int actual = 0;
+    socklen_t actual_size = sizeof(actual);
+    if (kkconfirm_fd >= 0 && (getsockopt(kkconfirm_fd, SOL_SOCKET, SO_RCVBUF,
+                                         &actual, &actual_size) != 0 ||
+                              actual < receive_buffer)) {
+      fprintf(stderr,
+              "Native confirmation tests need a 4 MiB UDP receive "
+              "queue; increase net.core.rmem_max on Linux.\n");
+      close(kkconfirm_fd);
+      kkconfirm_fd = -1;
+      return false;
+    }
+  }
   if (kkconfirm_fd < 0) return false;
 
   uint8_t frame[64] = {0};
