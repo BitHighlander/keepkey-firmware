@@ -417,7 +417,7 @@ TEST_F(MoneroSession, DispatchGateKeepsOnlyStatusRequestsAndOwnSteps) {
 TEST_F(MoneroSession, BeginPublishesOnlyInitializedState) {
   const auto& c = monero_core_cases[0];
   auto init = init_request({transfer(c, true)});
-  timer_poll_ticks(120001);
+  advance_monero_test_clock(120001);
   monero_session_interrupt = [] {
     EXPECT_EQ(SIGNING_SESSION_FREE, signing_session_owner());
     keepkey_user_activity();
@@ -437,7 +437,7 @@ TEST_F(MoneroSession, ActivityDuringAnExpiringStepCannotWipeItsCountOrKeys) {
   auto init = init_request({td});
   ASSERT_TRUE(monero_key_image_begin(c.key_seed, &init));
   monero_session_interrupt = [] {
-    timer_poll_ticks(120001);
+    advance_monero_test_clock(120001);
     const auto before = signing_session_arena;
     EXPECT_FALSE(monero_key_image_active());
     keepkey_user_activity();
@@ -465,7 +465,7 @@ TEST_F(MoneroSession, DispatchExpiresAnIdleKeyImageSession) {
   const auto& c = monero_core_cases[0];
   auto init = init_request({transfer(c, true)});
   ASSERT_TRUE(monero_key_image_begin(c.key_seed, &init));
-  timer_poll_ticks(120001);
+  advance_monero_test_clock(120001);
   keepkey_user_activity();
   EXPECT_EQ(SIGNING_SESSION_MONERO_KEY_IMAGE, signing_session_owner());
   EXPECT_TRUE(keepkey_before_message_dispatch(MessageType_MessageType_GetFeatures));
@@ -493,7 +493,7 @@ TEST(SigningSession, ZcashActivityPredicateDoesNotModifyTheArena) {
   ASSERT_NE(nullptr, signing_session_claim(SIGNING_SESSION_ZCASH));
   signing_session_arena.zcash.active = true;
   const auto before = signing_session_arena;
-  timer_poll_ticks(MONERO_TX_SESSION_MS + 1);
+  advance_monero_test_clock(MONERO_TX_SESSION_MS + 1);
   keepkey_user_activity();
   EXPECT_TRUE(zcash_signing_is_active());
   EXPECT_TRUE(fsm_workflowInProgress());

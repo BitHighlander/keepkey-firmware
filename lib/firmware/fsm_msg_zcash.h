@@ -304,8 +304,8 @@ static bool zcash_verify_and_confirm_orchard_output(
   uint8_t* const memo = zcash_memo;
   if (!zcash_orchard_note_ciphertext_valid(
           msg->recipient.bytes, msg->value, msg->nullifier.bytes,
-          msg->rseed.bytes, signing_session_arena.zcash.is_ironwood, msg->epk.bytes,
-          msg->enc_compact.bytes, msg->enc_memo.bytes,
+          msg->rseed.bytes, signing_session_arena.zcash.is_ironwood,
+          msg->epk.bytes, msg->enc_compact.bytes, msg->enc_memo.bytes,
           msg->enc_noncompact.bytes, memo)) {
     fsm_sendFailure(FailureType_Failure_Other,
                     _("Shielded note ciphertext mismatch"));
@@ -352,8 +352,9 @@ static bool zcash_verify_and_confirm_orchard_output(
    * the key that signs. Its value is shown once, as a total, at the final
    * gate. An output to any other address, the account's external ones
    * included, is shown on its own. */
-  if (msg->value > 0 && zcash_orchard_receiver_matches_ivk(
-                            signing_session_arena.zcash.ivk_internal, msg->recipient.bytes)) {
+  if (msg->value > 0 &&
+      zcash_orchard_receiver_matches_ivk(
+          signing_session_arena.zcash.ivk_internal, msg->recipient.bytes)) {
     if (signing_session_arena.zcash.change_value > UINT64_MAX - msg->value) {
       fsm_sendFailure(FailureType_Failure_Other, _("Invalid change value"));
       return false;
@@ -428,8 +429,10 @@ static bool zcash_compute_verified_fee(uint64_t* fee_out) {
   if (!fee_out) return false;
 
   int64_t net_transparent = 0;
-  for (uint32_t i = 0; i < signing_session_arena.zcash.n_transparent_inputs; i++) {
-    const uint64_t amount = signing_session_arena.zcash.transparent_inputs[i].amount;
+  for (uint32_t i = 0; i < signing_session_arena.zcash.n_transparent_inputs;
+       i++) {
+    const uint64_t amount =
+        signing_session_arena.zcash.transparent_inputs[i].amount;
     if (amount > (uint64_t)INT64_MAX ||
         net_transparent > INT64_MAX - (int64_t)amount) {
       return false;
@@ -437,8 +440,10 @@ static bool zcash_compute_verified_fee(uint64_t* fee_out) {
     net_transparent += (int64_t)amount;
   }
 
-  for (uint32_t i = 0; i < signing_session_arena.zcash.n_transparent_outputs; i++) {
-    const uint64_t amount = signing_session_arena.zcash.transparent_outputs[i].amount;
+  for (uint32_t i = 0; i < signing_session_arena.zcash.n_transparent_outputs;
+       i++) {
+    const uint64_t amount =
+        signing_session_arena.zcash.transparent_outputs[i].amount;
     if (amount > (uint64_t)INT64_MAX ||
         net_transparent < INT64_MIN + (int64_t)amount) {
       return false;
@@ -448,7 +453,8 @@ static bool zcash_compute_verified_fee(uint64_t* fee_out) {
 
   int64_t signed_fee = net_transparent;
   for (int pool = 0; pool < 2; pool++) {
-    const int64_t value_balance = signing_session_arena.zcash.bundle_value_balance[pool];
+    const int64_t value_balance =
+        signing_session_arena.zcash.bundle_value_balance[pool];
     if ((value_balance > 0 && signed_fee > INT64_MAX - value_balance) ||
         (value_balance < 0 && signed_fee < INT64_MIN - value_balance)) {
       return false;
@@ -539,7 +545,8 @@ static void zcash_send_transparent_ack(bool output, uint32_t next_index) {
 static bool zcash_build_transparent_digest_info(
     ZcashTransparentInputDigestInfo inputs[ZCASH_MAX_TRANSPARENT_INPUTS],
     ZcashTransparentOutputDigestInfo outputs[ZCASH_MAX_TRANSPARENT_OUTPUTS]) {
-  for (uint32_t i = 0; i < signing_session_arena.zcash.n_transparent_inputs; i++) {
+  for (uint32_t i = 0; i < signing_session_arena.zcash.n_transparent_inputs;
+       i++) {
     const ZcashTransparentInputState* stored =
         &signing_session_arena.zcash.transparent_inputs[i];
     if (!stored->received) return false;
@@ -551,7 +558,8 @@ static bool zcash_build_transparent_digest_info(
     inputs[i].script_pubkey_size = stored->script_pubkey_size;
   }
 
-  for (uint32_t i = 0; i < signing_session_arena.zcash.n_transparent_outputs; i++) {
+  for (uint32_t i = 0; i < signing_session_arena.zcash.n_transparent_outputs;
+       i++) {
     const ZcashTransparentOutputState* stored =
         &signing_session_arena.zcash.transparent_outputs[i];
     if (!stored->received) return false;
@@ -567,14 +575,17 @@ static bool zcash_compute_active_sighash(const uint8_t transparent_digest[32],
                                          uint8_t sighash[32]) {
   if (signing_session_arena.zcash.transaction_v6) {
     return zcash_compute_v6_shielded_sighash(
-        signing_session_arena.zcash.header_digest, transparent_digest, EMPTY_SAPLING_DIGEST,
+        signing_session_arena.zcash.header_digest, transparent_digest,
+        EMPTY_SAPLING_DIGEST,
         signing_session_arena.zcash.orchard_component_digest,
-        signing_session_arena.zcash.ironwood_component_digest, signing_session_arena.zcash.branch_id,
-        sighash);
+        signing_session_arena.zcash.ironwood_component_digest,
+        signing_session_arena.zcash.branch_id, sighash);
   }
   return zcash_compute_shielded_sighash(
-      signing_session_arena.zcash.header_digest, transparent_digest, EMPTY_SAPLING_DIGEST,
-      signing_session_arena.zcash.orchard_component_digest, signing_session_arena.zcash.branch_id, sighash);
+      signing_session_arena.zcash.header_digest, transparent_digest,
+      EMPTY_SAPLING_DIGEST,
+      signing_session_arena.zcash.orchard_component_digest,
+      signing_session_arena.zcash.branch_id, sighash);
 }
 
 /* The transparent component digest from the device-held plaintext; the empty
@@ -588,10 +599,12 @@ static bool zcash_device_transparent_digest(uint8_t transparent_digest[32]) {
 
   ZcashTransparentInputDigestInfo inputs[ZCASH_MAX_TRANSPARENT_INPUTS] = {0};
   ZcashTransparentOutputDigestInfo outputs[ZCASH_MAX_TRANSPARENT_OUTPUTS] = {0};
-  const bool ok = zcash_build_transparent_digest_info(inputs, outputs) &&
-                  zcash_compute_orchard_transparent_sig_digest(
-                      inputs, signing_session_arena.zcash.n_transparent_inputs, outputs,
-                      signing_session_arena.zcash.n_transparent_outputs, transparent_digest);
+  const bool ok =
+      zcash_build_transparent_digest_info(inputs, outputs) &&
+      zcash_compute_orchard_transparent_sig_digest(
+          inputs, signing_session_arena.zcash.n_transparent_inputs, outputs,
+          signing_session_arena.zcash.n_transparent_outputs,
+          transparent_digest);
   memzero(inputs, sizeof(inputs));
   memzero(outputs, sizeof(outputs));
   return ok;
@@ -600,12 +613,14 @@ static bool zcash_device_transparent_digest(uint8_t transparent_digest[32]) {
 /* Early, friendly check of the host's transparent digest claim. The sighash
  * is computed only at the final gate, from the device digest. */
 static bool zcash_finalize_transparent_digest(void) {
-  if (!signing_session_arena.zcash.has_expected_transparent_digest) return false;
+  if (!signing_session_arena.zcash.has_expected_transparent_digest)
+    return false;
 
   uint8_t transparent_digest[32] = {0};
-  const bool ok = zcash_device_transparent_digest(transparent_digest) &&
-                  memcmp(transparent_digest,
-                         signing_session_arena.zcash.expected_transparent_digest, 32) == 0;
+  const bool ok =
+      zcash_device_transparent_digest(transparent_digest) &&
+      memcmp(transparent_digest,
+             signing_session_arena.zcash.expected_transparent_digest, 32) == 0;
   memzero(transparent_digest, sizeof(transparent_digest));
   if (ok) signing_session_arena.zcash.transparent_digest_verified = true;
   return ok;
@@ -629,11 +644,13 @@ static bool zcash_sign_transparent_inputs(bool* cancelled, bool* reported) {
     goto cleanup;
   }
 
-  memset(&signing_session_arena.zcash.pending_transparent, 0, sizeof(ZcashTransparentSigned));
+  memset(&signing_session_arena.zcash.pending_transparent, 0,
+         sizeof(ZcashTransparentSigned));
   signing_session_arena.zcash.pending_transparent.signatures_count =
       signing_session_arena.zcash.n_transparent_inputs;
 
-  for (uint32_t i = 0; i < signing_session_arena.zcash.n_transparent_inputs; i++) {
+  for (uint32_t i = 0; i < signing_session_arena.zcash.n_transparent_inputs;
+       i++) {
     const ZcashTransparentInputState* stored =
         &signing_session_arena.zcash.transparent_inputs[i];
 
@@ -664,7 +681,8 @@ static bool zcash_sign_transparent_inputs(bool* cancelled, bool* reported) {
 
     bool sign_ok = zcash_compute_transparent_sighash_digest(
         inputs, signing_session_arena.zcash.n_transparent_inputs, outputs,
-        signing_session_arena.zcash.n_transparent_outputs, i, 0x01, t_sig_digest);
+        signing_session_arena.zcash.n_transparent_outputs, i, 0x01,
+        t_sig_digest);
     if (sign_ok) {
       sign_ok = zcash_compute_active_sighash(t_sig_digest, full_sighash);
     }
@@ -682,9 +700,10 @@ static bool zcash_sign_transparent_inputs(bool* cancelled, bool* reported) {
     }
 
     int der_len = ecdsa_sig_to_der(sig, der_sig);
-    signing_session_arena.zcash.pending_transparent.signatures[i].size = der_len;
-    memcpy(signing_session_arena.zcash.pending_transparent.signatures[i].bytes, der_sig,
-           der_len);
+    signing_session_arena.zcash.pending_transparent.signatures[i].size =
+        der_len;
+    memcpy(signing_session_arena.zcash.pending_transparent.signatures[i].bytes,
+           der_sig, der_len);
 
     memzero(sig, sizeof(sig));
     memzero(der_sig, sizeof(der_sig));
@@ -732,8 +751,10 @@ static bool zcash_sign_orchard_spends(void) {
      * alpha, so the device cannot sign under a key that is not its own. */
     ZCASH_TEST_COUNT_SIGN();
     int sign_rc = redpallas_sign_digest_with_ak(
-        signing_session_arena.zcash.keys.ask, signing_session_arena.zcash.keys.ak, alpha, rk,
-        signing_session_arena.zcash.sighash, zcash_T, slot, zcash_action_progress, &progress);
+        signing_session_arena.zcash.keys.ask,
+        signing_session_arena.zcash.keys.ak, alpha, rk,
+        signing_session_arena.zcash.sighash, zcash_T, slot,
+        zcash_action_progress, &progress);
     memzero(zcash_T, sizeof(zcash_T));
     memzero(alpha, sizeof(alpha));
     memzero(rk, sizeof(rk));
@@ -768,7 +789,8 @@ static bool zcash_finish_bundle(void) {
 
   blake2b_Final(&signing_session_arena.zcash.compact_ctx, compact_hash, 32);
   blake2b_Final(&signing_session_arena.zcash.memos_ctx, memos_hash, 32);
-  blake2b_Final(&signing_session_arena.zcash.noncompact_ctx, noncompact_hash, 32);
+  blake2b_Final(&signing_session_arena.zcash.noncompact_ctx, noncompact_hash,
+                32);
 
   /* Every v6 bundle digest, Orchard or Ironwood, omits the anchor: v6 moves
    * it to the auth digest. The action digests keep their v5 personalizations
@@ -778,24 +800,29 @@ static bool zcash_finish_bundle(void) {
       &bundle_ctx, 32,
       pool ? "ZTxIdIronwd_H_v6"
            : (signing_session_arena.zcash.transaction_v6 ? "ZTxIdOrchardH_v6"
-                                           : "ZTxIdOrchardHash"),
+                                                         : "ZTxIdOrchardHash"),
       16);
   blake2b_Update(&bundle_ctx, compact_hash, 32);
   blake2b_Update(&bundle_ctx, memos_hash, 32);
   blake2b_Update(&bundle_ctx, noncompact_hash, 32);
-  blake2b_Update(&bundle_ctx, &signing_session_arena.zcash.bundle_flags[pool], 1);
-  blake2b_Update(&bundle_ctx,
-                 (const uint8_t*)&signing_session_arena.zcash.bundle_value_balance[pool], 8);
+  blake2b_Update(&bundle_ctx, &signing_session_arena.zcash.bundle_flags[pool],
+                 1);
+  blake2b_Update(
+      &bundle_ctx,
+      (const uint8_t*)&signing_session_arena.zcash.bundle_value_balance[pool],
+      8);
   if (!signing_session_arena.zcash.transaction_v6) {
     blake2b_Update(&bundle_ctx, signing_session_arena.zcash.orchard_anchor, 32);
   }
 
-  uint8_t* bundle_digest = pool ? signing_session_arena.zcash.ironwood_component_digest
-                                : signing_session_arena.zcash.orchard_component_digest;
+  uint8_t* bundle_digest =
+      pool ? signing_session_arena.zcash.ironwood_component_digest
+           : signing_session_arena.zcash.orchard_component_digest;
   blake2b_Final(&bundle_ctx, bundle_digest, 32);
 
-  if (memcmp(bundle_digest, signing_session_arena.zcash.expected_bundle_digest[pool], 32) !=
-      0) {
+  if (memcmp(bundle_digest,
+             signing_session_arena.zcash.expected_bundle_digest[pool],
+             32) != 0) {
     zcash_fail(FailureType_Failure_Other,
                _("Shielded digest mismatch: transaction data "
                  "does not match sighash"));
@@ -812,17 +839,19 @@ static void zcash_final_gate(void) {
     if (!zcash_finish_bundle()) return;
   } else {
     /* Transparent-only: both bundles are empty, by the device's constants. */
-    zcash_empty_orchard_digest(signing_session_arena.zcash.transaction_v6,
-                               signing_session_arena.zcash.orchard_component_digest);
-    memcpy(signing_session_arena.zcash.ironwood_component_digest, EMPTY_IRONWOOD_DIGEST_V6,
-           32);
+    zcash_empty_orchard_digest(
+        signing_session_arena.zcash.transaction_v6,
+        signing_session_arena.zcash.orchard_component_digest);
+    memcpy(signing_session_arena.zcash.ironwood_component_digest,
+           EMPTY_IRONWOOD_DIGEST_V6, 32);
   }
 
   uint8_t t_digest[32];
   const bool sighash_ok =
       signing_session_arena.zcash.transparent_digest_verified &&
       zcash_device_transparent_digest(t_digest) &&
-      zcash_compute_active_sighash(t_digest, signing_session_arena.zcash.sighash);
+      zcash_compute_active_sighash(t_digest,
+                                   signing_session_arena.zcash.sighash);
   memzero(t_digest, sizeof(t_digest));
   if (!sighash_ok) {
     zcash_fail(FailureType_Failure_Other, _("Sighash computation failed"));
@@ -880,7 +909,8 @@ static void zcash_final_gate(void) {
   resp_signed->signatures_count = signing_session_arena.zcash.signature_count;
   for (uint32_t i = 0; i < signing_session_arena.zcash.signature_count; i++) {
     resp_signed->signatures[i].size = 64;
-    memcpy(resp_signed->signatures[i].bytes, signing_session_arena.zcash.signatures[i], 64);
+    memcpy(resp_signed->signatures[i].bytes,
+           signing_session_arena.zcash.signatures[i], 64);
   }
 
   zcash_signing_abort();
@@ -1207,7 +1237,8 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
   }
 
   /* Derive Orchard keys via storage; the seed never leaves storage.c. */
-  if (!storage_zcashOrchardKeys(account, true, &signing_session_arena.zcash.keys)) {
+  if (!storage_zcashOrchardKeys(account, true,
+                                &signing_session_arena.zcash.keys)) {
     zcash_signing_abort();
     fsm_sendFailure(FailureType_Failure_Other,
                     _("Orchard key derivation failed"));
@@ -1216,7 +1247,9 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
   }
   /* Change is recognised by the internal-scope ivk, derived once here. */
   if (!zcash_orchard_derive_internal_ivk(
-          signing_session_arena.zcash.keys.ak, signing_session_arena.zcash.keys.nk, signing_session_arena.zcash.keys.rivk,
+          signing_session_arena.zcash.keys.ak,
+          signing_session_arena.zcash.keys.nk,
+          signing_session_arena.zcash.keys.rivk,
           signing_session_arena.zcash.ivk_internal)) {
     zcash_signing_abort();
     fsm_sendFailure(FailureType_Failure_Other,
@@ -1225,15 +1258,20 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
     return;
   }
   /* The session signs with ask/ak only; do not keep sk, nk, rivk, dk. */
-  memzero(signing_session_arena.zcash.keys.sk, sizeof(signing_session_arena.zcash.keys.sk));
-  memzero(signing_session_arena.zcash.keys.nk, sizeof(signing_session_arena.zcash.keys.nk));
-  memzero(signing_session_arena.zcash.keys.rivk, sizeof(signing_session_arena.zcash.keys.rivk));
-  memzero(signing_session_arena.zcash.keys.dk, sizeof(signing_session_arena.zcash.keys.dk));
+  memzero(signing_session_arena.zcash.keys.sk,
+          sizeof(signing_session_arena.zcash.keys.sk));
+  memzero(signing_session_arena.zcash.keys.nk,
+          sizeof(signing_session_arena.zcash.keys.nk));
+  memzero(signing_session_arena.zcash.keys.rivk,
+          sizeof(signing_session_arena.zcash.keys.rivk));
+  memzero(signing_session_arena.zcash.keys.dk,
+          sizeof(signing_session_arena.zcash.keys.dk));
 
   signing_session_arena.zcash.active = true;
   signing_session_arena.zcash.account = account;
   signing_session_arena.zcash.n_actions = msg->n_actions + n_ironwood_actions;
-  signing_session_arena.zcash.n_orchard_actions = is_ironwood ? 0 : msg->n_actions;
+  signing_session_arena.zcash.n_orchard_actions =
+      is_ironwood ? 0 : msg->n_actions;
   signing_session_arena.zcash.current_action = 0;
   signing_session_arena.zcash.fee = fee;
   signing_session_arena.zcash.branch_id = branch_id;
@@ -1244,11 +1282,12 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
    * the device-computed bundle digest; the inactive one is the empty digest
    * (Ironwood's empty Orchard digest was checked above). */
   if (is_ironwood) {
-    memcpy(signing_session_arena.zcash.orchard_component_digest, EMPTY_ORCHARD_DIGEST_V6, 32);
+    memcpy(signing_session_arena.zcash.orchard_component_digest,
+           EMPTY_ORCHARD_DIGEST_V6, 32);
   } else if (signing_session_arena.zcash.transaction_v6) {
     /* Orchard-v6: bind the canonical empty Ironwood component. */
-    memcpy(signing_session_arena.zcash.ironwood_component_digest, EMPTY_IRONWOOD_DIGEST_V6,
-           32);
+    memcpy(signing_session_arena.zcash.ironwood_component_digest,
+           EMPTY_IRONWOOD_DIGEST_V6, 32);
   }
   signing_session_arena.zcash.has_device_sighash = false;
   signing_session_arena.zcash.verify_orchard_digest = false;
@@ -1282,15 +1321,19 @@ void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg) {
   memcpy(signing_session_arena.zcash.expected_bundle_digest[first_pool],
          is_ironwood ? msg->ironwood_digest.bytes : msg->orchard_digest.bytes,
          32);
-  signing_session_arena.zcash.bundle_flags[first_pool] = (uint8_t)msg->orchard_flags;
-  signing_session_arena.zcash.bundle_value_balance[first_pool] = msg->orchard_value_balance;
+  signing_session_arena.zcash.bundle_flags[first_pool] =
+      (uint8_t)msg->orchard_flags;
+  signing_session_arena.zcash.bundle_value_balance[first_pool] =
+      msg->orchard_value_balance;
   if (crossing) {
-    memcpy(signing_session_arena.zcash.expected_bundle_digest[1], msg->ironwood_digest.bytes,
-           32);
+    memcpy(signing_session_arena.zcash.expected_bundle_digest[1],
+           msg->ironwood_digest.bytes, 32);
     signing_session_arena.zcash.bundle_flags[1] = (uint8_t)msg->ironwood_flags;
-    signing_session_arena.zcash.bundle_value_balance[1] = msg->ironwood_value_balance;
+    signing_session_arena.zcash.bundle_value_balance[1] =
+        msg->ironwood_value_balance;
   }
-  memcpy(signing_session_arena.zcash.orchard_anchor, msg->orchard_anchor.bytes, 32);
+  memcpy(signing_session_arena.zcash.orchard_anchor, msg->orchard_anchor.bytes,
+         32);
 
   zcash_start_bundle(is_ironwood);
   signing_session_arena.zcash.verify_orchard_digest = true;
@@ -1476,7 +1519,8 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
     return;
   }
 
-  if (!msg->has_index || msg->index != signing_session_arena.zcash.current_action) {
+  if (!msg->has_index ||
+      msg->index != signing_session_arena.zcash.current_action) {
     zcash_fail(FailureType_Failure_SyntaxError, _("Unexpected action index"));
     return;
   }
@@ -1514,9 +1558,11 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
   }
 
   const uint32_t action_base =
-      (signing_session_arena.zcash.current_action * 1000) / signing_session_arena.zcash.n_actions;
+      (signing_session_arena.zcash.current_action * 1000) /
+      signing_session_arena.zcash.n_actions;
   const uint32_t action_target =
-      ((signing_session_arena.zcash.current_action + 1) * 1000) / signing_session_arena.zcash.n_actions;
+      ((signing_session_arena.zcash.current_action + 1) * 1000) /
+      signing_session_arena.zcash.n_actions;
   ZcashActionProgress verification_progress = {
       action_base, action_target - action_base, action_base};
 
@@ -1530,27 +1576,35 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
   }
 
   /* Phase 2b: feed action data into incremental BLAKE2b contexts */
-  blake2b_Update(&signing_session_arena.zcash.compact_ctx, msg->nullifier.bytes, 32);
+  blake2b_Update(&signing_session_arena.zcash.compact_ctx, msg->nullifier.bytes,
+                 32);
   blake2b_Update(&signing_session_arena.zcash.compact_ctx, msg->cmx.bytes, 32);
   blake2b_Update(&signing_session_arena.zcash.compact_ctx, msg->epk.bytes, 32);
-  blake2b_Update(&signing_session_arena.zcash.compact_ctx, msg->enc_compact.bytes, 52);
+  blake2b_Update(&signing_session_arena.zcash.compact_ctx,
+                 msg->enc_compact.bytes, 52);
 
-  blake2b_Update(&signing_session_arena.zcash.memos_ctx, msg->enc_memo.bytes, 512);
+  blake2b_Update(&signing_session_arena.zcash.memos_ctx, msg->enc_memo.bytes,
+                 512);
 
-  blake2b_Update(&signing_session_arena.zcash.noncompact_ctx, msg->cv_net.bytes, 32);
-  blake2b_Update(&signing_session_arena.zcash.noncompact_ctx, msg->rk.bytes, 32);
-  blake2b_Update(&signing_session_arena.zcash.noncompact_ctx, msg->enc_noncompact.bytes,
-                 msg->enc_noncompact.size);
-  blake2b_Update(&signing_session_arena.zcash.noncompact_ctx, msg->out_ciphertext.bytes, 80);
+  blake2b_Update(&signing_session_arena.zcash.noncompact_ctx, msg->cv_net.bytes,
+                 32);
+  blake2b_Update(&signing_session_arena.zcash.noncompact_ctx, msg->rk.bytes,
+                 32);
+  blake2b_Update(&signing_session_arena.zcash.noncompact_ctx,
+                 msg->enc_noncompact.bytes, msg->enc_noncompact.size);
+  blake2b_Update(&signing_session_arena.zcash.noncompact_ctx,
+                 msg->out_ciphertext.bytes, 80);
 
   /* The host's PCZT IO finalizer already signed dummy spends with their
    * ephemeral keys; only real spends are signed, at the final gate. rk is
    * hashed into the bundle digest, so check here that it is the device's own
    * ak re-randomized by alpha, and keep alpha || rk for the signer. */
   if (msg->is_spend) {
-    uint8_t* slot = signing_session_arena.zcash.signatures[signing_session_arena.zcash.signature_count];
-    if (redpallas_derive_rk_from_ak(signing_session_arena.zcash.keys.ak, msg->alpha.bytes,
-                                    slot + 32) != 0 ||
+    uint8_t* slot =
+        signing_session_arena.zcash
+            .signatures[signing_session_arena.zcash.signature_count];
+    if (redpallas_derive_rk_from_ak(signing_session_arena.zcash.keys.ak,
+                                    msg->alpha.bytes, slot + 32) != 0 ||
         memcmp(slot + 32, msg->rk.bytes, 32) != 0) {
       zcash_fail(FailureType_Failure_Other,
                  _("Orchard spend authorization failed"));
@@ -1562,20 +1616,23 @@ void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg) {
 
   signing_session_arena.zcash.current_action++;
 
-  uint32_t progress =
-      (signing_session_arena.zcash.current_action * 1000) / signing_session_arena.zcash.n_actions;
+  uint32_t progress = (signing_session_arena.zcash.current_action * 1000) /
+                      signing_session_arena.zcash.n_actions;
   layoutProgress(_("Signing Zcash"), progress);
 
   /* The last Orchard action of a crossing transaction closes the Orchard
    * bundle; the Ironwood actions follow. */
   if (!signing_session_arena.zcash.is_ironwood &&
-      signing_session_arena.zcash.current_action == signing_session_arena.zcash.n_orchard_actions &&
-      signing_session_arena.zcash.current_action < signing_session_arena.zcash.n_actions) {
+      signing_session_arena.zcash.current_action ==
+          signing_session_arena.zcash.n_orchard_actions &&
+      signing_session_arena.zcash.current_action <
+          signing_session_arena.zcash.n_actions) {
     if (!zcash_finish_bundle()) return;
     zcash_start_bundle(true);
   }
 
-  if (signing_session_arena.zcash.current_action >= signing_session_arena.zcash.n_actions) {
+  if (signing_session_arena.zcash.current_action >=
+      signing_session_arena.zcash.n_actions) {
     zcash_final_gate();
   } else {
     zcash_send_action_ack(signing_session_arena.zcash.current_action);
@@ -1706,7 +1763,8 @@ void fsm_msgZcashTransparentOutput(const ZcashTransparentOutput* msg) {
 
   if (signing_session_arena.zcash.current_transparent_output <
       signing_session_arena.zcash.n_transparent_outputs) {
-    zcash_send_transparent_ack(true, signing_session_arena.zcash.current_transparent_output);
+    zcash_send_transparent_ack(
+        true, signing_session_arena.zcash.current_transparent_output);
   } else if (signing_session_arena.zcash.n_transparent_inputs > 0) {
     zcash_send_transparent_ack(false, 0);
   } else {
@@ -1823,7 +1881,8 @@ void fsm_msgZcashTransparentInput(const ZcashTransparentInput* msg) {
 
   if (signing_session_arena.zcash.current_transparent_input <
       signing_session_arena.zcash.n_transparent_inputs) {
-    zcash_send_transparent_ack(false, signing_session_arena.zcash.current_transparent_input);
+    zcash_send_transparent_ack(
+        false, signing_session_arena.zcash.current_transparent_input);
     layoutProgress(_("Signing Zcash"), 0);
     return;
   }

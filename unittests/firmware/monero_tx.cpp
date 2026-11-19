@@ -1933,7 +1933,7 @@ TEST_F(MoneroTx, EveryRevocationWipesTheSession) {
 }
 
 TEST_F(MoneroTx, BeginPublishesOnlyInitializedState) {
-  timer_poll_ticks(MONERO_TX_SESSION_MS + 1);
+  advance_monero_test_clock(MONERO_TX_SESSION_MS + 1);
   keepkey_user_activity();
   Flow f(simple_plan());
   ASSERT_EQ(MONERO_TX_OK, monero_tx_review(signer_wallet().key_seed,
@@ -1957,7 +1957,7 @@ TEST_F(MoneroTx, ExpiredActivityPredicateNeverWipesTheHandlerState) {
   Flow f(simple_plan());
   ASSERT_EQ(MONERO_TX_OK, f.begin());
   const auto before = signing_session_arena;
-  timer_poll_ticks(MONERO_TX_SESSION_MS + 1);
+  advance_monero_test_clock(MONERO_TX_SESSION_MS + 1);
   EXPECT_FALSE(monero_tx_active());
   keepkey_user_activity();
   EXPECT_FALSE(fsm_workflowInProgress());
@@ -1971,7 +1971,7 @@ TEST_F(MoneroTx, SessionExpiresTenMinutesAfterBegin) {
   {
     Flow f(simple_plan());
     ASSERT_EQ(MONERO_TX_OK, f.begin());
-    timer_poll_ticks(MONERO_TX_SESSION_MS);
+    advance_monero_test_clock(MONERO_TX_SESSION_MS);
     EXPECT_TRUE(monero_tx_active());
     EXPECT_TRUE(fsm_workflowInProgress());
     EXPECT_EQ(MONERO_TX_OK, f.set_inputs());
@@ -1990,7 +1990,7 @@ TEST_F(MoneroTx, SessionExpiresTenMinutesAfterBegin) {
     }
     if (stage >= ONE_SIGNED) ASSERT_EQ(MONERO_TX_OK, f.sign(f.order[0]));
     if (stage >= SIGNED) ASSERT_EQ(MONERO_TX_OK, f.sign(f.order[1]));
-    timer_poll_ticks(MONERO_TX_SESSION_MS + 1);
+    advance_monero_test_clock(MONERO_TX_SESSION_MS + 1);
     MoneroTxFinalAck final_ack;
     switch (stage) {
       case BEGUN:
@@ -2021,7 +2021,7 @@ TEST_F(MoneroTx, SessionExpiresTenMinutesAfterBegin) {
   {
     Flow f(simple_plan());
     ASSERT_EQ(MONERO_TX_OK, f.to_signing());
-    timer_poll_ticks(MONERO_TX_SESSION_MS + 1);
+    advance_monero_test_clock(MONERO_TX_SESSION_MS + 1);
     keepkey_user_activity();
     EXPECT_FALSE(keepkey_before_message_dispatch(
         MessageType_MessageType_MoneroTxSignInputRequest));
@@ -2032,12 +2032,12 @@ TEST_F(MoneroTx, SessionExpiresTenMinutesAfterBegin) {
   {
     Flow f(simple_plan());
     ASSERT_EQ(MONERO_TX_OK, f.begin());
-    timer_poll_ticks(MONERO_TX_SESSION_MS / 2);
+    advance_monero_test_clock(MONERO_TX_SESSION_MS / 2);
     keepkey_user_activity();
     EXPECT_TRUE(
         keepkey_before_message_dispatch(MessageType_MessageType_GetFeatures));
     EXPECT_EQ(MONERO_TX_OK, f.set_inputs());
-    timer_poll_ticks(MONERO_TX_SESSION_MS / 2 + 1);
+    advance_monero_test_clock(MONERO_TX_SESSION_MS / 2 + 1);
     keepkey_user_activity();
     EXPECT_TRUE(
         keepkey_before_message_dispatch(MessageType_MessageType_GetFeatures));
@@ -2540,7 +2540,7 @@ TEST_F(MoneroTxHandlers, ExpiryDuringTheRangeProofStopsBeforeReturningProof) {
   ASSERT_TRUE(init(f, review_screens(f.plan)));
   ASSERT_TRUE(inputs_and_first_output(f));
   xmr_test_rng_interrupt = [] {
-    timer_poll_ticks(MONERO_TX_SESSION_MS + 1);
+    advance_monero_test_clock(MONERO_TX_SESSION_MS + 1);
     keepkey_user_activity();
   };
   EXPECT_FALSE(output(f, 1));

@@ -1,7 +1,11 @@
 #pragma once
+#include "keepkey/board/timer.h"
 #include "keepkey/firmware/monero.h"
 #include "keepkey/firmware/monero_tx.h"
 #ifdef __cplusplus
+static inline void advance_monero_test_clock(uint32_t elapsed_ms) {
+  while (elapsed_ms--) timerisr_usr();
+}
 extern "C" {
 #endif
 /* Source probes inject a button interrupt at timestamp/RNG calls without
