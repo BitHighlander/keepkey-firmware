@@ -77,12 +77,21 @@ if(${KK_ZCASH_PRIVACY})
       PROPERTIES COMPILE_OPTIONS "-U__SSE__;-U__MMX__")
 endif()
 
+# Monero signing crypto (BP+ prover, CLSAG signer), full builds only.
+if(KK_MONERO)
+  list(APPEND sources
+      monero/crypto_bpp.c
+      monero/crypto_clsag.c
+      monero/crypto_hedge.c
+      monero/crypto_rng.c)
+endif()
+
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/scm_revision.h.in"
                "${CMAKE_CURRENT_BINARY_DIR}/scm_revision.h" @ONLY)
 
 include_directories(
   ${CMAKE_BINARY_DIR}/include
-  ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-crypto
+  ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-firmware/crypto
   ${CMAKE_SOURCE_DIR}/lib/firmware
   ${CMAKE_CURRENT_BINARY_DIR})
 
