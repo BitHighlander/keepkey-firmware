@@ -413,6 +413,8 @@ KNOWN_CAPABILITIES = frozenset((
     "solana-lut-attestation", "solana-runtime-review", "storage-v19-kdf",
     "tendermint-progress", "safe-reset-ceremony", "thor-deposit-review",
     "tron-trc20-review",
+    "safe-typed-calls", "erc7730-typed-iteration",
+    "erc7730-typed-settlement",
 ))
 
 
