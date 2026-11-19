@@ -1254,15 +1254,15 @@ static bool confirm_safe_library(uint8_t lib, const char* who) {
  * that follow; the bytes themselves are always shown in full. */
 enum { MS_OFF, MS_SELECTOR, MS_OFFSET, MS_LENGTH, MS_HEADER, MS_DATA };
 #define MS_HEADER_LEN 85
-#define MS_SEEN_APPROVE 1   /* data so far starts 0x095ea7b3 */
-#define MS_SEEN_INCREASE 2  /* data so far starts 0x39509351 */
-#define MS_SEEN_DIRTY 4     /* the spender word has high bytes set */
-#define MS_SEEN_FINITE 8    /* the amount word is below 2^255 */
-#define MS_SEEN_HUGE 16     /* dataLength exceeds 32 bits */
-#define MS_SEEN_DELEGATE 32 /* this call's operation is 1 */
+#define MS_SEEN_APPROVE 1    /* data so far starts 0x095ea7b3 */
+#define MS_SEEN_INCREASE 2   /* data so far starts 0x39509351 */
+#define MS_SEEN_DIRTY 4      /* the spender word has high bytes set */
+#define MS_SEEN_FINITE 8     /* the amount word is below 2^255 */
+#define MS_SEEN_HUGE 16      /* dataLength exceeds 32 bits */
+#define MS_SEEN_DELEGATE 32  /* this call's operation is 1 */
 #define MS_SEEN_MIGRATION 64 /* four bytes of a pinned SafeMigration call */
-#define MS_FACT_CLEAN 1     /* read to its end, every call canonical */
-#define MS_FACT_DELEGATE 2  /* some inner call is a delegatecall */
+#define MS_FACT_CLEAN 1      /* read to its end, every call canonical */
+#define MS_FACT_DELEGATE 2   /* some inner call is a delegatecall */
 
 typedef enum {
   MS_SCAN_OK,
