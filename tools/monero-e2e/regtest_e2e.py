@@ -477,38 +477,29 @@ def main():
               {(0, 0, True), (0, 1, True), (0, 2, False), (0, 0, False),
                (1, 0, True), (1, 1, True), (1, 2, True)})
 
-        # ---- send-max. The stock wallet's sweep leaves no change: the
-        # second output is a 0-amount dummy to a random address. Firmware
-        # 7.17 signs only with one change output back to the wallet, so it
-        # must refuse this one cleanly: before any screen, with no session
-        # left behind. ----
+        # A sweep sends the balance and reviews its zero-amount second output.
         print('send-max (sweep_all)', flush=True)
         exported = sync_key_images()
         sweep = watch.call('sweep_all', {
             'address': recipient_address, 'account_index': 1,
             'ring_size': 16, 'priority': 1, 'do_not_relay': True})
         plan = adapter('plan', exported, sweep['unsigned_txset'])
-        refusal = None
         with xmr.Screens(client) as screens:
-            try:
-                monero_stream.sign(client, path, plan)
-            except CallException as error:
-                refusal = error.args[1]
-        report['sweep'] = {
-            'outputs': [o['amount'] for o in plan['outputs']],
-            'change': plan['change']['amount'], 'refusal': refusal}
-        check('sweep: refused at TxInit before any screen',
-              refusal == 'Monero change must return to this wallet' and
-              not screens.confirmations(), **report['sweep'])
-        check('sweep: the device is idle and still answers',
-              not daemon.post('/get_transaction_pool', {}).get(
-                  'transactions') and
-              client.monero_get_address(path).decode() == address)
+            signed = monero_stream.sign(client, path, plan)
+        check('sweep: the zero-amount output was reviewed', any(
+            title == 'Monero zero-amount output' for title, _ in screens.confirmations()))
+        relay = daemon.post('/send_raw_transaction', {
+            'tx_as_hex': signed.blob.hex(), 'do_not_relay': False})
+        check('sweep: private daemon accepted the transaction', relay.get('status') == 'OK',
+              reply=relay)
+        mine(11)
+        mined = daemon.post('/get_transactions', {
+            'txs_hashes': [signed.tx_hash.hex()], 'decode_as_json': False})['txs']
+        check('sweep: exact signed bytes mined', len(mined) == 1 and
+              not mined[0]['in_pool'] and bytes.fromhex(mined[0]['as_hex']) == signed.blob)
+        exported = sync_key_images()
 
-        # ---- a locked transfer. Monero v0.18.5.4 wallets no longer build
-        # one and its own cold signer refuses one, so the lock is set here
-        # on a plan the stock wallet built. The device signs it after a
-        # warning; the daemon does not relay a nonzero unlock time. ----
+        # The firmware declines a nonzero unlock time before the first prompt.
         print('locked transfer (unlock_time set by the host)', flush=True)
         transfer = watch.call('transfer', {
             'destinations': [{'address': recipient_address, 'amount': XMR}],
@@ -516,19 +507,14 @@ def main():
             'do_not_relay': True})
         plan = adapter('plan', exported, transfer['unsigned_txset'])
         plan['unlock_time'] = 1000
+        refusal = None
         with xmr.Screens(client) as screens:
-            signed = monero_stream.sign(client, path, plan)
-        check('locked: device warned before signing', any(
-            title == 'Monero WARNING' and 'block or time 1000' in body
-            for title, body in screens.confirmations()))
-        relay = daemon.post('/send_raw_transaction', {
-            'tx_as_hex': signed.blob.hex(), 'do_not_relay': False})
-        report['locked'] = {'tx_hash': signed.tx_hash.hex(), 'reply': relay}
-        check('locked: the daemon refuses a nonzero unlock time',
-              relay.get('status') != 'OK' and relay.get(
-                  'nonzero_unlock_time') and
-              not daemon.post('/get_transaction_pool', {}).get(
-                  'transactions'), reply=relay)
+            try:
+                monero_stream.sign(client, path, plan)
+            except CallException as error:
+                refusal = error.args[1]
+        check('locked: device refused before review', refusal == 'Monero unlock time must be zero'
+              and not screens.confirmations(), refusal=refusal)
 
         report['status'] = 'pass'
         if args.fixtures:
