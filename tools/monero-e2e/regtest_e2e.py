@@ -85,6 +85,20 @@ class Rpc:
         return reply['result']
 
 
+def wait_for_emulator(process, log_path, port):
+    # Only the child that acquired both sockets can emit this complete line.
+    # A different emulator on these ports may hold a real developer test wallet.
+    marker = f"Emulator listening on UDP ports {port} (main) and {port + 1} (debug); both sockets bound"
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f"kkemu exited before binding both UDP sockets (see {log_path})")
+        if marker in log_path.read_text(errors='replace').splitlines():
+            return
+        time.sleep(0.05)
+    raise RuntimeError(f"kkemu did not confirm its UDP sockets (see {log_path})")
+
+
 def free_ports(count):
     sockets = [socket.socket() for _ in range(count)]
     try:
@@ -203,9 +217,9 @@ def main():
 
         # ---- the emulator ----
         (out / 'emu').mkdir()
-        start('kkemu', [args.kkemu], cwd=out / 'emu',
-              env=dict(os.environ, KEEPKEY_UDP_PORT=str(args.udp_port)))
-        time.sleep(2)
+        emulator = start('kkemu', [args.kkemu], cwd=out / 'emu',
+                         env=dict(os.environ, KEEPKEY_UDP_PORT=str(args.udp_port)))
+        wait_for_emulator(emulator, out / 'kkemu.process.log', args.udp_port)
         client = KeepKeyDebuglinkClient(
             UDPTransport('127.0.0.1:%d' % args.udp_port))
         client.set_debuglink(UDPTransport('127.0.0.1:%d' %
