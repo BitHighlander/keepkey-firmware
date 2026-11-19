@@ -627,6 +627,7 @@ jobs:
           pip install --quiet --require-hashes -r tools/requirements-sram.txt
           python3 tools/check_sram_budget.py \
             --elf bin/firmware.keepkey.elf \
+            --lto-map bin/firmware.keepkey.map \
             --su-tar bin/stack-usage.tgz \
             --budgets tools/sram-budgets.json \
             --variant "${{ matrix.variant }}"

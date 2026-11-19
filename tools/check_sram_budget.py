@@ -14,12 +14,13 @@ observability + frame-margin half of that gate.
 
 Usage:
   check_sram_budget.py --elf bin/...firmware.keepkey.elf \
-      --su-tar bin/stack-usage.tgz --budgets tools/sram-budgets.json \
-      --variant full
+      --su-tar bin/stack-usage.tgz --lto-map bin/firmware.keepkey.map \
+      --budgets tools/sram-budgets.json --variant full
 """
 
 import argparse
 import json
+from pathlib import PurePosixPath
 import sys
 import tarfile
 
@@ -42,17 +43,33 @@ def read_symbols(elf_path):
         return wanted
 
 
-def largest_frames(su_tar_path, top_n=15):
+def lto_reports(link_map):
+    """Get the stack reports for the LTO objects that ld actually linked."""
+    reports = set()
+    with open(link_map) as stream:
+        for line in stream:
+            if line.startswith("LOAD "):
+                obj = PurePosixPath(line[5:].strip())
+                if obj.match("lto-su/*.ltrans.o"):
+                    reports.add(PurePosixPath("lto-su", obj.with_suffix(".su").name))
+    if not reports:
+        sys.exit(f"ERROR: no firmware LTO partitions in {link_map}")
+    return reports
+
+
+def largest_frames(su_tar_path, top_n=15, lto_map=None):
     """Parse GCC -fstack-usage records from a tar of .su files.
 
     Record format: "<file>:<line>:<col>:<function>\t<bytes>\t<qualifier>"
     """
     frames = []
+    missing = lto_reports(lto_map) if lto_map else set()
     with tarfile.open(su_tar_path, "r:*") as tar:
         for member in tar:
             if not member.name.endswith(".su") or not member.isfile():
                 continue
             data = tar.extractfile(member).read().decode("utf-8", "replace")
+            count_before = len(frames)
             for line in data.splitlines():
                 parts = line.rsplit("\t", 2)
                 if len(parts) != 3:
@@ -69,6 +86,11 @@ def largest_frames(su_tar_path, top_n=15):
                     frames.append((int(size), loc.split("/")[-1], qual))
                 except ValueError:
                     continue
+            if len(frames) > count_before:
+                missing.discard(PurePosixPath(member.name))
+    if missing:
+        sys.exit("ERROR: missing stack-usage records for linked LTO partitions: "
+                 + ", ".join(str(path) for path in sorted(missing)))
     frames.sort(reverse=True)
     return frames[:top_n]
 
@@ -77,6 +99,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--elf", required=True)
     ap.add_argument("--su-tar", required=True)
+    ap.add_argument("--lto-map", help="require stack records for all LTO objects in the linker map")
     ap.add_argument("--budgets", required=True)
     ap.add_argument("--variant", required=True)
     args = ap.parse_args()
@@ -90,7 +113,7 @@ def main():
     syms = read_symbols(args.elf)
     gap = syms["_stack"] - syms["_ebss"]
 
-    frames = largest_frames(args.su_tar)
+    frames = largest_frames(args.su_tar, lto_map=args.lto_map)
     if not frames:
         # An empty .su archive means -fstack-usage generation broke (or the
         # tar glob went stale). Treating it as "largest frame = 0" would let
