@@ -168,7 +168,11 @@ bool setup_stage(bool passphrase_protection, const char* language,
 }
 
 bool setup_stagePin(bool pin_protection) {
-  if (!setup.staged) return false;
+  if (!setup.staged) {
+    fsm_sendFailure(FailureType_Failure_UnexpectedMessage,
+                    _("Setup not started"));
+    return false;
+  }
 
   if (!pin_protection) {
     /* The empty PIN is a choice like any other: stage it, do not apply it. */
@@ -319,9 +323,8 @@ void reset_init(uint32_t _strength, bool passphrase_protection,
   /* Validate the PIN before the expensive dice ceremony. It stays staged,
    * so cancelling dice still clears it through setup_abort(). */
   if (!setup_stagePin(pin_protection)) {
+    /* setup_stagePin already sent the one terminal Failure. */
     setup_abort();
-    fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                    _("PINs do not match"));
     layoutHome();
     return;
   }
