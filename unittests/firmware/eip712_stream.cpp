@@ -2076,11 +2076,14 @@ Eip712ReqKind walkSafeTx(const Bytes& data, bool data_first, int screens,
                          std::vector<std::string>* bodies, int operation = -1,
                          bool operation_first = false, const char* to = nullptr,
                          ToPlace to_place = TO_FIRST, uint32_t chain_id = 1,
-                         bool has_chain = true) {
+                         bool has_chain = true, bool full_schema = false) {
   std::map<std::string, Struct> types;
   if (has_chain)
     addMember(types["EIP712Domain"], "chainId",
               mkSized(EthereumTypedDataStructAck_EthereumDataType_UINT, 32));
+  if (full_schema)
+    addMember(types["EIP712Domain"], "verifyingContract",
+              mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
   g_safe_members = {"to", "value"};
   g_safe_members.insert(
       data_first ? g_safe_members.begin() : g_safe_members.end(), "data");
@@ -2093,9 +2096,13 @@ Eip712ReqKind walkSafeTx(const Bytes& data, bool data_first, int screens,
         std::find(g_safe_members.begin(), g_safe_members.end(), "to"));
     if (to_place == TO_LAST) g_safe_members.push_back("to");
   }
+  if (full_schema)
+    g_safe_members.insert(g_safe_members.end(),
+                          {"safeTxGas", "baseGas", "gasPrice", "gasToken",
+                           "refundReceiver", "nonce"});
   g_to = to ? to : "a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";  // USDC
   for (const std::string& name : g_safe_members) {
-    if (name == "to")
+    if (name == "to" || name == "gasToken" || name == "refundReceiver")
       addMember(types["SafeTx"], name.c_str(),
                 mk(EthereumTypedDataStructAck_EthereumDataType_ADDRESS));
     else if (name == "data")
@@ -2112,14 +2119,18 @@ Eip712ReqKind walkSafeTx(const Bytes& data, bool data_first, int screens,
   g_safe_chain_id.assign(32, 0);
   for (unsigned i = 0; i < 4; i++)
     g_safe_chain_id[31 - i] = static_cast<uint8_t>(chain_id >> (8 * i));
+  if (!has_chain) g_safe_chain_id.clear();
   kkconfirm_capture_start();
   walk(
       "SafeTx", types,
       [](const std::vector<uint32_t>& path) -> Bytes {
-        if (path[0] == 0) return g_safe_chain_id;
+        if (path[0] == 0)
+          return path[1] == 0 && !g_safe_chain_id.empty() ? g_safe_chain_id
+                                                          : Bytes(20, 1);
         const std::string& name = g_safe_members[path[1]];
         if (name == "data") return g_approve;
         if (name == "to") return fromHex(g_to);
+        if (name == "gasToken" || name == "refundReceiver") return Bytes(20, 0);
         if (name == "operation") return Bytes{(uint8_t)g_operation};
         return word(0);
       },
@@ -2820,7 +2831,8 @@ MsRun signMultiSend(const Bytes& data, int screens = 400, int operation = -1,
                     bool has_chain = true) {
   MsRun r;
   r.kind = walkSafeTx(data, false, screens, &r.titles, &r.bodies, operation,
-                      operation_first, to, to_place, chain_id, has_chain);
+                      operation_first, to, to_place, chain_id, has_chain,
+                      operation >= 0);
   // The abort that ends walkSafeTx() leaves the last request in place.
   if (r.kind == EIP712_REQ_FAIL && eip712_stream_next()->error)
     r.error = eip712_stream_next()->error;
@@ -3243,8 +3255,7 @@ TEST(Eip712Stream, SafeTxDelegatecallWarnsUnlessACleanBatch) {
     }
   }
 
-  // The same clean batch to a Safe MultiSend keeps its screens, in any
-  // member order.
+  // Only the exact SafeTx member order identifies a Safe MultiSend.
   for (size_t i = 0; i < sizeof(kSafeMultiSends) / sizeof(kSafeMultiSends[0]);
        i++) {
     const char* multisend = kSafeMultiSends[i];
@@ -3259,7 +3270,8 @@ TEST(Eip712Stream, SafeTxDelegatecallWarnsUnlessACleanBatch) {
         ASSERT_EQ(r.kind, EIP712_REQ_DONE);
         EXPECT_TRUE(r.unchecked.empty());
         EXPECT_TRUE(r.delegated.empty());
-        EXPECT_TRUE(r.safe_delegated.empty());
+        EXPECT_EQ(r.safe_delegated.size(),
+                  operation_first || place != TO_FIRST ? 1u : 0u);
       }
     }
   }
@@ -3641,7 +3653,7 @@ TEST(Eip712Stream, SafeTxSafeLibrariesSayWhatTheyDo) {
             ASSERT_EQ(r.kind, EIP712_REQ_DONE);
             const std::vector<std::string> said =
                 screensTitled(r.titles, r.bodies, lib.title);
-            if (deployedOn(d, chain)) {
+            if (deployedOn(d, chain) && !operation_first && place == TO_FIRST) {
               EXPECT_TRUE(r.safe_delegated.empty());
               ASSERT_EQ(said.size(), 1u);
               EXPECT_EQ(said[0], squeezed(std::string("SafeTx ") + lib.text));
@@ -3678,6 +3690,13 @@ TEST(Eip712Stream, SafeTxL2MigrationNeedsSafesOwnArguments) {
     const char* text;  // nullptr: warned about
   };
   const std::vector<Case> cases = {
+      {"SafeMigration getter", &kSafeMigrations, fromHex("caa12add"), nullptr},
+      {"SafeMigration with trailing bytes", &kSafeMigrations,
+       fromHex("07f464a400"), nullptr},
+      {"migrateSingleton()", &kSafeMigrations, fromHex("f6682ab0"),
+       kMigrationText},
+      {"migrateWithFallbackHandler()", &kSafeMigrations, fromHex("ed007fc6"),
+       kMigrationText},
       {"setupToL2(SafeL2)", &kSafeToL2Setups, abiCall("fe51f643", {base_l2}),
        kToL2SetupText},
       {"migrateToL2(SafeL2)", &kSafeToL2Migrations,
@@ -3718,7 +3737,7 @@ TEST(Eip712Stream, SafeTxL2MigrationNeedsSafesOwnArguments) {
         ASSERT_EQ(r.kind, EIP712_REQ_DONE);
         const std::vector<std::string> said =
             screensTitled(r.titles, r.bodies, "Safe upgrade");
-        if (c.text) {
+        if (c.text && !operation_first && place == TO_FIRST) {
           EXPECT_TRUE(r.safe_delegated.empty());
           ASSERT_EQ(said.size(), 1u);
           EXPECT_EQ(said[0], squeezed(std::string("SafeTx ") + c.text));
@@ -3813,6 +3832,16 @@ TEST(Eip712Stream, MultiSendDelegatecallToSafeMigrationIsSaid) {
     EXPECT_EQ(declined.kind, EIP712_REQ_CANCELLED);
     EXPECT_EQ(declined.titles.size(), (size_t)before + 1);
   }
+  const Bytes getter = multiSendCall(
+      packedCall(kSafeMigrations[0].address, fromHex("caa12add"), -1, 1));
+  const MsRun read =
+      signMultiSend(getter, 400, 1, false, multisend, TO_FIRST, 100);
+  ASSERT_EQ(read.kind, EIP712_REQ_DONE);
+  EXPECT_TRUE(screensTitled(read.titles, read.bodies, "Safe upgrade").empty());
+  EXPECT_EQ(screensTitled(read.titles, read.bodies, "Delegatecall in batch"),
+            std::vector<std::string>{
+                squeezed(delegateText("Call #1", kSafeMigrations[0].address))});
+  EXPECT_EQ(read.safe_delegated.size(), 1u);
   const Bytes l2 = multiSendCall(
       packedCall(kSafeToL2Migrations[0].address,
                  abiCall("ef2624ae", {kSafeL2Singletons[3].address}), -1, 1));
@@ -3914,6 +3943,27 @@ size_t countTitle(const SafeTxScreens& s, const char* title) {
 }
 
 }  // namespace
+
+TEST(Eip712Stream, SafeUpgradeNeedsSafesDomainAndPrimaryType) {
+  const auto real = std::find_if(
+      kSafeChainTxs.begin(), kSafeChainTxs.end(), [](const SafeChainTx& tx) {
+        return strcmp(tx.doc.id, "gnosis-safemigration150-l2") == 0;
+      });
+  ASSERT_NE(real, kSafeChainTxs.end());
+  for (bool change_domain : {false, true}) {
+    SCOPED_TRACE(change_domain);
+    CorpusDoc doc = real->doc;
+    if (change_domain) {
+      doc.types[0].members.pop_back();  // only chainId
+    } else {
+      doc.types[1].members[4].name = "customGas";
+    }
+    const SafeTxScreens screens = walkDoc(doc);
+    ASSERT_EQ(screens.kind, EIP712_REQ_DONE);
+    EXPECT_EQ(countTitle(screens, "Safe upgrade"), 0u);
+    EXPECT_EQ(countTitle(screens, "Delegatecall"), 1u);
+  }
+}
 
 TEST(Eip712Stream, RealSafeTxsHashAsOnChainAndReadCalm) {
   // One canonical batch per chain (two on Base), then Safe's libraries.
@@ -4057,6 +4107,15 @@ TEST(Eip712Stream, SafeTxValueIsShownInTheChainsCoin) {
     ASSERT_EQ(s.kind, EIP712_REQ_DONE);
     EXPECT_EQ(valueScreen(s), std::string("value\nuint256: ") + std::get<2>(c));
   }
+  // The maximum integer plus its unit still fits the formatter.
+  const char* maximum =
+      "115792089237316195423570985008687907853269984665640564039457584007913129"
+      "639935";
+  const SafeTxScreens largest = walkDoc(safeSendOn(4663, maximum));
+  ASSERT_EQ(largest.kind, EIP712_REQ_DONE);
+  std::string shown;
+  for (const auto& body : largest.bodies) shown += squeezed(body);
+  EXPECT_NE(shown.find(std::string(maximum) + "Wei"), std::string::npos);
   // Any other SafeTx shape keeps the integer: its `value` need not be
   // Safe's.
   std::vector<std::string> titles, bodies;
