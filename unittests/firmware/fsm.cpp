@@ -4111,6 +4111,9 @@ TEST(Fsm, FeaturesReportExactlyTheStagedCapabilities) {
       Features_Capability_CAPABILITY_PERMIT2_REVIEW,
       Features_Capability_CAPABILITY_SOLANA_CERTIFIED_REVIEW,
 #endif
+#if MONERO_SIGNING
+      Features_Capability_CAPABILITY_MONERO_SIGNING,
+#endif
   };
   EXPECT_EQ(expected, std::vector<Features_Capability>(
                           features.capabilities,

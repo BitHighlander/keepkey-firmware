@@ -77,6 +77,28 @@ if(${KK_ZCASH_PRIVACY})
       PROPERTIES COMPILE_OPTIONS "-U__SSE__;-U__MMX__")
 endif()
 
+# Monero signing crypto (BP+ prover, CLSAG signer), full builds only.
+if(KK_MONERO)
+  list(APPEND sources
+      monero/crypto_bpp.c
+      monero/crypto_clsag.c
+      monero/crypto_hedge.c
+      monero/crypto_rng.c)
+endif()
+
+# Monero: full builds only. The Monero sources need the trezor-crypto Monero
+# primitives, which are compiled only with USE_MONERO=1.
+if(${KK_MONERO})
+  list(APPEND sources monero.c monero_key_image.c monero_tx.c)
+  set_source_files_properties(monero.c monero_key_image.c monero_tx.c
+      PROPERTIES COMPILE_OPTIONS "-UUSE_MONERO;-DUSE_MONERO=1;-U__SSE__;-U__MMX__")
+endif()
+
+# The CONFIDENTIAL arena that Zcash and Monero share.
+if(${KK_ZCASH_PRIVACY} OR ${KK_MONERO})
+  list(APPEND sources signing_session.c)
+endif()
+
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/scm_revision.h.in"
                "${CMAKE_CURRENT_BINARY_DIR}/scm_revision.h" @ONLY)
 
