@@ -15,9 +15,8 @@ mine it and credit the recipient:
   5. from account 1 (three inputs on three subaddresses; the change returns
      to subaddress (1, 0))
 
-Two more plans record what does not go through: the stock wallet's send-max
-(no change output; the device refuses it) and a transfer with an unlock
-time (the device signs it after a warning; the daemon does not relay it).
+The private daemon also mines a Send Max transaction after the device reviews
+its zero-amount output. A nonzero unlock time is refused before review.
 
 Nothing leaves 127.0.0.1; the chain is a fresh fakechain; no USB device is
 opened. The wallets are the published test mnemonics (the emulator:

@@ -17,6 +17,15 @@ if [ "$actual" != "$expected" ]; then
   echo "cppcheck executable mismatch: expected $expected, got $actual" >&2
   exit 1
 fi
+for header in \
+  deps/crypto/trezor-firmware/crypto/ed25519-donna/modm-donna-32bit.h \
+  deps/device-protocol/messages.proto
+do
+  if [ ! -r "$header" ]; then
+    echo "cppcheck input missing: $header; initialize pinned crypto and protocol submodules" >&2
+    exit 1
+  fi
+done
 mkdir -p .cppcheck-build
 exec cppcheck \
   -j "$(getconf _NPROCESSORS_ONLN)" \
