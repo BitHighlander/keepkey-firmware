@@ -26,6 +26,14 @@ if(NOT ${KK_EMULATOR})
   set(CMAKE_EXE_LINKER_FLAGS
       "${CMAKE_EXE_LINKER_FLAGS} -Wl,--defsym=snprintf=sniprintf -Wl,--defsym=vsnprintf=vsniprintf")
 
+  if(KK_FIRMWARE_LTO AND NOT KK_BUILD_BOOTLOADER_TOOLS)
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -flto")
+    # Keep GCC's link-time stack-usage records where the SRAM gate collects them.
+    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/lto-su")
+    set(CMAKE_C_LINK_EXECUTABLE
+        "\"${CMAKE_COMMAND}\" -E env \"TMPDIR=${CMAKE_BINARY_DIR}/lto-su\" ${CMAKE_C_LINK_EXECUTABLE}")
+  endif()
+
   set(LINK_FLAGS
       kkfirmware
       kkboard

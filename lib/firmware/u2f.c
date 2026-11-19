@@ -897,7 +897,8 @@ static void promptRegister(bool request, const U2F_REGISTER_REQ* req) {
   }
 }
 
-void u2f_register(const APDU* a) {
+/* Keep this frame out of the USB dispatcher under LTO. */
+__attribute__((noinline)) void u2f_register(const APDU* a) {
   static U2F_REGISTER_REQ last_req;
   const U2F_REGISTER_REQ* req = (U2F_REGISTER_REQ*)a->data;
 
@@ -1010,7 +1011,8 @@ static void promptAuthenticate(bool request, const U2F_AUTHENTICATE_REQ* req) {
                   appname);
 }
 
-void u2f_authenticate(const APDU* a) {
+/* Keep this frame out of the USB dispatcher under LTO. */
+__attribute__((noinline)) void u2f_authenticate(const APDU* a) {
   const U2F_AUTHENTICATE_REQ* req = (U2F_AUTHENTICATE_REQ*)a->data;
   static U2F_AUTHENTICATE_REQ last_req;
 
