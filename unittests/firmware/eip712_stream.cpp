@@ -21,12 +21,14 @@ extern "C" {
 #include <string>
 #include <vector>
 #include <tuple>
+#include <functional>
 #include "kkconfirm_driver.h"
 
 extern "C" {
 #include "keepkey/board/confirm_sm.h"
 }
 
+void kk_test_set_message_hook(std::function<void(MessageType, const void*)>);
 void kkconfirm_capture_start(void);
 std::vector<std::string> kkconfirm_capture_finish(void);
 std::vector<std::string> kkconfirm_captured_titles(void);
@@ -908,24 +910,34 @@ EthereumTypedDataValueAck valueAck(const Bytes& v, const Eip712Next* next) {
 
 // Drive the walk to its end, answering every request from `types` and
 // `value(path)`, with `screens` accepted confirmations available. Returns how
-// many were used; -1 means more screens were shown than were accepted. With
-// `topup`, every value answer first queues that many more acceptances (and no
-// rejection sentinel), for documents with thousands of screens; count those
-// from the captured screens instead.
+// many were used; -1 means a screen exceeded its budget and was rejected.
+// For very long documents, `topup` renews the budget at each value answer.
 int walk(const char* primary, const std::map<std::string, Struct>& types,
          Bytes (*value)(const std::vector<uint32_t>&), int screens,
          bool certified = false, int topup = 0) {
   EthereumSignTypedData begin{};
   strcpy(begin.primary_type, primary);
   g_first_chunks = g_later_chunks = 0;
-  if (!(topup ? kkconfirm_preload_no_sentinel(screens, 0)
-              : kkconfirm_preload(screens, 0)))
-    return -2;
-  if (!eip712_stream_begin(&begin, certified))
-    return screens - kkconfirm_drain() / 2;
-  for (;;) {
+  if (!kkconfirm_preload_no_sentinel(0, 0)) return -2;
+  // A large document can exhaust Linux's UDP receive queue if all replies
+  // are sent up front. Answer each ButtonRequest as a host would.
+  int remaining = screens;
+  int used = 0;
+  bool rejected = false;
+  kk_test_set_message_hook([&](MessageType id, const void*) {
+    if (id != MessageType_MessageType_ButtonRequest) return;
+    const bool accept = remaining > 0;
+    ASSERT_TRUE(kkconfirm_answerButtonRequest(accept));
+    if (accept) {
+      --remaining;
+      ++used;
+    } else {
+      rejected = true;
+    }
+  });
+  bool alive = eip712_stream_begin(&begin, certified);
+  while (alive) {
     const Eip712Next* next = eip712_stream_next();
-    bool alive = false;
     if (next->kind == EIP712_REQ_STRUCT) {
       auto it = types.find(next->struct_name);
       Struct empty{};
@@ -934,7 +946,7 @@ int walk(const char* primary, const std::map<std::string, Struct>& types,
       std::vector<uint32_t> path(next->member_path,
                                  next->member_path + next->member_path_len);
       EthereumTypedDataValueAck ack = valueAck(value(path), next);
-      if (topup && !kkconfirm_preload_no_sentinel(topup, 0)) return -2;
+      if (topup) remaining = topup;
       alive = eip712_stream_on_value(&ack);
     } else {
       break;
@@ -945,9 +957,11 @@ int walk(const char* primary, const std::map<std::string, Struct>& types,
     EXPECT_EQ(alive, kind != EIP712_REQ_FAIL && kind != EIP712_REQ_CANCELLED)
         << "after " << kind;
   }
-  // Two messages per screen; negative means the rejection sentinel was used.
-  const int unused = kkconfirm_drain();
-  return unused < 0 ? -1 : screens - unused / 2;
+  kk_test_set_message_hook({});
+  // No rejection sentinel was preloaded. Both frames for every request
+  // must have been consumed; drain() discounts a sentinel pair.
+  EXPECT_EQ(kkconfirm_drain(), -2);
+  return rejected ? -1 : used;
 }
 
 std::string decimal(Field f, const Bytes& v) {
