@@ -61,12 +61,6 @@ bool ethereum_typed_hash_policy_allows(bool advanced_mode) {
  * AdvancedMode requirement of the precomputed-hash endpoint. */
 bool ethereum_streamed_eip712_enabled(void) { return true; }
 
-/* The legacy JSON parser cannot guarantee that every displayed value is the
- * canonical value hashed by EIP-712. Keep the protocol symbol for compatibility
- * but fail closed in the FSM until the complete parser hardening is backported.
- */
-bool ethereum_structured_eip712_enabled(void) { return false; }
-
 /* The EIP-155 legacy recovery id is v + 2 * chain_id + 35, computed below in
  * a uint32_t, where v is 0 or 1. The bound is the largest chain id whose
  * WORST case still fits:
