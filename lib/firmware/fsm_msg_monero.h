@@ -153,10 +153,10 @@ void fsm_msgMoneroGetWatchKey(const MoneroGetWatchKey* msg) {
   /* Fresh consent on every request: the view key shows every incoming
    * payment of the wallet, now and in the future. */
   if (!confirm(ButtonRequestType_ButtonRequest_Other, _("Export view key"),
-               _("%s\nThis computer will see all incoming payments and "
-                 "balances of this wallet. It cannot spend."),
+               _("%s\nThis computer can see incoming payments for all "
+                 "subaddresses on all networks at this path. It cannot spend."),
                description) ||
-      !confirm(ButtonRequestType_ButtonRequest_Address, _("View key for"), "%s",
+      !confirm(ButtonRequestType_ButtonRequest_Address, _("Selected address"), "%s",
                approved)) {
     memzero(approved, sizeof(approved));
     fsm_sendFailure(FailureType_Failure_ActionCancelled,
