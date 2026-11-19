@@ -48,7 +48,7 @@
  * frame received inside the callback may therefore overwrite the workspace
  * freely. When the callback returns false the call wipes its own stack
  * secrets and the output, does NOT read or write the workspace again, and
- * returns false. On every other return the workspace is wiped before return.
+ * returns false. Every other return wipes a supplied, properly aligned workspace.
  *
  * CONSTANT TIME. Every product with a secret scalar uses a fixed-window
  * constant-time ladder (ge25519_scalarmult, ge25519_scalarmult_base_niels, or

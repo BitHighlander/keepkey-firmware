@@ -491,18 +491,19 @@ bool xmr_bpp_prove(xmr_bpp_proof *out, const uint64_t *amounts,
   bignum256modm t, t2, g, alpha, alpha1, e, einv, dL, dR;
   uint8_t T[32];
   bpp_rc rc = BPP_FAIL;
-  bool ws_dirty = false;
 
-  if (out == NULL) return false;
-  memzero(out, sizeof(*out));
+  if (out != NULL) memzero(out, sizeof(*out));
+  if (ws == NULL || ((uintptr_t)ws % XMR_WORKSPACE_ALIGN) != 0) return false;
   memzero(&c, sizeof(c));
-  if (amounts == NULL || gamma == NULL || ws == NULL || m == 0 ||
-      m > XMR_BPP_MAX_OUTPUTS || ((uintptr_t)ws % XMR_WORKSPACE_ALIGN) != 0) {
+  if (out == NULL || amounts == NULL || gamma == NULL || m == 0 ||
+      m > XMR_BPP_MAX_OUTPUTS) {
+    memzero(ws, sizeof(*ws));
     return false;
   }
   for (size_t j = 0; j < m; j++) {
     if (!xmr_sc_load_canonical(g, gamma[j])) {
       memzero(g, sizeof(g));
+      memzero(ws, sizeof(*ws));
       return false;
     }
   }
@@ -573,7 +574,6 @@ bool xmr_bpp_prove(xmr_bpp_proof *out, const uint64_t *amounts,
   memzero(alpha, sizeof(alpha));
 
   /* inner-product rounds */
-  ws_dirty = true;
   size_t n = c.MN;
   for (int round = 0; n > 1; round++) {
     size_t np = n / 2;
@@ -613,7 +613,7 @@ done:
   memzero(t2, sizeof(t2));
   /* An aborted call must not touch the workspace: the caller may already
    * have handed it to an inbound frame. It holds no secret at that point. */
-  if (ws_dirty && rc != BPP_ABORTED) memzero(ws, sizeof(*ws));
+  if (rc != BPP_ABORTED) memzero(ws, sizeof(*ws));
   memzero(&c, sizeof(c));
   if (rc != BPP_OK) {
     memzero(out, sizeof(*out));
