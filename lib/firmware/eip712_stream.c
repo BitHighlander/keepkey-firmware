@@ -559,6 +559,7 @@ static struct {
   uint8_t root;
   uint8_t domain_separator[32];
   bool have_domain_separator;
+  bool safe_schema; /* exact Safe domain and, once read, primary type */
   bool domain_value_confirmed;
   bool message_value_confirmed;
 
@@ -963,6 +964,15 @@ static bool in_safe_tx(void) {
   return !f->is_array && strcmp(e712.types.names[f->u.s.type], "SafeTx") == 0;
 }
 
+static bool hash_is(const uint8_t hash[32], const char* text);
+
+static bool safe_tx_type(const uint8_t hash[32]) {
+  return hash_is(hash,
+                 "SafeTx(address to,uint256 value,bytes data,uint8 operation,"
+                 "uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,"
+                 "address gasToken,address refundReceiver,uint256 nonce)");
+}
+
 /* The open SafeTx's `to`, once read; NULL before then. */
 static const uint8_t* safe_tx_to(void) {
   const Eip712Frame* f = &e712.stack[e712.depth - 1];
@@ -1184,6 +1194,20 @@ static uint8_t safe_contract(const uint8_t* address) {
   return SAFE_LIB_NONE;
 }
 
+/* SafeMigration also has public getters. Only these four no-argument calls
+ * change the singleton or its fallback handler. */
+static bool safe_migration_call(const uint8_t* data, size_t len) {
+  static const uint8_t selectors[][4] = {
+      {0x07, 0xf4, 0x64, 0xa4},  /* migrateL2Singleton() */
+      {0x68, 0xcb, 0x3d, 0x94},  /* migrateL2WithFallbackHandler() */
+      {0xf6, 0x68, 0x2a, 0xb0},  /* migrateSingleton() */
+      {0xed, 0x00, 0x7f, 0xc6}}; /* migrateWithFallbackHandler() */
+  if (len != 4) return false;
+  for (size_t i = 0; i < sizeof(selectors) / sizeof(selectors[0]); i++)
+    if (memcmp(data, selectors[i], 4) == 0) return true;
+  return false;
+}
+
 /* A delegatecall to a Safe library the caller has cleared: say what it
  * does, calmly. False when declined, or when `lib` is no such library. */
 static bool confirm_safe_library(uint8_t lib, const char* who) {
@@ -1237,6 +1261,7 @@ enum { MS_OFF, MS_SELECTOR, MS_OFFSET, MS_LENGTH, MS_HEADER, MS_DATA };
 #define MS_SEEN_FINITE 8    /* the amount word is not all ones */
 #define MS_SEEN_HUGE 16     /* dataLength exceeds 32 bits */
 #define MS_SEEN_DELEGATE 32 /* this call's operation is 1 */
+#define MS_SEEN_MIGRATION 64 /* four bytes of a pinned SafeMigration call */
 #define MS_FACT_CLEAN 1     /* read to its end, every call canonical */
 #define MS_FACT_DELEGATE 2  /* some inner call is a delegatecall */
 
@@ -1273,6 +1298,19 @@ static MultisendScan multisend_unchecked(void) {
   return confirm(ButtonRequestType_ButtonRequest_Other, "Batch not checked",
                  "KeepKey could not read this batch's calls; approvals "
                  "inside it are not shown.")
+             ? MS_SCAN_OK
+             : MS_SCAN_CANCELLED;
+}
+
+static MultisendScan confirm_batch_delegate(Eip712MultiSend* ms,
+                                            bool migration) {
+  char who[16];
+  snprintf(who, sizeof(who), "Call #%u", (unsigned)ms->call);
+  if (migration)
+    return confirm_safe_library(SAFE_LIB_MIGRATION, who) ? MS_SCAN_OK
+                                                         : MS_SCAN_CANCELLED;
+  ms->facts |= MS_FACT_DELEGATE;
+  return confirm_delegatecall("Delegatecall in batch", who, ms->to)
              ? MS_SCAN_OK
              : MS_SCAN_CANCELLED;
 }
@@ -1316,27 +1354,29 @@ static MultisendScan multisend_byte(uint8_t b) {
       /* The call's data must end inside the batch. */
       if ((ms->seen & MS_SEEN_HUGE) || ms->need > ms->left)
         return multisend_unchecked();
-      if (ms->seen & MS_SEEN_DELEGATE) {
-        char who[16];
-        snprintf(who, sizeof(who), "Call #%u", (unsigned)ms->call);
-        /* Safe{Wallet}'s upgrade batch delegatecalls SafeMigration. Only a
-         * library taking no address from its data is read here: the data
-         * is not kept. */
-        const uint8_t lib = safe_contract(ms->to);
-        if (lib == SAFE_LIB_MIGRATION) {
-          if (!confirm_safe_library(lib, who)) return MS_SCAN_CANCELLED;
-        } else {
-          ms->facts |= MS_FACT_DELEGATE;
-          if (!confirm_delegatecall("Delegatecall in batch", who, ms->to))
-            return MS_SCAN_CANCELLED;
-        }
+      if ((ms->seen & MS_SEEN_DELEGATE) && ms->need == 4 && e712.root == 1 &&
+          e712.depth == 1 && e712.safe_schema &&
+          safe_contract(safe_tx_to()) == SAFE_LIB_MULTISEND &&
+          safe_contract(ms->to) == SAFE_LIB_MIGRATION) {
+        ms->seen = MS_SEEN_MIGRATION;
+      } else {
+        if ((ms->seen & MS_SEEN_DELEGATE) &&
+            confirm_batch_delegate(ms, false) != MS_SCAN_OK)
+          return MS_SCAN_CANCELLED;
+        ms->seen = MS_SEEN_APPROVE | MS_SEEN_INCREASE;
       }
-      ms->seen = MS_SEEN_APPROVE | MS_SEEN_INCREASE;
       multisend_phase(ms->need ? MS_DATA : MS_HEADER);
       return ms->left ? MS_SCAN_OK : multisend_done();
     default: { /* MS_DATA */
       MultisendScan result = MS_SCAN_OK;
-      if (at < 4) {
+      if (ms->seen & MS_SEEN_MIGRATION) {
+        /* A four-byte call has no spender; reuse its scratch for the selector.
+         */
+        ms->spender[at] = b;
+        if (at == 3)
+          result =
+              confirm_batch_delegate(ms, safe_migration_call(ms->spender, 4));
+      } else if (at < 4) {
         if (b != approve[at]) ms->seen &= ~MS_SEEN_APPROVE;
         if (b != increase[at]) ms->seen &= ~MS_SEEN_INCREASE;
       } else if (at < 16) {
@@ -1372,13 +1412,12 @@ static MultisendScan multisend_feed(const uint8_t* bytes, size_t len) {
 }
 
 /* ── A SafeTx delegatecall ────────────────────────────────────────────
- * operation 1 runs SafeTx.to's code as the Safe. Only Safe's own libraries,
+ * operation 1 runs SafeTx.to's code as the Safe. In Safe's exact domain and
+ * primary type, only Safe's own libraries,
  * at their deployed addresses on this chain, are read:
  *  - MultiSend: no screen when `data` is a multiSend the scan read to its
- *    end, with no delegatecall inside but to SafeMigration (said in the
- *    batch);
- *  - SafeMigration: its code takes no address from `data`, so the screen
- *    says what it does;
+ *    end, with only identified migrations exempted in the batch;
+ *  - SafeMigration: only one of its four migration selectors;
  *  - SafeToL2Setup, SafeToL2Migration: take the singleton (and fallback
  *    handler) from `data`, so the screen says what it does only when
  *    `data` is exactly that call with Safe's own deployments as arguments.
@@ -1393,6 +1432,7 @@ static MultisendScan multisend_feed(const uint8_t* bytes, size_t len) {
 #define SAFE_TO 8          /* to has been read */
 #define SAFE_SETUP_ARGS 16 /* data is setupToL2(Safe's SafeL2) */
 #define SAFE_DECIDED 32
+#define SAFE_MIGRATION_CALL 128 /* an exact SafeMigration entry point */
 #define SAFE_MIGRATE_ARGS 64 /* data is migrateToL2/migrateFromV111, pinned */
 
 /* ABI word `n` of `data` after the selector is a pinned `kind`. */
@@ -1403,8 +1443,9 @@ static bool safe_arg_is(const uint8_t* data, size_t n, uint8_t kind) {
   return safe_contract(w + 12) == kind;
 }
 
-/* SAFE_SETUP_ARGS or SAFE_MIGRATE_ARGS for the whole of `data`, else 0. */
-static uint8_t safe_l2_args(const uint8_t* data, size_t len) {
+/* For a known whole call, return the flag tested for its library. */
+static uint8_t safe_library_args(const uint8_t* data, size_t len) {
+  if (safe_migration_call(data, len)) return SAFE_MIGRATION_CALL;
   if (len == 36 && memcmp(data, "\xfe\x51\xf6\x43", 4) == 0 &&
       safe_arg_is(data, 0, SAFE_ARG_L2_SINGLETON))
     return SAFE_SETUP_ARGS; /* setupToL2(address) */
@@ -1426,10 +1467,10 @@ static bool safe_delegate_decide(uint8_t* facts, bool closing,
   if (!(*facts & SAFE_DELEGATE) || (*facts & SAFE_DECIDED)) return true;
   if ((*facts & read) != read && !closing) return true;
   *facts |= SAFE_DECIDED;
-  if ((*facts & read) == read) {
+  if ((*facts & read) == read && e712.safe_schema && e712.depth == 1) {
     const uint8_t lib = safe_contract(to);
     if (lib == SAFE_LIB_MULTISEND && !(*facts & SAFE_UNCHECKED)) return true;
-    if (lib == SAFE_LIB_MIGRATION ||
+    if ((lib == SAFE_LIB_MIGRATION && (*facts & SAFE_MIGRATION_CALL)) ||
         (lib == SAFE_LIB_TO_L2_SETUP && (*facts & SAFE_SETUP_ARGS)) ||
         (lib == SAFE_LIB_TO_L2_MIGRATION && (*facts & SAFE_MIGRATE_ARGS)))
       return confirm_safe_library(lib, "SafeTx");
@@ -1451,7 +1492,7 @@ static bool safe_delegate_approved(const Eip712FieldType* field,
     if ((e712.multisend.facts & (MS_FACT_CLEAN | MS_FACT_DELEGATE)) !=
         MS_FACT_CLEAN)
       *facts |= SAFE_UNCHECKED;
-    if (whole && !field->has_size) *facts |= safe_l2_args(value, len);
+    if (whole && !field->has_size) *facts |= safe_library_args(value, len);
   } else if (field->data_type ==
                  EthereumTypedDataStructAck_EthereumDataType_ADDRESS &&
              strcmp(e712.pending_name, "to") == 0) {
@@ -1468,8 +1509,6 @@ static bool safe_delegate_approved(const Eip712FieldType* field,
   return safe_delegate_decide(facts, false, to);
 }
 
-static bool hash_is(const uint8_t hash[32], const char* text);
-
 /* Safe's own SafeTx (its exact type) sends `value` of the chain's coin: shown
  * in that coin, or in wei where the chain's coin has no name here. */
 static bool safe_tx_native_value(const Eip712FieldType* field,
@@ -1479,10 +1518,7 @@ static bool safe_tx_native_value(const Eip712FieldType* field,
   if (e712.root != 1 || !in_safe_tx() || !f->u.s.have_type_hash ||
       field->data_type != EthereumTypedDataStructAck_EthereumDataType_UINT ||
       len != 32 || strcmp(e712.pending_name, "value") != 0 ||
-      !hash_is(f->u.s.type_hash,
-               "SafeTx(address to,uint256 value,bytes data,uint8 operation,"
-               "uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,"
-               "address gasToken,address refundReceiver,uint256 nonce)"))
+      !safe_tx_type(f->u.s.type_hash))
     return false;
   bignum256 amount;
   bn_read_be(value, &amount);
@@ -1495,7 +1531,7 @@ static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
                                             uint16_t len) {
   char type_name[EIP712_MAX_TYPE_NAME];
   char path[EIP712_MAX_PATH];
-  char text[82]; /* "-" + 78 digits, or a checksummed address */
+  char text[96]; /* A full uint256, decimal point and native asset suffix. */
   if (!eip712_type_name(field, type_name, sizeof(type_name)) ||
       !leaf_path(path, sizeof(path)))
     return EIP712_LEAF_INVALID;
@@ -2099,6 +2135,9 @@ static void complete_frame(void) {
   if (e712.root == 0) {
     memcpy(e712.domain_separator, digest, 32);
     e712.have_domain_separator = true;
+    e712.safe_schema =
+        hash_is(e712.stack[0].u.s.type_hash,
+                "EIP712Domain(uint256 chainId,address verifyingContract)");
   }
   if (e712.root == 0 && e712.permit2 == 1 &&
       !permit2_domain_ok(e712.stack[0].u.s.type_hash) && !permit2_flush()) {
@@ -2411,6 +2450,7 @@ bool eip712_stream_on_struct(const EthereumTypedDataStructAck* ack) {
       keccak_Final(&e712.hash, tf->u.s.type_hash);
       tf->u.s.have_type_hash = true;
       if (e712.root == 1 && e712.depth == 1) {
+        e712.safe_schema = e712.safe_schema && safe_tx_type(tf->u.s.type_hash);
         memcpy(e712.domain_facts.primary_type_hash, tf->u.s.type_hash, 32);
         e712.domain_facts.has_primary_type_hash = true;
         if (hash_is(tf->u.s.type_hash,
