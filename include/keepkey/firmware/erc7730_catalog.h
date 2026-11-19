@@ -123,7 +123,8 @@ typedef struct {
   uint8_t path_arrays[64];        /* ABI node of each path's [] step, or 0xff */
   uint64_t path_iterable_mask;    /* paths that end on their [] step */
   uint64_t path_second_word_mask; /* paths that are exactly [1] */
-  bool second_word_nft;           /* an nftName token id reads [1] */
+  bool formatter_second_word_nft; /* this nftName token id reads [1] */
+  bool second_word_nft;           /* the display shows that token id */
   bool second_word_other;         /* any other formatter argument does */
   uint8_t formatter_value_array;
   uint8_t display_iteration_array;

@@ -1744,7 +1744,11 @@ TEST(Erc7730Catalog, IdentityNotesASecondWordShownOnlyAsATokenId) {
       {{3, 0, 2, 1, 1, 0, 1, 2, 1, 0, 0}, 1, false},  // tokenAmount of [1]
       {{1, 0, 1, 1, 1, 0, 1}, 1, false},              // raw [1]
       {{1, 0, 1, 1, 1, 0, 0}, 1, false},              // [1] not shown at all
-      {{4, 0, 2, 1, 1, 0, 1, 3, 1, 0, 0,              // nftName and raw [1]
+      {{1, 0, 1, 1, 1, 0, 0,                          // displayed raw address
+        4, 0, 2, 1, 1, 0, 1, 3, 1, 0, 0},             // unused NFT formatter
+       2,
+       false},
+      {{4, 0, 2, 1, 1, 0, 1, 3, 1, 0, 0,  // nftName and raw [1]
         1, 0, 1, 1, 1, 0, 1},
        2,
        false},

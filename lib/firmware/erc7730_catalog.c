@@ -607,12 +607,15 @@ static bool finish_formatter(Erc7730CatalogVerifier* v) {
    * the end of the path section until the bindings. */
   v->cert[v->entry_index] = v->formatter_value_array;
   /* bit 0: an argument iterates; bit 1: an auxiliary path uses another
-   * array or a scalar; bit 2: embedded calldata; bit 3: signer constant. */
+   * array or a scalar; bit 2: embedded calldata; bit 3: signer constant;
+   * bit 4: the nftName value reads the second word. */
   v->cert[64u + v->entry_index] =
       (uint8_t)((v->formatter_any_array ? 1u : 0u) |
                 (v->formatter_mixed_arrays ? 2u : 0u) |
                 (v->formatter_kind == 13 ? 4u : 0u) |
-                (v->formatter_value_literal ? 8u : 0u));
+                (v->formatter_value_literal ? 8u : 0u) |
+                (v->formatter_second_word_nft ? 16u : 0u));
+  v->formatter_second_word_nft = false;
   v->formatter_value_array = 0xff;
   v->formatter_any_array = false;
   v->formatter_mixed_arrays = false;
@@ -691,7 +694,7 @@ static bool consume_formatter_byte(Erc7730CatalogVerifier* v, uint8_t byte) {
     v->formatter_value_literal = true;
   if (source == 1 && ((v->path_second_word_mask >> index) & 1u) != 0) {
     if (v->formatter_kind == 4 && role == 1)
-      v->second_word_nft = true;
+      v->formatter_second_word_nft = true;
     else
       v->second_word_other = true;
   }
@@ -744,6 +747,10 @@ static bool validate_display_instruction(Erc7730CatalogVerifier* v) {
     const uint16_t formatter = opcode == 3 ? a : b;
     if (formatter >= 64) return false;
     const uint8_t value_array = v->cert[formatter];
+    /* A formatter declaration alone displays nothing. A field in an empty
+     * iteration can also be skipped. */
+    if (!v->display_in_iteration && (v->cert[64u + formatter] & 16u) != 0)
+      v->second_word_nft = true;
     /* Intent value: never an embedded call or a signer constant. */
     if (opcode == 3 && (v->cert[64u + formatter] & 12u) != 0) return false;
     /* A field label is signer text shown with its value. */
