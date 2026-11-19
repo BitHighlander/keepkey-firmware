@@ -406,12 +406,15 @@ KNOWN_CAPABILITIES = frozenset((
     "erc20-unlimited-permit-review", "erc7730-runtime-review",
     "evm-certified-intent", "evm-max-amount-review", "evm-tx-metadata",
     "evm-unknown-token-review", "hive-release-review",
-    "legacy-evm-router-signing", "maya-single-message", "osmosis-wire-guards",
+    "legacy-evm-router-signing", "maya-single-message", "monero-signing",
+    "osmosis-wire-guards",
     "permit2-review", "prompt-workflow-unwind", "protected-ping-presence",
     "ripple-memo-policy", "session-trust-lifetime", "solana-certified-review",
     "solana-lut-attestation", "solana-runtime-review", "storage-v19-kdf",
     "tendermint-progress", "safe-reset-ceremony", "thor-deposit-review",
     "tron-trc20-review",
+    "safe-typed-calls", "erc7730-typed-iteration",
+    "erc7730-typed-settlement",
 ))
 
 
