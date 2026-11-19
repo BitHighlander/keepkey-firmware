@@ -601,7 +601,10 @@ TEST(Erc7730Workflow, TokenIdExemptionNeedsACertifiedDefinition) {
     workflow.depth = c.depth;
     // erc7730_workflow_tier() reads the outer tier from outer_tier here.
     if (c.depth) workflow.outer_tier = c.outer;
+    memcpy(workflow.identity.selector_or_type_hash, "\x09\x5e\xa7\xb3", 4);
     EXPECT_EQ(c.exempt, erc7730_workflow_token_id_exempt(&workflow));
+    memcpy(workflow.identity.selector_or_type_hash, "\x39\x50\x93\x51", 4);
+    EXPECT_FALSE(erc7730_workflow_token_id_exempt(&workflow));
   }
 }
 

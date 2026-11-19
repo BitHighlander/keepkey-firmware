@@ -842,7 +842,11 @@ uint8_t erc7730_workflow_tier(const Erc7730Workflow* workflow) {
 }
 
 bool erc7730_workflow_token_id_exempt(const Erc7730Workflow* workflow) {
+  /* Only approve(address,uint256) is shared by ERC-20 and ERC-721.
+   * increaseAllowance always grants an allowance. */
   return workflow && workflow->identity.second_word_token_id &&
+         memcmp(workflow->identity.selector_or_type_hash, "\x09\x5e\xa7\xb3",
+                4) == 0 &&
          erc7730_workflow_tier(workflow) == METADATA_TIER_KEEPKEY;
 }
 
