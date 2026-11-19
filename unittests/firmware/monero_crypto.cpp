@@ -826,6 +826,17 @@ TEST_F(MoneroCrypto, ClsagAbortLeavesNoOutputAndDoesNotTouchTheArena) {
 
 // ------------------------------------------------------ argument checking
 
+TEST_F(MoneroCrypto, EarlyFailureWipesValidWorkspace) {
+  memset(&bws, 0xa5, sizeof(bws));
+  EXPECT_FALSE(
+      xmr_bpp_prove(nullptr, nullptr, nullptr, 0, &bws, nullptr, nullptr));
+  EXPECT_TRUE(all_zero(&bws, sizeof(bws)));
+  memset(&cws, 0xa5, sizeof(cws));
+  EXPECT_FALSE(xmr_clsag_sign(nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0,
+                              nullptr, nullptr, &cws, nullptr, nullptr));
+  EXPECT_TRUE(all_zero(&cws, sizeof(cws)));
+}
+
 TEST_F(MoneroCrypto, BppRejectsBadArgumentsBeforeDrawing) {
   const uint64_t a[3] = {1, 2, 3};
   uint8_t gamma[3][32], bad[2][32];

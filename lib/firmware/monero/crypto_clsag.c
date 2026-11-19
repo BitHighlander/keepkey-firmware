@@ -136,11 +136,12 @@ bool xmr_clsag_sign(xmr_clsag_sig *sig, const uint8_t message[32],
   uint8_t Lb[32], Rb[32], nk[32], tr[33], secret[64];
   bool ok = false, aborted = false;
 
-  if (sig == NULL) return false;
-  memzero(sig, sizeof(*sig));
-  if (message == NULL || P == NULL || C_nonzero == NULL || C_offset == NULL ||
-      p == NULL || z == NULL || ws == NULL || n < 2 || n > XMR_CLSAG_MAX_RING ||
-      l >= n || ((uintptr_t)ws % XMR_WORKSPACE_ALIGN) != 0) {
+  if (sig != NULL) memzero(sig, sizeof(*sig));
+  if (ws == NULL || ((uintptr_t)ws % XMR_WORKSPACE_ALIGN) != 0) return false;
+  if (sig == NULL || message == NULL || P == NULL || C_nonzero == NULL ||
+      C_offset == NULL || p == NULL || z == NULL || n < 2 ||
+      n > XMR_CLSAG_MAX_RING || l >= n) {
+    memzero(ws, sizeof(*ws));
     return false;
   }
   if (!xmr_sc_load_canonical(ps, p) || !xmr_sc_load_canonical(zs, z) ||
