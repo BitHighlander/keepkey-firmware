@@ -21,7 +21,7 @@ mkdir -p "$OUT"
 FLAGS="-O2 -std=gnu99 -DUSE_MONERO=1 -DUSE_KECCAK=1 -DUSE_ETHEREUM=1 \
  -DUSE_GROESTL=0 -DXMR_TEST_RNG_NO_CHECKED=1 \
  -I$SRC/include -I$C -I$SRC/lib/firmware/monero -I$HERE"
-CRY="$C/hasher.c $C/sha2.c $C/sha3.c $C/ripemd160.c $C/blake256.c \
+CRY="$C/hasher.c $C/groestl.c $C/sha2.c $C/sha3.c $C/ripemd160.c $C/blake256.c \
  $C/blake2b.c $C/memzero.c \
  $C/ed25519-donna/curve25519-donna-scalarmult-base.c \
  $C/ed25519-donna/ed25519-donna-32bit-tables.c $C/ed25519-donna/ed25519.c \
