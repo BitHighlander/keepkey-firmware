@@ -29,9 +29,11 @@ if(NOT ${KK_EMULATOR})
   if(KK_FIRMWARE_LTO AND NOT KK_BUILD_BOOTLOADER_TOOLS)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -flto")
     # Keep GCC's link-time stack-usage records where the SRAM gate collects them.
+    # The CMake link wrapper closes GNU Make jobserver descriptors. Keep the
+    # nested GCC link independent of the outer parallel make.
     file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/lto-su")
     set(CMAKE_C_LINK_EXECUTABLE
-        "\"${CMAKE_COMMAND}\" -E env \"TMPDIR=${CMAKE_BINARY_DIR}/lto-su\" ${CMAKE_C_LINK_EXECUTABLE}")
+        "\"${CMAKE_COMMAND}\" -E env MAKEFLAGS= \"TMPDIR=${CMAKE_BINARY_DIR}/lto-su\" ${CMAKE_C_LINK_EXECUTABLE}")
   endif()
 
   set(LINK_FLAGS
