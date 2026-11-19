@@ -338,7 +338,7 @@ static Erc7730UiResult confirm_erc7730_source_and_intent(
     workflow->intent_confirmed = true;
     /* A Safe delegatecall, read from the signed calldata: said before any
      * field, whatever the definition shows. */
-    if (!inner && workflow->safe_delegatecall &&
+    if (workflow->safe_delegatecall &&
         !confirm(ButtonRequestType_ButtonRequest_Other, "DELEGATECALL",
                  "Runs the contract in 'to' as the Safe, with its full "
                  "authority. Not checked."))

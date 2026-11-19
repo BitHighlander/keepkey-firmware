@@ -690,6 +690,20 @@ static bool safe_exec_selector(const uint8_t selector[4]) {
   return false;
 }
 
+/* Offsets here are relative to the active call's arguments at either depth. */
+static Erc7730AbiResult feed_call_arguments(Erc7730Workflow* workflow,
+                                            size_t offset, const uint8_t* data,
+                                            size_t length) {
+  const Erc7730AbiResult result =
+      erc7730_abi_stream_feed(&workflow->calldata, offset, data, length);
+  if (result == ERC7730_ABI_OK && !workflow->calldata_validated &&
+      offset < 128 &&
+      safe_exec_selector(workflow->identity.selector_or_type_hash))
+    for (size_t i = 0; i < length && offset + i < 128; i++)
+      if (offset + i >= 96 && data[i] != 0) workflow->safe_delegatecall = true;
+  return result;
+}
+
 Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
                                                 const uint8_t* data,
                                                 size_t data_len) {
@@ -717,8 +731,8 @@ Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
   }
   Erc7730AbiResult result = ERC7730_ABI_OK;
   if (workflow->depth == 0) {
-    result = erc7730_abi_stream_feed(
-        &workflow->calldata, workflow->calldata.received, data, data_len);
+    result = feed_call_arguments(workflow, workflow->calldata.received, data,
+                                 data_len);
   } else {
     /* Feed only the inner call's arguments (after its selector). */
     const uint32_t start = workflow->inner_offset + 4u;
@@ -728,21 +742,12 @@ Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
     const uint32_t lo = from > start ? from : start;
     const uint32_t hi = to < end ? to : end;
     if (lo < hi)
-      result = erc7730_abi_stream_feed(&workflow->calldata, lo - start,
-                                       data + (lo - from), hi - lo);
+      result = feed_call_arguments(workflow, lo - start, data + (lo - from),
+                                   hi - lo);
   }
   if (result != ERC7730_ABI_OK) {
     fail(workflow);
   } else {
-    /* The operation word (argument bytes 96..127) is read from the signed
-     * calldata, whatever the definition shows: anything but 0 is not a
-     * plain call. */
-    if (workflow->depth == 0 &&
-        safe_exec_selector(workflow->identity.selector_or_type_hash))
-      for (size_t i = 0; i < data_len; i++)
-        if (workflow->outer_received + i >= 96u &&
-            workflow->outer_received + i < 128u && data[i] != 0)
-          workflow->safe_delegatecall = true;
     sha256_Update(&workflow->calldata_hash, data, data_len);
     for (size_t i = 0; i < data_len; i++)
       workflow->suffix_tail[(workflow->outer_received + i) &
@@ -941,6 +946,7 @@ bool erc7730_workflow_begin_fetch(Erc7730Workflow* workflow, uint8_t depth) {
     /* What restores the outer program, whichever way the inner call ends. */
     memcpy(workflow->outer_definition_id, workflow->identity.definition_id, 32);
     workflow->outer_resume = workflow->display_index;
+    workflow->outer_safe_delegatecall = workflow->safe_delegatecall;
     workflow->outer_identity_confirmed = workflow->identity_confirmed;
     workflow->outer_intent_confirmed = workflow->intent_confirmed;
     workflow->outer_tier = workflow->identity.tier;
@@ -1040,6 +1046,7 @@ bool erc7730_workflow_fetch_complete(Erc7730Workflow* workflow) {
                                          : workflow->identity.contract_address,
              20);
       workflow->depth = 1;
+      workflow->safe_delegatecall = false;
       if (identity.tier < workflow->review_tier)
         workflow->review_tier = identity.tier;
       workflow->identity_confirmed = false;
@@ -1057,6 +1064,7 @@ bool erc7730_workflow_fetch_complete(Erc7730Workflow* workflow) {
                                     ? (uint16_t)(workflow->outer_resume - 1u)
                                     : workflow->outer_resume;
       workflow->depth = 0;
+      workflow->safe_delegatecall = workflow->outer_safe_delegatecall;
       workflow->identity_confirmed = workflow->outer_identity_confirmed;
       workflow->intent_confirmed = workflow->outer_intent_confirmed;
       workflow->calldata_validated = true;

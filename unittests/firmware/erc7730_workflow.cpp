@@ -376,7 +376,7 @@ TEST(Erc7730Workflow, EmbeddedApproveIsClassifiedLikeATopLevelOne) {
 // the last is read as a uint256 word: a uint8 one would not decode.
 static bool safeExecPass(Erc7730Workflow* workflow, const uint8_t selector[4],
                          uint8_t operation, size_t chunk,
-                         size_t operation_at = 127) {
+                         size_t operation_at = 127, bool inner = false) {
   *workflow = Erc7730Workflow{};
   memcpy(workflow->identity.selector_or_type_hash, selector, 4);
   workflow->phase = ERC7730_WORKFLOW_READY;
@@ -400,12 +400,29 @@ static bool safeExecPass(Erc7730Workflow* workflow, const uint8_t selector[4],
   args[operation_at] = operation;  // operation
   args[159] = 68;         // data length
   args[160] = 0xa9;       // transfer(...)
+  const uint8_t forward_selector[4] = {0x6f, 0xad, 0xcf, 0x72};
+  if (inner) {
+    // forward(address,bytes) wraps the inner selector and arguments.
+    std::vector<uint8_t> outer(96, 0);
+    outer[31] = 0x22;
+    outer[63] = 64;
+    const size_t length = 4 + args.size();
+    outer[94] = static_cast<uint8_t>(length >> 8);
+    outer[95] = static_cast<uint8_t>(length);
+    workflow->depth = 1;
+    workflow->inner_offset = outer.size();
+    workflow->inner_length = length;
+    outer.insert(outer.end(), selector, selector + 4);
+    outer.insert(outer.end(), args.begin(), args.end());
+    outer.resize((outer.size() + 31) & ~size_t{31});
+    args.swap(outer);
+  }
   EthereumSignTx tx{};
   tx.has_data_length = true;
   tx.data_length = 4 + args.size();
   tx.has_data_initial_chunk = true;
   tx.data_initial_chunk.size = 4;
-  memcpy(tx.data_initial_chunk.bytes, selector, 4);
+  memcpy(tx.data_initial_chunk.bytes, inner ? forward_selector : selector, 4);
   if (!erc7730_tx_continuation_capture(&workflow->continuation, &tx) ||
       !erc7730_workflow_restore_and_start_calldata(workflow, &tx))
     return false;
@@ -450,6 +467,20 @@ TEST(Erc7730Workflow, SafeExecOperationIsReadFromTheCalldata) {
   }
   ASSERT_TRUE(safeExecPass(&workflow, other, 1, 256));
   EXPECT_FALSE(workflow.safe_delegatecall);
+}
+
+TEST(Erc7730Workflow, InnerSafeExecUsesItsOwnOperationWord) {
+  const uint8_t module[4] = {0x46, 0x87, 0x21, 0xa7};
+  const uint8_t other[4] = {0x29, 0x23, 0x8e, 0xe4};
+  Erc7730Workflow workflow{};
+  for (size_t chunk : {1u, 31u, 128u, 512u}) {
+    ASSERT_TRUE(safeExecPass(&workflow, module, 1, chunk, 127, true));
+    EXPECT_TRUE(workflow.safe_delegatecall);
+    ASSERT_TRUE(safeExecPass(&workflow, module, 0, chunk, 127, true));
+    EXPECT_FALSE(workflow.safe_delegatecall);
+    ASSERT_TRUE(safeExecPass(&workflow, other, 1, chunk, 127, true));
+    EXPECT_FALSE(workflow.safe_delegatecall);
+  }
 }
 
 // An outer approve(address,uint256): the first calldata pass, at any chunking,
