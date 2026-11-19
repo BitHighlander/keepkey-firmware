@@ -192,13 +192,18 @@ jobs:
 
   static-analysis:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           submodules: false
+
+      - name: Initialize analyzer input headers
+        # Without crypto's array typedefs, output parameters are misread as
+        # uninitialized scalar inputs. Use the same pinned headers as builds.
+        run: git submodule update --init -- deps/crypto/trezor-firmware deps/device-protocol
 
       - name: Install cppcheck
         run: sudo apt-get update && sudo apt-get install -y "cppcheck=$(cat scripts/cppcheck-version)"
