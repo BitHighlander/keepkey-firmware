@@ -110,11 +110,15 @@ def free_ports(count):
             s.close()
 
 
+def absolute_path(value):
+    return Path(value).resolve()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
-    parser.add_argument('--bin-dir', type=Path, required=True)
-    parser.add_argument('--kkemu', type=Path, required=True)
-    parser.add_argument('--adapter', type=Path, required=True)
+    parser.add_argument('--bin-dir', type=absolute_path, required=True)
+    parser.add_argument('--kkemu', type=absolute_path, required=True)
+    parser.add_argument('--adapter', type=absolute_path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--udp-port', type=int, default=22100)
     parser.add_argument('--fixtures', type=Path,

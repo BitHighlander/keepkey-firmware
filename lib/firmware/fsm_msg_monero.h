@@ -265,6 +265,7 @@ void fsm_msgMoneroKeyImageSyncStep(const MoneroKeyImageSyncStepRequest* msg) {
     layoutHome();
     return;
   }
+  note_workflow_progress();
   layoutProgress(_("Syncing key images"), permil);
   msg_write(MessageType_MessageType_MoneroKeyImageSyncStepAck, resp);
 }

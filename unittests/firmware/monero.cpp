@@ -1,6 +1,7 @@
 extern "C" {
 #include "keepkey/board/keepkey_button.h"
 #include "keepkey/firmware/fsm.h"
+#include "keepkey/firmware/home_sm.h"
 #include "keepkey/firmware/monero.h"
 #include "keepkey/firmware/signing_session.h"
 #include "keepkey/firmware/storage.h"
@@ -461,6 +462,28 @@ TEST_F(MoneroSession, ActivityDuringAnExpiringStepCannotWipeItsCountOrKeys) {
   for (auto b : key) EXPECT_EQ(0, b);
 }
 
+TEST_F(MoneroSession, ValidatedKeyImageStepDefersLockUntilProgressStalls) {
+  const auto& c = monero_core_cases[0];
+  const auto td = transfer(c, true);
+  auto init = init_request({td});
+  layoutHomeForced();
+  ASSERT_TRUE(monero_key_image_begin(c.key_seed, &init));
+  const uint32_t delay = storage_getAutoLockDelayMs();
+  increment_idle_time(delay / 2);
+  MoneroKeyImageSyncStepRequest step = {};
+  step.tdis_count = 1;
+  step.tdis[0] = td;
+  fsm_msgMoneroKeyImageSyncStep(&step);
+  increment_idle_time(delay - delay / 2);
+  EXPECT_FALSE(auto_lock_if_due());
+  EXPECT_TRUE(monero_key_image_active());
+  increment_idle_time(delay / 2);
+  EXPECT_TRUE(auto_lock_if_due());
+  EXPECT_EQ(SIGNING_SESSION_FREE, signing_session_owner());
+  layoutHomeForced();
+  reset_idle_time();
+}
+
 TEST_F(MoneroSession, DispatchExpiresAnIdleKeyImageSession) {
   const auto& c = monero_core_cases[0];
   auto init = init_request({transfer(c, true)});
@@ -484,7 +507,8 @@ TEST(SigningSession, UnpublishedReservationIsExclusiveAndCanBeWiped) {
   monero_session_abort();
   EXPECT_TRUE(signing_session_is_zero());
   EXPECT_NE(nullptr, signing_session_claim(SIGNING_SESSION_ZCASH));
-  fsm_abort_signing_workflows();
+  signing_session_release(SIGNING_SESSION_ZCASH);
+  EXPECT_EQ(SIGNING_SESSION_FREE, signing_session_owner());
 }
 
 #if ZCASH_PRIVACY
