@@ -61,7 +61,8 @@ bool pin_protect_cached(void);
 /// setup ceremony can stage it until its commit point.
 /// \param out      receives the confirmed PIN.
 /// \param out_len  size of \a out (use PIN_BUF).
-/// \returns true iff both entries were given and matched.
+/// \returns true iff both entries were given and matched. A false result
+/// has already sent its terminal Failure response (mismatch or cancel).
 bool change_pin_staged(char* out, size_t out_len);
 
 /// Prompt for PIN regardless of whether it was cached
@@ -71,6 +72,7 @@ bool pin_protect_uncached(void);
 
 /// Process a PIN change.
 /// \returns true iff the PIN was successfully changed.
+/// A false result has already sent its terminal Failure response.
 bool change_pin(void);
 
 /// Process a wipe code change.

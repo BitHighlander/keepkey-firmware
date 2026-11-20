@@ -193,21 +193,26 @@ struct PinRun {
   int cancels = 0;
   int polls = 0;
   bool watchdog = false;
+  int failures = 0;
   std::string failure;
 };
-static PinRun resetWithPinThenCancel(bool mismatch) {
+static PinRun resetWithPinThenCancel(bool mismatch,
+                                     bool cancel_at_pin = false) {
   PinRun result;
   MessageType pending = (MessageType)0;
   kk_test_set_message_hook([&](MessageType id, const void* msg) {
-    if (id == MessageType_MessageType_PinMatrixRequest) pending = id;
+    if (id == MessageType_MessageType_PinMatrixRequest)
+      pending = cancel_at_pin ? MessageType_MessageType_Cancel : id;
     if (id == MessageType_MessageType_ButtonRequest &&
         ((const ButtonRequest*)msg)->code ==
             ButtonRequestType_ButtonRequest_DiceRoll) {
       ++result.dice_requests;
       pending = MessageType_MessageType_Cancel;
     }
-    if (id == MessageType_MessageType_Failure)
+    if (id == MessageType_MessageType_Failure) {
+      ++result.failures;
       result.failure = ((const Failure*)msg)->message;
+    }
   });
   kk_test_set_poll_hook([&] {
     if (++result.polls > 10000) {
@@ -254,6 +259,7 @@ static PinRun resetWithPinThenCancel(bool mismatch) {
 TEST_F(SetupUx, PinMismatchHappensBeforeDiceAndLeavesNoWallet) {
   const auto run = resetWithPinThenCancel(true);
   EXPECT_EQ(2, run.answered);
+  EXPECT_EQ(1, run.failures);
   EXPECT_EQ("PINs do not match", run.failure);
   EXPECT_EQ(0, run.dice_requests);
   EXPECT_EQ(0, run.cancels);
@@ -264,6 +270,22 @@ TEST_F(SetupUx, PinMismatchHappensBeforeDiceAndLeavesNoWallet) {
   EXPECT_FALSE(storage_hasPin());
   uint8_t digest[32] = {};
   EXPECT_EQ(0u, reset_get_dice_digest(digest));
+}
+
+// A host Cancel at the first PIN prompt gets exactly one terminal response,
+// PinCancelled, as ChangePin does since #1043: no second "PINs do not match"
+// that a host would read as the answer to its next request.
+TEST_F(SetupUx, PinCancelDuringResetSendsOneFailure) {
+  const auto run = resetWithPinThenCancel(false, true);
+  EXPECT_EQ(0, run.answered);
+  EXPECT_EQ(1, run.cancels);
+  EXPECT_EQ(0, run.dice_requests);
+  EXPECT_FALSE(run.watchdog);
+  EXPECT_EQ(1, run.failures);
+  EXPECT_EQ(FailureType_Failure_PinCancelled, fsm_test_lastFailureCode());
+  EXPECT_FALSE(setup_isArmed());
+  EXPECT_FALSE(storage_isInitialized());
+  EXPECT_FALSE(storage_hasPin());
 }
 
 TEST_F(SetupUx, DiceCancelAfterPinLeavesNoWalletOrStagedPin) {
