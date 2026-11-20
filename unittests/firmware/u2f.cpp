@@ -386,7 +386,7 @@ TEST_F(U2FWait, PresenceNeedsFreshPressAndRelease) {
 
 // Chrome's CTAP 2.0 "touch your security key" request is a makeCredential or
 // getAssertion with an empty pinAuth. The device must wait for a press and
-// then answer PIN_NOT_SET; answering at once left Chrome spinning forever.
+// then report whether a passkey PIN is set.
 TEST_F(U2FWait, EmptyPinAuthWaitsForTouch) {
   // makeCredential {1: hash, 2: {"id": ".dummy"}, 3: {"id": h'01', "name":
   // "dummy"}, 4: [{"alg": -7, "type": "public-key"}], 8: h'', 9: 1} and
@@ -407,17 +407,28 @@ TEST_F(U2FWait, EmptyPinAuthWaitsForTouch) {
              {0x01, 0x66, '.', 'd', 'u', 'm', 'm', 'y', 0x02, 0x58, 0x20});
   get.insert(get.end(), hash.begin(), hash.end());
   get.insert(get.end(), {0x06, 0x40, 0x07, 0x01});
-  for (const auto& request : {make, get}) {
-    ctap2_init();
-    hold(true, 2);
-    hold(false, 1);  // develop confirms on the fresh press
-    uint8_t response[64] = {0};
-    size_t response_length = 0;
-    ctap2_handle(request.data(), request.size(), response, sizeof(response),
-                 &response_length);
-    EXPECT_EQ(response[0], CTAP2_ERR_PIN_NOT_SET);
-    EXPECT_TRUE(poll_script.empty()) << "answered without waiting for a press";
-    poll_script.clear();
+  PasskeyStorage passkeys;
+  storage_getPasskeyData(&passkeys);
+  for (bool pin_set : {false, true}) {
+    passkeys.pin_set = pin_set;
+    storage_setPasskeyData(&passkeys);
+    for (const auto& request : {make, get}) {
+      SCOPED_TRACE(::testing::Message()
+                   << "command=" << int(request[0]) << " pin_set=" << pin_set);
+      ctap2_init();
+      hold(true, 2);
+      hold(false, 1);  // confirm on the fresh press
+      uint8_t response[64] = {0};
+      size_t response_length = 0;
+      ctap2_handle(request.data(), request.size(), response, sizeof(response),
+                   &response_length);
+      EXPECT_EQ(1u, response_length);
+      EXPECT_EQ(pin_set ? CTAP2_ERR_PIN_INVALID : CTAP2_ERR_PIN_NOT_SET,
+                response[0]);
+      EXPECT_TRUE(poll_script.empty())
+          << "answered without waiting for a press";
+      poll_script.clear();
+    }
   }
 }
 
