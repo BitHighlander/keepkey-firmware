@@ -135,6 +135,11 @@ bool zcash_compute_v6_shielded_sighash(const uint8_t header_digest[32],
  * other pair must be refused before confirmation. */
 bool zcash_tx_version_supported(uint32_t version, uint32_t version_group_id);
 
+/* Consensus branches with the Ironwood pool: NU6.3 (0x37A5165B) and NU7
+ * (0x77190AD9, mainnet since height 3,543,405). Both carry Ironwood bundles
+ * and refuse value entering the Orchard pool (ZIP 258). */
+bool zcash_branch_has_ironwood(uint32_t branch_id);
+
 /* Orchard v6 binds the empty Ironwood digest; a host digest is accepted only
  * if it equals that, else the device would sign a different sighash. */
 bool zcash_v6_orchard_ironwood_digest_valid(bool present, size_t size,
