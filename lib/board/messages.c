@@ -497,6 +497,11 @@ bool msg_take_tiny_rejection(void) {
   return rejected;
 }
 
+bool msg_session_end_pending(void) {
+  return msg_tiny_id == MessageType_MessageType_Initialize ||
+         msg_tiny_id == MessageType_MessageType_Cancel;
+}
+
 MessageType msg_take_tiny_id(void) {
   const MessageType id = msg_tiny_id;
   if (id != MSG_TINY_TYPE_ERROR) {
