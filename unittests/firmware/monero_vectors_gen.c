@@ -323,7 +323,8 @@ int main(int argc, char **argv) {
       write_clsag(f, &cv[tv[t].vec], buf, n, 0);
     }
   }
-  fclose(f);
+  int record_error = ferror(f);
+  if (fclose(f) != 0 || record_error) return 1;
 
   FILE *h = fopen(argv[2], "w");
   if (!h) return 1;
@@ -403,7 +404,8 @@ int main(int argc, char **argv) {
     fprintf(h, "},\n     \"%s\"},\n", x->what);
   }
   fprintf(h, "};\n\n#endif\n");
-  fclose(h);
+  int header_error = ferror(h);
+  if (fclose(h) != 0 || header_error) return 1;
   printf("bpp=%d clsag=%d tampers=%u\n", N_BPP, N_CLSAG, (unsigned)ntv);
   return 0;
 }

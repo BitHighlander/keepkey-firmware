@@ -12,11 +12,21 @@
 # The header is only replaced when Core agrees with every record.
 set -eu
 OUT=$1
-HERE=$(cd "$(dirname "$0")" && pwd)
+HERE=$(cd "$(dirname "$0")" && pwd -P)
 SRC=$(cd "$HERE/../.." && pwd)
 C=$SRC/deps/crypto/trezor-firmware/crypto
 DEPS=${MONERO_DEPS:-/opt/homebrew/opt}
 mkdir -p "$OUT"
+OUT=$(cd "$OUT" && pwd -P)
+if [ "$OUT" -ef "$HERE" ]; then
+  echo "OUTDIR must differ from the checked-in header directory" >&2
+  exit 1
+fi
+# Generate in a fresh directory so pre-existing output links cannot overwrite
+# the checked-in header while the Core verification is pending.
+STAGE=$(mktemp -d "$OUT/.monero-vectors.XXXXXXXX")
+trap 'rm -rf "$STAGE"' EXIT
+trap 'exit 1' HUP INT TERM
 
 FLAGS="-O2 -std=gnu99 -DUSE_MONERO=1 -DUSE_KECCAK=1 -DUSE_ETHEREUM=1 \
  -DUSE_GROESTL=0 -DXMR_TEST_RNG_NO_CHECKED=1 \
@@ -37,8 +47,8 @@ MON="$SRC/lib/firmware/monero/crypto_bpp.c \
 # deliberately not defined, so the link fails if the prover or signer reached
 # an unchecked draw.
 cc $FLAGS -Wl,-dead_strip $CRY $MON "$HERE/monero_test_rng.c" \
-  "$HERE/monero_vectors_gen.c" -o "$OUT/monero_vectors_gen"
-"$OUT/monero_vectors_gen" "$OUT/records.bin" "$OUT/monero_crypto_vectors.h"
+  "$HERE/monero_vectors_gen.c" -o "$STAGE/monero_vectors_gen"
+"$STAGE/monero_vectors_gen" "$STAGE/records.bin" "$STAGE/monero_crypto_vectors.h"
 
 S=$MONERO_CORE_SRC
 B=$MONERO_CORE_BUILD
@@ -46,7 +56,7 @@ B=$MONERO_CORE_BUILD
 c++ -std=c++14 -O2 -I"$S/src" -I"$S/contrib/epee/include" \
   -I"$S/external/easylogging++" -I"$S/external" -I"$B" \
   -I"$DEPS/boost/include" -I"$DEPS/libsodium/include" \
-  "$HERE/monero_core_verify.cpp" -o "$OUT/monero_core_verify" \
+  "$HERE/monero_core_verify.cpp" -o "$STAGE/monero_core_verify" \
   "$B/src/ringct/libringct.a" "$B/src/cryptonote_basic/libcryptonote_basic.a" \
   "$B/src/cryptonote_basic/libcryptonote_format_utils_basic.a" \
   "$B/src/ringct/libringct_basic.a" "$B/src/device/libdevice.a" \
@@ -60,11 +70,14 @@ c++ -std=c++14 -O2 -I"$S/src" -I"$S/contrib/epee/include" \
   -L"$DEPS/libsodium/lib" -lsodium -L"$DEPS/unbound/lib" -lunbound \
   -L"$DEPS/hidapi/lib" -lhidapi -framework AppKit -framework CoreFoundation \
   -framework IOKit -framework Security
-if ! "$OUT/monero_core_verify" "$OUT/records.bin" >"$OUT/core_verify.log"; then
-  cat "$OUT/core_verify.log"
+if ! "$STAGE/monero_core_verify" "$STAGE/records.bin" >"$STAGE/core_verify.log"; then
+  cat "$STAGE/core_verify.log"
   echo "Monero Core disagrees with a record; header NOT updated" >&2
   exit 1
 fi
-cat "$OUT/core_verify.log"
+cat "$STAGE/core_verify.log"
+for artifact in monero_vectors_gen records.bin monero_core_verify core_verify.log monero_crypto_vectors.h; do
+  mv -f "$STAGE/$artifact" "$OUT/$artifact"
+done
 cp "$OUT/monero_crypto_vectors.h" "$HERE/monero_crypto_vectors.h"
 echo "updated $HERE/monero_crypto_vectors.h"
