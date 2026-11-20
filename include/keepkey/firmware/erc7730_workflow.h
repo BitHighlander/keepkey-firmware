@@ -54,9 +54,9 @@ typedef enum {
  * policy (ethereum.c) reads, taken from the arguments of the first calldata
  * pass, which fixes the digest every later pass and the signature must match.
  */
-#define ERC7730_ALLOWANCE_CALL 1u      /* the selector, with both words */
-#define ERC7730_ALLOWANCE_DIRTY 2u     /* the spender word has high bytes */
-#define ERC7730_ALLOWANCE_CHECKED 8u   /* the policy ran, before any screen */
+#define ERC7730_ALLOWANCE_CALL 1u    /* the selector, with both words */
+#define ERC7730_ALLOWANCE_DIRTY 2u   /* the spender word has high bytes */
+#define ERC7730_ALLOWANCE_CHECKED 8u /* the policy ran, before any screen */
 
 /* The longest suffix the review shows byte for byte (a power of two); a
  * longer one cannot be clear-signed. */
