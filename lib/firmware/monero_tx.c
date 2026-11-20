@@ -428,8 +428,13 @@ static MoneroTxResult plan_build(const bignum256modm spend,
                                    t->outputs[0].spend_public_key.bytes, 32) &&
                            !memcmp(d->view_public_key.bytes,
                                    t->outputs[0].view_public_key.bytes, 32);
+    const bool subaddress = d->has_is_subaddress && d->is_subaddress;
+    if (duplicate &&
+        subaddress != (t->outputs[0].has_is_subaddress &&
+                       t->outputs[0].is_subaddress))
+      return MONERO_TX_ERR_REQUEST;
     if (!duplicate) {
-      if (d->has_is_subaddress && d->is_subaddress) {
+      if (subaddress) {
         ++subaddresses;
         single_subaddress = d;
       } else {

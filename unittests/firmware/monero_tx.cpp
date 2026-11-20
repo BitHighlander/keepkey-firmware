@@ -962,6 +962,21 @@ TEST_F(MoneroTx, NoChangeReviewIncludesEveryOutputEvenOwnOrZeroAmount) {
   }
 }
 
+TEST_F(MoneroTx, RepeatedRecipientKeysRequireAConsistentAddressKind) {
+  for (unsigned recipient = 0; recipient < 2; ++recipient) {
+    Plan p = sweep_plan(0, recipient);
+    MoneroTxData& t = p.init.tsx_data;
+    t.outputs[1 - recipient] = destination(p.to[recipient], 0);
+    MoneroTxReview review;
+    ASSERT_EQ(MONERO_TX_OK,
+              monero_tx_review(signer_wallet().key_seed, &p.init, &review));
+    t.outputs[1 - recipient].is_subaddress = true;
+    EXPECT_EQ(MONERO_TX_ERR_REQUEST,
+              monero_tx_review(signer_wallet().key_seed, &p.init, &review));
+    EXPECT_FALSE(monero_tx_active());
+  }
+}
+
 TEST_F(MoneroTx, SweepCannotDeclareForeignChangeOrAZeroIntegratedDummy) {
   for (unsigned recipient = 0; recipient < 2; ++recipient) {
     for (bool integrated : {false, true}) {
