@@ -133,7 +133,7 @@ bool xmr_clsag_sign(xmr_clsag_sig *sig, const uint8_t message[32],
   const size_t l = real_index;
   bignum256modm ps, zs, a, mu[2], c, cp, cc, si, t;
   ge25519 Hl, I, D, Coff, Pi, Ci, Hi, X, G;
-  uint8_t Lb[32], Rb[32], nk[32], tr[33], secret[64];
+  uint8_t Lb[32], Rb[32], alpha_G[32], nk[32], tr[33], secret[64];
   bool ok = false, aborted = false;
 
   if (sig != NULL) memzero(sig, sizeof(*sig));
@@ -188,7 +188,7 @@ bool xmr_clsag_sign(xmr_clsag_sig *sig, const uint8_t message[32],
   expand256_modm(t, xmr_inv_eight, 32);
   scalarmult_packed(sig->D, &D, t);
   if (xmr_eq32(sig->I, identity) || xmr_eq32(sig->D, identity)) goto done;
-  base_packed(Lb, a);
+  base_packed(alpha_G, a);
   scalarmult_packed(Rb, &Hl, a);
 
   /* mu_P, mu_C = H(dom, P, C_nonzero, I, D/8, C_offset) */
@@ -204,7 +204,7 @@ bool xmr_clsag_sign(xmr_clsag_sig *sig, const uint8_t message[32],
   }
 
   memcpy(&ws->round, &ws->prefix, sizeof(SHA3_CTX));
-  keccak_Update(&ws->round, Lb, 32);
+  keccak_Update(&ws->round, alpha_G, 32);
   keccak_Update(&ws->round, Rb, 32);
   hash_final_scalar(&ws->round, c);
 
@@ -253,9 +253,25 @@ bool xmr_clsag_sign(xmr_clsag_sig *sig, const uint8_t message[32],
   mul256_modm(t, t, c);
   sub256_modm(t, a, t);
   contract256_modm(sig->s[l], t);
-  ok = true;
+  /* Check the serialized response against the original nonce commitment
+   * before releasing it. Only the challenge and ring points enter the
+   * variable-time product. A response that fails this check is secret. */
+  if (!xmr_sc_load_canonical(t, sig->s[l]) ||
+      !ge25519_unpack_vartime(&Pi, P[l]) ||
+      !ge25519_unpack_vartime(&Ci, C_nonzero[l])) {
+    goto done;
+  }
+  ge25519_add(&Ci, &Ci, &Coff, 1);
+  mul256_modm(cp, c, mu[0]);
+  mul256_modm(cc, c, mu[1]);
+  ge25519_double_scalarmult_vartime2(&Hi, &Pi, cp, &Ci, cc);
+  ge25519_scalarmult_base_niels(&X, ge25519_niels_base_multiples, t);
+  ge25519_add(&X, &X, &Hi, 0);
+  ge25519_pack(Lb, &X);
+  ok = xmr_eq32(Lb, alpha_G);
 
 done:
+  memzero(alpha_G, sizeof(alpha_G));
   memzero(ps, sizeof(ps));
   memzero(zs, sizeof(zs));
   memzero(a, sizeof(a));
