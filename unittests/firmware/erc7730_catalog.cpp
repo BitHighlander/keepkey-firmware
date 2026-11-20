@@ -479,7 +479,7 @@ class Erc7730SigningHandlers : public ::testing::Test {
 
 // 7.17: an approve() or increaseAllowance() definition starts its replay like
 // any other, with the allowance policy armed for the first calldata pass; a
-// shorter call is no allowance and leaves it unarmed.
+// short recognized allowance is refused before review begins.
 TEST_F(Erc7730SigningHandlers, CertifiedAllowancesStartDefinitionReplay) {
   const uint8_t selectors[][4] = {
       {0x09, 0x5e, 0xa7, 0xb3},   // approve
@@ -495,10 +495,22 @@ TEST_F(Erc7730SigningHandlers, CertifiedAllowancesStartDefinitionReplay) {
       kkconfirm_capture_start();
       fsm_msgEthereumSignTx(&tx);
       EXPECT_TRUE(kkconfirm_capture_finish().empty());
-      EXPECT_EQ(0, fsm_test_lastFailureCode());
       const Erc7730Workflow* workflow = erc7730_workflow_state();
+      if (length < 68) {
+        EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+        EXPECT_STREQ("Unable to start ERC-7730 verification",
+                     fsm_test_lastFailureMessage());
+        EXPECT_EQ(ERC7730_WORKFLOW_FAILED, workflow->phase);
+        Failure response = {};
+        EXPECT_TRUE(kkconfirm_readResponse(MessageType_MessageType_Failure,
+                                           Failure_fields, &response));
+        EXPECT_EQ(0, kkconfirm_drain());
+        fsm_abort_workflows();
+        continue;
+      }
+      EXPECT_EQ(0, fsm_test_lastFailureCode());
       EXPECT_EQ(ERC7730_WORKFLOW_REPLAY, workflow->phase);
-      EXPECT_EQ(length == 68 ? ERC7730_ALLOWANCE_CALL : 0u,
+      EXPECT_EQ(ERC7730_ALLOWANCE_CALL,
                 (unsigned)workflow->allowance);
       EXPECT_FALSE(erc7730_workflow_allowance_checked(workflow));
       EthereumClearSignDefinitionRequest request = {};
