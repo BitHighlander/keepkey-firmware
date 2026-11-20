@@ -763,22 +763,6 @@ static void resolve_erc7730_argument(Erc7730Workflow* workflow) {
       show_erc7730_delegatecall(workflow);
       return;
     }
-    /* An inner unlimited approve() signs only after the device's own
-     * UNLIMITED warning, before its inner or blind screens. */
-    if (field->unlimited_approve && field->has_address) {
-      const Erc7730UiResult ui = confirm_erc7730_source_and_intent(workflow);
-      if (ui != ERC7730_UI_OK) {
-        fail_erc7730_ui(workflow, ui);
-        return;
-      }
-      if (!ethereum_confirmUnlimitedApproval(
-              (uint32_t)workflow->identity.chain_id, field->approve_spender,
-              field->address)) {
-        fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
-                           _("Signing cancelled by user"));
-        return;
-      }
-    }
     /* Clear-sign the inner call at depth 1, outside iterations, for whole ABI
      * words; otherwise it is refused. */
     const bool fetchable = workflow->depth == 0 && !workflow->iterating &&
@@ -1032,6 +1016,29 @@ static bool erc7730_enum_key_word(const Erc7730Literal* key, uint8_t word[32]) {
   return true;
 }
 
+/* The amount and spender come from signed ABI words, independently of any
+ * field labels or display coverage the definition provides. */
+static bool confirm_erc7730_approval(uint32_t chain_id, const uint8_t token[20],
+                                     const uint8_t spender[20],
+                                     const uint8_t amount[32],
+                                     bool shared_selector, bool certified_nft) {
+  if (!certified_nft && ethereum_allowanceAmountIsUnlimited(amount))
+    return ethereum_confirmUnlimitedApproval(chain_id, spender, token);
+  char address[43], contract[43], digits[80];
+  if (!erc7730_format_address(spender, false, address, sizeof(address)) ||
+      !erc7730_format_address(token, false, contract, sizeof(contract)) ||
+      !erc7730_format_integer(amount, false, digits, sizeof(digits)))
+    return false;
+  const char* label = certified_nft      ? "Token ID"
+                      : !shared_selector ? "Increase in base units"
+                      : tokenByChainAddress(chain_id, token) != UnknownToken
+                          ? "Amount in base units"
+                          : "Base units or token ID";
+  return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                 "Token approval", "Contract %s\nSpender %s\n%s: %s", contract,
+                 address, label, digits);
+}
+
 /* An approve() or increaseAllowance(): the top-level allowance policy, on the
  * words the first pass fixed, before any screen (ethereum.c). */
 static bool erc7730_allowance_policy(Erc7730Workflow* workflow,
@@ -1045,10 +1052,11 @@ static bool erc7730_allowance_policy(Erc7730Workflow* workflow,
   /* ERC-721 approve(to, tokenId) shares approve()'s selector; a certified
    * definition that shows the second word only as a token id grants one
    * token, so a high id (an ENS-style hash) is not an UNLIMITED allowance. */
-  if ((workflow->allowance & ERC7730_ALLOWANCE_UNLIMITED) &&
-      !erc7730_workflow_token_id_exempt(workflow) &&
-      !ethereum_confirmUnlimitedApproval(
-          tx->chain_id, workflow->allowance_spender, tx->to.bytes)) {
+  if (!confirm_erc7730_approval(tx->chain_id, tx->to.bytes,
+                                workflow->allowance_spender,
+                                workflow->field.approval_amount,
+                                tx->data_initial_chunk.bytes[0] == 0x09,
+                                erc7730_workflow_token_id_exempt(workflow))) {
     fail_erc7730_field(workflow, FailureType_Failure_ActionCancelled,
                        _("Signing cancelled by user"));
     return false;
@@ -1134,23 +1142,24 @@ static void finish_erc7730_calldata(Erc7730Workflow* workflow) {
     fail_erc7730_ui(workflow, ui);
     return;
   }
-  /* Bytes the definition allows after the arguments: no field above
-   * described them, so they are shown as they are, or, past
-   * ERC7730_SUFFIX_SHOWN_MAX, said to exist. */
+  /* The validation pass refused any suffix larger than the retained tail. */
   if (workflow->suffix_length != 0) {
     uint8_t suffix[ERC7730_SUFFIX_SHOWN_MAX];
     char hex[2u + 2u * ERC7730_SUFFIX_SHOWN_MAX + 1u];
     const size_t shown = erc7730_workflow_suffix(workflow, suffix);
-    if (!shown || !erc7730_format_hex(suffix, shown, hex, sizeof(hex)))
-      hex[0] = '\0';
-    const bool one = workflow->suffix_length == 1;
+    if (shown != workflow->suffix_length ||
+        !erc7730_format_hex(suffix, shown, hex, sizeof(hex))) {
+      fail_erc7730_field(workflow, FailureType_Failure_SyntaxError,
+                         _("Extra data cannot be displayed"));
+      return;
+    }
+    const bool one = shown == 1;
     const bool confirmed =
         confirm(ButtonRequestType_ButtonRequest_ConfirmOutput, "Extra data",
                 "%lu more byte%s the arguments. The description above does "
-                "not cover %s%s%s",
-                (unsigned long)workflow->suffix_length,
-                one ? " follows" : "s follow", one ? "it" : "them",
-                hex[0] ? ":\n" : ". They are too long to show here.", hex);
+                "not cover %s:\n%s",
+                (unsigned long)shown, one ? " follows" : "s follow",
+                one ? "it" : "them", hex);
     memzero(suffix, sizeof(suffix));
     memzero(hex, sizeof(hex));
     if (!confirmed) {
@@ -1445,6 +1454,11 @@ void fsm_msgEthereumClearSignDefinitionChunk(
                                   workflow->identity.chain_id,
                                   field->has_spender ? field->spender : NULL,
                                   formatted, sizeof(formatted));
+      const bool nft =
+          shown && inner.second_word_token_id &&
+          inner.tier == METADATA_TIER_KEEPKEY &&
+          erc7730_workflow_tier(workflow) == METADATA_TIER_KEEPKEY &&
+          field->inner_selector[0] == 0x09;
       memzero(&inner, sizeof(inner));
       if (!shown) {
         memzero(formatted, sizeof(formatted));
@@ -1453,6 +1467,11 @@ void fsm_msgEthereumClearSignDefinitionChunk(
         return;
       }
       const bool confirmed =
+          (!ethereum_isAllowanceSelector(field->inner_selector, 4) ||
+           confirm_erc7730_approval((uint32_t)workflow->identity.chain_id,
+                                    field->address, field->approve_spender,
+                                    field->approval_amount,
+                                    field->inner_selector[0] == 0x09, nft)) &&
           confirm_erc7730_field("Signer field", workflow->label, formatted);
       memzero(formatted, sizeof(formatted));
       if (!confirmed) {

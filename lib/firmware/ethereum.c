@@ -168,7 +168,8 @@ static bool ethereum_isERC20ApproveCall(const EthereumSignTx* msg) {
  * both. len < 4 matches a selector prefix. */
 bool ethereum_isAllowanceSelector(const uint8_t* data, size_t len) {
   return memcmp(data, "\x09\x5e\xa7\xb3", len) == 0 ||
-         memcmp(data, "\x39\x50\x93\x51", len) == 0;
+         memcmp(data, "\x39\x50\x93\x51", len) == 0 ||
+         memcmp(data, "\xd7\x3d\xd6\x23", len) == 0;
 }
 
 /* Both ABI words present, and nothing in the spender word's high bytes. */
@@ -1097,7 +1098,7 @@ void ethereum_signing_init(EthereumSignTx* msg, const HDNode* node,
       erc7730_workflow_allowance_checked(erc7730_workflow_state());
   const size_t selector_bytes =
       msg->data_initial_chunk.size < 4 ? msg->data_initial_chunk.size : 4;
-  if (msg->has_to && msg->to.size == 20 && data_total >= 68 &&
+  if (msg->has_to && msg->to.size == 20 && data_total >= 4 &&
       !allowance_checked && msg->data_initial_chunk.size < 68 &&
       ethereum_isAllowanceSelector(msg->data_initial_chunk.bytes,
                                    selector_bytes)) {
