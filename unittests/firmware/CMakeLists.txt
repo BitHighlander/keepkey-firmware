@@ -90,6 +90,12 @@ if(NOT ${KK_BITCOIN_ONLY})
                "${eip712_corpus_inc}")
 endif()
 
+# Monero signing crypto. monero_test_rng.c replaces the module's RNG entry
+# point in this binary only (see lib/firmware/monero/crypto_rng.c).
+if(${KK_MONERO})
+  list(APPEND sources monero_crypto.cpp monero_test_rng.c)
+endif()
+
 if(${KK_ZCASH_PRIVACY})
   list(APPEND sources zcash.cpp)
 endif()
@@ -98,7 +104,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/lib/firmware
     ${CMAKE_BINARY_DIR}/include
-    ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-crypto)
+    ${CMAKE_SOURCE_DIR}/deps/crypto/trezor-firmware/crypto)
 
 add_executable(firmware-unit ${sources})
 # Real Base Universal Router calls for the streaming decoder's differential

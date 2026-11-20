@@ -18,6 +18,13 @@ class CppcheckInvocation(unittest.TestCase):
         (self.root / 'scripts').mkdir()
         for name in ('cppcheck.sh', 'cppcheck-version'):
             shutil.copy2(ROOT / 'scripts' / name, self.root / 'scripts' / name)
+        self.headers = [
+            self.root / 'deps/crypto/trezor-firmware/crypto/ed25519-donna/modm-donna-32bit.h',
+            self.root / 'deps/device-protocol/messages.proto',
+        ]
+        for header in self.headers:
+            header.parent.mkdir(parents=True, exist_ok=True)
+            header.touch()
         self.bin = self.root / 'bin'
         self.bin.mkdir()
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ['PATH'],
@@ -80,6 +87,17 @@ else:
     def test_analyzer_failure_is_preserved(self):
         self.env['TEST_ANALYZER_EXIT'] = '7'
         self.assertEqual(7, self.run_analyzer('report.txt').returncode)
+
+    def test_uninitialized_dependencies_fail_before_analysis(self):
+        for header in self.headers:
+            with self.subTest(header=header.relative_to(self.root)):
+                header.unlink()
+                result = self.run_analyzer('report.txt')
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn('cppcheck input missing:', result.stderr)
+                self.assertIn(str(header.relative_to(self.root)), result.stderr)
+                self.assertFalse((self.root / 'argv.json').exists())
+                header.touch()
 
     def test_missing_or_extra_output_arguments_are_rejected(self):
         for args in ((), ('a', 'b')):

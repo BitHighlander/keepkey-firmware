@@ -102,6 +102,7 @@ bool rng_health_analyze(const uint8_t* buf, size_t len);
 ///   - the one-shot OTP randomness block  flash_collectHWEntropy()
 ///   - the RedPallas spend-auth T          fsm_msg_zcash.h, the is_spend path
 ///   - PIN/recovery secret permutations   pin_sm.c, recovery_cipher.c
+///   - Monero BP+ and CLSAG hedge keys    lib/firmware/monero/crypto_rng.c
 ///
 /// NOT covered: everything else in the tree and in deps/, because plain
 /// random_buffer() and random32() are unchecked exactly as on develop.

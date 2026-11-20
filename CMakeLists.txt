@@ -33,6 +33,13 @@ else()
   option(KK_ZCASH_PRIVACY "Build Zcash privacy support" ON)
 endif()
 
+# Build the Monero signing primitives on full firmware and emulator targets.
+if(KK_BITCOIN_ONLY)
+  set(KK_MONERO OFF)
+else()
+  option(KK_MONERO "Build Monero signing primitives" ON)
+endif()
+
 # When building the dylib, every static lib it links (kkfirmware, kkboard,
 # trezorcrypto, kkrand, kktransport, qrcodegenerator, SecAESSTM32, ...) must
 # itself be compiled with -fPIC. macOS happens to be lenient and will produce
@@ -129,7 +136,11 @@ endif()
 add_definitions(-DUSE_KECCAK=1)
 add_definitions(-DUSE_GRAPHENE=0)
 add_definitions(-DUSE_CARDANO=0)
-add_definitions(-DUSE_MONERO=0)
+if(KK_MONERO)
+  add_definitions(-DUSE_MONERO=1)
+else()
+  add_definitions(-DUSE_MONERO=0)
+endif()
 add_definitions(-DUSE_NEM=0)
 # Groestlcoin was dropped in 7.17: no coin uses Groestl hashing any more.
 add_definitions(-DUSE_GROESTL=0)
