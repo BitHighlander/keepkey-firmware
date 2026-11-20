@@ -4160,6 +4160,48 @@ TEST(Fsm, PinChangeCancellationAndMismatchSendExactlyOneFailure) {
   }
 }
 
+TEST(Fsm, RecoveryPinCancellationSendsExactlyOneFailure) {
+  kk_test_board_init();
+  fsm_init();
+  // Establish the client's UDP return address before the first PIN request.
+  ASSERT_TRUE(kkconfirm_preload(0, 0));
+  ASSERT_EQ(0, kkconfirm_drain());
+  for (int cancel_at : {1, 2}) {
+    SCOPED_TRACE(cancel_at);
+    ScopedFlash flash;
+    ASSERT_TRUE(kkconfirm_preload_no_sentinel(0, 0));
+    if (cancel_at == 2) {
+      const uint8_t first[] = {0x0a, 0x01, '1'};
+      ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_PinMatrixAck,
+                                     first, sizeof(first)));
+    }
+    ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_Cancel, nullptr, 0));
+
+    RecoveryDevice recovery = {};
+    recovery.has_word_count = true;
+    recovery.word_count = 12;
+    recovery.has_pin_protection = recovery.pin_protection = true;
+    receiveMessage(MessageType_MessageType_RecoveryDevice,
+                   RecoveryDevice_fields, &recovery);
+    std::vector<uint16_t> expected(cancel_at,
+                                   MessageType_MessageType_PinMatrixRequest);
+    expected.push_back(MessageType_MessageType_Failure);
+    EXPECT_EQ(expected, kkconfirm_readResponseIds());
+    EXPECT_EQ(FailureType_Failure_PinCancelled, fsm_test_lastFailureCode());
+    EXPECT_FALSE(storage_hasPin());
+    EXPECT_FALSE(storage_isInitialized());
+    EXPECT_FALSE(setup_isArmed());
+    setup_arm(SETUP_RECOVERY);
+    EXPECT_FALSE(setup_isArmed()) << "cancel left a staged recovery";
+
+    GetFeatures request = {};
+    receiveMessage(MessageType_MessageType_GetFeatures, GetFeatures_fields,
+                   &request);
+    EXPECT_EQ(std::vector<uint16_t>{MessageType_MessageType_Features},
+              kkconfirm_readResponseIds());
+  }
+}
+
 // DebugLinkGetState is also serviced inside the PIN, passphrase and confirm
 // waits. The suspended outer handler may already hold its pending response in
 // the shared RESP_INIT arena, so the debug reply must not be built there.
