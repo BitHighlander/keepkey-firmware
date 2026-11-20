@@ -102,6 +102,27 @@ bool kkconfirm_sendTiny(uint16_t msgId, const uint8_t* payload, uint8_t len) {
 /* One ButtonAck + one DebugLinkDecision, i.e. what a single screen eats. */
 #define KKCONFIRM_MSGS_PER_SCREEN 2
 
+static bool kkconfirm_sendDecision(bool accept) {
+  const uint8_t decision[] = {0x08, static_cast<uint8_t>(accept)};
+  return kkconfirm_sendTiny(MessageType_MessageType_ButtonAck, nullptr, 0) &&
+         kkconfirm_sendTiny(MessageType_MessageType_DebugLinkDecision, decision,
+                            sizeof(decision));
+}
+
+static void kkconfirm_discardResponses() {
+  uint8_t frame[64];
+  while (kkconfirm_fd >= 0 &&
+         recv(kkconfirm_fd, frame, sizeof(frame), MSG_DONTWAIT) > 0) {
+  }
+}
+
+bool kkconfirm_answerButtonRequest(bool accept) {
+  // The write hook runs before the current request reaches the client. Drain
+  // prior output so a long exchange does not fill the client's queue either.
+  kkconfirm_discardResponses();
+  return kkconfirm_sendDecision(accept);
+}
+
 static bool kkconfirm_preload_impl(int nYes, int nNo, bool sentinel) {
   static bool initialized = false;
   if (!initialized) {
@@ -120,20 +141,11 @@ static bool kkconfirm_preload_impl(int nYes, int nNo, bool sentinel) {
     }
     // The same client socket receives ButtonRequests and terminal responses.
     // Discard earlier output so response assertions cannot pass on stale data.
-    while (kkconfirm_fd >= 0 &&
-           recv(kkconfirm_fd, stale, sizeof(stale), MSG_DONTWAIT) > 0) {
-    }
+    kkconfirm_discardResponses();
   }
 
-  static const uint8_t yes[] = {0x08, 0x01};  // DebugLinkDecision.yes_no
-  static const uint8_t no[] = {0x08, 0x00};
   for (int i = 0; i < nYes + nNo + (sentinel ? 1 : 0); i++) {
-    if (!kkconfirm_sendTiny(MessageType_MessageType_ButtonAck, NULL, 0))
-      return false;
-    const uint8_t* decision = (i < nYes) ? yes : no;
-    if (!kkconfirm_sendTiny(MessageType_MessageType_DebugLinkDecision, decision,
-                            2))
-      return false;
+    if (!kkconfirm_sendDecision(i < nYes)) return false;
   }
   return true;
 }
