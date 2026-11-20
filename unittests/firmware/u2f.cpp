@@ -1,8 +1,11 @@
 extern "C" {
+// Select the firmware CTAPHID definitions before the board USB headers.
+#include "keepkey/firmware/u2f/u2f_hid.h"
 #include "keepkey/board/layout.h"
 #include "keepkey/board/memory.h"
 #include "keepkey/board/messages.h"
 #include "keepkey/board/usb.h"
+#include "keepkey/firmware/ctap2.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/recovery_cipher.h"
 #include "keepkey/firmware/reset.h"
@@ -381,6 +384,92 @@ TEST_F(U2FWait, PresenceNeedsFreshPressAndRelease) {
                 U2F_SW_NO_ERROR}),                // fresh press and release
             statuses());
   EXPECT_TRUE(poll_script.empty());
+}
+
+// Chrome's CTAP 2.0 "touch your security key" request is a makeCredential or
+// getAssertion with an empty pinAuth. The device must wait for a press and
+// then report whether a passkey PIN is set.
+TEST_F(U2FWait, EmptyPinAuthWaitsForTouch) {
+  // makeCredential {1: hash, 2: {"id": ".dummy"}, 3: {"id": h'01', "name":
+  // "dummy"}, 4: [{"alg": -7, "type": "public-key"}], 8: h'', 9: 1} and
+  // getAssertion {1: ".dummy", 2: hash, 6: h'', 7: 1}, as Chrome sends them.
+  std::vector<uint8_t> hash(32, 0x11);
+  std::vector<uint8_t> make = {CTAP2_CMD_MAKE_CREDENTIAL, 0xa6, 0x01, 0x58,
+                               0x20};
+  make.insert(make.end(), hash.begin(), hash.end());
+  make.insert(
+      make.end(),
+      {0x02, 0xa1, 0x62, 'i', 'd', 0x66, '.',  'd',  'u',  'm',  'm', 'y',
+       0x03, 0xa2, 0x62, 'i', 'd', 0x41, 0x01, 0x64, 'n',  'a',  'm', 'e',
+       0x65, 'd',  'u',  'm', 'm', 'y',  0x04, 0x81, 0xa2, 0x63, 'a', 'l',
+       'g',  0x26, 0x64, 't', 'y', 'p',  'e',  0x6a, 'p',  'u',  'b', 'l',
+       'i',  'c',  '-',  'k', 'e', 'y',  0x08, 0x40, 0x09, 0x01});
+  std::vector<uint8_t> get = {CTAP2_CMD_GET_ASSERTION, 0xa4};
+  get.insert(get.end(),
+             {0x01, 0x66, '.', 'd', 'u', 'm', 'm', 'y', 0x02, 0x58, 0x20});
+  get.insert(get.end(), hash.begin(), hash.end());
+  get.insert(get.end(), {0x06, 0x40, 0x07, 0x01});
+  PasskeyStorage passkeys;
+  storage_getPasskeyData(&passkeys);
+  for (bool pin_set : {false, true}) {
+    passkeys.pin_set = pin_set;
+    storage_setPasskeyData(&passkeys);
+    for (const auto& request : {make, get}) {
+      SCOPED_TRACE(::testing::Message()
+                   << "command=" << int(request[0]) << " pin_set=" << pin_set);
+      ctap2_init();
+      hold(true, 2);
+      hold(false, 1);  // confirm on the fresh press
+      uint8_t response[64] = {0};
+      size_t response_length = 0;
+      ctap2_handle(request.data(), request.size(), response, sizeof(response),
+                   &response_length);
+      EXPECT_EQ(1u, response_length);
+      EXPECT_EQ(pin_set ? CTAP2_ERR_PIN_INVALID : CTAP2_ERR_PIN_NOT_SET,
+                response[0]);
+      EXPECT_TRUE(poll_script.empty())
+          << "answered without waiting for a press";
+      poll_script.clear();
+    }
+  }
+}
+
+TEST_F(U2FWait, CtapPresenceEndsWhenItsDisplayIsReplaced) {
+  for (const char* rp : {static_cast<const char*>(nullptr), "example.com"}) {
+    for (bool registration : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << "rp=" << (rp ? rp : "none")
+                                        << " registration=" << registration);
+      button_up = true;
+      poll_script.push_back([] {
+        layout_clear();
+        button_up = false;
+      });
+      EXPECT_FALSE(ctap2_request_user_presence(rp, registration));
+      EXPECT_TRUE(poll_script.empty());
+    }
+  }
+}
+
+TEST_F(U2FWait, CancelledResetPreservesPasskeysAndAnswersBothHosts) {
+  ctap2_init();
+  PasskeyStorage before;
+  storage_getPasskeyData(&before);
+  before.pin_set = true;
+  storage_setPasskeyData(&before);
+  U2FHID_FRAME reset = {};
+  reset.cid = kCid;
+  reset.init.cmd = U2FHID_CBOR;
+  reset.init.bcntl = 1;
+  reset.init.data[0] = CTAP2_CMD_RESET;
+  poll_script.push_back(
+      [] { send_main(MessageType_MessageType_Cancel, nullptr, 0); });
+  fsm_test_clearLastFailure();
+  u2fhid_read(0, &reset);
+  EXPECT_EQ(1u, count(U2FHID_CBOR, CTAP2_ERR_KEEPALIVE_CANCEL));
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  PasskeyStorage after;
+  storage_getPasskeyData(&after);
+  EXPECT_EQ(0, memcmp(&before, &after, sizeof(after)));
 }
 
 // Every exit of a U2F session forgets the request. A session ended by the

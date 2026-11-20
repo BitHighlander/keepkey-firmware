@@ -15,6 +15,9 @@ bool kkconfirm_preload(int nYes, int nNo);
 // As above without the trailing rejection sentinel; see confirm_test_utils.cpp.
 bool kkconfirm_preload_no_sentinel(int nYes, int nNo);
 
+// Send the acknowledgement and decision for one pending ButtonRequest.
+bool kkconfirm_answerButtonRequest(bool accept);
+
 // Consume and count any queued messages the code under test did not use.
 // Zero proves exactly the preloaded number of screens was shown: fewer screens
 // leave packets queued, more would hang the test.
