@@ -173,9 +173,13 @@ static bool ethereum_allowanceIsWellFormed(const EthereumSignTx* msg) {
   return true;
 }
 
-/* ERC-7730's threshold: an allowance of 2^255 or more is UNLIMITED. */
+bool ethereum_allowanceAmountIsUnlimited(const uint8_t amount[32]) {
+  return (amount[0] & 0x80) != 0;
+}
+
 static bool ethereum_allowanceIsUnlimited(const EthereumSignTx* msg) {
-  return (msg->data_initial_chunk.bytes[36] & 0x80) != 0;
+  return ethereum_allowanceAmountIsUnlimited(msg->data_initial_chunk.bytes +
+                                             36);
 }
 
 /* An unlimited approve signs only after this warning, with the full spender
@@ -632,7 +636,7 @@ bool ethereumFormatAmount(const bignum256* amnt, const TokenType* token,
           suffix = " xDAI";
           break;  //  Gnosis Chain
         case 137:
-          suffix = " MATIC";
+          suffix = " POL";
           break;  //  Polygon Mainnet
         case 8453:
           suffix = " ETH";
