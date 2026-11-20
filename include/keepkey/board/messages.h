@@ -143,6 +143,11 @@ uint16_t* frame_arena_scratch2049(void);
 void* frame_arena_scratch(size_t size);
 void frame_arena_scratch_wipe(void);
 
+/* Single-owner MAX_DECODE_SIZE buffer, initially zero and wiped on release.
+ * Acquisition fails if a suspended operation still owns it. */
+uint8_t* msg_acquire_decode_buffer(void);
+void msg_release_decode_buffer(void);
+
 /* A handler may reuse its decoded request storage for a large response after
  * copying every request field it still needs. The transport does not dispatch
  * another normal message until the handler returns. */

@@ -6,7 +6,7 @@ import tarfile
 import tempfile
 import unittest
 
-from check_sram_budget import largest_frames
+from check_sram_budget import largest_frames, passkey_dispatch_frames
 
 
 class StackUsageRecords(unittest.TestCase):
@@ -19,6 +19,18 @@ class StackUsageRecords(unittest.TestCase):
                 tar.addfile(info, io.BytesIO(data))
             archive.flush()
             return largest_frames(archive.name)
+
+    def test_passkey_charges_overlapping_frames_and_split_helpers(self):
+        frames = [
+            (64, "u2f.c:1:2:u2fhid_read", "static"),
+            (256, "u2f.c:1:2:u2f_register", "static"),
+            (320, "ctap2.c:1:2:make_credential.constprop", "static"),
+            (48, "ctap2.c:1:2:answer_touch_probe", "static"),
+            (160, "ctap2.c:1:2:answer_touch_probe.part.0", "static"),
+        ]
+        self.assertEqual(passkey_dispatch_frames(frames), 2 * 64 + 320 + 48 + 160)
+        with self.assertRaisesRegex(SystemExit, "missing passkey stack frames"):
+            passkey_dispatch_frames(frames[1:])
 
     def test_static_frame_is_measured(self):
         self.assertEqual(
