@@ -471,8 +471,7 @@ struct Flow {
     Bytes tx = prefix();
     tx.push_back((uint8_t)all_out.rct_type);
     put_varint(tx, all_out.fee);
-    for (unsigned j = 0; j < 2; ++j)
-      append(tx, out_acks[j].ecdh_info.bytes, 8);
+    for (unsigned j = 0; j < 2; ++j) append(tx, out_acks[j].ecdh_info.bytes, 8);
     for (unsigned j = 0; j < 2; ++j)
       append(tx, out_acks[j].out_pk.bytes + 32, 32);
     put_varint(tx, 1); /* one aggregate BP+ proof */
@@ -480,8 +479,7 @@ struct Flow {
     for (size_t k = 0; k < sign_acks.size(); ++k) {
       uint8_t plain[18 * 32];
       EXPECT_EQ(sizeof(plain) + 16, sign_acks[k].clsag_enc.size);
-      EXPECT_TRUE(monero_tx_probe_open(final_ack.opening_key.bytes,
-                                       (uint32_t)k,
+      EXPECT_TRUE(monero_tx_probe_open(final_ack.opening_key.bytes, (uint32_t)k,
                                        sign_acks[k].clsag_enc.bytes,
                                        sign_acks[k].clsag_enc.size, plain));
       append(tx, plain, sizeof(plain));
@@ -776,9 +774,9 @@ TEST_F(MoneroTx, IntegratedRecipientVerifiesWithMoneroCore) {
     MoneroTxReview review;
     ASSERT_EQ(MONERO_TX_OK,
               monero_tx_review(signer_wallet().key_seed, &q.init, &review));
-    expect_core_address(network == 1 ? "integrated-testnet"
-                                     : "integrated-stagenet",
-                        network, review.outputs[0], p.to[0].keys, p.pid);
+    expect_core_address(
+        network == 1 ? "integrated-testnet" : "integrated-stagenet", network,
+        review.outputs[0], p.to[0].keys, p.pid);
   }
 }
 
@@ -809,14 +807,17 @@ TEST_F(MoneroTx, SendToOwnAddressWithLockIsRefused) {
     p.init.tsx_data.has_unlock_time = true;
     p.init.tsx_data.unlock_time = unlock;
     Flow f(p);
-    auto result = monero_tx_review(signer_wallet().key_seed, &p.init, &f.review);
+    auto result =
+        monero_tx_review(signer_wallet().key_seed, &p.init, &f.review);
     EXPECT_NE(MONERO_TX_OK, result);
-    EXPECT_STREQ("Monero unlock time must be zero", monero_tx_result_text(result));
+    EXPECT_STREQ("Monero unlock time must be zero",
+                 monero_tx_result_text(result));
     memset(&f.init_ack, 0xa5, sizeof(f.init_ack));
-    result = monero_tx_begin(signer_wallet().key_seed, &p.init,
-                             f.review.digest, &f.init_ack);
+    result = monero_tx_begin(signer_wallet().key_seed, &p.init, f.review.digest,
+                             &f.init_ack);
     EXPECT_NE(MONERO_TX_OK, result);
-    EXPECT_STREQ("Monero unlock time must be zero", monero_tx_result_text(result));
+    EXPECT_STREQ("Monero unlock time must be zero",
+                 monero_tx_result_text(result));
     EXPECT_EQ(0u, f.init_ack.dst_hmacs_count);
     EXPECT_TRUE(signing_session_is_zero());
     EXPECT_EQ(SIGNING_SESSION_FREE, signing_session_owner());
@@ -845,8 +846,8 @@ TEST_F(MoneroTx, FreshRandomnessGivesAFreshSession) {
   EXPECT_NE(0, memcmp(a.init_ack.dst_hmacs[0].bytes,
                       b.init_ack.dst_hmacs[0].bytes, 32));
   EXPECT_NE(0, memcmp(a.all_out.extra.bytes, b.all_out.extra.bytes, 44));
-  EXPECT_NE(0, memcmp(a.out_acks[0].tx_out.bytes, b.out_acks[0].tx_out.bytes,
-                      35));
+  EXPECT_NE(0,
+            memcmp(a.out_acks[0].tx_out.bytes, b.out_acks[0].tx_out.bytes, 35));
   /* The key image is the output's, not the session's. */
   EXPECT_EQ(0, memcmp(a.key_image(0), b.key_image(0), 32));
 }
@@ -1202,8 +1203,8 @@ TEST_F(MoneroTx, InitRefusesKeysThatAreNotCleanPoints) {
     for (int which = 0; which < 2; ++which) {
       Plan p = simple_plan();
       MoneroTxDestination& d = p.init.tsx_data.outputs[0];
-      memcpy(which ? d.view_public_key.bytes : d.spend_public_key.bytes,
-             point, 32);
+      memcpy(which ? d.view_public_key.bytes : d.spend_public_key.bytes, point,
+             32);
       MoneroTxReview review;
       EXPECT_EQ(MONERO_TX_ERR_POINT, monero_tx_review(key, &p.init, &review));
       EXPECT_FALSE(monero_tx_active());
@@ -1224,8 +1225,8 @@ TEST_F(MoneroTx, BeginOpensOnlyThePlanThatWasReviewed) {
         m.tsx_data.fee -= 1;
       },
       [](MoneroTxInitRequest& m) {
-        m.tsx_data.outputs[0] = destination(other_address(0, 5),
-                                            m.tsx_data.outputs[0].amount);
+        m.tsx_data.outputs[0] =
+            destination(other_address(0, 5), m.tsx_data.outputs[0].amount);
       },
       [](MoneroTxInitRequest& m) {
         m.tsx_data.has_unlock_time = true;
@@ -1274,8 +1275,7 @@ TEST_F(MoneroTx, SetInputRefusesBadRingsAndForeignOutputs) {
        [](MoneroTxSourceEntry& s) {
          s.ring[8].global_index = s.ring[7].global_index;
        }},
-      {MONERO_TX_ERR_RING,
-       [](MoneroTxSourceEntry& s) { s.real_index = 16; }},
+      {MONERO_TX_ERR_RING, [](MoneroTxSourceEntry& s) { s.real_index = 16; }},
       {MONERO_TX_ERR_RING,
        [](MoneroTxSourceEntry& s) { s.ring[4].dest.size = 31; }},
       {MONERO_TX_ERR_RING,
@@ -1385,8 +1385,7 @@ TEST_F(MoneroTx, ViniMustComeBackUnchangedOnceAndInKeyImageOrder) {
     ASSERT_EQ(MONERO_TX_OK, f.set_inputs());
     MoneroTxInputViniRequest req = f.vini_request(f.order[0]);
     cases[i].change(req);
-    EXPECT_ENDED(cases[i].expected, monero_tx_input_vini(&req))
-        << "case " << i;
+    EXPECT_ENDED(cases[i].expected, monero_tx_input_vini(&req)) << "case " << i;
   }
 
   /* Ascending key images. */
@@ -1614,7 +1613,8 @@ TEST_F(MoneroTx, OpeningKeyIsReleasedOnlyAfterEveryInputIsSigned) {
 }
 
 TEST_F(MoneroTx, FinalReleasesTransactionKeysMatchingExtra) {
-  const std::vector<Plan> plans = {simple_plan(), two_input_plan(), sweep_plan(1)};
+  const std::vector<Plan> plans = {simple_plan(), two_input_plan(),
+                                   sweep_plan(1)};
   for (size_t kind = 0; kind < plans.size(); ++kind) {
     Flow f(plans[kind]);
     ASSERT_EQ(MONERO_TX_OK, f.to_signing());
@@ -1638,11 +1638,10 @@ TEST_F(MoneroTx, FinalReleasesTransactionKeysMatchingExtra) {
     }
     for (unsigned j = 0; j < count; ++j) {
       ASSERT_EQ(32u, ack.additional_tx_keys[j].size);
-      base = f.plan.init.tsx_data.outputs[j].is_subaddress
-                 ? f.plan.to[j].keys
-                 : nullptr;
-      ASSERT_TRUE(monero_tx_probe_key_public(
-          ack.additional_tx_keys[j].bytes, base, pub));
+      base = f.plan.init.tsx_data.outputs[j].is_subaddress ? f.plan.to[j].keys
+                                                           : nullptr;
+      ASSERT_TRUE(monero_tx_probe_key_public(ack.additional_tx_keys[j].bytes,
+                                             base, pub));
       EXPECT_EQ(0, memcmp(pub, f.all_out.extra.bytes + 35 + j * 32, 32));
     }
     EXPECT_TRUE(signing_session_is_zero());
@@ -1733,7 +1732,7 @@ TEST_F(MoneroTx, EveryStepIsRefusedOutsideItsExactPlace) {
     }
   };
   /* The one call each stage accepts; every other one ends the session. */
-  const Call accepted[] = {SET_INPUT, VINI, SET_OUTPUT, SET_OUTPUT,
+  const Call accepted[] = {SET_INPUT,   VINI, SET_OUTPUT, SET_OUTPUT,
                            ALL_OUT_SET, SIGN, FINAL};
   replay_rng("step-order");
   for (int stage = BEGUN; stage <= SIGNED; ++stage) {
@@ -1952,14 +1951,14 @@ TEST_F(MoneroTx, BeginPublishesOnlyInitializedState) {
   keepkey_user_activity();
   Flow f(simple_plan());
   ASSERT_EQ(MONERO_TX_OK, monero_tx_review(signer_wallet().key_seed,
-                                         &f.plan.init, &f.review));
+                                           &f.plan.init, &f.review));
   monero_session_interrupt = [] {
     EXPECT_EQ(SIGNING_SESSION_FREE, signing_session_owner());
     keepkey_user_activity();
     EXPECT_FALSE(fsm_workflowInProgress());
   };
-  const auto result = probe_monero_tx_begin(signer_wallet().key_seed,
-      &f.plan.init, f.review.digest, &f.init_ack);
+  const auto result = probe_monero_tx_begin(
+      signer_wallet().key_seed, &f.plan.init, f.review.digest, &f.init_ack);
   monero_session_interrupt = nullptr;
   ASSERT_EQ(MONERO_TX_OK, result);
   EXPECT_EQ(SIGNING_SESSION_MONERO_TX, signing_session_owner());
@@ -2205,9 +2204,8 @@ class MoneroTxHandlers : public ::testing::Test {
     EXPECT_TRUE(reject ? kkconfirm_preload(accept, reject)
                        : kkconfirm_preload_no_sentinel(accept, 0));
     kkconfirm_capture_start();
-    const bool ok =
-        reply(MessageType_MessageType_MoneroTxInitAck, &f.init_ack,
-              [&] { fsm_msgMoneroTxInit(&f.plan.init); });
+    const bool ok = reply(MessageType_MessageType_MoneroTxInitAck, &f.init_ack,
+                          [&] { fsm_msgMoneroTxInit(&f.plan.init); });
     titles = kkconfirm_captured_titles();
     bodies = kkconfirm_capture_finish();
     if (getenv("KK_XMR_SHOW_SCREENS"))
@@ -2353,12 +2351,14 @@ TEST_F(MoneroTxHandlers, ReviewThenSignTheCoreVerifiedTransaction) {
 
   ASSERT_TRUE(f.final_ack.has_tx_key);
   uint8_t pub[32];
-  ASSERT_TRUE(monero_tx_probe_key_public(f.final_ack.tx_key.bytes, nullptr, pub));
+  ASSERT_TRUE(
+      monero_tx_probe_key_public(f.final_ack.tx_key.bytes, nullptr, pub));
   EXPECT_EQ(0, memcmp(pub, f.all_out.extra.bytes + 1, 32));
   size_t response_size = 0;
   const uint8_t* response = fsm_test_responseArena(&response_size);
   ASSERT_GE(response_size, sizeof(MoneroTxFinalAck));
-  for (size_t i = 0; i < sizeof(MoneroTxFinalAck); ++i) EXPECT_EQ(0, response[i]);
+  for (size_t i = 0; i < sizeof(MoneroTxFinalAck); ++i)
+    EXPECT_EQ(0, response[i]);
 
   /* Byte for byte the transaction Monero Core verified for this plan. */
   const Bytes tx = f.assemble();
@@ -2574,7 +2574,8 @@ TEST_F(MoneroTxHandlers, NonzeroUnlockTimeFailsBeforeAnyScreen) {
                        [&] { fsm_msgMoneroTxInit(&f.plan.init); }));
     EXPECT_TRUE(kkconfirm_capture_finish().empty());
     EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
-    EXPECT_STREQ("Monero unlock time must be zero", fsm_test_lastFailureMessage());
+    EXPECT_STREQ("Monero unlock time must be zero",
+                 fsm_test_lastFailureMessage());
     EXPECT_TRUE(signing_session_is_zero());
     EXPECT_EQ(SIGNING_SESSION_FREE, signing_session_owner());
     kkconfirm_drain();
