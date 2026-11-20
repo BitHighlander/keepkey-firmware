@@ -6,7 +6,6 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
-#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -17,17 +16,6 @@
 #include "ringct/rctSigs.h"
 #include "serialization/binary_utils.h"
 
-static std::vector<unsigned char> buf;
-static size_t pos = 0;
-
-static rct::key K() {
-  rct::key k;
-  memcpy(k.bytes, &buf.at(pos), 32);
-  pos += 32;
-  return k;
-}
-static unsigned U8() { return buf.at(pos++); }
-
 template <class F>
 static bool TRY(F f) {
   try {
@@ -37,23 +25,35 @@ static bool TRY(F f) {
   }
 }
 
-int main(int argc, char **argv) {
-  if (argc != 2) return 2;
-  std::ifstream f(argv[1], std::ios::binary);
-  buf.assign(std::istreambuf_iterator<char>(f), {});
-  int records = 0, accepted = 0, rejected = 0, disagree = 0;
-  while (pos < buf.size()) {
-    unsigned tag = U8(), expect = U8();
+static int verify_records(std::istream &input) {
+  auto read = [&](void *out, size_t count) {
+    if (!input.read(static_cast<char *>(out), count))
+      throw std::runtime_error("incomplete or unreadable record");
+  };
+  auto key = [&]() {
+    rct::key value;
+    read(value.bytes, sizeof(value.bytes));
+    return value;
+  };
+  auto byte = [&]() {
+    unsigned char value;
+    read(&value, 1);
+    return value;
+  };
+
+  size_t records = 0, accepted = 0, rejected = 0, disagree = 0;
+  while (input.peek() != std::char_traits<char>::eof()) {
+    unsigned tag = byte(), expect = byte();
     bool ok = false, extra = true;
     records++;
     if (tag == 'B') {
-      unsigned m = U8();
+      unsigned m = byte();
       std::vector<rct::key> V;
-      for (unsigned j = 0; j < m; j++) V.push_back(K());
-      size_t len = U8();
-      len |= (size_t)U8() << 8;
-      std::string blob((const char *)&buf.at(pos), len);
-      pos += len;
+      for (unsigned j = 0; j < m; j++) V.push_back(key());
+      size_t len = byte();
+      len |= (size_t)byte() << 8;
+      std::string blob(len, '\0');
+      if (len) read(&blob[0], len);
       rct::BulletproofPlus p;
       bool parsed = ::serialization::parse_binary(blob, p);
       if (parsed) {
@@ -62,10 +62,10 @@ int main(int argc, char **argv) {
       }
       // Commitment binding: 8 V[j] == gamma_j G + v_j H (positive only).
       std::vector<rct::key> gamma;
-      for (unsigned j = 0; j < m; j++) gamma.push_back(K());
+      for (unsigned j = 0; j < m; j++) gamma.push_back(key());
       for (unsigned j = 0; j < m; j++) {
         uint64_t v = 0;
-        for (int b = 0; b < 8; b++) v |= (uint64_t)U8() << (8 * b);
+        for (int b = 0; b < 8; b++) v |= (uint64_t)byte() << (8 * b);
         if (expect) {
           rct::key C;
           rct::addKeys2(C, gamma[j], rct::d2h(v), rct::H);
@@ -76,18 +76,18 @@ int main(int argc, char **argv) {
              ok ? "accept" : "reject",
              expect && !extra ? " COMMITMENT-MISMATCH" : "");
     } else if (tag == 'C') {
-      unsigned n = U8();
-      rct::key msg = K();
+      unsigned n = byte();
+      rct::key msg = key();
       rct::ctkeyV pubs(n);
-      for (unsigned i = 0; i < n; i++) pubs[i].dest = K();
-      for (unsigned i = 0; i < n; i++) pubs[i].mask = K();
-      rct::key Coff = K();
+      for (unsigned i = 0; i < n; i++) pubs[i].dest = key();
+      for (unsigned i = 0; i < n; i++) pubs[i].mask = key();
+      rct::key Coff = key();
       rct::clsag s;
-      s.I = K();
-      s.D = K();
-      s.c1 = K();
-      for (unsigned i = 0; i < n; i++) s.s.push_back(K());
-      rct::key p = K();
+      s.I = key();
+      s.D = key();
+      s.c1 = key();
+      for (unsigned i = 0; i < n; i++) s.s.push_back(key());
+      rct::key p = key();
       ok = TRY([&] { return rct::verRctCLSAGSimple(msg, s, pubs, Coff); });
       // Key image must be Core's own: I = p * Hp(p G).
       if (expect) {
@@ -111,7 +111,24 @@ int main(int argc, char **argv) {
       printf("  ^ expected %s\n", expect ? "accept" : "reject");
     }
   }
-  printf("records=%d accepted=%d rejected=%d disagreements=%d\n", records,
+  if (input.bad() || !input.eof() || records == 0)
+    throw std::runtime_error("empty or unreadable record stream");
+  printf("records=%zu accepted=%zu rejected=%zu disagreements=%zu\n", records,
          accepted, rejected, disagree);
   return disagree ? 1 : 0;
+}
+
+int main(int argc, char **argv) {
+  if (argc != 2) return 2;
+  std::ifstream input(argv[1], std::ios::binary);
+  if (!input) {
+    fprintf(stderr, "could not open %s\n", argv[1]);
+    return 2;
+  }
+  try {
+    return verify_records(input);
+  } catch (const std::exception &error) {
+    fprintf(stderr, "%s: %s\n", argv[1], error.what());
+    return 2;
+  }
 }
