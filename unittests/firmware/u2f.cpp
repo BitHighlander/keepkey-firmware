@@ -1,4 +1,6 @@
 extern "C" {
+// Select the firmware CTAPHID definitions before the board USB headers.
+#include "keepkey/firmware/u2f/u2f_hid.h"
 #include "keepkey/board/layout.h"
 #include "keepkey/board/memory.h"
 #include "keepkey/board/messages.h"
