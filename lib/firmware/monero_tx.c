@@ -50,6 +50,12 @@ enum {
 #define VINI_MAX_BYTES 200u
 #define CLSAG_PLAIN_BYTES ((MONERO_TX_RING_SIZE + 2u) * 32u)
 
+/* Public keys and payment ID needed to build extra once all inputs arrive. */
+typedef struct {
+  bool on_spend[1 + MONERO_TX_OUTPUTS], has_pid_view;
+  uint8_t base[1 + MONERO_TX_OUTPUTS][32], pid_view[32], pid[8];
+} TxExtraPlan;
+
 typedef struct {
   uint32_t started;
   uint8_t step;
@@ -58,23 +64,38 @@ typedef struct {
   uint8_t
       out_self[MONERO_TX_OUTPUTS]; /* declared own address: derive with a*R */
   uint32_t account;
-  uint64_t fee, sum_in, sum_out;
-  uint64_t seen;                       /* plan indices with a vini accepted */
+  uint64_t fee, sum_in;
   uint8_t order[MONERO_TX_MAX_INPUTS]; /* plan index at each sorted position */
   bignum256modm spend, view;
-  uint8_t master[32], mac_key[32], open_key[32];
+  uint8_t master[32], mac_key[32];
+  /* Each full wire MAC for an input also authenticates this device-held,
+   * 128-bit binding to the source accepted in that slot. */
+  uint8_t source_tags[MONERO_TX_MAX_INPUTS][16];
   bignum256modm sum_pseudo, sum_out_mask;
-  uint8_t out_mask[MONERO_TX_OUTPUTS][32];
-  uint64_t out_amount[MONERO_TX_OUTPUTS];
-  uint8_t out_commit[MONERO_TX_OUTPUTS][32];
   uint8_t extra[EXTRA_BYTES];
   uint8_t extra_size;
   bool additional_keys;
-  uint8_t last_ki[32];
-  uint8_t bp_hash[32];
-  uint8_t message[32];
-  SHA3_CTX prefix;   /* running tx prefix hash */
-  SHA3_CTX rct_base; /* running rctSigBase hash */
+  SHA3_CTX prefix;
+  /* AllInputsSet consumes the input plan and initializes outputs.
+   * AllOutSet consumes outputs before writing the signing state. */
+  union {
+    struct {
+      TxExtraPlan extra_plan;
+      uint64_t seen;
+      uint8_t last_ki[32];
+    } inputs;
+    struct {
+      uint64_t sum_out;
+      uint8_t out_mask[MONERO_TX_OUTPUTS][32];
+      uint64_t out_amount[MONERO_TX_OUTPUTS];
+      uint8_t out_commit[MONERO_TX_OUTPUTS][32];
+      uint8_t ecdh[MONERO_TX_OUTPUTS][8];
+      uint8_t bp_hash[32];
+    } outputs;
+    struct {
+      uint8_t message[32], open_key[32];
+    } sign;
+  };
 } TxSession;
 
 _Static_assert(sizeof(TxSession) <= MONERO_SESSION_BYTES,
@@ -227,23 +248,27 @@ static void kdf_scalar(bignum256modm out, const uint8_t master[32],
 /* The MAC over host-held state: purpose and slot index are inside it, so
  * one item never verifies in another role or slot. */
 static void mac(uint8_t out[32], const TxSession* s, const char* purpose,
-                uint32_t index, const uint8_t* data, size_t size) {
+                uint32_t index, bool source_bound, const uint8_t* data,
+                size_t size) {
   HMAC_SHA256_CTX ctx;
   uint8_t head[16] = {0};
   memcpy(head, purpose, strlen(purpose));
   put_le32(head + 12, index);
   hmac_sha256_Init(&ctx, s->mac_key, 32);
   hmac_sha256_Update(&ctx, head, sizeof(head));
+  if (source_bound)
+    hmac_sha256_Update(&ctx, s->source_tags[index],
+                       sizeof(s->source_tags[index]));
   hmac_sha256_Update(&ctx, data, (uint32_t)size);
   hmac_sha256_Final(&ctx, out);
   memzero(&ctx, sizeof(ctx));
 }
 
 static bool mac_matches(const TxSession* s, const char* purpose, uint32_t index,
-                        const uint8_t* data, size_t size,
+                        bool source_bound, const uint8_t* data, size_t size,
                         const uint8_t expected[32]) {
   uint8_t tag[32];
-  mac(tag, s, purpose, index, data, size);
+  mac(tag, s, purpose, index, source_bound, data, size);
   const bool ok = ct_equal(tag, expected, 32);
   memzero(tag, sizeof(tag));
   return ok;
@@ -559,8 +584,8 @@ done:
  * 01 R | optional 04 02 R0 R1 | optional 02 09 01 pid. Core adds a dummy
  * zero payment ID only when there is a unique nonzero destination view key.
  * Additional keys let mixed destinations scan their own outputs. */
-static bool build_extra(TxSession* s, const TxPlan* plan,
-                        const MoneroTxData* t) {
+static bool build_extra(TxSession* s) {
+  const TxExtraPlan* plan = &s->inputs.extra_plan;
   struct {
     bignum256modm r;
     ge25519 point, product;
@@ -570,8 +595,8 @@ static bool build_extra(TxSession* s, const TxPlan* plan,
   kdf_scalar(tmp.r, s->master, "KKXMR-r", 0);
   if (iszero256_modm(tmp.r)) goto done;
   s->extra[0] = 0x01;
-  if (plan->tx_key_on_spend) {
-    if (!monero_decode_public(&tmp.point, plan->tx_key_base)) goto done;
+  if (plan->on_spend[0]) {
+    if (!monero_decode_public(&tmp.point, plan->base[0])) goto done;
     ge25519_scalarmult(&tmp.product, &tmp.point, tmp.r);
   } else {
     ge25519_scalarmult_base_wrapper(&tmp.product, tmp.r);
@@ -579,17 +604,14 @@ static bool build_extra(TxSession* s, const TxPlan* plan,
   ge25519_pack(s->extra + 1, &tmp.product);
 
   s->extra_size = 33;
-  s->additional_keys = plan->additional_keys;
-  if (plan->additional_keys) {
+  if (s->additional_keys) {
     s->extra[s->extra_size++] = 0x04; /* additional tx public keys */
     s->extra[s->extra_size++] = MONERO_TX_OUTPUTS;
     for (unsigned j = 0; j < MONERO_TX_OUTPUTS; ++j) {
-      const MoneroTxDestination* d = &t->outputs[j];
       kdf_scalar(tmp.r, s->master, "KKXMR-ra", j);
       if (iszero256_modm(tmp.r)) goto done;
-      if (d->has_is_subaddress && d->is_subaddress) {
-        if (!monero_decode_public(&tmp.point, d->spend_public_key.bytes))
-          goto done;
+      if (plan->on_spend[j + 1]) {
+        if (!monero_decode_public(&tmp.point, plan->base[j + 1])) goto done;
         ge25519_scalarmult(&tmp.product, &tmp.point, tmp.r);
       } else {
         ge25519_scalarmult_base_wrapper(&tmp.product, tmp.r);
@@ -609,9 +631,7 @@ static bool build_extra(TxSession* s, const TxPlan* plan,
     s->extra[s->extra_size++] = 0x09;
     s->extra[s->extra_size++] = 0x01; /* encrypted payment ID */
     for (unsigned i = 0; i < 8; ++i)
-      s->extra[s->extra_size++] =
-          (uint8_t)((t->has_payment_id ? t->payment_id.bytes[i] : 0) ^
-                    tmp.hash[i]);
+      s->extra[s->extra_size++] = (uint8_t)(plan->pid[i] ^ tmp.hash[i]);
   }
   ok = true;
 done:
@@ -643,8 +663,9 @@ MoneroTxResult monero_tx_begin(const uint8_t node_key[32],
   s = signing_session_prepare(SIGNING_SESSION_MONERO_TX);
   if (!s) goto done;
   const MoneroTxData* t = &request->tsx_data;
-  /* K: hedged with the spend key and the reviewed plan, so even a repeated
-   * RNG output gives a different K for a different plan. */
+  /* Init must issue destination tickets before the host streams its inputs.
+   * Derive the early MAC key here. SetInput then folds every checked source
+   * into master before any transaction or payment-proof key is derived. */
   contract256_modm(spend_bytes, spend);
   result = MONERO_TX_ERR_PROOF;
   if (!xmr_hedge_key(s->master, "KKXMR-K", spend_bytes, sizeof(spend_bytes),
@@ -652,7 +673,6 @@ MoneroTxResult monero_tx_begin(const uint8_t node_key[32],
     goto done;
   result = MONERO_TX_ERR_INTERNAL;
   kdf(s->mac_key, s->master, "KKXMR-mac", 0);
-  kdf(s->open_key, s->master, "KKXMR-open", 0);
   memcpy(s->spend, spend, sizeof(bignum256modm));
   memcpy(s->view, view, sizeof(bignum256modm));
   s->account = t->has_account ? t->account : 0u;
@@ -660,23 +680,30 @@ MoneroTxResult monero_tx_begin(const uint8_t node_key[32],
   s->fee = t->fee;
   for (unsigned j = 0; j < MONERO_TX_OUTPUTS; ++j)
     s->out_self[j] = plan.self[j];
-  if (!build_extra(s, &plan, t)) goto done;
+  s->additional_keys = plan.additional_keys;
+  s->inputs.extra_plan.on_spend[0] = plan.tx_key_on_spend;
+  memcpy(s->inputs.extra_plan.base[0], plan.tx_key_base, 32);
+  for (unsigned j = 0; j < MONERO_TX_OUTPUTS; ++j) {
+    const MoneroTxDestination* d = &t->outputs[j];
+    s->inputs.extra_plan.on_spend[j + 1] =
+        d->has_is_subaddress && d->is_subaddress;
+    memcpy(s->inputs.extra_plan.base[j + 1], d->spend_public_key.bytes, 32);
+  }
+  s->inputs.extra_plan.has_pid_view = plan.has_pid_view;
+  memcpy(s->inputs.extra_plan.pid_view, plan.pid_view, 32);
+  if (t->has_payment_id)
+    memcpy(s->inputs.extra_plan.pid, t->payment_id.bytes, 8);
 
   /* tx prefix: version 2, unlock time, then the inputs. */
   keccak_256_Init(&s->prefix);
   hash_varint(&s->prefix, 2);
   hash_varint(&s->prefix, t->has_unlock_time ? t->unlock_time : 0u);
   hash_varint(&s->prefix, s->n_inputs);
-  /* rctSigBase: type, fee, then the encrypted amounts and commitments. */
-  keccak_256_Init(&s->rct_base);
-  field[0] = MONERO_TX_RCT_TYPE;
-  keccak_Update(&s->rct_base, field, 1);
-  hash_varint(&s->rct_base, s->fee);
 
   ack->dst_hmacs_count = MONERO_TX_OUTPUTS;
   for (unsigned j = 0; j < MONERO_TX_OUTPUTS; ++j) {
     dest_encode(field, &t->outputs[j]);
-    mac(ack->dst_hmacs[j].bytes, s, "txdest", j, field, DEST_BYTES);
+    mac(ack->dst_hmacs[j].bytes, s, "txdest", j, false, field, DEST_BYTES);
     ack->dst_hmacs[j].size = 32;
   }
   ack->has_rsig_mode = true;
@@ -814,6 +841,30 @@ done:
   return result;
 }
 
+/* The canonical vini binds the offsets and key image. Include the actual
+ * ring keys so reopening a source also authenticates the decoy points. */
+static void input_mask(const TxSession* s, uint32_t index,
+                       const MoneroTxSourceEntry* src, const TxInput* in,
+                       bignum256modm pseudo, uint8_t binding[32]) {
+  SHA3_CTX hash;
+  uint8_t amount[8], digest[32];
+  keccak_256_Init(&hash);
+  put_le64(amount, in->amount);
+  keccak_Update(&hash, amount, sizeof(amount));
+  keccak_Update(&hash, &in->real_index, 1);
+  keccak_Update(&hash, in->vini, in->vini_size);
+  for (unsigned i = 0; i < MONERO_TX_RING_SIZE; ++i) {
+    keccak_Update(&hash, src->ring[i].dest.bytes, 32);
+    keccak_Update(&hash, src->ring[i].commitment.bytes, 32);
+  }
+  keccak_Final(&hash, digest);
+  mac(binding, s, "tx-source", index, false, digest, 32);
+  kdf_scalar(pseudo, binding, "KKXMR-pa", index);
+  memzero(&hash, sizeof(hash));
+  memzero(digest, sizeof(digest));
+  memzero(amount, sizeof(amount));
+}
+
 /* out = mask*G + amount*H, packed. */
 static void commit(uint8_t out[32], const bignum256modm mask, uint64_t amount) {
   ge25519 point;
@@ -825,6 +876,7 @@ static void commit(uint8_t out[32], const bignum256modm mask, uint64_t amount) {
 MoneroTxResult monero_tx_set_input(const MoneroTxSetInputRequest* request,
                                    MoneroTxSetInputAck* ack) {
   TxInput in;
+  uint8_t binding[32];
   bignum256modm pseudo = {0};
   MoneroTxResult result = MONERO_TX_ERR_STEP;
   TxSession* s = session_in(STEP_INPUT, &result);
@@ -839,21 +891,26 @@ MoneroTxResult monero_tx_set_input(const MoneroTxSetInputRequest* request,
   if (!add_u64(&s->sum_in, in.amount)) goto fail;
 
   const uint32_t index = s->in_pos;
-  kdf_scalar(pseudo, s->master, "KKXMR-pa", index);
+  input_mask(s, index, &request->src, &in, pseudo, binding);
+  /* Fold each authenticated source into the transaction master in plan
+   * order. Init MACs remain verifiable under their separate early key. */
+  memcpy(s->source_tags[index], binding, sizeof(s->source_tags[index]));
+  hmac_sha256(s->master, 32, binding, sizeof(binding), s->master);
+  memzero(binding, sizeof(binding));
   commit(ack->pseudo_out.bytes, pseudo, in.amount);
   add256_modm(s->sum_pseudo, s->sum_pseudo, pseudo);
   ack->has_pseudo_out = true;
   ack->pseudo_out.size = 32;
   ack->has_pseudo_out_hmac = true;
   ack->pseudo_out_hmac.size = 32;
-  mac(ack->pseudo_out_hmac.bytes, s, "txin-comm", index, ack->pseudo_out.bytes,
-      32);
+  mac(ack->pseudo_out_hmac.bytes, s, "txin-comm", index, true,
+      ack->pseudo_out.bytes, 32);
   ack->has_vini = true;
   ack->vini.size = (pb_size_t)in.vini_size;
   memcpy(ack->vini.bytes, in.vini, in.vini_size);
   ack->has_vini_hmac = true;
   ack->vini_hmac.size = 32;
-  mac(ack->vini_hmac.bytes, s, "txin", index, in.vini, in.vini_size);
+  mac(ack->vini_hmac.bytes, s, "txin", index, true, in.vini, in.vini_size);
   if (++s->in_pos == s->n_inputs) s->step = STEP_VINI;
   memzero(&in, sizeof(in));
   memzero(pseudo, sizeof(pseudo));
@@ -878,20 +935,21 @@ MoneroTxResult monero_tx_input_vini(const MoneroTxInputViniRequest* request) {
       request->vini_hmac.size != 32 || !request->has_orig_idx)
     goto fail;
   result = MONERO_TX_ERR_ORDER;
-  if (request->orig_idx >= s->n_inputs || (s->seen >> request->orig_idx) & 1u)
+  if (request->orig_idx >= s->n_inputs ||
+      (s->inputs.seen >> request->orig_idx) & 1u)
     goto fail;
   result = MONERO_TX_ERR_MAC;
-  if (!mac_matches(s, "txin", request->orig_idx, request->vini.bytes,
+  if (!mac_matches(s, "txin", request->orig_idx, true, request->vini.bytes,
                    request->vini.size, request->vini_hmac.bytes))
     goto fail;
   /* Core sorts inputs by key image, largest first. Strictly decreasing
    * also means no key image appears twice. */
   const uint8_t* key_image = request->vini.bytes + request->vini.size - 32u;
   result = MONERO_TX_ERR_ORDER;
-  if (s->vini_pos && memcmp(s->last_ki, key_image, 32) <= 0) goto fail;
-  memcpy(s->last_ki, key_image, 32);
+  if (s->vini_pos && memcmp(s->inputs.last_ki, key_image, 32) <= 0) goto fail;
+  memcpy(s->inputs.last_ki, key_image, 32);
   keccak_Update(&s->prefix, request->vini.bytes, request->vini.size);
-  s->seen |= (uint64_t)1 << request->orig_idx;
+  s->inputs.seen |= (uint64_t)1 << request->orig_idx;
   s->order[s->vini_pos++] = (uint8_t)request->orig_idx;
   return MONERO_TX_OK;
 fail:
@@ -907,7 +965,12 @@ MoneroTxResult monero_tx_all_inputs_set(void) {
     monero_session_abort();
     return result;
   }
+  if (!build_extra(s)) {
+    monero_session_abort();
+    return MONERO_TX_ERR_INTERNAL;
+  }
   hash_varint(&s->prefix, MONERO_TX_OUTPUTS);
+  memzero(&s->outputs, sizeof(s->outputs));
   s->step = STEP_OUTPUT;
   return MONERO_TX_OK;
 }
@@ -924,7 +987,7 @@ static bool bpp_matches_commitments(const xmr_bpp_proof* proof,
     if (!ok) break;
     ge25519_mul8(&c, &v);
     ge25519_pack(packed, &c);
-    ok = ct_equal(packed, s->out_commit[j], 32);
+    ok = ct_equal(packed, s->outputs.out_commit[j], 32);
   }
   return ok;
 }
@@ -962,7 +1025,7 @@ MoneroTxResult monero_tx_set_output(const MoneroTxSetOutputRequest* request,
   const MoneroTxDestination* dst = &request->dst;
   dest_encode(tmp.field, dst);
   result = MONERO_TX_ERR_MAC;
-  if (!mac_matches(s, "txdest", j, tmp.field, DEST_BYTES,
+  if (!mac_matches(s, "txdest", j, false, tmp.field, DEST_BYTES,
                    request->dst_hmac.bytes))
     goto fail;
 
@@ -1004,12 +1067,12 @@ MoneroTxResult monero_tx_set_output(const MoneroTxSetOutputRequest* request,
   /* mask = Hs("commitment_mask" | amount key); C = mask*G + amount*H;
    * encrypted amount = amount ^ Keccak("amount" | amount key)[0..8). */
   monero_hash_scalar(tmp.mask, tmp.amount_key, sizeof(tmp.amount_key));
-  contract256_modm(s->out_mask[j], tmp.mask);
-  s->out_amount[j] = dst->amount;
-  commit(s->out_commit[j], tmp.mask, dst->amount);
+  contract256_modm(s->outputs.out_mask[j], tmp.mask);
+  s->outputs.out_amount[j] = dst->amount;
+  commit(s->outputs.out_commit[j], tmp.mask, dst->amount);
   add256_modm(s->sum_out_mask, s->sum_out_mask, tmp.mask);
   result = MONERO_TX_ERR_AMOUNT;
-  if (!add_u64(&s->sum_out, dst->amount)) goto fail;
+  if (!add_u64(&s->outputs.sum_out, dst->amount)) goto fail;
   memcpy(tmp.amount_key + 9, "amount", 6);
   keccak_256(tmp.amount_key + 9, 6u + 32u, tmp.hash);
   ack->has_ecdh_info = true;
@@ -1019,19 +1082,20 @@ MoneroTxResult monero_tx_set_output(const MoneroTxSetOutputRequest* request,
   ack->has_out_pk = true;
   ack->out_pk.size = 64;
   memcpy(ack->out_pk.bytes, ack->tx_out.bytes + 2, 32);
-  memcpy(ack->out_pk.bytes + 32, s->out_commit[j], 32);
+  memcpy(ack->out_pk.bytes + 32, s->outputs.out_commit[j], 32);
 
   keccak_Update(&s->prefix, ack->tx_out.bytes, TX_OUT_BYTES);
-  keccak_Update(&s->rct_base, ack->ecdh_info.bytes, 8);
+  memcpy(s->outputs.ecdh[j], ack->ecdh_info.bytes, 8);
 
   if (proves) {
     /* The long step. The amounts and masks are the session's; the prover
      * holds no other secret across its progress callback, and after an
      * aborted callback neither it nor this function touches scratch. */
     result = MONERO_TX_ERR_PROOF;
-    if (!xmr_bpp_prove(&tmp.proof, s->out_amount,
-                       (const uint8_t (*)[32])s->out_mask, MONERO_TX_OUTPUTS,
-                       (xmr_bpp_workspace*)scratch, progress, progress_ctx))
+    if (!xmr_bpp_prove(&tmp.proof, s->outputs.out_amount,
+                       (const uint8_t (*)[32])s->outputs.out_mask,
+                       MONERO_TX_OUTPUTS, (xmr_bpp_workspace*)scratch, progress,
+                       progress_ctx))
       goto fail;
     /* A callback that let a session-ending message through must have
      * returned false; never continue on a session that is gone. */
@@ -1051,10 +1115,10 @@ MoneroTxResult monero_tx_set_output(const MoneroTxSetOutputRequest* request,
                   6u * 32u);
     keccak_Update(&hash, (const uint8_t*)tmp.proof.L, tmp.proof.n_rounds * 32u);
     keccak_Update(&hash, (const uint8_t*)tmp.proof.R, tmp.proof.n_rounds * 32u);
-    keccak_Final(&hash, s->bp_hash);
+    keccak_Final(&hash, s->outputs.bp_hash);
     /* Only the sum of the masks is needed from here on. */
-    memzero(s->out_mask, sizeof(s->out_mask));
-    memzero(s->out_amount, sizeof(s->out_amount));
+    memzero(s->outputs.out_mask, sizeof(s->outputs.out_mask));
+    memzero(s->outputs.out_amount, sizeof(s->outputs.out_amount));
   }
   ++s->out_pos;
   memzero(&tmp, sizeof(tmp));
@@ -1076,19 +1140,29 @@ MoneroTxResult monero_tx_all_out_set(MoneroTxAllOutSetAck* ack) {
   if (!ack || s->out_pos != MONERO_TX_OUTPUTS) goto fail;
   /* No signature exists yet: the fee the user approved must be exactly
    * what the inputs leave after the outputs. */
-  uint64_t spent = s->sum_out;
+  uint64_t spent = s->outputs.sum_out;
   result = MONERO_TX_ERR_BALANCE;
   if (!add_u64(&spent, s->fee) || spent != s->sum_in) goto fail;
 
-  for (unsigned j = 0; j < MONERO_TX_OUTPUTS; ++j)
-    keccak_Update(&s->rct_base, s->out_commit[j], 32);
   hash_varint(&s->prefix, s->extra_size);
   keccak_Update(&s->prefix, s->extra, s->extra_size);
   /* CLSAG message = Keccak(prefix hash | rctSigBase hash | proof hash). */
   keccak_Final(&s->prefix, hashes);
-  keccak_Final(&s->rct_base, hashes + 32);
-  memcpy(hashes + 64, s->bp_hash, 32);
-  keccak_256(hashes, sizeof(hashes), s->message);
+  const uint8_t rct_type = MONERO_TX_RCT_TYPE;
+  keccak_256_Init(&s->prefix);
+  keccak_Update(&s->prefix, &rct_type, 1);
+  hash_varint(&s->prefix, s->fee);
+  keccak_Update(&s->prefix, (const uint8_t*)s->outputs.ecdh,
+                sizeof(s->outputs.ecdh));
+  keccak_Update(&s->prefix, (const uint8_t*)s->outputs.out_commit,
+                sizeof(s->outputs.out_commit));
+  keccak_Final(&s->prefix, hashes + 32);
+  memcpy(hashes + 64, s->outputs.bp_hash, 32);
+  keccak_256(hashes, sizeof(hashes), s->sign.message);
+  /* Bind the sealing key to the complete transaction, including the proof. */
+  kdf(s->sign.open_key, s->master, "KKXMR-open", 0);
+  hmac_sha256(s->sign.open_key, 32, s->sign.message, sizeof(s->sign.message),
+              s->sign.open_key);
 
   ack->has_extra = true;
   ack->extra.size = s->extra_size;
@@ -1102,7 +1176,7 @@ MoneroTxResult monero_tx_all_out_set(MoneroTxAllOutSetAck* ack) {
   ack->rct_type = MONERO_TX_RCT_TYPE;
   ack->has_full_message_hash = true;
   ack->full_message_hash.size = 32;
-  memcpy(ack->full_message_hash.bytes, s->message, 32);
+  memcpy(ack->full_message_hash.bytes, s->sign.message, 32);
   s->step = STEP_SIGN;
   return MONERO_TX_OK;
 fail:
@@ -1151,9 +1225,9 @@ MoneroTxResult monero_tx_sign_input(const MoneroTxSignInputRequest* request,
   result = MONERO_TX_ERR_ORDER;
   if (index != s->order[position]) goto fail;
   result = MONERO_TX_ERR_MAC;
-  if (!mac_matches(s, "txin", index, request->vini.bytes, request->vini.size,
-                   request->vini_hmac.bytes) ||
-      !mac_matches(s, "txin-comm", index, request->pseudo_out.bytes, 32,
+  if (!mac_matches(s, "txin", index, true, request->vini.bytes,
+                   request->vini.size, request->vini_hmac.bytes) ||
+      !mac_matches(s, "txin-comm", index, true, request->pseudo_out.bytes, 32,
                    request->pseudo_out_hmac.bytes))
     goto fail;
 
@@ -1166,7 +1240,10 @@ MoneroTxResult monero_tx_sign_input(const MoneroTxSignInputRequest* request,
   if (tmp.in.vini_size != request->vini.size ||
       !ct_equal(tmp.in.vini, request->vini.bytes, tmp.in.vini_size))
     goto fail;
-  kdf_scalar(tmp.pseudo, s->master, "KKXMR-pa", index);
+  input_mask(s, index, &request->src, &tmp.in, tmp.pseudo, tmp.secret);
+  if (!ct_equal(s->source_tags[index], tmp.secret,
+                sizeof(s->source_tags[index])))
+    goto fail;
   commit(tmp.pseudo_out, tmp.pseudo, tmp.in.amount);
   if (!ct_equal(tmp.pseudo_out, request->pseudo_out.bytes, 32)) goto fail;
   if (position + 1u == s->n_inputs) {
@@ -1189,7 +1266,7 @@ MoneroTxResult monero_tx_sign_input(const MoneroTxSignInputRequest* request,
    * any failure ends the session. After an aborted callback neither the
    * signer nor this function touches scratch (the ring copies included). */
   result = MONERO_TX_ERR_PROOF;
-  if (!xmr_clsag_sign(&tmp.sig, s->message, (const uint8_t (*)[32])work->P,
+  if (!xmr_clsag_sign(&tmp.sig, s->sign.message, (const uint8_t (*)[32])work->P,
                       (const uint8_t (*)[32])work->C, tmp.pseudo_out,
                       MONERO_TX_RING_SIZE, tmp.in.real_index, tmp.secret,
                       tmp.offset_secret, &work->ws, progress, progress_ctx))
@@ -1201,7 +1278,7 @@ MoneroTxResult monero_tx_sign_input(const MoneroTxSignInputRequest* request,
   /* s[16] | c1 | D, sealed until final releases Kopen. The nonce is the
    * position, used once per session key. */
   put_le32(tmp.nonce, position);
-  rfc7539_init(&tmp.cipher, s->open_key, tmp.nonce);
+  rfc7539_init(&tmp.cipher, s->sign.open_key, tmp.nonce);
   chacha20poly1305_encrypt(&tmp.cipher, (const uint8_t*)&tmp.sig,
                            ack->clsag_enc.bytes, CLSAG_PLAIN_BYTES);
   rfc7539_finish(&tmp.cipher, 0, CLSAG_PLAIN_BYTES,
@@ -1229,7 +1306,7 @@ MoneroTxResult monero_tx_final(MoneroTxFinalAck* ack) {
   if (s && ack) {
     ack->has_opening_key = true;
     ack->opening_key.size = 32;
-    memcpy(ack->opening_key.bytes, s->open_key, 32);
+    memcpy(ack->opening_key.bytes, s->sign.open_key, 32);
     /* Release payment-proof keys only at the same final gate as Kopen.
      * Re-derive them from the session master; never retain extra key copies. */
     kdf_scalar(key, s->master, "KKXMR-r", 0);

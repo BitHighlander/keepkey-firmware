@@ -851,6 +851,37 @@ TEST_F(MoneroTx, FreshRandomnessGivesAFreshSession) {
   EXPECT_EQ(0, memcmp(a.key_image(0), b.key_image(0), 32));
 }
 
+TEST_F(MoneroTx, TransactionKeysBindEveryStreamedSourceWithRepeatedRandomness) {
+  const Plan plan = two_input_plan();
+  Flow original(plan);
+  replay_rng("repeat-init");
+  ASSERT_EQ(MONERO_TX_OK, original.run());
+
+  // The second input keeps its indices and real member. Its decoy key changes.
+  Plan changed = plan;
+  auto& ring = changed.inputs[1].src.ring;
+  monero_tx_probe_point(ring[0].dest.bytes, "different-decoy", 0);
+  Flow updated(changed);
+  replay_rng("repeat-init");
+  ASSERT_EQ(MONERO_TX_OK, updated.run());
+  EXPECT_EQ(0, memcmp(original.review.digest, updated.review.digest, 32));
+  EXPECT_EQ(0, memcmp(original.key_image(1), updated.key_image(1), 32));
+  EXPECT_NE(0, memcmp(original.in_acks[1].pseudo_out.bytes,
+                      updated.in_acks[1].pseudo_out.bytes, 32));
+  EXPECT_NE(0, memcmp(original.final_ack.tx_key.bytes,
+                      updated.final_ack.tx_key.bytes, 32));
+  EXPECT_NE(0, memcmp(original.final_ack.opening_key.bytes,
+                      updated.final_ack.opening_key.bytes, 32));
+
+  Flow fresh(changed);
+  replay_rng("repeat-init");
+  ASSERT_EQ(MONERO_TX_OK, fresh.begin());
+  ASSERT_EQ(MONERO_TX_OK, fresh.set_inputs());
+  const auto earlier = original.vini_request(1);
+  EXPECT_EQ(MONERO_TX_ERR_MAC, monero_tx_input_vini(&earlier));
+  EXPECT_FALSE(monero_tx_active());
+}
+
 /* ----------------------------------------------------------- review */
 
 TEST_F(MoneroTx, ReviewShowsDeviceEncodedAddressesAndItsOwnClassification) {
