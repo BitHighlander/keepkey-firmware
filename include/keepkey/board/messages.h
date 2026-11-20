@@ -140,6 +140,11 @@ uint16_t* frame_arena_scratch2049(void);
 void* frame_arena_scratch(size_t size);
 void frame_arena_scratch_wipe(void);
 
+/* Single-owner MAX_DECODE_SIZE buffer, initially zero and wiped on release.
+ * Acquisition fails if a suspended operation still owns it. */
+uint8_t* msg_acquire_decode_buffer(void);
+void msg_release_decode_buffer(void);
+
 /* Request storage reused as response scratch: copy needed fields first. */
 void* msg_decoded_request_response_scratch(void);
 
