@@ -467,6 +467,17 @@ RELEASE_CAPABILITIES = {
 }
 
 
+# Fork RC and release share the product contract. The Bitcoin-only build
+# keeps the 7.15 controls; the full build adds the 7.16 controls and Monero.
+RELEASE_CAPABILITIES["7.17.0"] = {
+    "bitcoin-only": RELEASE_CAPABILITIES["7.15.0"]["bitcoin-only"],
+    "full": RELEASE_CAPABILITIES["7.15.0"]["full"] | {
+        "evm-certified-intent", "permit2-review", "solana-certified-review",
+        "monero-signing",
+    },
+}
+
+
 def release_capability_gaps(fw_version, product, missing):
     """Required capabilities whose controls were skipped. None when this
     version has no release list, which release.yml also refuses."""

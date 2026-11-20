@@ -85,6 +85,13 @@ class ReleaseControlGaps(unittest.TestCase):
         self.assertEqual(1, len(report.release_control_gaps(
             "7.15.0", "bitcoin-only", cases + cases[:1])))
 
+    def test_717_requires_monero_on_full_only(self):
+        missing = {"monero-signing"}
+        self.assertEqual(["monero-signing"], report.release_capability_gaps(
+            "7.17.0", "full", missing))
+        self.assertEqual([], report.release_capability_gaps(
+            "7.17.0", "bitcoin-only", missing))
+
     def test_flag_mapping_names_known_capabilities(self):
         self.assertLessEqual(set(report.SUPPORTS_FLAG_CAPABILITY.values()),
                              report.KNOWN_CAPABILITIES)
