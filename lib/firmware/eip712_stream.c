@@ -541,7 +541,6 @@ typedef struct {
   uint8_t seen;  /* MS_SEEN_* */
   uint8_t facts; /* MS_FACT_*, kept once the scan stops */
   uint8_t to[20];
-  uint8_t prefix[132]; /* selector and up to four approval words */
 } Eip712MultiSend;
 
 static struct {
@@ -628,7 +627,12 @@ static struct {
    * moment that proof fails, so nothing is ever hidden. */
   uint8_t permit2;
   uint8_t queued;
-  char queue[EIP712_QUEUE_SLOTS][EIP712_QUEUE_BODY];
+  union {
+    char queue[EIP712_QUEUE_SLOTS][EIP712_QUEUE_BODY];
+    /* A canonical Permit2 domain and message have no dynamic bytes. Before
+     * a MultiSend uses this buffer, show any speculative domain screens. */
+    uint8_t approval_prefix[132];
+  };
   Eip712Permit2 p2;
 
   /* EIP-2612 / DAI Permit with the canonical type hash (ERC20_PERMIT_*). An
@@ -1308,12 +1312,18 @@ typedef enum {
 } MultisendScan;
 
 /* Every leaf starts here, whole or chunked, before any of its bytes is fed. */
-static void multisend_begin(const Eip712FieldType* field, const uint8_t* value,
+static bool permit2_flush(void);
+
+static bool multisend_begin(const Eip712FieldType* field, const uint8_t* value,
                             size_t len) {
   memzero(&e712.multisend, sizeof(e712.multisend));
   if (field->data_type == EthereumTypedDataStructAck_EthereumDataType_BYTES &&
-      !field->has_size && len >= 4 && memcmp(value, "\x8d\x80\xff\x0a", 4) == 0)
+      !field->has_size && len >= 4 &&
+      memcmp(value, "\x8d\x80\xff\x0a", 4) == 0) {
+    if (e712.permit2 == 1 && !permit2_flush()) return false;
     e712.multisend.phase = MS_SELECTOR;
+  }
+  return true;
 }
 
 static void multisend_phase(uint8_t phase) {
@@ -1403,25 +1413,26 @@ static MultisendScan multisend_byte(uint8_t b) {
       return ms->left ? MS_SCAN_OK : multisend_done();
     default: { /* MS_DATA */
       MultisendScan result = MS_SCAN_OK;
-      if (at < sizeof(ms->prefix)) {
-        ms->prefix[at] = b;
+      if (at < sizeof(e712.approval_prefix)) {
+        e712.approval_prefix[at] = b;
         const size_t captured = at + 1u;
         if (at == 3 || at == 67 || at == 131) {
-          const uint8_t size = embedded_approval_size(ms->prefix, captured);
+          const uint8_t size =
+              embedded_approval_size(e712.approval_prefix, captured);
           if (at == 3 && size && ms->need < (uint32_t)size - 3u)
             return MS_SCAN_MALFORMED;
           if (captured == size) {
-            const Eip712LeafResult review =
-                review_embedded_approval(ms->prefix, captured, ms->to);
+            const Eip712LeafResult review = review_embedded_approval(
+                e712.approval_prefix, captured, ms->to);
             if (review == EIP712_LEAF_INVALID) return MS_SCAN_MALFORMED;
             if (review == EIP712_LEAF_CANCELLED) return MS_SCAN_CANCELLED;
           }
           if (at == 3 && (ms->seen & MS_SEEN_MIGRATION))
-            result =
-                confirm_batch_delegate(ms, safe_migration_call(ms->prefix, 4));
+            result = confirm_batch_delegate(
+                ms, safe_migration_call(e712.approval_prefix, 4));
         }
       } else {
-        ms->at = sizeof(ms->prefix);
+        ms->at = sizeof(e712.approval_prefix);
       }
       if (--ms->need == 0) multisend_phase(MS_HEADER);
       /* need <= left: the batch ends at a call's end. */
@@ -1952,7 +1963,7 @@ static bool multisend_reviewed(const uint8_t* bytes, size_t len, bool last) {
   if (scan == MS_SCAN_OK && last && e712.multisend.phase != MS_OFF) {
     const Eip712MultiSend* ms = &e712.multisend;
     scan = ms->phase == MS_DATA &&
-                   embedded_approval_size(ms->prefix, ms->at) > ms->at
+                   embedded_approval_size(e712.approval_prefix, ms->at) > ms->at
                ? MS_SCAN_MALFORMED
                : multisend_unchecked();
   }
@@ -2854,7 +2865,7 @@ static bool chunk_begin(const Eip712FieldType* field,
     if (!review_leaf_approval(field, ack->value.bytes, ack->value.size))
       return false;
   }
-  multisend_begin(field, ack->value.bytes, ack->value.size);
+  if (!multisend_begin(field, ack->value.bytes, ack->value.size)) return false;
   keccak_256_Init(&e712.hash);
   return chunk_absorb(field, ack->value.bytes, ack->value.size);
 }
@@ -2960,7 +2971,7 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
     return false;
   }
 
-  multisend_begin(field, bytes, len);
+  if (!multisend_begin(field, bytes, len)) return false;
   if (!multisend_reviewed(bytes, len, true)) return false;
   if (!review_approved(safe_delegate_approved(field, bytes, len, true)
                            ? EIP712_LEAF_OK
