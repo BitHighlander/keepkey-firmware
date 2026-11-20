@@ -559,7 +559,7 @@ static std::vector<uint8_t> innerApprove(uint8_t amount_byte) {
 TEST(Erc7730Workflow, EmbeddedApproveIsClassifiedLikeATopLevelOne) {
   Erc7730Workflow workflow{};
   ASSERT_TRUE(locateEmbedded(&workflow, innerApprove(0xff)));
-  EXPECT_TRUE(workflow.field.unlimited_approve);
+  EXPECT_TRUE((workflow.field.approval_amount[0] & 0x80) != 0);
   const uint8_t spender[20] = {0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
                                0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
                                0x22, 0x22, 0x22, 0x22, 0x22, 0x22};
@@ -572,19 +572,20 @@ TEST(Erc7730Workflow, EmbeddedApproveIsClassifiedLikeATopLevelOne) {
   auto threshold = innerApprove(0x00);
   threshold[36] = 0x80;
   ASSERT_TRUE(locateEmbedded(&workflow, threshold));
-  EXPECT_TRUE(workflow.field.unlimited_approve);
+  EXPECT_TRUE((workflow.field.approval_amount[0] & 0x80) != 0);
   auto almost = innerApprove(0xff);
   almost[36] = 0x7f;
   ASSERT_TRUE(locateEmbedded(&workflow, almost));
-  EXPECT_FALSE(workflow.field.unlimited_approve);
+  EXPECT_FALSE((workflow.field.approval_amount[0] & 0x80) != 0);
+  EXPECT_EQ(0, memcmp(workflow.field.approval_amount, almost.data() + 36, 32));
   ASSERT_TRUE(locateEmbedded(&workflow, innerApprove(0x01)));
-  EXPECT_FALSE(workflow.field.unlimited_approve);
+  EXPECT_FALSE((workflow.field.approval_amount[0] & 0x80) != 0);
 
   // Trailing bytes do not hide it, as they do not at the top level.
   auto longer = innerApprove(0xff);
   longer.resize(100, 0xab);
   ASSERT_TRUE(locateEmbedded(&workflow, longer));
-  EXPECT_TRUE(workflow.field.unlimited_approve);
+  EXPECT_TRUE((workflow.field.approval_amount[0] & 0x80) != 0);
   EXPECT_EQ(workflow.field.inner_length, 100u);
 
   auto dirty = innerApprove(0xff);
@@ -596,14 +597,14 @@ TEST(Erc7730Workflow, EmbeddedApproveIsClassifiedLikeATopLevelOne) {
   const uint8_t selector[4] = {0x39, 0x50, 0x93, 0x51};
   std::copy(selector, selector + 4, increase.begin());
   ASSERT_TRUE(locateEmbedded(&workflow, increase));
-  EXPECT_TRUE(workflow.field.unlimited_approve);
+  EXPECT_TRUE((workflow.field.approval_amount[0] & 0x80) != 0);
   EXPECT_EQ(0, memcmp(workflow.field.approve_spender, spender, 20));
 
   // Another call keeps only its selector.
   auto transfer = innerApprove(0xff);
   transfer[0] = 0xa9;
   ASSERT_TRUE(locateEmbedded(&workflow, transfer));
-  EXPECT_FALSE(workflow.field.unlimited_approve);
+  EXPECT_FALSE((workflow.field.approval_amount[0] & 0x80) != 0);
   EXPECT_EQ(workflow.field.inner_selector[0], 0xa9);
 }
 
@@ -728,11 +729,11 @@ TEST(Erc7730Workflow, FirstPassRecordsTheAllowanceFacts) {
     allowancePass(&workflow, args, chunk);
     EXPECT_EQ((unsigned)workflow.allowance, ERC7730_ALLOWANCE_CALL);
     EXPECT_EQ(0, memcmp(workflow.allowance_spender, args.data() + 12, 20));
+    EXPECT_EQ(0, memcmp(workflow.field.approval_amount, args.data() + 32, 32));
 
     args[32] = 0x80;  // 2^255: unlimited
     allowancePass(&workflow, args, chunk);
-    EXPECT_EQ((unsigned)workflow.allowance,
-              ERC7730_ALLOWANCE_CALL | ERC7730_ALLOWANCE_UNLIMITED);
+    EXPECT_EQ(workflow.field.approval_amount[0], 0x80);
 
     std::vector<uint8_t> dirty = args;
     dirty[11] = 1;
@@ -755,7 +756,7 @@ TEST(Erc7730Workflow, FirstPassRecordsTheAllowanceFacts) {
   unlimited[32] = 0xff;
   ASSERT_EQ(erc7730_workflow_calldata_feed(&workflow, unlimited.data(), 64),
             ERC7730_ABI_OK);
-  EXPECT_FALSE(workflow.allowance & ERC7730_ALLOWANCE_UNLIMITED);
+  EXPECT_EQ(workflow.field.approval_amount[0], 0);
   // ...and the signing pass must still match the reviewed digest.
   EXPECT_NE(erc7730_workflow_calldata_finish(&workflow), ERC7730_ABI_OK);
   EXPECT_FALSE(erc7730_workflow_allowance_checked(&workflow));
@@ -763,7 +764,7 @@ TEST(Erc7730Workflow, FirstPassRecordsTheAllowanceFacts) {
 
 // 7.17 B5c: the review shows a suffix byte for byte, from the pass that just
 // matched the reviewed digest, up to ERC7730_SUFFIX_SHOWN_MAX; a longer one
-// is stated by its length alone. Chunks of 5 split words and the suffix.
+// is refused before any signing pass. Chunks of 5 split words and the suffix.
 TEST(Erc7730Workflow, ShowsTheSuffixTheLastPassCarried) {
   for (size_t n :
        {size_t{1}, size_t{24}, size_t{33}, size_t{127},
@@ -793,17 +794,20 @@ TEST(Erc7730Workflow, ShowsTheSuffixTheLastPassCarried) {
             erc7730_workflow_calldata_feed(&workflow, data.data() + at, len),
             ERC7730_ABI_OK);
       }
+      if (n > ERC7730_SUFFIX_SHOWN_MAX) {
+        EXPECT_EQ(erc7730_workflow_calldata_finish(&workflow),
+                  ERC7730_ABI_BOUNDS);
+        EXPECT_EQ(workflow.phase, ERC7730_WORKFLOW_FAILED);
+        break;
+      }
       ASSERT_EQ(erc7730_workflow_calldata_finish(&workflow), ERC7730_ABI_OK);
     }
+    if (n > ERC7730_SUFFIX_SHOWN_MAX) continue;
     EXPECT_EQ(workflow.suffix_length, n);
     uint8_t shown[ERC7730_SUFFIX_SHOWN_MAX];
     const size_t length = erc7730_workflow_suffix(&workflow, shown);
-    if (n > ERC7730_SUFFIX_SHOWN_MAX) {
-      EXPECT_EQ(length, 0u);
-    } else {
-      ASSERT_EQ(length, n);
-      EXPECT_EQ(0, memcmp(shown, data.data() + 32, n));
-    }
+    ASSERT_EQ(length, n);
+    EXPECT_EQ(0, memcmp(shown, data.data() + 32, n));
   }
   Erc7730Workflow none{};
   uint8_t shown[ERC7730_SUFFIX_SHOWN_MAX];
