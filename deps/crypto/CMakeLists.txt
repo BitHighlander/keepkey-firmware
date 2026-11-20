@@ -36,7 +36,6 @@ set(sources
     trezor-firmware/crypto/bignum.c
     trezor-firmware/crypto/segwit_addr.c
     trezor-firmware/crypto/ripemd160.c
-    trezor-firmware/crypto/groestl.c
     trezor-firmware/crypto/nist256p1.c
     #trezor-firmware/crypto/monero/serialize.c
     #trezor-firmware/crypto/monero/range_proof.c
