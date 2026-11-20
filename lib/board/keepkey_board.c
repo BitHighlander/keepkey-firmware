@@ -54,7 +54,8 @@ void __attribute__((noreturn)) shutdown(void) { exit(1); }
  * OUTPUT
  *     none
  */
-__attribute__((noreturn)) void __stack_chk_fail(void) {
+/* GCC emits canary calls after LTO resolves symbols. Retain their handler. */
+__attribute__((used, noreturn)) void __stack_chk_fail(void) {
   layout_warning_static("Error Detected.  Reboot Device!");
   shutdown();
 }
