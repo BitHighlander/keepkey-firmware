@@ -99,7 +99,7 @@ _STACK07_EVM = [_STACK07 + "TestStack07Regressions." + name for name in (
     "test_all_typed_fields_are_reviewed_and_signature_is_unchanged",
     "test_calldata_signing_replay_change_is_refused",
     "test_calldata_signing_replay_succeeds_with_arguments",
-    "test_certified_approval_refused_before_annotation_screens",
+    "test_certified_approval_runs_the_allowance_policy",
     "test_declining_source_intent_or_either_field_aborts",
     "test_domain_name_version_and_salt_mismatches_are_refused",
     "test_early_typed_failure_clears_preload",
@@ -406,12 +406,15 @@ KNOWN_CAPABILITIES = frozenset((
     "erc20-unlimited-permit-review", "erc7730-runtime-review",
     "evm-certified-intent", "evm-max-amount-review", "evm-tx-metadata",
     "evm-unknown-token-review", "hive-release-review",
-    "legacy-evm-router-signing", "maya-single-message", "osmosis-wire-guards",
+    "legacy-evm-router-signing", "maya-single-message", "monero-signing",
+    "osmosis-wire-guards",
     "permit2-review", "prompt-workflow-unwind", "protected-ping-presence",
     "ripple-memo-policy", "session-trust-lifetime", "solana-certified-review",
     "solana-lut-attestation", "solana-runtime-review", "storage-v19-kdf",
     "tendermint-progress", "safe-reset-ceremony", "thor-deposit-review",
     "tron-trc20-review",
+    "safe-typed-calls", "erc7730-typed-iteration",
+    "erc7730-typed-settlement",
 ))
 
 

@@ -4,6 +4,7 @@
 
 #include "keepkey/firmware/eip712_stream.h"
 #include "keepkey/firmware/erc7730_capabilities.h"
+#include "keepkey/firmware/ethereum.h"
 #include "trezor/crypto/memzero.h"
 
 static Erc7730Workflow active_workflow;
@@ -58,6 +59,13 @@ bool erc7730_workflow_begin(Erc7730Workflow* workflow,
     return false;
   }
   workflow->review_tier = identity->tier;
+  if (ethereum_isAllowanceSelector(tx->data_initial_chunk.bytes, 4)) {
+    if (tx->data_length < 68) {
+      fail(workflow);
+      return false;
+    }
+    workflow->allowance = ERC7730_ALLOWANCE_CALL;
+  }
   return begin_replay(workflow, identity);
 }
 
@@ -80,6 +88,8 @@ bool erc7730_workflow_begin_eip712(Erc7730Workflow* workflow,
       facts.has_verifying_contract && facts.chain_id == identity->chain_id &&
       erc7730_program_loader_require_deployment(
           &workflow->loader, facts.chain_id, facts.verifying_contract);
+  /* Typed data's @.to: the deployment just bound. */
+  if (bound) memcpy(workflow->inner_to, facts.verifying_contract, 20);
   memzero(&facts, sizeof(facts));
   if (!bound) {
     fail(workflow);
@@ -400,12 +410,18 @@ bool erc7730_workflow_restore_and_start_calldata(Erc7730Workflow* workflow,
    * inside the outer arguments that are replayed and hashed in full. */
   const uint32_t outer = tx->data_length >= 4 ? tx->data_length - 4u : 0;
   const bool inner = workflow->depth == 1;
+  /* Only the outer call may carry bytes after its arguments, and only when
+   * its definition says so. */
   if (tx->data_length < 4 ||
       (inner && (workflow->inner_length < 4 || workflow->inner_offset > outer ||
                  workflow->inner_length > outer - workflow->inner_offset)) ||
       !erc7730_program_loader_complete(&workflow->loader, &program) ||
-      erc7730_abi_stream_begin(&workflow->calldata, &program,
-                               inner ? workflow->inner_length - 4u : outer) !=
+      (inner ? erc7730_abi_stream_begin(&workflow->calldata, &program,
+                                        workflow->inner_length - 4u)
+       : workflow->identity.trailing_data
+           ? erc7730_abi_stream_begin_suffixed(&workflow->calldata, &program,
+                                               outer)
+           : erc7730_abi_stream_begin(&workflow->calldata, &program, outer)) !=
           ERC7730_ABI_OK) {
     fail(workflow);
     return false;
@@ -662,6 +678,36 @@ bool erc7730_workflow_start_signing(Erc7730Workflow* workflow,
   return true;
 }
 
+/* Safe's execTransaction, execTransactionFromModule and
+ * execTransactionFromModuleReturnData, and Zodiac Roles v1/v2
+ * execTransactionWithRole and execTransactionWithRoleReturnData, take
+ * (to, value, data, operation, ...): operation 1 delegatecalls `to`, running
+ * its code as the Safe. */
+static bool safe_exec_selector(const uint8_t selector[4]) {
+  static const uint8_t selectors[][4] = {
+      {0x6a, 0x76, 0x12, 0x02}, {0x46, 0x87, 0x21, 0xa7},
+      {0x52, 0x29, 0x07, 0x3f}, {0x69, 0x28, 0xe7, 0x4b},
+      {0xc6, 0xfe, 0x87, 0x47}, {0xb0, 0xc1, 0x99, 0x12},
+      {0x2b, 0x99, 0xe5, 0x06}};
+  for (size_t i = 0; i < sizeof(selectors) / sizeof(selectors[0]); i++)
+    if (memcmp(selector, selectors[i], 4) == 0) return true;
+  return false;
+}
+
+/* Offsets here are relative to the active call's arguments at either depth. */
+static Erc7730AbiResult feed_call_arguments(Erc7730Workflow* workflow,
+                                            size_t offset, const uint8_t* data,
+                                            size_t length) {
+  const Erc7730AbiResult result =
+      erc7730_abi_stream_feed(&workflow->calldata, offset, data, length);
+  if (result == ERC7730_ABI_OK && !workflow->calldata_validated &&
+      offset < 128 &&
+      safe_exec_selector(workflow->identity.selector_or_type_hash))
+    for (size_t i = 0; i < length && offset + i < 128; i++)
+      if (offset + i >= 96 && data[i] != 0) workflow->safe_delegatecall = true;
+  return result;
+}
+
 Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
                                                 const uint8_t* data,
                                                 size_t data_len) {
@@ -674,10 +720,21 @@ Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
     fail(workflow);
     return ERC7730_ABI_BOUNDS;
   }
+  /* The first pass reads an approval's words for the allowance policy. */
+  if (workflow->depth == 0 && !workflow->calldata_validated &&
+      (workflow->allowance & ERC7730_ALLOWANCE_CALL)) {
+    for (size_t i = 0; i < data_len && workflow->outer_received + i < 64; i++) {
+      const uint32_t at = workflow->outer_received + (uint32_t)i;
+      if (at < 12 && data[i] != 0)
+        workflow->allowance |= ERC7730_ALLOWANCE_DIRTY;
+      if (at >= 12 && at < 32) workflow->allowance_spender[at - 12] = data[i];
+      if (at >= 32) workflow->field.approval_amount[at - 32] = data[i];
+    }
+  }
   Erc7730AbiResult result = ERC7730_ABI_OK;
   if (workflow->depth == 0) {
-    result = erc7730_abi_stream_feed(
-        &workflow->calldata, workflow->calldata.received, data, data_len);
+    result = feed_call_arguments(workflow, workflow->calldata.received, data,
+                                 data_len);
   } else {
     /* Feed only the inner call's arguments (after its selector). */
     const uint32_t start = workflow->inner_offset + 4u;
@@ -687,13 +744,16 @@ Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
     const uint32_t lo = from > start ? from : start;
     const uint32_t hi = to < end ? to : end;
     if (lo < hi)
-      result = erc7730_abi_stream_feed(&workflow->calldata, lo - start,
-                                       data + (lo - from), hi - lo);
+      result = feed_call_arguments(workflow, lo - start, data + (lo - from),
+                                   hi - lo);
   }
   if (result != ERC7730_ABI_OK) {
     fail(workflow);
   } else {
     sha256_Update(&workflow->calldata_hash, data, data_len);
+    for (size_t i = 0; i < data_len; i++)
+      workflow->suffix_tail[(workflow->outer_received + i) &
+                            (ERC7730_SUFFIX_SHOWN_MAX - 1u)] = data[i];
     workflow->outer_received += (uint32_t)data_len;
   }
   return result;
@@ -711,6 +771,13 @@ Erc7730AbiResult erc7730_workflow_calldata_finish(Erc7730Workflow* workflow) {
   if (result != ERC7730_ABI_OK) {
     fail(workflow);
     return result;
+  }
+  if (workflow->depth == 0)
+    workflow->suffix_length =
+        (uint32_t)erc7730_abi_stream_suffix(&workflow->calldata);
+  if (workflow->suffix_length > ERC7730_SUFFIX_SHOWN_MAX) {
+    fail(workflow);
+    return ERC7730_ABI_BOUNDS;
   }
   uint8_t digest[32];
   sha256_Final(&workflow->calldata_hash, digest);
@@ -759,11 +826,39 @@ const Erc7730CatalogIdentity* erc7730_workflow_identity(
   return &workflow->identity;
 }
 
+bool erc7730_workflow_allowance_checked(const Erc7730Workflow* workflow) {
+  return workflow && workflow->signing_pass && !workflow->typed_data &&
+         workflow->phase == ERC7730_WORKFLOW_CALLDATA &&
+         (workflow->allowance & ERC7730_ALLOWANCE_CHECKED) != 0;
+}
+
+size_t erc7730_workflow_suffix(const Erc7730Workflow* workflow,
+                               uint8_t out[ERC7730_SUFFIX_SHOWN_MAX]) {
+  const uint32_t length = workflow ? workflow->suffix_length : 0;
+  if (length == 0 || length > ERC7730_SUFFIX_SHOWN_MAX ||
+      length > workflow->outer_total)
+    return 0;
+  const uint32_t start = workflow->outer_total - length;
+  for (uint32_t i = 0; i < length; i++)
+    out[i] =
+        workflow->suffix_tail[(start + i) & (ERC7730_SUFFIX_SHOWN_MAX - 1u)];
+  return length;
+}
+
 uint8_t erc7730_workflow_tier(const Erc7730Workflow* workflow) {
   if (!workflow) return METADATA_TIER_NONE;
   const uint8_t own = workflow->identity.tier;
   if (workflow->depth == 0 || own < workflow->outer_tier) return own;
   return workflow->outer_tier;
+}
+
+bool erc7730_workflow_token_id_exempt(const Erc7730Workflow* workflow) {
+  /* Only approve(address,uint256) is shared by ERC-20 and ERC-721.
+   * increaseAllowance always grants an allowance. */
+  return workflow && workflow->identity.second_word_token_id &&
+         memcmp(workflow->identity.selector_or_type_hash, "\x09\x5e\xa7\xb3",
+                4) == 0 &&
+         erc7730_workflow_tier(workflow) == METADATA_TIER_KEEPKEY;
 }
 
 bool erc7730_workflow_certified(const Erc7730Workflow* workflow) {
@@ -857,6 +952,7 @@ bool erc7730_workflow_begin_fetch(Erc7730Workflow* workflow, uint8_t depth) {
     /* What restores the outer program, whichever way the inner call ends. */
     memcpy(workflow->outer_definition_id, workflow->identity.definition_id, 32);
     workflow->outer_resume = workflow->display_index;
+    workflow->outer_safe_delegatecall = workflow->safe_delegatecall;
     workflow->outer_identity_confirmed = workflow->identity_confirmed;
     workflow->outer_intent_confirmed = workflow->intent_confirmed;
     workflow->outer_tier = workflow->identity.tier;
@@ -956,6 +1052,7 @@ bool erc7730_workflow_fetch_complete(Erc7730Workflow* workflow) {
                                          : workflow->identity.contract_address,
              20);
       workflow->depth = 1;
+      workflow->safe_delegatecall = false;
       if (identity.tier < workflow->review_tier)
         workflow->review_tier = identity.tier;
       workflow->identity_confirmed = false;
@@ -973,6 +1070,7 @@ bool erc7730_workflow_fetch_complete(Erc7730Workflow* workflow) {
                                     ? (uint16_t)(workflow->outer_resume - 1u)
                                     : workflow->outer_resume;
       workflow->depth = 0;
+      workflow->safe_delegatecall = workflow->outer_safe_delegatecall;
       workflow->identity_confirmed = workflow->outer_identity_confirmed;
       workflow->intent_confirmed = workflow->outer_intent_confirmed;
       workflow->calldata_validated = true;
@@ -1014,21 +1112,21 @@ bool erc7730_workflow_field_embedded(Erc7730Workflow* workflow) {
   }
   Erc7730Field* field = &workflow->field;
   /* An inner approve() or increaseAllowance() gets the top-level policy
-   * (ethereum.c): a dirty spender word is refused, and 2^256-1 signs only
-   * after the UNLIMITED warning. */
-  if (capture.length == ERC7730_ABI_LOCATE_PREFIX &&
-      (memcmp(capture.data, "\x09\x5e\xa7\xb3", 4) == 0 ||
-       memcmp(capture.data, "\x39\x50\x93\x51", 4) == 0)) {
-    bool unlimited = true;
-    for (size_t i = 4; i < 68; i++) {
-      if (i < 16 && capture.data[i] != 0) {
+   * (ethereum.c): a dirty spender word is refused, and an amount of 2^255 or
+   * more signs only after the UNLIMITED warning. */
+  if (capture.length >= 4 && ethereum_isAllowanceSelector(capture.data, 4)) {
+    if (capture.length < 68) {
+      memzero(&capture, sizeof(capture));
+      return false;
+    }
+    for (size_t i = 4; i < 16; i++) {
+      if (capture.data[i] != 0) {
         memzero(&capture, sizeof(capture));
         return false;
       }
-      if (i >= 36) unlimited &= capture.data[i] == 0xff;
     }
-    field->unlimited_approve = unlimited;
-    if (unlimited) memcpy(field->approve_spender, capture.data + 16, 20);
+    memcpy(field->approve_spender, capture.data + 16, 20);
+    memcpy(field->approval_amount, capture.data + 36, 32);
   }
   const size_t selector_length = capture.length < 4 ? capture.length : 4;
   memcpy(field->inner_selector, capture.data, selector_length);
