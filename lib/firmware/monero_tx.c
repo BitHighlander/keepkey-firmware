@@ -671,7 +671,6 @@ MoneroTxResult monero_tx_begin(const uint8_t node_key[32],
   if (!xmr_hedge_key(s->master, "KKXMR-K", spend_bytes, sizeof(spend_bytes),
                      plan.digest, sizeof(plan.digest)))
     goto done;
-  result = MONERO_TX_ERR_INTERNAL;
   kdf(s->mac_key, s->master, "KKXMR-mac", 0);
   memcpy(s->spend, spend, sizeof(bignum256modm));
   memcpy(s->view, view, sizeof(bignum256modm));
