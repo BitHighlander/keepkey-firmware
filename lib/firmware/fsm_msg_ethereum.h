@@ -2165,48 +2165,18 @@ void fsm_msgEthereumSignTypedHash(const EthereumSignTypedHash* msg) {
 }
 
 void fsm_msgEthereum712TypesValues(Ethereum712TypesValues* msg) {
-  RESP_INIT(EthereumTypedDataSignature);
+  (void)msg;
 
   CHECK_INITIALIZED
 
   CHECK_PIN
 
-  if (!ethereum_structured_eip712_enabled()) {
-    fsm_sendFailure(
-        FailureType_Failure_Other,
-        _("Structured EIP-712 disabled pending canonical display hardening"));
-    layoutHome();
-    return;
-  }
-
-  if (strlen(msg->eip712types) == 0) {
-    fsm_sendFailure(FailureType_Failure_Other,
-                    _("Invalid EIP-712 types property string"));
-    return;
-  }
-
-  /* Not const, for the same reason as fsm_msgEthereumSignTypedHash() above:
-   * this is the shared fsm_derived_node scratch and every exit has to scrub
-   * it. e712_types_values() runs its own confirmations, and a Cancel answered
-   * there never reaches fsm_msgCancel(). */
-  HDNode* node = fsm_getDerivedNode(SECP256K1_NAME, msg->address_n,
-                                    msg->address_n_count, NULL);
-  if (!node) return;
-
-  uint8_t pubkeyhash[20] = {0};
-  if (!hdnode_get_ethereum_pubkeyhash(node, pubkeyhash)) {
-    memzero(node, sizeof(*node));
-    layoutHome();
-    return;
-  }
-
-  resp->address[0] = '0';
-  resp->address[1] = 'x';
-  ethereum_address_checksum(pubkeyhash, resp->address + 2, false, 0);
-
-  e712_types_values(msg, resp, node);
-  memzero(node, sizeof(*node));
-
+  /* The whole-JSON parser is withdrawn: it cannot guarantee that every value
+   * shown is the canonical value EIP-712 hashes. The message stays on the wire
+   * and fails closed; typed data is signed through the streamed path. */
+  fsm_sendFailure(
+      FailureType_Failure_Other,
+      _("Structured EIP-712 disabled pending canonical display hardening"));
   layoutHome();
 }
 
