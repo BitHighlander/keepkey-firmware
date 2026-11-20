@@ -54,6 +54,7 @@ class PassphraseTransition : public ::testing::Test {
       setup();
       kk_test_board_init();
       storage_init();
+      fsm_init();
       initialized = true;
     }
     LoadDevice load = {};
