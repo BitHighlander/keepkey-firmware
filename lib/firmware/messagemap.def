@@ -186,6 +186,37 @@
     MSG_OUT(MessageType_MessageType_ZcashTransparentAck,           ZcashTransparentAck,         NO_PROCESS_FUNC)
     MSG_OUT(MessageType_MessageType_ZcashAddress,                  ZcashAddress,                NO_PROCESS_FUNC)
 #endif
+    /* Monero (full builds only). MESSAGEMAP_WITHOUT_MONERO lets fsm.c size
+       the responses of everything else. */
+#if MONERO_SIGNING && !defined(MESSAGEMAP_WITHOUT_MONERO)
+    MSG_IN(MessageType_MessageType_MoneroGetAddress,               MoneroGetAddress,            fsm_msgMoneroGetAddress)
+    MSG_IN(MessageType_MessageType_MoneroGetWatchKey,              MoneroGetWatchKey,           fsm_msgMoneroGetWatchKey)
+    MSG_IN(MessageType_MessageType_MoneroKeyImageExportInitRequest, MoneroKeyImageExportInitRequest, fsm_msgMoneroKeyImageExportInit)
+    MSG_IN(MessageType_MessageType_MoneroKeyImageSyncStepRequest,  MoneroKeyImageSyncStepRequest, fsm_msgMoneroKeyImageSyncStep)
+    MSG_IN(MessageType_MessageType_MoneroKeyImageSyncFinalRequest, MoneroKeyImageSyncFinalRequest, fsm_msgMoneroKeyImageSyncFinal)
+    MSG_IN(MessageType_MessageType_MoneroTxInitRequest,            MoneroTxInitRequest,         fsm_msgMoneroTxInit)
+    MSG_IN(MessageType_MessageType_MoneroTxSetInputRequest,        MoneroTxSetInputRequest,     fsm_msgMoneroTxSetInput)
+    MSG_IN(MessageType_MessageType_MoneroTxInputViniRequest,       MoneroTxInputViniRequest,    fsm_msgMoneroTxInputVini)
+    MSG_IN(MessageType_MessageType_MoneroTxAllInputsSetRequest,    MoneroTxAllInputsSetRequest, fsm_msgMoneroTxAllInputsSet)
+    MSG_IN(MessageType_MessageType_MoneroTxSetOutputRequest,       MoneroTxSetOutputRequest,    fsm_msgMoneroTxSetOutput)
+    MSG_IN(MessageType_MessageType_MoneroTxAllOutSetRequest,       MoneroTxAllOutSetRequest,    fsm_msgMoneroTxAllOutSet)
+    MSG_IN(MessageType_MessageType_MoneroTxSignInputRequest,       MoneroTxSignInputRequest,    fsm_msgMoneroTxSignInput)
+    MSG_IN(MessageType_MessageType_MoneroTxFinalRequest,           MoneroTxFinalRequest,        fsm_msgMoneroTxFinal)
+
+    MSG_OUT(MessageType_MessageType_MoneroAddress,                 MoneroAddress,               NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_MoneroWatchKey,                MoneroWatchKey,              NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_MoneroKeyImageExportInitAck,   MoneroKeyImageExportInitAck, NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_MoneroKeyImageSyncStepAck,     MoneroKeyImageSyncStepAck,   NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_MoneroKeyImageSyncFinalAck,    MoneroKeyImageSyncFinalAck,  NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_MoneroTxInitAck,               MoneroTxInitAck,             NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_MoneroTxSetInputAck,           MoneroTxSetInputAck,         NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_MoneroTxInputViniAck,          MoneroTxInputViniAck,        NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_MoneroTxAllInputsSetAck,       MoneroTxAllInputsSetAck,     NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_MoneroTxSetOutputAck,          MoneroTxSetOutputAck,        NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_MoneroTxAllOutSetAck,          MoneroTxAllOutSetAck,        NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_MoneroTxSignInputAck,          MoneroTxSignInputAck,        NO_PROCESS_FUNC)
+    MSG_OUT(MessageType_MessageType_MoneroTxFinalAck,              MoneroTxFinalAck,            NO_PROCESS_FUNC)
+#endif
 #if !BITCOIN_ONLY
     /* Hive */
     MSG_IN(MessageType_MessageType_HiveGetPublicKey,               HiveGetPublicKey,            fsm_msgHiveGetPublicKey)

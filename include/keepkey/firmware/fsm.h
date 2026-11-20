@@ -179,6 +179,22 @@ void fsm_msgSolanaSignTx(const SolanaSignTx* msg);
 void fsm_msgSolanaSignMessage(const SolanaSignMessage* msg);
 void fsm_msgSolanaSignOffchainMessage(const SolanaSignOffchainMessage* msg);
 
+#if MONERO_SIGNING
+void fsm_msgMoneroGetAddress(const MoneroGetAddress* msg);
+void fsm_msgMoneroGetWatchKey(const MoneroGetWatchKey* msg);
+void fsm_msgMoneroKeyImageExportInit(
+    const MoneroKeyImageExportInitRequest* msg);
+void fsm_msgMoneroKeyImageSyncStep(const MoneroKeyImageSyncStepRequest* msg);
+void fsm_msgMoneroKeyImageSyncFinal(const MoneroKeyImageSyncFinalRequest* msg);
+void fsm_msgMoneroTxInit(const MoneroTxInitRequest* msg);
+void fsm_msgMoneroTxSetInput(const MoneroTxSetInputRequest* msg);
+void fsm_msgMoneroTxInputVini(const MoneroTxInputViniRequest* msg);
+void fsm_msgMoneroTxAllInputsSet(const MoneroTxAllInputsSetRequest* msg);
+void fsm_msgMoneroTxSetOutput(const MoneroTxSetOutputRequest* msg);
+void fsm_msgMoneroTxAllOutSet(const MoneroTxAllOutSetRequest* msg);
+void fsm_msgMoneroTxSignInput(const MoneroTxSignInputRequest* msg);
+void fsm_msgMoneroTxFinal(const MoneroTxFinalRequest* msg);
+#endif
 #if ZCASH_PRIVACY
 void fsm_msgZcashSignPCZT(const ZcashSignPCZT* msg);
 void fsm_msgZcashPCZTAction(const ZcashPCZTAction* msg);

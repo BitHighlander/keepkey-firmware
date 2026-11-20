@@ -29,7 +29,7 @@ on:
     # firmware/integration leg without adding an independent signal.
     branches: [master, develop]
   pull_request:
-    branches: [master, develop, 'release/715-stack-*']
+    branches: [master, develop, 'release/715-stack-*', 'release/717-monero-crypto']
   workflow_dispatch:
     inputs:
       publish_emulator:
@@ -563,6 +563,7 @@ jobs:
           pip install --quiet --require-hashes -r tools/requirements-sram.txt
           python3 tools/check_sram_budget.py \
             --elf bin/firmware.keepkey.elf \
+            --lto-map bin/firmware.keepkey.map \
             --su-tar bin/stack-usage.tgz \
             --budgets tools/sram-budgets.json \
             --variant "${{ matrix.variant }}"
@@ -705,7 +706,7 @@ jobs:
       contents: read
       packages: read
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:

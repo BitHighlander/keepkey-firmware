@@ -33,11 +33,11 @@ else()
   option(KK_ZCASH_PRIVACY "Build Zcash privacy support" ON)
 endif()
 
-# Build the Monero signing primitives on full firmware and emulator targets.
+# The full device and emulator expose the streamed Monero signer.
 if(KK_BITCOIN_ONLY)
   set(KK_MONERO OFF)
 else()
-  option(KK_MONERO "Build Monero signing primitives" ON)
+  option(KK_MONERO "Build the Monero on-device signer" ON)
 endif()
 
 # When building the dylib, every static lib it links (kkfirmware, kkboard,
@@ -136,6 +136,7 @@ endif()
 add_definitions(-DUSE_KECCAK=1)
 add_definitions(-DUSE_GRAPHENE=0)
 add_definitions(-DUSE_CARDANO=0)
+# trezor-crypto's Monero primitives (monero/xmr.c) back the on-device signer.
 if(KK_MONERO)
   add_definitions(-DUSE_MONERO=1)
 else()
@@ -190,6 +191,12 @@ else()
   add_definitions(-DZCASH_PRIVACY=0)
 endif()
 
+if(${KK_MONERO})
+  add_definitions(-DMONERO_SIGNING=1)
+else()
+  add_definitions(-DMONERO_SIGNING=0)
+endif()
+
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
   add_definitions(-DDEBUG_ON)
   add_definitions(-DMEMORY_PROTECT=0)
@@ -221,6 +228,16 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 if(NOT ${KK_EMULATOR})
   link_directories(${LIBOPENCM3_PATH}/lib)
   include_directories(${LIBOPENCM3_PATH}/include)
+
+  if(NOT KK_BUILD_BOOTLOADER_TOOLS)
+    option(KK_FIRMWARE_LTO "Optimize the device firmware at link time" ON)
+    if(KK_FIRMWARE_LTO)
+      # Shared archives also supply device tools that use ordinary machine code.
+      add_compile_options($<$<COMPILE_LANGUAGE:C>:-flto> $<$<COMPILE_LANGUAGE:C>:-ffat-lto-objects>
+                          $<$<COMPILE_LANGUAGE:CXX>:-flto> $<$<COMPILE_LANGUAGE:CXX>:-ffat-lto-objects>)
+      set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fno-lto")
+    endif()
+  endif()
 
   # Dummy empty libraries for stack smashing protection support, since we
   # implement __stack_chk_guard and __stack_chk_fail ourselves.

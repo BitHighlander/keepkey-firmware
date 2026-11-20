@@ -93,6 +93,25 @@ set(protoc_pb_sources_moved
     ${CMAKE_BINARY_DIR}/lib/transport/messages-hive.proto
     ${CMAKE_BINARY_DIR}/lib/transport/messages.proto)
 
+if(KK_MONERO)
+  list(APPEND protoc_pb_sources ${DEVICE_PROTOCOL}/messages-monero.proto)
+  list(APPEND protoc_pb_options
+    ${CMAKE_SOURCE_DIR}/include/keepkey/transport/messages-monero.options)
+  list(APPEND protoc_c_sources ${CMAKE_BINARY_DIR}/lib/transport/messages-monero.pb.c)
+  list(APPEND protoc_c_headers ${CMAKE_BINARY_DIR}/include/messages-monero.pb.h)
+  list(APPEND protoc_pb_sources_moved
+    ${CMAKE_BINARY_DIR}/lib/transport/messages-monero.proto)
+endif()
+
+set(monero_protoc_command)
+if(KK_MONERO)
+  set(monero_protoc_command
+    COMMAND
+      ${PROTOC_BINARY} -I. -I/usr/include
+        --plugin=nanopb=${NANOPB_DIR}/generator/protoc-gen-nanopb
+        "--nanopb_out=-fmessages-monero.options:." messages-monero.proto)
+endif()
+
 add_custom_command(
   OUTPUT
     ${CMAKE_BINARY_DIR}/lib/transport/kktransport.pb.stamp
@@ -172,6 +191,7 @@ add_custom_command(
     ${PROTOC_BINARY} -I. -I/usr/include
       --plugin=nanopb=${NANOPB_DIR}/generator/protoc-gen-nanopb
       "--nanopb_out=-f messages-hive.options:." messages-hive.proto
+  ${monero_protoc_command}
   COMMAND
     ${PROTOC_BINARY} -I. -I/usr/include
       --plugin=nanopb=${NANOPB_DIR}/generator/protoc-gen-nanopb

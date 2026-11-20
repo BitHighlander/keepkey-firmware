@@ -39,6 +39,22 @@ static msg_failure_t msg_failure;
 static bool tiny_handler_rejected;
 static uint8_t decode_buffer[MAX_DECODE_SIZE] __attribute__((aligned(8)));
 
+/* A normal protobuf dispatch and a U2F HID session can each need several
+ * KiB. Only their owner may use this buffer, including across nested polls.
+ * Tiny messages and failure/DebugLink replies have separate storage. */
+static bool decode_buffer_in_use;
+
+uint8_t* msg_acquire_decode_buffer(void) {
+  if (decode_buffer_in_use) return NULL;
+  decode_buffer_in_use = true;
+  return decode_buffer;
+}
+
+void msg_release_decode_buffer(void) {
+  memzero(decode_buffer, sizeof(decode_buffer));
+  decode_buffer_in_use = false;
+}
+
 void* msg_decoded_request_response_scratch(void) { return decode_buffer; }
 
 bool msg_handler_rejected(void) { return tiny_handler_rejected; }
@@ -76,7 +92,9 @@ typedef union {
   uint16_t scratch_u16[2049];
 } FrameArena;
 
-static FrameArena frame_arena;
+/* 8-byte aligned for frame_arena_scratch(): its users lay curve points and
+ * hash states over the arena. */
+static FrameArena frame_arena __attribute__((aligned(8)));
 
 /* Inbound reassembly state — file scope so arena acquisition can reset it. */
 static bool rxFirstFrame = true;
@@ -103,6 +121,30 @@ TrezorFrameBuffer* frame_arena_tx(void) {
 uint16_t* frame_arena_scratch2049(void) {
   frame_arena_rx_reset();
   return frame_arena.scratch_u16;
+}
+
+/* User 3 again, for a handler's long computation (the Monero range proof and
+ * ring signature). The handler runs between the inbound decode and its own
+ * reply, so the arena is idle: dispatch() has decoded the request out of
+ * frame_arena.rx, and nothing is encoded until the handler calls msg_write.
+ * While the handler computes it may poll for a cancel with
+ * check_for_tiny_msg(); tiny-mode receive never lands here, but a rejected
+ * tiny packet does reset or overwrite the arena (msg_reject_short_tiny_packet,
+ * reject_tiny_message -> msg_write). The handler must therefore stop using
+ * the scratch as soon as a poll returns anything but "nothing" or
+ * msg_handler_rejected() is set. */
+void* frame_arena_scratch(size_t size) {
+  if (size > sizeof(frame_arena)) return NULL;
+  frame_arena_rx_reset();
+  return &frame_arena;
+}
+
+/* Zero the whole arena once the scratch user is done or has aborted. Only
+ * for handler context: no receive is in progress there and every reply was
+ * sent synchronously, so nothing live is lost. */
+void frame_arena_scratch_wipe(void) {
+  frame_arena_rx_reset();
+  memzero(&frame_arena, sizeof(frame_arena));
 }
 
 /*
@@ -185,8 +227,10 @@ __attribute__((weak)) void keepkey_after_message_dispatch(void) {}
  */
 static void dispatch(const MessagesMap_t* entry, const uint8_t* msg,
                      uint32_t msg_size) {
-  memzero(decode_buffer, sizeof(decode_buffer));
-
+  if (!msg_acquire_decode_buffer()) {
+    (*msg_failure)(FailureType_Failure_UnexpectedMessage, "Device busy");
+    return;
+  }
   if (!pb_parse(entry, msg, msg_size, decode_buffer)) {
     (*msg_failure)(FailureType_Failure_UnexpectedMessage,
                    "Could not parse protocol buffer message");
@@ -209,7 +253,7 @@ cleanup:
    * other credentials.  Handlers must copy any state they retain; do not keep
    * the source message resident until the next dispatch. */
   if (entry->type == NORMAL_MSG) keepkey_after_message_dispatch();
-  memzero(decode_buffer, sizeof(decode_buffer));
+  msg_release_decode_buffer();
 }
 
 /*

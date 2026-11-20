@@ -131,12 +131,14 @@ void emulatorSocketInit(void) {
     int p = atoi(env_port);
     if (p > 0 && p < 65535) port = p;
   }
-  fprintf(stderr, "Emulator listening on UDP ports %d (main) and %d (debug)\n",
-          port, port + 1);
   usb_main.fd = socket_setup(port);
   usb_main.fromlen = 0;
   usb_debug.fd = socket_setup(port + 1);
   usb_debug.fromlen = 0;
+  fprintf(stderr,
+          "Emulator listening on UDP ports %d (main) and %d (debug); "
+          "both sockets bound\n",
+          port, port + 1);
 }
 
 size_t emulatorSocketRead(int* iface, void* buffer, size_t size) {
