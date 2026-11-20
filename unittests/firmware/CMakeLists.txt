@@ -96,6 +96,44 @@ if(${KK_MONERO})
   list(APPEND sources monero_crypto.cpp monero_test_rng.c)
 endif()
 
+# monero.cpp checks the Monero engine against Monero Core fixtures, generated
+# into the build tree from the committed public reference cases.
+if(${KK_MONERO})
+  find_program(MONERO_PYTHON_EXECUTABLE NAMES python3)
+  if(NOT MONERO_PYTHON_EXECUTABLE)
+    message(FATAL_ERROR "Python 3 is required to generate the Monero fixtures")
+  endif()
+  set(monero_reference_json
+      "${CMAKE_SOURCE_DIR}/tools/monero-feasibility/evidence/2026-11-04-interoperability/host.json")
+  set(monero_vectors_h "${CMAKE_CURRENT_BINARY_DIR}/generated/monero_core_vectors.h")
+  add_custom_command(
+      OUTPUT "${monero_vectors_h}"
+      COMMAND "${CMAKE_COMMAND}" -E make_directory
+              "${CMAKE_CURRENT_BINARY_DIR}/generated"
+      COMMAND "${MONERO_PYTHON_EXECUTABLE}" -I
+              "${CMAKE_CURRENT_SOURCE_DIR}/monero_vectors_gen.py"
+              --input "${monero_reference_json}" --output "${monero_vectors_h}"
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/monero_vectors_gen.py"
+              "${monero_reference_json}"
+      VERBATIM)
+  list(APPEND sources monero.cpp monero_probe.c "${monero_vectors_h}")
+  set_property(SOURCE monero.cpp APPEND PROPERTY OBJECT_DEPENDS
+               "${monero_vectors_h}")
+  # monero_tx.cpp drives the streamed signer; monero_tx_vectors.h holds the
+  # digests of the transactions Monero Core verified
+  # (monero_tx_vectors_gen.sh).
+  list(APPEND sources monero_tx.cpp monero_tx_probe.c
+      monero_tx_session_probe.c monero_key_image_session_probe.c)
+  set_property(SOURCE monero_tx.cpp APPEND PROPERTY OBJECT_DEPENDS
+               "${monero_vectors_h}")
+  set_source_files_properties(monero_probe.c monero_tx_probe.c
+      monero_tx_session_probe.c monero_key_image_session_probe.c
+      PROPERTIES COMPILE_OPTIONS
+      "-UUSE_MONERO;-DUSE_MONERO=1;-U__SSE__;-U__MMX__")
+endif()
+
+# zcash.cpp exercises the Orchard engine (lib/firmware/zcash.c), which is only
+# compiled into kkfirmware when the privacy flag is on.
 if(${KK_ZCASH_PRIVACY})
   list(APPEND sources zcash.cpp)
 endif()

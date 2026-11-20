@@ -54,6 +54,9 @@
 #include "keepkey/firmware/signing.h"
 #include "keepkey/firmware/u2f.h"
 #include "keepkey/firmware/zcash.h"
+#if MONERO_SIGNING
+#include "keepkey/firmware/monero.h"
+#endif
 #include "keepkey/rand/rng.h"
 #include "keepkey/rand/rng_health.h"
 #include "keepkey/transport/interface.h"
@@ -1844,6 +1847,12 @@ void session_clear(bool clear_pin) {
 #if !BITCOIN_ONLY
   signed_metadata_clear_signers();
   contact_book_clear(); /* verified against this session's attestor key */
+#endif
+#if ZCASH_PRIVACY
+  zcash_signing_abort();
+#endif
+#if MONERO_SIGNING
+  monero_session_abort();
 #endif
   signing_abort();
   setup_abort();

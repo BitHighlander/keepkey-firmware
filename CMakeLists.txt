@@ -33,11 +33,11 @@ else()
   option(KK_ZCASH_PRIVACY "Build Zcash privacy support" ON)
 endif()
 
-# Build the Monero signing primitives on full firmware and emulator targets.
+# The full device and emulator expose the streamed Monero signer.
 if(KK_BITCOIN_ONLY)
   set(KK_MONERO OFF)
 else()
-  option(KK_MONERO "Build Monero signing primitives" ON)
+  option(KK_MONERO "Build the Monero on-device signer" ON)
 endif()
 
 # When building the dylib, every static lib it links (kkfirmware, kkboard,
@@ -136,6 +136,7 @@ endif()
 add_definitions(-DUSE_KECCAK=1)
 add_definitions(-DUSE_GRAPHENE=0)
 add_definitions(-DUSE_CARDANO=0)
+# trezor-crypto's Monero primitives (monero/xmr.c) back the on-device signer.
 if(KK_MONERO)
   add_definitions(-DUSE_MONERO=1)
 else()
@@ -190,6 +191,12 @@ if(${KK_ZCASH_PRIVACY})
   add_definitions(-DAES_SMALL_TABLES)
 else()
   add_definitions(-DZCASH_PRIVACY=0)
+endif()
+
+if(${KK_MONERO})
+  add_definitions(-DMONERO_SIGNING=1)
+else()
+  add_definitions(-DMONERO_SIGNING=0)
 endif()
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
