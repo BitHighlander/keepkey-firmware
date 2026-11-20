@@ -536,11 +536,12 @@ typedef struct {
   uint32_t need; /* inner data bytes left; dataLength while read */
   uint16_t call; /* the inner call being read, from 1 */
   uint8_t phase; /* MS_* */
-  uint8_t at;    /* position in the word or header, or in data (stops at 68) */
+  uint8_t
+      at; /* position in the word or header, or in the bounded data prefix */
   uint8_t seen;  /* MS_SEEN_* */
   uint8_t facts; /* MS_FACT_*, kept once the scan stops */
   uint8_t to[20];
-  uint8_t spender[20];
+  uint8_t prefix[132]; /* selector and up to four approval words */
 } Eip712MultiSend;
 
 static struct {
@@ -1002,24 +1003,17 @@ static const char* leaf_title(void) {
   return e712.root == 0 ? "EIP-712 Domain" : "EIP-712 Message";
 }
 
-/* approve(spender, amount) or increaseAllowance(spender, amount) carried in
- * a dynamic `bytes` leaf, such as a Safe transaction's data: the policy of a
- * top-level approve, the same as inside a batch. */
-static bool embedded_approve(const Eip712FieldType* field, const uint8_t* value,
-                             uint16_t len) {
-  return field->data_type ==
-             EthereumTypedDataStructAck_EthereumDataType_BYTES &&
-         !field->has_size && len >= 68 &&
-         (memcmp(value, "\x09\x5e\xa7\xb3", 4) == 0 ||
-          memcmp(value, "\x39\x50\x93\x51", 4) == 0);
-}
-
-/* Pre-0.8 Solidity masks the spender word's high bytes, so a dirty one
- * still grants the allowance on chain: refused, as ethereum.c does. */
-static bool embedded_approve_is_dirty(const uint8_t* value) {
-  for (size_t i = 4; i < 16; i++)
-    if (value[i] != 0) return true;
-  return false;
+/* ABI bytes needed to review a recognized allowance or operator call. */
+static uint8_t embedded_approval_size(const uint8_t* data, size_t len) {
+  if (len < 4) return 0;
+  if (memcmp(data, "\x87\x51\x7c\x45", 4) == 0)
+    return 132;                                   /* Permit2 approve */
+  if (memcmp(data, "\x09\x5e\xa7\xb3", 4) == 0 || /* approve */
+      memcmp(data, "\x39\x50\x93\x51", 4) == 0 || /* increaseAllowance */
+      memcmp(data, "\xd7\x3d\xd6\x23", 4) == 0 || /* increaseApproval */
+      memcmp(data, "\xa2\x2c\xb4\x65", 4) == 0)   /* setApprovalForAll */
+    return 68;
+  return 0;
 }
 
 /* The domain's chainId names addresses and tokens; 0 when it has none. */
@@ -1053,14 +1047,64 @@ static const uint8_t* safe_tx_to(void) {
   return NULL;
 }
 
-/* An unlimited embedded approve signs only after the UNLIMITED warning,
- * which names the full spender, and the token from SafeTx.to once seen. */
-static Eip712LeafResult confirm_embedded_unlimited(const uint8_t* value) {
+static uint64_t be_u64(const uint8_t* v, uint16_t len) {
+  uint64_t out = 0;
+  for (uint16_t i = 0; i < len; i++) out = (out << 8) | v[i];
+  return out;
+}
+
+/* The same policy reads whole Safe data and the bounded prefix of each packed
+ * call. A malformed approval is refused on every walk; its screen is drawn
+ * once, on the walk that shows warnings. */
+static Eip712LeafResult review_embedded_approval(const uint8_t* value,
+                                                 size_t len,
+                                                 const uint8_t* to) {
+  const uint8_t size = embedded_approval_size(value, len);
+  if (!size) return EIP712_LEAF_OK;
+  static const uint8_t zero[32] = {0};
+  if (len < size || memcmp(value + 4, zero, 12) != 0)
+    return EIP712_LEAF_INVALID;
+  const uint32_t cid = domain_chain_id();
+  if (size == 132) {
+    /* Permit2 approve(token, spender, uint160 amount, uint48 expiration). */
+    if (memcmp(value + 36, zero, 12) || memcmp(value + 68, zero, 12) ||
+        memcmp(value + 100, zero, 26))
+      return EIP712_LEAF_INVALID;
+    if (!warning_shown()) return EIP712_LEAF_OK;
+    char token[43] = "0x", spender[43] = "0x", amount[60];
+    ethereum_address_checksum(value + 16, token + 2, false, cid);
+    ethereum_address_checksum(value + 48, spender + 2, false, cid);
+    bignum256 number;
+    bn_read_be(value + 68, &number);
+    if (!bn_format(&number, NULL, NULL, 0, 0, false, amount, sizeof(amount)))
+      return EIP712_LEAF_INVALID;
+    const bool unlimited = eip712_amount_unlimited(value + 80, 20);
+    char expires[40] = "the current block";
+    uint64_t timestamp = be_u64(value + 126, 6);
+    if (timestamp) eip712_format_utc(timestamp, expires, sizeof(expires));
+    return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   unlimited ? "UNLIMITED approval" : "Permit2 approval",
+                   "Token %s\nSpender %s\n%s%s until %s", token, spender,
+                   unlimited ? "UNLIMITED" : amount,
+                   unlimited ? "" : " base units", expires)
+               ? EIP712_LEAF_OK
+               : EIP712_LEAF_CANCELLED;
+  }
+  if (value[0] == 0xa2) {
+    if (memcmp(value + 36, zero, 31) || value[67] > 1)
+      return EIP712_LEAF_INVALID;
+    if (!warning_shown()) return EIP712_LEAF_OK;
+    char operator_address[43] = "0x";
+    ethereum_address_checksum(value + 16, operator_address + 2, false, cid);
+    return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
+                   "Operator approval",
+                   "%s %s for ALL items in this collection",
+                   value[67] ? "Authorize" : "Remove", operator_address)
+               ? EIP712_LEAF_OK
+               : EIP712_LEAF_CANCELLED;
+  }
   if (!ethereum_allowanceAmountIsUnlimited(value + 36) || !warning_shown())
     return EIP712_LEAF_OK;
-  const uint32_t cid = domain_chain_id();
-  const bool safe_tx = in_safe_tx();
-  const uint8_t* to = safe_tx_to();
   if (to)
     return ethereum_confirmUnlimitedApproval(cid, value + 16, to)
                ? EIP712_LEAF_OK
@@ -1070,7 +1114,7 @@ static Eip712LeafResult confirm_embedded_unlimited(const uint8_t* value) {
   return confirm(ButtonRequestType_ButtonRequest_ConfirmOutput,
                  "UNLIMITED approval",
                  "Allow %s to spend ALL your tokens of %s", spender,
-                 safe_tx ? "the contract in 'to'" : "the contract called")
+                 in_safe_tx() ? "the contract in 'to'" : "the contract called")
              ? EIP712_LEAF_OK
              : EIP712_LEAF_CANCELLED;
 }
@@ -1301,7 +1345,7 @@ static bool confirm_safe_library(uint8_t lib, const char* who) {
       return false;
   }
   return !warning_shown() || confirm(ButtonRequestType_ButtonRequest_Other,
-                                     "Safe upgrade", "%s %s", who, what);
+                                     "Safe migration", "%s %s", who, what);
 }
 
 bool eip712_stream_safe_multisend(const uint8_t address[20]) {
@@ -1330,19 +1374,15 @@ bool eip712_stream_safe_multisend(const uint8_t address[20]) {
  * that follow; the bytes themselves are always shown in full. */
 enum { MS_OFF, MS_SELECTOR, MS_OFFSET, MS_LENGTH, MS_HEADER, MS_DATA };
 #define MS_HEADER_LEN 85
-#define MS_SEEN_APPROVE 1   /* data so far starts 0x095ea7b3 */
-#define MS_SEEN_INCREASE 2  /* data so far starts 0x39509351 */
-#define MS_SEEN_DIRTY 4     /* the spender word has high bytes set */
-#define MS_SEEN_FINITE 8    /* the amount word is below 2^255 */
-#define MS_SEEN_HUGE 16     /* dataLength exceeds 32 bits */
-#define MS_SEEN_DELEGATE 32 /* this call's operation is 1 */
-#define MS_FACT_CLEAN 1     /* read to its end, every call canonical */
-#define MS_FACT_DELEGATE 2  /* some inner call is a delegatecall */
+#define MS_SEEN_HUGE 1     /* dataLength exceeds 32 bits */
+#define MS_SEEN_DELEGATE 2 /* this call's operation is 1 */
+#define MS_FACT_CLEAN 1    /* read to its end, every call canonical */
+#define MS_FACT_DELEGATE 2 /* some inner call is a delegatecall */
 
 typedef enum {
   MS_SCAN_OK,
   MS_SCAN_CANCELLED,
-  MS_SCAN_DIRTY, /* an inner approve's spender word is dirty */
+  MS_SCAN_MALFORMED, /* an incomplete or noncanonical approval */
 } MultisendScan;
 
 /* Every leaf starts here, whole or chunked, before any of its bytes is fed. */
@@ -1379,8 +1419,6 @@ static MultisendScan multisend_unchecked(void) {
 }
 
 static MultisendScan multisend_byte(uint8_t b) {
-  static const uint8_t approve[4] = {0x09, 0x5e, 0xa7, 0xb3};
-  static const uint8_t increase[4] = {0x39, 0x50, 0x93, 0x51};
   Eip712MultiSend* ms = &e712.multisend;
   const uint8_t at = ms->at++;
   switch (ms->phase) {
@@ -1432,30 +1470,27 @@ static MultisendScan multisend_byte(uint8_t b) {
             return MS_SCAN_CANCELLED;
         }
       }
-      ms->seen = MS_SEEN_APPROVE | MS_SEEN_INCREASE;
+      ms->seen = 0;
       multisend_phase(ms->need ? MS_DATA : MS_HEADER);
       return ms->left ? MS_SCAN_OK : multisend_done();
     default: { /* MS_DATA */
       MultisendScan result = MS_SCAN_OK;
-      if (at < 4) {
-        if (b != approve[at]) ms->seen &= ~MS_SEEN_APPROVE;
-        if (b != increase[at]) ms->seen &= ~MS_SEEN_INCREASE;
-      } else if (at < 16) {
-        if (b != 0) ms->seen |= MS_SEEN_DIRTY;
-      } else if (at < 36) {
-        ms->spender[at - 16] = b;
-      } else if (at < 68) {
-        /* The top-level threshold (ethereum_allowanceAmountIsUnlimited). */
-        if (at == 36 && (b & 0x80) == 0) ms->seen |= MS_SEEN_FINITE;
+      if (at < sizeof(ms->prefix)) {
+        ms->prefix[at] = b;
+        const size_t captured = at + 1u;
+        if (at == 3 || at == 67 || at == 131) {
+          const uint8_t size = embedded_approval_size(ms->prefix, captured);
+          if (at == 3 && size && ms->need < (uint32_t)size - 3u)
+            return MS_SCAN_MALFORMED;
+          if (captured == size) {
+            const Eip712LeafResult review =
+                review_embedded_approval(ms->prefix, captured, ms->to);
+            if (review == EIP712_LEAF_INVALID) return MS_SCAN_MALFORMED;
+            if (review == EIP712_LEAF_CANCELLED) return MS_SCAN_CANCELLED;
+          }
+        }
       } else {
-        ms->at = 68;
-      }
-      if (at == 67 && (ms->seen & (MS_SEEN_APPROVE | MS_SEEN_INCREASE))) {
-        if (ms->seen & MS_SEEN_DIRTY) return MS_SCAN_DIRTY;
-        if (!(ms->seen & MS_SEEN_FINITE) && warning_shown() &&
-            !ethereum_confirmUnlimitedApproval(domain_chain_id(), ms->spender,
-                                               ms->to))
-          result = MS_SCAN_CANCELLED;
+        ms->at = sizeof(ms->prefix);
       }
       if (--ms->need == 0) multisend_phase(MS_HEADER);
       /* need <= left: the batch ends at a call's end. */
@@ -1615,10 +1650,6 @@ static Eip712LeafResult eip712_confirm_leaf(const Eip712FieldType* field,
       return confirm_parts(title, path, type_name, EIP712_RENDER_ESCAPED, value,
                            len);
     case EthereumTypedDataStructAck_EthereumDataType_BYTES:
-      if (embedded_approve(field, value, len)) {
-        const Eip712LeafResult warned = confirm_embedded_unlimited(value);
-        if (warned != EIP712_LEAF_OK) return warned;
-      }
       return confirm_parts(title, path, type_name, EIP712_RENDER_HEX, value,
                            len);
     default:
@@ -1782,12 +1813,6 @@ static bool permit2_type_ok(void) {
                  "PermitSingle(PermitDetails details,address spender,"
                  "uint256 sigDeadline)PermitDetails(address token,"
                  "uint160 amount,uint48 expiration,uint48 nonce)");
-}
-
-static uint64_t be_u64(const uint8_t* v, uint16_t len) {
-  uint64_t out = 0;
-  for (uint16_t i = 0; i < len; i++) out = (out << 8) | v[i];
-  return out;
 }
 
 /* The canonical type hash fixes every member and width, so each leaf lands
@@ -2001,14 +2026,19 @@ static bool erc20_permit_warning(void) {
 static bool multisend_reviewed(const uint8_t* bytes, size_t len, bool last) {
   MultisendScan scan = multisend_feed(bytes, len);
   /* The value ended before the batch did. */
-  if (scan == MS_SCAN_OK && last && e712.multisend.phase != MS_OFF)
-    scan = multisend_unchecked();
+  if (scan == MS_SCAN_OK && last && e712.multisend.phase != MS_OFF) {
+    const Eip712MultiSend* ms = &e712.multisend;
+    scan = ms->phase == MS_DATA &&
+                   embedded_approval_size(ms->prefix, ms->at) > ms->at
+               ? MS_SCAN_MALFORMED
+               : multisend_unchecked();
+  }
   switch (scan) {
     case MS_SCAN_OK:
       return true;
     case MS_SCAN_CANCELLED:
       return review_approved(EIP712_LEAF_CANCELLED);
-    default: /* MS_SCAN_DIRTY */
+    default: /* MS_SCAN_MALFORMED */
       fail("Malformed ERC20 approval");
       return false;
   }
@@ -2868,6 +2898,20 @@ static bool chunk_absorb(const Eip712FieldType* field, const uint8_t* bytes,
   return walk_continues();
 }
 
+static bool review_leaf_approval(const Eip712FieldType* field,
+                                 const uint8_t* value, uint16_t len) {
+  if (field->data_type != EthereumTypedDataStructAck_EthereumDataType_BYTES ||
+      field->has_size || !embedded_approval_size(value, len))
+    return true;
+  const Eip712LeafResult result =
+      review_embedded_approval(value, len, safe_tx_to());
+  if (result == EIP712_LEAF_INVALID) {
+    fail("Malformed ERC20 approval");
+    return false;
+  }
+  return result == EIP712_LEAF_OK || review_approved(result);
+}
+
 /* The first chunk: value_total_length names the whole value's length. */
 static bool chunk_begin(const Eip712FieldType* field,
                         const EthereumTypedDataValueAck* ack) {
@@ -2916,16 +2960,8 @@ static bool chunk_begin(const Eip712FieldType* field,
       fail("EIP-712 value cannot be displayed");
       return false;
     }
-    /* An embedded approve needs only its first 68 bytes: refused or warned
-     * about before any screen of the bytes. */
-    if (embedded_approve(field, ack->value.bytes, ack->value.size)) {
-      if (embedded_approve_is_dirty(ack->value.bytes)) {
-        fail("Malformed ERC20 approval");
-        return false;
-      }
-      if (!review_approved(confirm_embedded_unlimited(ack->value.bytes)))
-        return false;
-    }
+    if (!review_leaf_approval(field, ack->value.bytes, ack->value.size))
+      return false;
   }
   multisend_begin(field, ack->value.bytes, ack->value.size);
   keccak_256_Init(&e712.hash);
@@ -3026,10 +3062,7 @@ bool eip712_stream_on_value(const EthereumTypedDataValueAck* ack) {
     fail("EIP-712 value does not match its declared type");
     return false;
   }
-  if (embedded_approve(field, bytes, len) && embedded_approve_is_dirty(bytes)) {
-    fail("Malformed ERC20 approval");
-    return false;
-  }
+  if (!review_leaf_approval(field, bytes, len)) return false;
   if (e712.root == 0 && e712.depth == 1 &&
       !eip712_domain_facts_observe(&e712.domain_facts, e712.pending_name, field,
                                    bytes, len)) {
