@@ -1422,10 +1422,10 @@ static MultisendScan multisend_byte(uint8_t b) {
           if (at == 3 && size && ms->need < (uint32_t)size - 3u)
             return MS_SCAN_MALFORMED;
           if (captured == size) {
-            const Eip712LeafResult review = review_embedded_approval(
+            const Eip712LeafResult approval = review_embedded_approval(
                 e712.approval_prefix, captured, ms->to);
-            if (review == EIP712_LEAF_INVALID) return MS_SCAN_MALFORMED;
-            if (review == EIP712_LEAF_CANCELLED) return MS_SCAN_CANCELLED;
+            if (approval == EIP712_LEAF_INVALID) return MS_SCAN_MALFORMED;
+            if (approval == EIP712_LEAF_CANCELLED) return MS_SCAN_CANCELLED;
           }
           if (at == 3 && (ms->seen & MS_SEEN_MIGRATION))
             result = confirm_batch_delegate(
