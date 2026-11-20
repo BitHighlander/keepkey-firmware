@@ -92,4 +92,19 @@ include_directories(
   ${OPENSSL_INCLUDE_DIR})
 
 
+# The signing primitives need key arithmetic and varint serialization.
+# range_proof.c (Borromean proofs, unchecked xmr_random_scalar draws) is not
+# used.
+if(${KK_MONERO})
+  list(APPEND sources
+      trezor-firmware/crypto/monero/serialize.c
+      trezor-firmware/crypto/monero/xmr.c)
+endif()
+
 add_library(trezorcrypto ${sources})
+
+# The Monero sources, and the ed25519-donna helper they call, are compiled
+# only with USE_MONERO=1.
+if(${KK_MONERO})
+  target_compile_options(trezorcrypto PRIVATE -UUSE_MONERO -DUSE_MONERO=1)
+endif()
