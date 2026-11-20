@@ -46,7 +46,12 @@ void ethereum_signing_txack(EthereumTxAck* tx);
 void format_ethereum_address(const uint8_t* to, char* destination_str,
                              uint32_t destination_str_len);
 bool ethereum_isStandardERC20Transfer(const EthereumSignTx* msg);
-/* ERC-7730: allowances of 2^255 and above require the unlimited warning. */
+/* approve(spender, amount) or increaseAllowance(spender, amount); a len below
+ * 4 matches a selector prefix. */
+bool ethereum_isAllowanceSelector(const uint8_t* data, size_t len);
+/* ERC-7730's threshold, for every approve() and increaseAllowance() the
+ * device reads, top-level or embedded: an amount word of 2^255 or more is
+ * UNLIMITED. */
 bool ethereum_allowanceAmountIsUnlimited(const uint8_t amount[32]);
 bool ethereum_confirmUnlimitedApproval(uint32_t cid,
                                        const uint8_t* spender_address,

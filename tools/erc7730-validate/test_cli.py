@@ -73,6 +73,14 @@ class ValidatorCLI(unittest.TestCase):
     def test_trailing_data(self):
         self.check_bytes(valid_program() + b"\x00", 1, b"device verifier refused")
 
+    def test_trailing_data_flag(self):
+        # Header byte 6: TRAILING_DATA (bit 0) is the only flag, for calldata.
+        data = valid_program()
+        data[6] = 1
+        self.check_bytes(data, 0)
+        data[6] = 2
+        self.check_bytes(data, 1, b"device verifier refused")
+
     def test_bad_magic(self):
         data = valid_program()
         data[0] = 0
