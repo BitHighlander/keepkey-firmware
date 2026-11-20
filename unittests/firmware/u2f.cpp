@@ -432,6 +432,44 @@ TEST_F(U2FWait, EmptyPinAuthWaitsForTouch) {
   }
 }
 
+TEST_F(U2FWait, CtapPresenceEndsWhenItsDisplayIsReplaced) {
+  for (const char* rp : {static_cast<const char*>(nullptr), "example.com"}) {
+    for (bool registration : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << "rp=" << (rp ? rp : "none")
+                                        << " registration=" << registration);
+      button_up = true;
+      poll_script.push_back([] {
+        layout_clear();
+        button_up = false;
+      });
+      EXPECT_FALSE(ctap2_request_user_presence(rp, registration));
+      EXPECT_TRUE(poll_script.empty());
+    }
+  }
+}
+
+TEST_F(U2FWait, CancelledResetPreservesPasskeysAndAnswersBothHosts) {
+  ctap2_init();
+  PasskeyStorage before;
+  storage_getPasskeyData(&before);
+  before.pin_set = true;
+  storage_setPasskeyData(&before);
+  U2FHID_FRAME reset = {};
+  reset.cid = kCid;
+  reset.init.cmd = U2FHID_CBOR;
+  reset.init.bcntl = 1;
+  reset.init.data[0] = CTAP2_CMD_RESET;
+  poll_script.push_back(
+      [] { send_main(MessageType_MessageType_Cancel, nullptr, 0); });
+  fsm_test_clearLastFailure();
+  u2fhid_read(0, &reset);
+  EXPECT_EQ(1u, count(U2FHID_CBOR, CTAP2_ERR_KEEPALIVE_CANCEL));
+  EXPECT_EQ(FailureType_Failure_ActionCancelled, fsm_test_lastFailureCode());
+  PasskeyStorage after;
+  storage_getPasskeyData(&after);
+  EXPECT_EQ(0, memcmp(&before, &after, sizeof(after)));
+}
+
 // Every exit of a U2F session forgets the request. A session ended by the
 // data timeout used to keep it armed, with its presence progress, so the next
 // identical request was not prompted and a single release completed presence.

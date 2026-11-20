@@ -404,6 +404,7 @@ void u2fhid_read_start(const U2FHID_FRAME* f) {
          * type has interleaved. */
         last_req_state = INIT;
         u2fhid_cbor(reader->buf, reader->len);
+        if (hostEndedSession(msg_tiny)) return;
         break;
       case U2FHID_CANCEL:
         /* Nothing in flight; u2fhid_read() flags in-flight cancels. */
@@ -855,9 +856,14 @@ bool ctap2_request_user_presence(const char* rp_id, bool registration) {
     layoutHome();
     return false;
   }
+  /* USB polling may replace the prompt, including through a wallet failure
+   * reply. An unrelated screen can never authorize this CTAP operation. */
+  const uint32_t prompt = layout_get_generation();
   bool saw_button_up = false;
   for (uint32_t remaining = 10 * U2F_TIMEOUT; remaining > 0; --remaining) {
-    if (ctap_cancelled) {
+    if (msg_session_end_pending()) ctap_cancelled = true;
+    if (ctap_cancelled || msg_take_tiny_rejection() ||
+        layout_get_generation() != prompt) {
       layoutHome();
       return false;
     }
@@ -872,6 +878,7 @@ bool ctap2_request_user_presence(const char* rp_id, bool registration) {
       send_u2fhid_msg(U2FHID_KEEPALIVE, &status, 1);
     }
     usbPoll();
+    keepkey_idle_clock_sample();
   }
   layoutHome();
   return false;

@@ -173,6 +173,8 @@ bool msg_take_tiny_rejection(void);
 /* For the same wait: the tiny message received since the last call, without
  * its payload, or MSG_TINY_TYPE_ERROR. Nothing else reads it there. */
 MessageType msg_take_tiny_id(void);
+/* Leave Initialize/Cancel queued until the active CTAP request unwinds. */
+bool msg_session_end_pending(void);
 /* The firmware's authorization boundary, run before a message is dispatched;
  * false means it was refused and answered. Board-only targets default to
  * true. */
