@@ -186,6 +186,7 @@ typedef struct {
  * C_offset, real member l, nonzero spend secret p (P[l] = p*G) and nonzero
  * commitment secret z (C_nonzero[l] - C_offset = z*G). Secrets, both relations
  * and all supplied point encodings are checked before drawing randomness.
+ * The serialized real response must reproduce the nonce commitment.
  * Identity key images are refused. Returns false, with *sig zeroed, on any
  * failure. */
 bool xmr_clsag_sign(xmr_clsag_sig *sig, const uint8_t message[32],
