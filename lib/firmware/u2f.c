@@ -854,10 +854,10 @@ bool u2f_load_credential(const uint8_t app_id[32], const uint8_t key_handle[64],
   return true;
 }
 
-#define CTAP2_DESTRUCTIVE_HOLD_MS 1500
+#define CTAP2_CONFIRM_HOLD_MS 1500
 
 static bool wait_for_ctap_presence(bool fits, const char* title,
-                                   const char* done, uint32_t hold_ms) {
+                                   const char* done) {
   if (!fits) {
     // rp_id is host-controlled and can run up to 253 chars; the credential
     // is bound to the FULL string (see ctap2's sha256_Raw() over rp_id), so
@@ -871,9 +871,7 @@ static bool wait_for_ctap_presence(bool fits, const char* title,
   bool saw_button_up = false, pressing = false;
   const uint32_t started = getSysTime();
   uint32_t pressed_at = 0, last_keepalive = started - 100;
-  for (uint32_t polls = 0;
-       hold_ms ? getSysTime() - started < 30000u : polls < 10u * U2F_TIMEOUT;
-       ++polls) {
+  while (getSysTime() - started < 30000u) {
     if (msg_session_end_pending()) ctap_cancelled = true;
     if (ctap_cancelled || msg_take_tiny_rejection() ||
         layout_get_generation() != prompt) {
@@ -888,13 +886,12 @@ static bool wait_for_ctap_presence(bool fits, const char* title,
         pressed_at = getSysTime();
         pressing = true;
       }
-      if (getSysTime() - pressed_at >= hold_ms) {
+      if (getSysTime() - pressed_at >= CTAP2_CONFIRM_HOLD_MS) {
         layoutU2FDialog(false, title, "%s", done);
         return true;
       }
     }
-    if (hold_ms ? getSysTime() - last_keepalive >= 100u
-                : polls % (U2F_TIMEOUT / 4) == 0) {
+    if (getSysTime() - last_keepalive >= 100u) {
       last_keepalive = getSysTime();
       const uint8_t status = 0x02; /* CTAPHID_KEEPALIVE_STATUS_UPNEEDED */
       send_u2fhid_msg(U2FHID_KEEPALIVE, &status, 1);
@@ -909,23 +906,20 @@ static bool wait_for_ctap_presence(bool fits, const char* title,
 /* rp_id NULL: the authenticator reset, which is destructive, or with
  * registration the browser asking which security key to use. */
 bool ctap2_request_user_presence(const char* rp_id, bool registration) {
-  const char* title = !rp_id
-                          ? (registration ? "Security Key" : "Reset Passkeys")
-                          : (registration ? "Create Passkey" : "Use Passkey");
-  bool fits =
-      !rp_id ? layoutU2FDialog(true, title,
-                               registration
-                                   ? "Use this KeepKey as your security key?"
-                                   : "Hold to delete all passkeys, the "
-                                     "passkey PIN and U2F logins.")
-             : layoutU2FDialog(
-                   true, title,
-                   registration ? "Create a passkey for %s?" : "Sign in to %s?",
-                   rp_id);
-  const bool reset = !rp_id && !registration;
-  return wait_for_ctap_presence(fits, title,
-                                rp_id ? rp_id : (reset ? "Reset" : "Selected"),
-                                reset ? CTAP2_DESTRUCTIVE_HOLD_MS : 0);
+  if (rp_id) {
+    const char* title = registration ? "Create Passkey" : "Use Passkey";
+    const char* body =
+        registration ? "Hold to create for %s." : "Hold to sign in to %s.";
+    return wait_for_ctap_presence(layoutU2FDialog(true, title, body, rp_id),
+                                  title, rp_id);
+  }
+
+  const char* title = registration ? "Security Key" : "Reset Passkeys";
+  const char* body = registration ? "Hold to use this KeepKey as your key."
+                                  : "Hold to delete all passkeys, the passkey "
+                                    "PIN and U2F logins.";
+  return wait_for_ctap_presence(layoutU2FDialog(true, title, "%s", body), title,
+                                registration ? "Selected" : "Reset");
 }
 
 bool ctap2_confirm_delete(const char* user_name, const uint8_t id[64]) {
@@ -946,8 +940,7 @@ bool ctap2_confirm_delete(const char* user_name, const uint8_t id[64]) {
   if (!fits)
     fits =
         layoutU2FDialog(true, title, "Hold to delete passkey %s.", fingerprint);
-  return wait_for_ctap_presence(fits, title, "Confirmed",
-                                CTAP2_DESTRUCTIVE_HOLD_MS);
+  return wait_for_ctap_presence(fits, title, "Confirmed");
 }
 
 bool ctap2_user_presence_was_cancelled(void) { return ctap_cancelled; }
