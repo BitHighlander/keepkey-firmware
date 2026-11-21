@@ -908,10 +908,10 @@ static bool wait_for_ctap_presence(bool fits, const char* title,
 bool ctap2_request_user_presence(const char* rp_id, bool registration) {
   if (rp_id) {
     const char* title = registration ? "Create Passkey" : "Use Passkey";
-    const char* body =
-        registration ? "Hold to create for %s." : "Hold to sign in to %s.";
-    return wait_for_ctap_presence(layoutU2FDialog(true, title, body, rp_id),
-                                  title, rp_id);
+    bool fits =
+        layoutU2FDialog(true, title, "Hold to %s %s.",
+                        registration ? "create for" : "sign in to", rp_id);
+    return wait_for_ctap_presence(fits, title, rp_id);
   }
 
   const char* title = registration ? "Security Key" : "Reset Passkeys";
