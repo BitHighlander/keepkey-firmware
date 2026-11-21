@@ -863,6 +863,12 @@ static bool wait_for_ctap_presence(bool fits, const char* title,
   /* USB polling may replace the prompt, including through a wallet failure
    * reply. An unrelated screen can never authorize this CTAP operation. */
   const uint32_t prompt = layout_get_generation();
+  const VariantAnimation* animation = get_confirming_animation();
+  uint32_t displayed_frame = 0;
+  /* Use the same bounds for the idle icon and every progress frame. */
+  draw_bitmap_mono_rle(layout_get_canvas(), &animation->frames[0], false);
+  display_refresh();
+
   bool saw_button_up = false, pressing = false;
   const uint32_t started = getSysTime();
   uint32_t pressed_at = 0, last_keepalive = started - 100;
@@ -873,21 +879,37 @@ static bool wait_for_ctap_presence(bool fits, const char* title,
       layoutHome();
       return false;
     }
+    const uint32_t now = getSysTime();
+    uint32_t frame = 0;
     if (keepkey_button_up()) {
       saw_button_up = true;
       pressing = false;
     } else if (saw_button_up && keepkey_button_down()) {
       if (!pressing) {
-        pressed_at = getSysTime();
+        pressed_at = now;
         pressing = true;
       }
-      if (getSysTime() - pressed_at >= CTAP2_CONFIRM_HOLD_MS) {
-        layoutU2FDialog(false, title, "%s", done);
+      const uint32_t held_ms = now - pressed_at;
+      if (held_ms >= CTAP2_CONFIRM_HOLD_MS) {
+        layout_standard_notification(title, done, NOTIFICATION_CONFIRMED);
+        display_refresh();
         return true;
       }
+      /* Start with a visible change, then pace the wallet's animation to
+       * the CTAP hold. Reserve the last frame for a completed hold. */
+      const uint32_t first_hold_frame = 3;
+      frame = first_hold_frame + held_ms *
+                                     (animation->count - 1 - first_hold_frame) /
+                                     CTAP2_CONFIRM_HOLD_MS;
     }
-    if (getSysTime() - last_keepalive >= 100u) {
-      last_keepalive = getSysTime();
+    if (frame != displayed_frame) {
+      draw_bitmap_mono_rle(layout_get_canvas(), &animation->frames[frame],
+                           false);
+      display_refresh();
+      displayed_frame = frame;
+    }
+    if (now - last_keepalive >= 100u) {
+      last_keepalive = now;
       const uint8_t status = 0x02; /* CTAPHID_KEEPALIVE_STATUS_UPNEEDED */
       send_u2fhid_msg(U2FHID_KEEPALIVE, &status, 1);
     }
