@@ -10,13 +10,15 @@
 #define PASSKEY_USER_NAME_MAX 48
 #define PASSKEY_MAX_DISCOVERABLE_CREDENTIALS 4
 #define PASSKEY_PIN_RETRIES 8
-#define PASSKEY_STORAGE_VERSION 2
+#define PASSKEY_STORAGE_VERSION 3
+#define PASSKEY_RETIRED_ID_SIZE 16
 #define PASSKEY_CREDENTIAL_GENERATION_SIZE 32
 
 typedef struct __attribute__((packed)) {
   uint8_t occupied;
   uint8_t user_id_length;
-  uint8_t reserved[2];
+  uint8_t resident_only;
+  uint8_t reserved;
   uint8_t rp_id_hash[32];
   uint8_t credential_id[PASSKEY_CREDENTIAL_ID_SIZE];
   uint8_t user_id[PASSKEY_USER_ID_MAX];
@@ -35,6 +37,10 @@ typedef struct __attribute__((packed)) {
    * value, invalidating every handle without retaining an enumerated copy. */
   uint8_t credential_generation[PASSKEY_CREDENTIAL_GENERATION_SIZE];
   uint8_t legacy_credentials_enabled;
+  /* At most four pre-management resident handles can need revocation.
+   * Newly issued resident-only handles require a live slot. */
+  uint8_t retired_ids[PASSKEY_MAX_DISCOVERABLE_CREDENTIALS]
+                     [PASSKEY_RETIRED_ID_SIZE];
 } PasskeyStorage;
 
 #endif
