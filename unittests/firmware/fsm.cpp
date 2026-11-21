@@ -4540,6 +4540,31 @@ TEST(Fsm, StorageRecoversACommitCutAfterStaging) {
   EXPECT_STREQ("kept", storage_getLabel());
 }
 
+TEST(Fsm, RcPasskeyLayoutUpgradePreservesGenerationAndIgnoresOldPadding) {
+  ScopedFlash flash;
+  PasskeyStorage old_format;
+  storage_getPasskeyData(&old_format);
+  old_format.version = 2;
+  memset(old_format.credential_generation, 0x23,
+         sizeof(old_format.credential_generation));
+  memset(old_format.retired_ids, 0x5a, sizeof(old_format.retired_ids));
+  old_format.credentials[0].occupied = 1;
+  old_format.credentials[0].resident_only = 0x55;  // formerly reserved
+  storage_setPasskeyData(&old_format);
+
+  storage_init();
+  PasskeyStorage upgraded;
+  storage_getPasskeyData(&upgraded);
+  EXPECT_EQ(PASSKEY_STORAGE_VERSION, upgraded.version);
+  EXPECT_EQ(0, memcmp(old_format.credential_generation,
+                      upgraded.credential_generation,
+                      sizeof(upgraded.credential_generation)));
+  EXPECT_EQ(1, upgraded.credentials[0].occupied);
+  EXPECT_EQ(0, upgraded.credentials[0].resident_only);
+  const uint8_t empty[sizeof(upgraded.retired_ids)] = {};
+  EXPECT_EQ(0, memcmp(empty, upgraded.retired_ids, sizeof(empty)));
+}
+
 TEST(Fsm, PasskeyDeleteRecoversTheVerifiedPendingRecord) {
   ScopedFlash flash;
   PasskeyStorage passkeys;

@@ -936,9 +936,11 @@ bool ctap2_confirm_delete(const char* user_name, const uint8_t id[64]) {
   sha256_Raw(id, 64, digest);
   data2hex(digest, 4, fingerprint);
   const char* title = "Delete Passkey";
-  const bool fits =
-      layoutU2FDialog(true, title, "Hold to delete %s (%s).",
-                      account[0] ? account : "passkey", fingerprint);
+  bool fits = layoutU2FDialog(true, title, "Hold to delete %s (%s).",
+                              account[0] ? account : "passkey", fingerprint);
+  if (!fits)
+    fits =
+        layoutU2FDialog(true, title, "Hold to delete passkey %s.", fingerprint);
   return wait_for_ctap_presence(fits, title, "Confirmed",
                                 CTAP2_DESTRUCTIVE_HOLD_MS);
 }
