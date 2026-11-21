@@ -412,9 +412,7 @@ static uint8_t verify_pin_uv(const uint8_t* request, size_t request_length,
   bool have_protocol = cbor_map_find(request, request_length, NULL,
                                      protocol_key, &protocol, NULL, NULL);
   if (!have_auth && !have_protocol) {
-    PasskeyStorage storage;
-    storage_getPasskeyData(&storage);
-    if (storage.pin_set && (uv_requested || require_pin_when_set))
+    if (storage_hasPasskeyPin() && (uv_requested || require_pin_when_set))
       return CTAP2_ERR_PIN_REQUIRED;
     if (uv_requested) return CTAP2_ERR_PIN_NOT_SET;
     return CTAP2_OK;
@@ -431,9 +429,7 @@ static uint8_t verify_pin_uv(const uint8_t* request, size_t request_length,
     if (memcmp(hash, pin_token_rp_hash, sizeof(hash)) != 0)
       return CTAP2_ERR_PIN_AUTH_INVALID;
   }
-  PasskeyStorage current;
-  storage_getPasskeyData(&current);
-  if (!current.pin_set) {
+  if (!storage_hasPasskeyPin()) {
     clear_pin_token(); /* a token never outlives the PIN that issued it */
     return CTAP2_ERR_PIN_AUTH_INVALID;
   }
@@ -465,10 +461,9 @@ static bool answer_touch_probe(const uint8_t* request, size_t request_length,
                 response, response_length);
     return true;
   }
-  PasskeyStorage storage;
-  storage_getPasskeyData(&storage);
-  write_error(storage.pin_set ? CTAP2_ERR_PIN_INVALID : CTAP2_ERR_PIN_NOT_SET,
-              response, response_length);
+  write_error(
+      storage_hasPasskeyPin() ? CTAP2_ERR_PIN_INVALID : CTAP2_ERR_PIN_NOT_SET,
+      response, response_length);
   return true;
 }
 
@@ -515,37 +510,20 @@ static bool credential_list_contains(const uint8_t* buffer, size_t length,
   return false;
 }
 
-static int store_discoverable_credential(const uint8_t rp_id_hash[32],
-                                         const uint8_t* user_id,
-                                         size_t user_id_length,
-                                         const char* user_name,
-                                         const uint8_t credential_id[64]) {
-  PasskeyStorage storage;
-  storage_getPasskeyData(&storage);
-  int slot = -1;
-  for (size_t i = 0; i < PASSKEY_MAX_DISCOVERABLE_CREDENTIALS; ++i) {
-    const PasskeyCredential* candidate = &storage.credentials[i];
-    if (candidate->occupied &&
-        memcmp(candidate->rp_id_hash, rp_id_hash, 32) == 0 &&
-        candidate->user_id_length == user_id_length &&
-        memcmp(candidate->user_id, user_id, user_id_length) == 0) {
-      slot = (int)i;
-      break;
-    }
-    if (!candidate->occupied && slot < 0) slot = (int)i;
-  }
-  if (slot < 0) return -1;
-  PasskeyCredential* credential = &storage.credentials[slot];
-  if (!storage_retirePasskey(&storage, (size_t)slot)) return -1;
-  credential->occupied = 1;
-  credential->resident_only = 1;
-  credential->user_id_length = (uint8_t)user_id_length;
-  memcpy(credential->rp_id_hash, rp_id_hash, 32);
-  memcpy(credential->credential_id, credential_id, 64);
-  memcpy(credential->user_id, user_id, user_id_length);
-  strlcpy(credential->user_name, user_name, sizeof(credential->user_name));
-  storage_setPasskeyData(&storage);
-  return slot;
+static bool store_discoverable_credential(const uint8_t rp_id_hash[32],
+                                          const uint8_t* user_id,
+                                          size_t user_id_length,
+                                          const char* user_name,
+                                          const uint8_t credential_id[64]) {
+  PasskeyCredential credential = {0};
+  credential.occupied = 1;
+  credential.resident_only = 1;
+  credential.user_id_length = (uint8_t)user_id_length;
+  memcpy(credential.rp_id_hash, rp_id_hash, 32);
+  memcpy(credential.credential_id, credential_id, 64);
+  memcpy(credential.user_id, user_id, user_id_length);
+  strlcpy(credential.user_name, user_name, sizeof(credential.user_name));
+  return storage_storePasskeySlot(&credential);
 }
 
 static int find_discoverable_credential(const uint8_t rp_id_hash[32],
@@ -810,8 +788,8 @@ static void make_credential(const uint8_t* request, size_t request_length,
     return;
   }
   if (resident &&
-      store_discoverable_credential(rp_id_hash, user_id.data, user_id.length,
-                                    user_name, credential_id) < 0) {
+      !store_discoverable_credential(rp_id_hash, user_id.data, user_id.length,
+                                     user_name, credential_id)) {
     memzero(private_key, sizeof(private_key));
     write_error(CTAP2_ERR_KEY_STORE_FULL, response, response_length);
     return;
@@ -1467,21 +1445,11 @@ static uint8_t delete_managed_credential(const uint8_t id[64]) {
       return ctap2_user_presence_was_cancelled() ? CTAP2_ERR_KEEPALIVE_CANCEL
                                                  : CTAP2_ERR_OPERATION_DENIED;
 
-    PasskeyStorage storage;
-    storage_getPasskeyData(&storage);
-    const PasskeyCredential* current = &storage.credentials[i];
-    /* A wipe, storage lock or session abort during USB polling cannot
-     * authorize a mutation of the replacement record. */
-    uint8_t result = CTAP2_ERR_OPERATION_DENIED;
-    if (pin_token_valid && (pin_permissions & PIN_PERMISSION_MANAGE) &&
-        !storage_isBitcoinOnlyLocked() && !storage_isFirmwareTooOld() &&
-        current->occupied && memcmp(current, &slot, sizeof(slot)) == 0 &&
-        storage_retirePasskey(&storage, i)) {
-      storage_setPasskeyData(&storage);
-      result = CTAP2_OK;
-    }
-    memzero(&storage, sizeof(storage));
-    return result;
+    expire_windows();
+    return pin_token_valid && (pin_permissions & PIN_PERMISSION_MANAGE) &&
+                   storage_deletePasskeySlot(i, &slot)
+               ? CTAP2_OK
+               : CTAP2_ERR_OPERATION_DENIED;
   }
   return CTAP2_ERR_NO_CREDENTIALS;
 }
@@ -1654,8 +1622,6 @@ static void get_info(uint8_t* response, size_t capacity, size_t* length) {
 
   /* CTAP 2.0 GetInfo response. Options are conservative until each command is
    * fully backed by storage and user-verification support. */
-  PasskeyStorage storage;
-  storage_getPasskeyData(&storage);
   cbor_encode_map(&encoder, 7);
 
   cbor_encode_uint(&encoder, 1); /* versions */
@@ -1675,7 +1641,7 @@ static void get_info(uint8_t* response, size_t capacity, size_t* length) {
   cbor_encode_text(&encoder, "credMgmt", 8);
   cbor_encode_bool(&encoder, true);
   cbor_encode_text(&encoder, "clientPin", 9);
-  cbor_encode_bool(&encoder, storage.pin_set != 0);
+  cbor_encode_bool(&encoder, storage_hasPasskeyPin());
   cbor_encode_text(&encoder, "pinUvAuthToken", 14);
   cbor_encode_bool(&encoder, true);
 

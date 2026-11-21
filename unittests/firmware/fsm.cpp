@@ -4540,6 +4540,31 @@ TEST(Fsm, StorageRecoversACommitCutAfterStaging) {
   EXPECT_STREQ("kept", storage_getLabel());
 }
 
+TEST(Fsm, PasskeyDeleteRecoversTheVerifiedPendingRecord) {
+  ScopedFlash flash;
+  PasskeyStorage passkeys;
+  storage_getPasskeyData(&passkeys);
+  passkeys.version = PASSKEY_STORAGE_VERSION;
+  auto& slot = passkeys.credentials[0];
+  slot.occupied = true;
+  memset(slot.credential_id, 0x5a, sizeof(slot.credential_id));
+  const PasskeyCredential credential = slot;
+  storage_setPasskeyData(&passkeys);
+  Allocation active;
+  ASSERT_TRUE(find_active_storage(&active));
+  memset(Sector(next_storage(next_storage(active))), 0x5a, 1000);
+  storage_init();
+  PasskeyCredential reread;
+  ASSERT_TRUE(storage_getPasskeySlot(0, &reread));
+  EXPECT_EQ(0, memcmp(&reread, &credential, sizeof(reread)));
+
+  ASSERT_TRUE(storage_deletePasskeySlot(0, &credential));
+  CutAfterStaging(false);
+  storage_init();
+  EXPECT_FALSE(storage_getPasskeySlot(0, &reread));
+  EXPECT_TRUE(storage_isPasskeyRetired(credential.credential_id));
+}
+
 TEST(Fsm, StorageKeepsTheOldRecordWhenStagingIsCut) {
   ScopedFlash flash;
   storage_setLabel("old");
