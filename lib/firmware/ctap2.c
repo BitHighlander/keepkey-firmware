@@ -444,7 +444,7 @@ static uint8_t verify_pin_uv(const uint8_t* request, size_t request_length,
 
 /* CTAP 2.0 makeCredential/getAssertion step 1: an empty pinAuth asks the user
  * to pick this authenticator. Chrome sends it before asking for a PIN; refusing
- * it at once left the browser waiting forever. Wait for a press, then say
+ * it at once left the browser waiting forever. Wait for a hold, then say
  * whether a passkey PIN exists. Returns false when the request is not one. */
 static bool answer_touch_probe(const uint8_t* request, size_t request_length,
                                int auth_key, uint8_t* response,

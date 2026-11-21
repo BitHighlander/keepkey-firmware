@@ -114,6 +114,30 @@ void hold(bool up, int polls) {
     poll_script.push_back([=] { button_up = up; });
 }
 
+void advance_ctap_time(unsigned milliseconds) {
+  for (unsigned i = 0; i < milliseconds; ++i) timerisr_usr();
+}
+
+void hold_for_ctap() {
+  button_up = true;
+  poll_script.push_back([] { button_up = false; });
+  poll_script.push_back([] { advance_ctap_time(1600); });
+}
+
+void short_presses_then_cancel() {
+  button_up = true;
+  for (int i = 0; i < 2; ++i) {
+    poll_script.push_back([] { button_up = false; });
+    poll_script.push_back([] { advance_ctap_time(800); });
+    poll_script.push_back([] { button_up = true; });
+  }
+  poll_script.push_back(
+      [] { send_main(MessageType_MessageType_Cancel, nullptr, 0); });
+}
+
+std::vector<uint8_t> ctap_call(const std::vector<uint8_t>& request,
+                               uint32_t channel = kCid);
+
 uint16_t status(const std::vector<uint8_t>& reply) {
   return reply.size() < 2 ? 0 : reply[reply.size() - 2] << 8 | reply.back();
 }
@@ -396,9 +420,10 @@ TEST_F(U2FWait, PresenceNeedsFreshPressAndRelease) {
 }
 
 // Chrome's CTAP 2.0 "touch your security key" request is a makeCredential or
-// getAssertion with an empty pinAuth. The device must wait for a press and
+// getAssertion with an empty pinAuth. The device must wait for a hold and
 // then report whether a passkey PIN is set.
-TEST_F(U2FWait, EmptyPinAuthWaitsForTouch) {
+TEST_F(U2FWait, EmptyPinAuthWaitsForHold) {
+  ctap2_init();
   // makeCredential {1: hash, 2: {"id": ".dummy"}, 3: {"id": h'01', "name":
   // "dummy"}, 4: [{"alg": -7, "type": "public-key"}], 8: h'', 9: 1} and
   // getAssertion {1: ".dummy", 2: hash, 6: h'', 7: 1}, as Chrome sends them.
@@ -426,19 +451,16 @@ TEST_F(U2FWait, EmptyPinAuthWaitsForTouch) {
     for (const auto& request : {make, get}) {
       SCOPED_TRACE(::testing::Message()
                    << "command=" << int(request[0]) << " pin_set=" << pin_set);
-      ctap2_init();
-      hold(true, 2);
-      hold(false, 1);  // confirm on the fresh press
-      uint8_t response[64] = {0};
-      size_t response_length = 0;
-      ctap2_handle(request.data(), request.size(), response, sizeof(response),
-                   &response_length);
-      EXPECT_EQ(1u, response_length);
+      short_presses_then_cancel();
+      ASSERT_EQ(CTAP2_ERR_KEEPALIVE_CANCEL, ctap_call(request).at(0));
+      ASSERT_TRUE(poll_script.empty());
+      hold_for_ctap();
+      const auto response = ctap_call(request);
+      ASSERT_EQ(1u, response.size());
       EXPECT_EQ(pin_set ? CTAP2_ERR_PIN_INVALID : CTAP2_ERR_PIN_NOT_SET,
                 response[0]);
       EXPECT_TRUE(poll_script.empty())
-          << "answered without waiting for a press";
-      poll_script.clear();
+          << "answered without waiting for a hold";
     }
   }
 }
@@ -721,7 +743,7 @@ TEST(U2F, AuthenticatorResetGenerationInvalidatesNewAndLegacyHandles) {
 
 namespace {
 std::vector<uint8_t> ctap_call(const std::vector<uint8_t>& request,
-                               uint32_t channel = kCid) {
+                               uint32_t channel) {
   auto frames = frames_for(request, U2FHID_CBOR, channel);
   for (size_t i = frames.size(); i > 1; --i) {
     poll_script.push_front([frame = frames[i - 1]] {
@@ -878,7 +900,8 @@ std::vector<uint8_t> delete_params(const PasskeyCredential& credential) {
   return params;
 }
 
-uint8_t explicit_sign_in(const char* rp, const PasskeyCredential& credential) {
+std::vector<uint8_t> assertion_request(const char* rp,
+                                        const PasskeyCredential& credential) {
   uint8_t wire[256] = {CTAP2_CMD_GET_ASSERTION};
   uint8_t challenge[32] = {};
   CborEncoder e;
@@ -895,16 +918,19 @@ uint8_t explicit_sign_in(const char* rp, const PasskeyCredential& credential) {
   cbor_encode_bytes(&e, credential.credential_id, sizeof(credential.credential_id));
   cbor_encode_text(&e, "type", 4);
   cbor_encode_text(&e, "public-key", 10);
-  button_up = true;
+  return {wire, wire + 1 + cbor_encoder_size(&e)};
+}
+
+uint8_t explicit_sign_in(const char* rp, const PasskeyCredential& credential) {
   EXPECT_TRUE(poll_script.empty());
-  poll_script.push_back([] { button_up = false; });
-  const auto response = ctap_call({wire, wire + 1 + cbor_encoder_size(&e)});
-  poll_script.clear();
+  hold_for_ctap();
+  const auto response = ctap_call(assertion_request(rp, credential));
+  EXPECT_TRUE(poll_script.empty());
   return response.at(0);
 }
 
-void register_into_freed_slot(const char* rp, const uint8_t token[32],
-                              PasskeyCredential* replacement) {
+std::vector<uint8_t> registration_request(const char* rp,
+                                           const uint8_t token[32]) {
   uint8_t request[256] = {CTAP2_CMD_MAKE_CREDENTIAL};
   uint8_t client_hash[32] = {}, auth[32];
   hmac_sha256(token, 32, client_hash, sizeof(client_hash), auth);
@@ -937,21 +963,46 @@ void register_into_freed_slot(const char* rp, const uint8_t token[32],
   cbor_encode_bytes(&e, auth, 16);
   cbor_encode_uint(&e, 9);
   cbor_encode_uint(&e, 1);
-  button_up = true;
-  poll_script.push_back([] { button_up = false; });
-  const auto response = ctap_call({request, request + 1 + cbor_encoder_size(&e)});
+  return {request, request + 1 + cbor_encoder_size(&e)};
+}
+
+void register_into_freed_slot(const char* rp, const uint8_t token[32],
+                              PasskeyCredential* replacement) {
+  hold_for_ctap();
+  const auto response = ctap_call(registration_request(rp, token));
   ASSERT_EQ(CTAP2_OK, response.at(0));
+  EXPECT_TRUE(poll_script.empty());
   ASSERT_TRUE(storage_getPasskeySlot(0, replacement));
   EXPECT_TRUE(replacement->resident_only);
 }
-
-void hold_for_management() {
-  button_up = true;
-  poll_script.push_back([] { button_up = false; });
-  poll_script.push_back([] {
-    for (unsigned i = 0; i < 1600; ++i) timerisr_usr();
-  });
 }
+
+TEST_F(U2FWait, RegistrationAndSignInRequireAFreshUninterruptedHold) {
+  ctap2_init();
+  uint8_t token[32] = {};
+  pin_exchange(3, "1234", 0, CTAP2_OK, token);
+  pin_exchange(5, "1234", 0, CTAP2_OK, token);
+  const auto registration = registration_request("example.com", token);
+
+  short_presses_then_cancel();
+  ASSERT_EQ(CTAP2_ERR_KEEPALIVE_CANCEL, ctap_call(registration).at(0));
+  ASSERT_TRUE(poll_script.empty());
+  PasskeyCredential credential;
+  ASSERT_FALSE(storage_getPasskeySlot(0, &credential));
+  register_into_freed_slot("example.com", token, &credential);
+  ASSERT_FALSE(HasFatalFailure());
+  const auto assertion = assertion_request("example.com", credential);
+
+  short_presses_then_cancel();
+  ASSERT_EQ(CTAP2_ERR_KEEPALIVE_CANCEL, ctap_call(assertion).at(0));
+  ASSERT_TRUE(poll_script.empty());
+  button_up = false;
+  poll_script.push_back([] { advance_ctap_time(1600); });
+  poll_script.push_back(
+      [] { send_main(MessageType_MessageType_Cancel, nullptr, 0); });
+  ASSERT_EQ(CTAP2_ERR_KEEPALIVE_CANCEL, ctap_call(assertion).at(0));
+  ASSERT_TRUE(poll_script.empty());
+  EXPECT_EQ(CTAP2_OK, explicit_sign_in("example.com", credential));
 }
 
 TEST_F(U2FWait, ManagementRequiresTheCorrectPinAndPermission) {
@@ -1014,11 +1065,11 @@ TEST_F(U2FWait, ManagementEnumeratesAndRetiresOnlyTheSelectedHandle) {
   EXPECT_EQ(CTAP2_ERR_OPERATION_DENIED,
             management(6, token, delete_params(created)).at(0));
   EXPECT_TRUE(can_use_credential(created));
-  hold_for_management();
+  hold_for_ctap();
   ASSERT_EQ(CTAP2_OK, management(6, token, delete_params(created)).at(0));
   EXPECT_EQ(CTAP2_ERR_NO_CREDENTIALS, explicit_sign_in("example.com", created));
   EXPECT_EQ(CTAP2_OK, explicit_sign_in("example.org", prerelease));
-  hold_for_management();
+  hold_for_ctap();
   ASSERT_EQ(CTAP2_OK, management(6, token, delete_params(prerelease)).at(0));
   EXPECT_FALSE(can_use_credential(prerelease));
 
@@ -1048,7 +1099,7 @@ TEST_F(U2FWait, ResetRequiresAHoldAndClearsThePinAndCredentials) {
   EXPECT_EQ(CTAP2_ERR_OPERATION_DENIED, ctap_call({CTAP2_CMD_RESET}).at(0));
   EXPECT_TRUE(can_use_credential(credential));
 
-  hold_for_management();
+  hold_for_ctap();
   ASSERT_EQ(CTAP2_OK, ctap_call({CTAP2_CMD_RESET}).at(0));
   EXPECT_EQ(CTAP2_ERR_NO_CREDENTIALS, explicit_sign_in("example.com", credential));
   pin_exchange(9, "1234", 4, CTAP2_ERR_PIN_NOT_SET, token);
