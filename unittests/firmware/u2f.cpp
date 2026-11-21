@@ -124,19 +124,21 @@ std::vector<uint16_t> statuses() {
   return out;
 }
 
-// Splits an APDU into one init frame and its continuations.
-std::vector<U2FHID_FRAME> frames_for(const std::vector<uint8_t>& apdu) {
+// Splits a request into one init frame and its continuations.
+std::vector<U2FHID_FRAME> frames_for(const std::vector<uint8_t>& apdu,
+                                    uint8_t command = U2FHID_MSG,
+                                    uint32_t channel = kCid) {
   std::vector<U2FHID_FRAME> out(1);
   out[0] = {};
-  out[0].cid = kCid;
-  out[0].init.cmd = U2FHID_MSG;
+  out[0].cid = channel;
+  out[0].init.cmd = command;
   out[0].init.bcnth = apdu.size() >> 8;
   out[0].init.bcntl = apdu.size() & 0xff;
   size_t off = std::min(apdu.size(), sizeof(out[0].init.data));
   memcpy(out[0].init.data, apdu.data(), off);
   for (uint8_t seq = 0; off < apdu.size(); seq++) {
     U2FHID_FRAME cont = {};
-    cont.cid = kCid;
+    cont.cid = channel;
     cont.cont.seq = seq;
     const size_t n = std::min(apdu.size() - off, sizeof(cont.cont.data));
     memcpy(cont.cont.data, apdu.data() + off, n);
@@ -737,13 +739,22 @@ TEST(U2F, AuthenticatorResetGenerationInvalidatesNewAndLegacyHandles) {
 }
 
 namespace {
-std::vector<uint8_t> ctap_call(const std::vector<uint8_t>& request) {
-  std::vector<uint8_t> response(CTAP2_MAX_RESPONSE_SIZE);
-  size_t length = 0;
-  ctap2_handle(request.data(), request.size(), response.data(), response.size(),
-               &length);
-  response.resize(length);
-  return response;
+std::vector<uint8_t> ctap_call(const std::vector<uint8_t>& request,
+                               uint32_t channel = kCid) {
+  auto frames = frames_for(request, U2FHID_CBOR, channel);
+  for (size_t i = frames.size(); i > 1; --i) {
+    poll_script.push_front([frame = frames[i - 1]] {
+      usb_test_receive_u2f(&frame);
+    });
+  }
+  u2f_replies.clear();
+  u2f_reply_cmds.clear();
+  u2fhid_read(0, &frames[0]);
+  if (u2f_reply_cmds.empty() || u2f_reply_cmds.back() != U2FHID_CBOR) {
+    ADD_FAILURE() << "Expected CTAPHID_CBOR reply";
+    return {0xff};
+  }
+  return u2f_replies.back();
 }
 
 CborValue response_field(const std::vector<uint8_t>& response, int key) {
@@ -837,7 +848,8 @@ void pin_exchange(uint8_t command, const char* pin, uint8_t permission,
 }
 
 std::vector<uint8_t> management(uint8_t command, const uint8_t token[32],
-                                const std::vector<uint8_t>& params = {}) {
+                                const std::vector<uint8_t>& params = {},
+                                uint32_t channel = kCid) {
   std::vector<uint8_t> auth_data = {command};
   auth_data.insert(auth_data.end(), params.begin(), params.end());
   uint8_t auth[32];
@@ -851,7 +863,7 @@ std::vector<uint8_t> management(uint8_t command, const uint8_t token[32],
   }
   wire.insert(wire.end(), {3, 1, 4, 0x50});
   wire.insert(wire.end(), auth, auth + 16);
-  return ctap_call(wire);
+  return ctap_call(wire, channel);
 }
 
 PasskeyCredential fixture_credential(const char* rp, bool resident) {
@@ -903,8 +915,11 @@ uint8_t explicit_sign_in(const char* rp, const PasskeyCredential& credential) {
   cbor_encode_text(&e, "type", 4);
   cbor_encode_text(&e, "public-key", 10);
   button_up = true;
+  EXPECT_TRUE(poll_script.empty());
   poll_script.push_back([] { button_up = false; });
-  return ctap_call({wire, wire + 1 + cbor_encoder_size(&e)}).at(0);
+  const auto response = ctap_call({wire, wire + 1 + cbor_encoder_size(&e)});
+  poll_script.clear();
+  return response.at(0);
 }
 
 void register_into_freed_slot(const char* rp, const uint8_t token[32],
@@ -976,8 +991,7 @@ TEST_F(U2FWait, ManagementRequiresTheCorrectPinAndPermission) {
   EXPECT_EQ(CTAP2_OK, metadata.at(0));
   EXPECT_EQ(0u, response_field(metadata, 1).value);
   EXPECT_EQ(4u, response_field(metadata, 2).value);
-  ctap2_set_transport_channel(kCid + 1);
-  EXPECT_EQ(CTAP2_ERR_PIN_AUTH_INVALID, management(1, token).at(0));
+  EXPECT_EQ(CTAP2_ERR_PIN_AUTH_INVALID, management(1, token, {}, kCid + 1).at(0));
 }
 
 TEST_F(U2FWait, ManagementEnumeratesAndRetiresOnlyTheSelectedHandle) {
@@ -1038,6 +1052,26 @@ TEST_F(U2FWait, ManagementEnumeratesAndRetiresOnlyTheSelectedHandle) {
   ASSERT_FALSE(HasFatalFailure());
   EXPECT_EQ(CTAP2_ERR_NO_CREDENTIALS, explicit_sign_in("example.com", created));
   EXPECT_EQ(CTAP2_OK, explicit_sign_in("example.com", replacement));
+}
+
+TEST_F(U2FWait, ResetRequiresAHoldAndClearsThePinAndCredentials) {
+  ctap2_init();
+  uint8_t token[32] = {};
+  pin_exchange(3, "1234", 0, CTAP2_OK, token);
+  const auto credential = fixture_credential("example.com", true);
+  ASSERT_TRUE(storage_storePasskeySlot(&credential));
+  button_up = true;
+  poll_script.push_back([] { button_up = false; });
+  poll_script.push_back([] { button_up = true; });
+  poll_script.push_back([] { layoutHome(); });
+  EXPECT_EQ(CTAP2_ERR_OPERATION_DENIED, ctap_call({CTAP2_CMD_RESET}).at(0));
+  EXPECT_TRUE(can_use_credential(credential));
+
+  hold_for_management();
+  ASSERT_EQ(CTAP2_OK, ctap_call({CTAP2_CMD_RESET}).at(0));
+  EXPECT_EQ(CTAP2_ERR_NO_CREDENTIALS, explicit_sign_in("example.com", credential));
+  pin_exchange(9, "1234", 4, CTAP2_ERR_PIN_NOT_SET, token);
+  EXPECT_EQ(CTAP2_ERR_NOT_ALLOWED, ctap_call({CTAP2_CMD_RESET}).at(0));
 }
 
 TEST_F(U2FWait, CredentialListsRespectTheAdvertisedBound) {
