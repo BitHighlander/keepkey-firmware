@@ -34,7 +34,20 @@ typedef struct {
 
 static CONFIDENTIAL KeyAgreement key_agreement;
 static CONFIDENTIAL uint8_t pin_token[32];
+#define PIN_PERMISSION_MAKE 0x01
+#define PIN_PERMISSION_GET 0x02
+#define PIN_PERMISSION_MANAGE 0x04
+#define PIN_PERMISSION_SIGN (PIN_PERMISSION_MAKE | PIN_PERMISSION_GET)
+#define CTAP2_SESSION_MS 30000
+
 static bool pin_token_valid;
+static uint8_t pin_permissions;
+static bool pin_token_scoped;
+static bool pin_token_has_rp;
+static uint8_t pin_token_rp_hash[32];
+static uint32_t pin_token_started;
+static uint32_t pin_token_channel;
+
 static uint8_t pin_attempts_since_boot;
 static uint32_t reset_started; /* power-up stamp */
 static bool reset_open;
@@ -55,6 +68,15 @@ typedef struct {
 
 static AssertionSequence assertion_sequence;
 
+typedef struct {
+  uint32_t channel;
+  uint32_t started;
+  uint8_t command;
+  uint8_t remaining; /* bitset of physical slot indices */
+} CredentialEnumeration;
+
+static CredentialEnumeration credential_enumeration;
+
 static bool encode_authenticator_data(uint8_t* output, size_t capacity,
                                       size_t* length,
                                       const uint8_t rp_id_hash[32],
@@ -69,6 +91,11 @@ static void clear_key_agreement(void) {
 static void clear_pin_token(void) {
   memzero(pin_token, sizeof(pin_token));
   pin_token_valid = false;
+  pin_permissions = 0;
+  pin_token_has_rp = false;
+  pin_token_scoped = false;
+  memzero(pin_token_rp_hash, sizeof(pin_token_rp_hash));
+  memzero(&credential_enumeration, sizeof(credential_enumeration));
 }
 
 #ifdef EMULATOR
@@ -97,6 +124,9 @@ static bool still_open(uint32_t started, uint32_t window_ms) {
 }
 
 static void expire_windows(void) {
+  if (pin_token_valid && pin_token_scoped &&
+      !still_open(pin_token_started, CTAP2_SESSION_MS))
+    clear_pin_token();
   if (key_agreement.valid && !still_open(key_agreement.started, 30000))
     clear_key_agreement();
   if (assertion_sequence.valid &&
@@ -373,6 +403,7 @@ static uint8_t verify_pin_uv(const uint8_t* request, size_t request_length,
                              int auth_key, int protocol_key,
                              const uint8_t client_data_hash[32],
                              bool uv_requested, bool require_pin_when_set,
+                             uint8_t permission, const char* rp_id,
                              bool* verified) {
   CborValue auth, protocol;
   *verified = false;
@@ -390,8 +421,16 @@ static uint8_t verify_pin_uv(const uint8_t* request, size_t request_length,
   }
   if (!have_auth || !have_protocol || protocol.type != CBOR_TYPE_UINT ||
       protocol.value != 1 || auth.type != CBOR_TYPE_BYTES ||
-      auth.length != 16 || !pin_token_valid)
+      auth.length != 16 || !pin_token_valid ||
+      !(pin_permissions & permission) ||
+      (pin_token_scoped && pin_token_channel != transport_channel))
     return CTAP2_ERR_PIN_AUTH_INVALID;
+  if (pin_token_has_rp) {
+    uint8_t hash[32];
+    sha256_Raw((const uint8_t*)rp_id, strlen(rp_id), hash);
+    if (memcmp(hash, pin_token_rp_hash, sizeof(hash)) != 0)
+      return CTAP2_ERR_PIN_AUTH_INVALID;
+  }
   PasskeyStorage current;
   storage_getPasskeyData(&current);
   if (!current.pin_set) {
@@ -431,6 +470,16 @@ static bool answer_touch_probe(const uint8_t* request, size_t request_length,
   write_error(storage.pin_set ? CTAP2_ERR_PIN_INVALID : CTAP2_ERR_PIN_NOT_SET,
               response, response_length);
   return true;
+}
+
+static uint8_t check_credential_list(const uint8_t* request, size_t length,
+                                     int key) {
+  CborValue list;
+  if (!cbor_map_find(request, length, NULL, key, &list, NULL, NULL))
+    return CTAP2_OK;
+  if (list.type != CBOR_TYPE_ARRAY) return CTAP2_ERR_INVALID_CBOR;
+  return list.value > CTAP2_MAX_CREDENTIAL_LIST ? CTAP2_ERR_LIMIT_EXCEEDED
+                                                : CTAP2_OK;
 }
 
 static bool credential_list_contains(const uint8_t* buffer, size_t length,
@@ -487,8 +536,9 @@ static int store_discoverable_credential(const uint8_t rp_id_hash[32],
   }
   if (slot < 0) return -1;
   PasskeyCredential* credential = &storage.credentials[slot];
-  memzero(credential, sizeof(*credential));
+  if (!storage_retirePasskey(&storage, (size_t)slot)) return -1;
   credential->occupied = 1;
+  credential->resident_only = 1;
   credential->user_id_length = (uint8_t)user_id_length;
   memcpy(credential->rp_id_hash, rp_id_hash, 32);
   memcpy(credential->credential_id, credential_id, 64);
@@ -663,6 +713,11 @@ static void make_credential(const uint8_t* request, size_t request_length,
     write_error(CTAP2_ERR_MISSING_PARAMETER, response, response_length);
     return;
   }
+  uint8_t list_status = check_credential_list(request, request_length, 5);
+  if (list_status != CTAP2_OK) {
+    write_error(list_status, response, response_length);
+    return;
+  }
   if (answer_touch_probe(request, request_length, 8, response, response_length))
     return;
   if (!request_has_es256(algorithm_slice, algorithm_length)) {
@@ -711,9 +766,9 @@ static void make_credential(const uint8_t* request, size_t request_length,
     }
   }
   bool uv_verified;
-  uint8_t uv_status =
-      verify_pin_uv(request, request_length, 8, 9, client_hash.data,
-                    uv_requested, true, &uv_verified);
+  uint8_t uv_status = verify_pin_uv(request, request_length, 8, 9,
+                                    client_hash.data, uv_requested, true,
+                                    PIN_PERMISSION_MAKE, rp_id, &uv_verified);
   if (uv_status != CTAP2_OK) {
     write_error(uv_status, response, response_length);
     return;
@@ -749,7 +804,7 @@ static void make_credential(const uint8_t* request, size_t request_length,
                 response, response_length);
     return;
   }
-  if (!u2f_generate_credential(rp_id_hash, credential_id, private_key,
+  if (!u2f_generate_credential(rp_id_hash, resident, credential_id, private_key,
                                public_key)) {
     write_error(CTAP2_ERR_OTHER, response, response_length);
     return;
@@ -821,6 +876,11 @@ static void get_assertion(const uint8_t* request, size_t request_length,
     write_error(CTAP2_ERR_MISSING_PARAMETER, response, response_length);
     return;
   }
+  uint8_t list_status = check_credential_list(request, request_length, 3);
+  if (list_status != CTAP2_OK) {
+    write_error(list_status, response, response_length);
+    return;
+  }
   if (answer_touch_probe(request, request_length, 6, response, response_length))
     return;
   bool ignored_rk, uv_requested = false, up_requested = true;
@@ -839,9 +899,9 @@ static void get_assertion(const uint8_t* request, size_t request_length,
     }
   }
   bool uv_verified;
-  uint8_t uv_status =
-      verify_pin_uv(request, request_length, 6, 7, client_hash.data,
-                    uv_requested, false, &uv_verified);
+  uint8_t uv_status = verify_pin_uv(request, request_length, 6, 7,
+                                    client_hash.data, uv_requested, false,
+                                    PIN_PERMISSION_GET, rp_id, &uv_verified);
   if (uv_status != CTAP2_OK) {
     write_error(uv_status, response, response_length);
     return;
@@ -1176,7 +1236,30 @@ static void client_pin(const uint8_t* request, size_t request_length,
       return;
     }
 
-    case 5: { /* getPINToken */
+    case 5:   /* legacy getPINToken */
+    case 9: { /* getPinUvAuthTokenUsingPinWithPermissions */
+      const bool scoped = subcommand.value == 9;
+      uint8_t permissions = PIN_PERMISSION_SIGN;
+      char token_rp[254] = {0};
+      if (scoped) {
+        CborValue value;
+        if (!cbor_map_find(request, request_length, NULL, 9, &value, NULL,
+                           NULL) ||
+            value.type != CBOR_TYPE_UINT || value.value == 0 ||
+            (value.value &
+             ~(uint64_t)(PIN_PERMISSION_SIGN | PIN_PERMISSION_MANAGE))) {
+          write_error(CTAP2_ERR_INVALID_PARAMETER, response, length);
+          return;
+        }
+        permissions = (uint8_t)value.value;
+        const bool has_rp = cbor_map_find(request, request_length, NULL, 10,
+                                          &value, NULL, NULL);
+        if ((has_rp && !copy_rp_id(&value, token_rp, sizeof(token_rp))) ||
+            (!has_rp && (permissions & PIN_PERMISSION_SIGN))) {
+          write_error(CTAP2_ERR_INVALID_PARAMETER, response, length);
+          return;
+        }
+      }
       CborValue encrypted_hash;
       uint8_t shared_secret[32] = {0};
       uint8_t supplied_hash[16] = {0};
@@ -1235,6 +1318,15 @@ static void client_pin(const uint8_t* request, size_t request_length,
         return;
       }
       pin_token_valid = true;
+      pin_permissions = permissions;
+      pin_token_scoped = scoped;
+      pin_token_has_rp = token_rp[0] != 0;
+      if (pin_token_has_rp)
+        sha256_Raw((const uint8_t*)token_rp, strlen(token_rp),
+                   pin_token_rp_hash);
+      pin_token_channel = transport_channel;
+      pin_token_started = getSysTime();
+      memzero(&credential_enumeration, sizeof(credential_enumeration));
       aes256_cbc(true, shared_secret, pin_token, encrypted_token,
                  sizeof(encrypted_token));
       response[0] = CTAP2_OK;
@@ -1255,6 +1347,281 @@ static void client_pin(const uint8_t* request, size_t request_length,
       write_error(CTAP2_ERR_INVALID_PARAMETER, response, length);
       return;
   }
+}
+
+enum {
+  CREDMAN_METADATA = 1,
+  CREDMAN_RPS = 2,
+  CREDMAN_NEXT_RP = 3,
+  CREDMAN_CREDENTIALS = 4,
+  CREDMAN_NEXT_CREDENTIAL = 5,
+  CREDMAN_DELETE = 6,
+};
+
+static bool credential_management_pin(const CborValue* auth, uint8_t subcommand,
+                                      const uint8_t* params,
+                                      size_t params_length) {
+  if (!pin_token_valid || !(pin_permissions & PIN_PERMISSION_MANAGE) ||
+      pin_token_channel != transport_channel || auth->type != CBOR_TYPE_BYTES ||
+      auth->length != 16)
+    return false;
+
+  HMAC_SHA256_CTX ctx;
+  uint8_t expected[32];
+  hmac_sha256_Init(&ctx, pin_token, sizeof(pin_token));
+  hmac_sha256_Update(&ctx, &subcommand, 1);
+  if (params_length) hmac_sha256_Update(&ctx, params, (uint32_t)params_length);
+  hmac_sha256_Final(&ctx, expected);
+  const bool verified = equal16(expected, auth->data);
+  memzero(expected, sizeof(expected));
+  return verified;
+}
+
+static size_t slot_count(uint8_t slots) {
+  size_t count = 0;
+  for (; slots; slots >>= 1) count += slots & 1u;
+  return count;
+}
+
+/* The bitset identifies slots, rather than copying the whole credential store.
+ * The RP listing selects the first slot for each distinct full hash. */
+static uint8_t credential_slots(uint8_t subcommand, const uint8_t* rp_hash) {
+  uint8_t matches = 0;
+  uint8_t hashes[PASSKEY_MAX_DISCOVERABLE_CREDENTIALS][32];
+  PasskeyCredential slot;
+  for (size_t i = 0; i < PASSKEY_MAX_DISCOVERABLE_CREDENTIALS; ++i) {
+    if (!storage_getPasskeySlot(i, &slot)) continue;
+    if (rp_hash && memcmp(rp_hash, slot.rp_id_hash, 32) != 0) continue;
+    if (subcommand == CREDMAN_RPS) {
+      bool seen = false;
+      for (size_t j = 0; j < i; ++j) {
+        if ((matches & (1u << j)) &&
+            memcmp(hashes[j], slot.rp_id_hash, 32) == 0)
+          seen = true;
+      }
+      if (seen) continue;
+      memcpy(hashes[i], slot.rp_id_hash, 32);
+    }
+    matches |= 1u << i;
+  }
+  return matches;
+}
+
+static bool encode_credential_entry(CborEncoder* encoder,
+                                    const PasskeyCredential* slot,
+                                    uint8_t command, bool first, size_t count) {
+  if (command == CREDMAN_NEXT_RP) {
+    cbor_encode_map(encoder, first ? 3 : 2);
+    cbor_encode_uint(encoder,
+                     3); /* RP entity. Vault resolves labels locally. */
+    cbor_encode_map(encoder, 0);
+    cbor_encode_uint(encoder, 4);
+    cbor_encode_bytes(encoder, slot->rp_id_hash, sizeof(slot->rp_id_hash));
+    if (first) {
+      cbor_encode_uint(encoder, 5);
+      cbor_encode_uint(encoder, count);
+    }
+    return true;
+  }
+
+  uint8_t private_key[32] = {0}, public_key[65] = {0};
+  bool loaded = u2f_load_credential(slot->rp_id_hash, slot->credential_id,
+                                    private_key, public_key);
+  memzero(private_key, sizeof(private_key));
+  if (!loaded) return false;
+  cbor_encode_map(encoder, first ? 5 : 4);
+  cbor_encode_uint(encoder, 6);
+  cbor_encode_map(encoder, slot->user_name[0] ? 2 : 1);
+  cbor_encode_text(encoder, "id", 2);
+  cbor_encode_bytes(encoder, slot->user_id, slot->user_id_length);
+  if (slot->user_name[0]) {
+    cbor_encode_text(encoder, "name", 4);
+    cbor_encode_text(encoder, slot->user_name, strlen(slot->user_name));
+  }
+  cbor_encode_uint(encoder, 7);
+  cbor_encode_map(encoder, 2);
+  cbor_encode_text(encoder, "id", 2);
+  cbor_encode_bytes(encoder, slot->credential_id, sizeof(slot->credential_id));
+  cbor_encode_text(encoder, "type", 4);
+  cbor_encode_text(encoder, "public-key", 10);
+  cbor_encode_uint(encoder, 8);
+  encode_cose_public_key(encoder, public_key, -7);
+  if (first) {
+    cbor_encode_uint(encoder, 9);
+    cbor_encode_uint(encoder, count);
+  }
+  cbor_encode_uint(encoder, 10);
+  cbor_encode_uint(encoder, 1); /* userVerificationOptional */
+  return true;
+}
+
+static uint8_t delete_managed_credential(const uint8_t id[64]) {
+  PasskeyCredential slot;
+  for (size_t i = 0; i < PASSKEY_MAX_DISCOVERABLE_CREDENTIALS; ++i) {
+    if (!storage_getPasskeySlot(i, &slot) ||
+        memcmp(slot.credential_id, id, sizeof(slot.credential_id)) != 0 ||
+        (pin_token_has_rp && memcmp(slot.rp_id_hash, pin_token_rp_hash,
+                                    sizeof(slot.rp_id_hash)) != 0))
+      continue;
+    if (!ctap2_confirm_delete(slot.user_name, slot.credential_id))
+      return ctap2_user_presence_was_cancelled() ? CTAP2_ERR_KEEPALIVE_CANCEL
+                                                 : CTAP2_ERR_OPERATION_DENIED;
+
+    PasskeyStorage storage;
+    storage_getPasskeyData(&storage);
+    const PasskeyCredential* current = &storage.credentials[i];
+    /* A wipe, storage lock or session abort during USB polling cannot
+     * authorize a mutation of the replacement record. */
+    uint8_t result = CTAP2_ERR_OPERATION_DENIED;
+    if (pin_token_valid && (pin_permissions & PIN_PERMISSION_MANAGE) &&
+        !storage_isBitcoinOnlyLocked() && !storage_isFirmwareTooOld() &&
+        current->occupied && memcmp(current, &slot, sizeof(slot)) == 0 &&
+        storage_retirePasskey(&storage, i)) {
+      storage_setPasskeyData(&storage);
+      result = CTAP2_OK;
+    }
+    memzero(&storage, sizeof(storage));
+    return result;
+  }
+  return CTAP2_ERR_NO_CREDENTIALS;
+}
+
+static void credential_management(const uint8_t* request, size_t length,
+                                  uint8_t* response, size_t capacity,
+                                  size_t* response_length) {
+  CborValue command, param_map, protocol, auth;
+  const uint8_t* params = NULL;
+  size_t params_length = 0;
+  if (!cbor_map_find(request, length, NULL, 1, &command, NULL, NULL) ||
+      command.type != CBOR_TYPE_UINT) {
+    memzero(&credential_enumeration, sizeof(credential_enumeration));
+    write_error(CTAP2_ERR_MISSING_PARAMETER, response, response_length);
+    return;
+  }
+
+  const bool next = command.value == CREDMAN_NEXT_RP ||
+                    command.value == CREDMAN_NEXT_CREDENTIAL;
+  const bool has_params = cbor_map_find(request, length, NULL, 2, &param_map,
+                                        &params, &params_length);
+  const bool has_protocol =
+      cbor_map_find(request, length, NULL, 3, &protocol, NULL, NULL);
+  const bool has_auth =
+      cbor_map_find(request, length, NULL, 4, &auth, NULL, NULL);
+  CredentialEnumeration list = credential_enumeration;
+  memzero(&credential_enumeration, sizeof(credential_enumeration));
+  CborEncoder encoder;
+  cbor_encoder_init(&encoder, response + 1, capacity - 1);
+  uint8_t error = CTAP2_ERR_INVALID_PARAMETER;
+
+  if (next) {
+    if (has_params || has_protocol || has_auth || !pin_token_valid ||
+        !(pin_permissions & PIN_PERMISSION_MANAGE) ||
+        list.channel != transport_channel || list.command != command.value ||
+        !still_open(list.started, CTAP2_SESSION_MS))
+      error = CTAP2_ERR_NOT_ALLOWED;
+    else
+      error = CTAP2_OK;
+  } else {
+    if (command.value < CREDMAN_METADATA || command.value > CREDMAN_DELETE)
+      goto done;
+    if (!has_protocol || !has_auth) {
+      error = CTAP2_ERR_PIN_REQUIRED;
+      goto done;
+    }
+    if (protocol.type != CBOR_TYPE_UINT || protocol.value != 1 ||
+        (has_params && (param_map.type != CBOR_TYPE_MAP ||
+                        !valid_request_map(params, params_length))))
+      goto done;
+    if (!credential_management_pin(&auth, (uint8_t)command.value, params,
+                                   params_length)) {
+      error = CTAP2_ERR_PIN_AUTH_INVALID;
+      goto done;
+    }
+
+    const uint8_t* rp_hash = NULL;
+    if (command.value == CREDMAN_DELETE) {
+      CborValue descriptor, id, type;
+      const uint8_t* desc;
+      size_t desc_length;
+      if (!has_params ||
+          !cbor_map_find(params, params_length, NULL, 2, &descriptor, &desc,
+                         &desc_length) ||
+          descriptor.type != CBOR_TYPE_MAP ||
+          !cbor_map_find(desc, desc_length, "id", 0, &id, NULL, NULL) ||
+          id.type != CBOR_TYPE_BYTES || id.length != 64 ||
+          !cbor_map_find(desc, desc_length, "type", 0, &type, NULL, NULL) ||
+          type.type != CBOR_TYPE_TEXT || type.length != 10 ||
+          memcmp(type.data, "public-key", 10) != 0)
+        goto done;
+      error = delete_managed_credential(id.data);
+      goto done;
+    }
+    if (command.value == CREDMAN_CREDENTIALS) {
+      CborValue hash;
+      if (!has_params ||
+          !cbor_map_find(params, params_length, NULL, 1, &hash, NULL, NULL) ||
+          hash.type != CBOR_TYPE_BYTES || hash.length != 32)
+        goto done;
+      rp_hash = hash.data;
+    } else if (has_params) {
+      goto done;
+    }
+    if (pin_token_has_rp &&
+        (!rp_hash || memcmp(rp_hash, pin_token_rp_hash, 32) != 0)) {
+      error = CTAP2_ERR_PIN_AUTH_INVALID;
+      goto done;
+    }
+    const uint8_t slots = credential_slots((uint8_t)command.value, rp_hash);
+    if (command.value == CREDMAN_METADATA) {
+      const size_t count = slot_count(slots);
+      cbor_encode_map(&encoder, 2);
+      cbor_encode_uint(&encoder, 1);
+      cbor_encode_uint(&encoder, count);
+      cbor_encode_uint(&encoder, 2);
+      cbor_encode_uint(&encoder, PASSKEY_MAX_DISCOVERABLE_CREDENTIALS - count);
+      error = CTAP2_OK;
+      goto done;
+    }
+    list = (CredentialEnumeration){
+        .channel = transport_channel,
+        .started = getSysTime(),
+        .command = command.value == CREDMAN_RPS ? CREDMAN_NEXT_RP
+                                                : CREDMAN_NEXT_CREDENTIAL,
+        .remaining = slots,
+    };
+    error = CTAP2_OK;
+  }
+
+  if (error != CTAP2_OK) goto done;
+  error = CTAP2_ERR_NO_CREDENTIALS;
+  for (size_t i = 0; i < PASSKEY_MAX_DISCOVERABLE_CREDENTIALS; ++i) {
+    if (!(list.remaining & (1u << i))) continue;
+    PasskeyCredential slot;
+    if (storage_getPasskeySlot(i, &slot) &&
+        encode_credential_entry(&encoder, &slot, list.command, !next,
+                                slot_count(list.remaining))) {
+      list.remaining &= ~(1u << i);
+      if (cbor_encoder_size(&encoder)) {
+        credential_enumeration = list;
+        error = CTAP2_OK;
+      } else {
+        error = CTAP2_ERR_OTHER;
+      }
+    }
+    break;
+  }
+
+done:
+  if (error == CTAP2_OK && command.value != CREDMAN_DELETE) {
+    size_t encoded = cbor_encoder_size(&encoder);
+    if (encoded) {
+      response[0] = CTAP2_OK;
+      *response_length = encoded + 1;
+      return;
+    }
+    error = CTAP2_ERR_OTHER;
+  }
+  write_error(error, response, response_length);
 }
 
 static void reset_authenticator(uint8_t* response, size_t* response_length) {
@@ -1300,13 +1667,17 @@ static void get_info(uint8_t* response, size_t capacity, size_t* length) {
   cbor_encode_bytes(&encoder, KEEPKEY_AAGUID, sizeof(KEEPKEY_AAGUID));
 
   cbor_encode_uint(&encoder, 4); /* options */
-  cbor_encode_map(&encoder, 3);
+  cbor_encode_map(&encoder, 5);
   cbor_encode_text(&encoder, "rk", 2);
   cbor_encode_bool(&encoder, true);
   cbor_encode_text(&encoder, "up", 2);
   cbor_encode_bool(&encoder, true);
+  cbor_encode_text(&encoder, "credMgmt", 8);
+  cbor_encode_bool(&encoder, true);
   cbor_encode_text(&encoder, "clientPin", 9);
   cbor_encode_bool(&encoder, storage.pin_set != 0);
+  cbor_encode_text(&encoder, "pinUvAuthToken", 14);
+  cbor_encode_bool(&encoder, true);
 
   cbor_encode_uint(&encoder, 5); /* maxMsgSize */
   cbor_encode_uint(&encoder, 7609);
@@ -1316,7 +1687,7 @@ static void get_info(uint8_t* response, size_t capacity, size_t* length) {
   cbor_encode_uint(&encoder, 1);
 
   cbor_encode_uint(&encoder, 7); /* maxCredentialCountInList */
-  cbor_encode_uint(&encoder, 8);
+  cbor_encode_uint(&encoder, CTAP2_MAX_CREDENTIAL_LIST);
 
   cbor_encode_uint(&encoder, 8); /* maxCredentialIdLength */
   cbor_encode_uint(&encoder, 64);
@@ -1351,9 +1722,13 @@ void ctap2_handle(const uint8_t* request, size_t request_length,
   const uint8_t command = request[0];
   const bool has_body = command == CTAP2_CMD_MAKE_CREDENTIAL ||
                         command == CTAP2_CMD_GET_ASSERTION ||
-                        command == CTAP2_CMD_CLIENT_PIN;
+                        command == CTAP2_CMD_CLIENT_PIN ||
+                        command == CTAP2_CMD_CREDENTIAL_MANAGEMENT;
+  if (command != CTAP2_CMD_CREDENTIAL_MANAGEMENT)
+    memzero(&credential_enumeration, sizeof(credential_enumeration));
   if (has_body && request_length > 1 &&
       !valid_request_map(request + 1, request_length - 1)) {
+    memzero(&credential_enumeration, sizeof(credential_enumeration));
     write_error(CTAP2_ERR_INVALID_CBOR, response, response_length);
     return;
   }
@@ -1362,6 +1737,7 @@ void ctap2_handle(const uint8_t* request, size_t request_length,
   if ((has_body || command == CTAP2_CMD_GET_NEXT_ASSERTION ||
        command == CTAP2_CMD_GET_INFO || command == CTAP2_CMD_RESET) &&
       has_body != (request_length > 1)) {
+    memzero(&credential_enumeration, sizeof(credential_enumeration));
     write_error(CTAP2_ERR_INVALID_LENGTH, response, response_length);
     return;
   }
@@ -1384,6 +1760,10 @@ void ctap2_handle(const uint8_t* request, size_t request_length,
     case CTAP2_CMD_CLIENT_PIN:
       client_pin(request + 1, request_length - 1, response, response_capacity,
                  response_length);
+      return;
+    case CTAP2_CMD_CREDENTIAL_MANAGEMENT:
+      credential_management(request + 1, request_length - 1, response,
+                            response_capacity, response_length);
       return;
     case CTAP2_CMD_RESET:
       reset_authenticator(response, response_length);
