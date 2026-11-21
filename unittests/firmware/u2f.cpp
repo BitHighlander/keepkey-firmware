@@ -1024,6 +1024,43 @@ TEST_F(U2FWait, RegistrationAndSignInRequireAFreshUninterruptedHold) {
   EXPECT_EQ(CTAP2_OK, explicit_sign_in("example.com", credential));
 }
 
+TEST_F(U2FWait, PasskeyHoldAnimatesImmediatelyAndResetsOnRelease) {
+  ctap2_init();
+  const auto credential = fixture_credential("example.com", true);
+  ASSERT_TRUE(storage_storePasskeySlot(&credential));
+  const auto assertion = assertion_request("example.com", credential);
+  std::vector<uint8_t> idle, first_frame;
+  uint32_t prompt = 0;
+
+  button_up = true;
+  poll_script.push_back([&] {
+    idle = screen();
+    prompt = layout_get_generation();
+    button_up = false;
+  });
+  poll_script.push_back([&] {
+    first_frame = screen();
+    EXPECT_NE(idle, first_frame);
+    EXPECT_EQ(prompt, layout_get_generation());
+    advance_ctap_time(600);
+  });
+  poll_script.push_back([&] {
+    EXPECT_NE(first_frame, screen());
+    EXPECT_EQ(prompt, layout_get_generation());
+    button_up = true;
+  });
+  poll_script.push_back([&] {
+    EXPECT_EQ(idle, screen());
+    button_up = false;
+  });
+  poll_script.push_back([&] {
+    EXPECT_EQ(first_frame, screen());
+    advance_ctap_time(1600);
+  });
+  EXPECT_EQ(CTAP2_OK, ctap_call(assertion).at(0));
+  EXPECT_TRUE(poll_script.empty());
+}
+
 TEST_F(U2FWait, ManagementRequiresTheCorrectPinAndPermission) {
   ctap2_init();
   ctap2_set_transport_channel(kCid);
