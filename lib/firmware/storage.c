@@ -754,7 +754,7 @@ bool storage_isPasskeyRetired(const uint8_t id[64]) {
   return false;
 }
 
-bool storage_retirePasskey(PasskeyStorage* storage, size_t index) {
+static bool retirePasskey(PasskeyStorage* storage, size_t index) {
   if (index >= PASSKEY_MAX_DISCOVERABLE_CREDENTIALS) return false;
   PasskeyCredential* slot = &storage->credentials[index];
   if (slot->occupied && !slot->resident_only) {
@@ -769,6 +769,49 @@ bool storage_retirePasskey(PasskeyStorage* storage, size_t index) {
     memcpy(storage->retired_ids[i], digest, PASSKEY_RETIRED_ID_SIZE);
   }
   memzero(slot, sizeof(*slot));
+  return true;
+}
+
+bool storage_hasPasskeyPin(void) {
+  return shadow_config.storage.pub.passkeys.pin_set != 0;
+}
+
+bool storage_storePasskeySlot(const PasskeyCredential* credential) {
+  if (!credential || credential->user_id_length > PASSKEY_USER_ID_MAX ||
+      btc_only_locked || firmware_too_old)
+    return false;
+  PasskeyStorage* storage = &shadow_config.storage.pub.passkeys;
+  size_t target = PASSKEY_MAX_DISCOVERABLE_CREDENTIALS;
+  for (size_t i = 0; i < PASSKEY_MAX_DISCOVERABLE_CREDENTIALS; ++i) {
+    const PasskeyCredential* slot = &storage->credentials[i];
+    if (slot->occupied &&
+        memcmp(slot->rp_id_hash, credential->rp_id_hash,
+               sizeof(slot->rp_id_hash)) == 0 &&
+        slot->user_id_length == credential->user_id_length &&
+        memcmp(slot->user_id, credential->user_id, slot->user_id_length) == 0) {
+      target = i;
+      break;
+    }
+    if (!slot->occupied && target == PASSKEY_MAX_DISCOVERABLE_CREDENTIALS)
+      target = i;
+  }
+  if (!retirePasskey(storage, target)) return false;
+  storage->credentials[target] = *credential;
+  storage_commit();
+  return true;
+}
+
+bool storage_deletePasskeySlot(size_t index,
+                               const PasskeyCredential* expected) {
+  if (btc_only_locked || firmware_too_old ||
+      index >= PASSKEY_MAX_DISCOVERABLE_CREDENTIALS)
+    return false;
+  PasskeyStorage* storage = &shadow_config.storage.pub.passkeys;
+  const PasskeyCredential* current = &storage->credentials[index];
+  if (!current->occupied || memcmp(current, expected, sizeof(*current)) != 0 ||
+      !retirePasskey(storage, index))
+    return false;
+  storage_commit();
   return true;
 }
 

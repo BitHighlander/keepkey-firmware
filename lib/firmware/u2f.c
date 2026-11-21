@@ -869,8 +869,11 @@ static bool wait_for_ctap_presence(bool fits, const char* title,
    * reply. An unrelated screen can never authorize this CTAP operation. */
   const uint32_t prompt = layout_get_generation();
   bool saw_button_up = false, pressing = false;
-  uint32_t pressed_at = 0;
-  for (uint32_t remaining = 10 * U2F_TIMEOUT; remaining > 0; --remaining) {
+  const uint32_t started = getSysTime();
+  uint32_t pressed_at = 0, last_keepalive = started - 100;
+  for (uint32_t polls = 0;
+       hold_ms ? getSysTime() - started < 30000u : polls < 10u * U2F_TIMEOUT;
+       ++polls) {
     if (msg_session_end_pending()) ctap_cancelled = true;
     if (ctap_cancelled || msg_take_tiny_rejection() ||
         layout_get_generation() != prompt) {
@@ -890,7 +893,9 @@ static bool wait_for_ctap_presence(bool fits, const char* title,
         return true;
       }
     }
-    if ((remaining % (U2F_TIMEOUT / 4)) == 0) {
+    if (hold_ms ? getSysTime() - last_keepalive >= 100u
+                : polls % (U2F_TIMEOUT / 4) == 0) {
+      last_keepalive = getSysTime();
       const uint8_t status = 0x02; /* CTAPHID_KEEPALIVE_STATUS_UPNEEDED */
       send_u2fhid_msg(U2FHID_KEEPALIVE, &status, 1);
     }
@@ -939,7 +944,7 @@ bool ctap2_confirm_delete(const char* user_name, const uint8_t id[64]) {
   const bool fits =
       layoutU2FDialog(true, title, "Hold to delete %s (%s).",
                       account[0] ? account : "passkey", fingerprint);
-  return wait_for_ctap_presence(fits, title, "Deleted",
+  return wait_for_ctap_presence(fits, title, "Confirmed",
                                 CTAP2_DESTRUCTIVE_HOLD_MS);
 }
 
