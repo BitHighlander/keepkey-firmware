@@ -700,6 +700,8 @@ jobs:
           path: |
             bin/*.bin
             bin/*.elf
+            bin/firmware.keepkey.map
+            bin/stack-usage.tgz
             bin/arm-build-manifest.json
           retention-days: 90
 
