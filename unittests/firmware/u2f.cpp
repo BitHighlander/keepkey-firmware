@@ -652,6 +652,25 @@ U2FHID_FRAME ping_frame() {
 
 }  // namespace
 
+TEST_F(U2FWait, ReceiveBufferIsExclusiveAndWipedOnRelease) {
+  auto* active = msg_acquire_decode_buffer();
+  ASSERT_NE(nullptr, active);
+  active[0] = 0x55;
+  const U2FHID_FRAME ping = ping_frame();
+  usb_test_receive_u2f(&ping);
+  EXPECT_EQ(1u, count(U2FHID_ERROR, ERR_CHANNEL_BUSY));
+  EXPECT_EQ(0x55, active[0]);
+  msg_release_decode_buffer();
+
+  usb_test_receive_u2f(&ping);
+  EXPECT_EQ(U2FHID_PING, u2f_reply_cmds.back());
+  active = msg_acquire_decode_buffer();
+  ASSERT_NE(nullptr, active);
+  EXPECT_TRUE(std::all_of(active, active + MAX_DECODE_SIZE,
+                          [](uint8_t value) { return value == 0; }));
+  msg_release_decode_buffer();
+}
+
 // While a ceremony waits in the main loop, U2F frames get the busy reply and
 // draw nothing. A session used to end on the home screen with the recovery
 // still armed, taking CharacterAcks with no cipher shown.

@@ -11,6 +11,9 @@ set(CMAKE_SYSROOT /usr/local/arm-none-eabi CACHE PATH "")
 
 set(CMAKE_C_COMPILER arm-none-eabi-gcc CACHE FILEPATH "")
 set(CMAKE_CXX_COMPILER arm-none-eabi-g++ CACHE FILEPATH "")
+# Index GCC's intermediate representation in firmware static archives.
+set(CMAKE_AR arm-none-eabi-gcc-ar CACHE FILEPATH "")
+set(CMAKE_RANLIB arm-none-eabi-gcc-ranlib CACHE FILEPATH "")
 
 # FIXME: teach cmake how to do compiler tests on baremetal
 set(CMAKE_C_COMPILER_WORKS True CACHE BOOL "")

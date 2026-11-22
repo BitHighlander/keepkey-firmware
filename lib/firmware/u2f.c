@@ -147,8 +147,10 @@ uint32_t next_cid(void) {
 // With a packet size of 64 bytes (max for full-speed devices), this means that
 // the maximum message payload length is 64 - 7 + 128 * (64 - 5) = 7609 bytes.
 #define U2F_MAXIMUM_PAYLOAD_LENGTH 7609
+_Static_assert(U2F_MAXIMUM_PAYLOAD_LENGTH <= MAX_DECODE_SIZE,
+               "U2F HID payload must fit in the shared decode buffer");
 typedef struct {
-  uint8_t buf[U2F_MAXIMUM_PAYLOAD_LENGTH];
+  uint8_t* buf;
   uint8_t* buf_ptr;
   uint32_t len;
   uint8_t seq;
@@ -242,8 +244,8 @@ void u2fhid_read(char tiny, const U2FHID_FRAME* f) {
 
     // check out of bounds
     if ((reader->buf_ptr - reader->buf) >= (signed)reader->len ||
-        (reader->buf_ptr + sizeof(f->cont.data) - reader->buf) >
-            (signed)sizeof(reader->buf))
+        (size_t)(reader->buf_ptr - reader->buf) >
+            U2F_MAXIMUM_PAYLOAD_LENGTH - sizeof(f->cont.data))
       return;
     reader->seq++;
     memcpy(reader->buf_ptr, f->cont.data, sizeof(f->cont.data));
@@ -274,6 +276,7 @@ static void u2fhid_session_end(bool msg_tiny) {
   dialog_timeout = 0;
   cid = 0;
   reader = 0;
+  msg_release_decode_buffer();
   usbTiny(0);
   msg_set_tiny(msg_tiny);
   /* As fsm_msgPing(): never leave an armed recovery behind the home screen. */
@@ -328,9 +331,6 @@ static bool hostEndedSession(bool msg_tiny) {
 }
 
 void u2fhid_read_start(const U2FHID_FRAME* f) {
-  U2F_ReadBuffer readbuffer;
-  memzero(&readbuffer, sizeof(readbuffer));
-
   if (!(f->type & TYPE_INIT)) {
     return;
   }
@@ -341,11 +341,16 @@ void u2fhid_read_start(const U2FHID_FRAME* f) {
     return;
   }
 
-  if ((unsigned)MSG_LEN(*f) > sizeof(reader->buf)) {
+  if ((unsigned)MSG_LEN(*f) > U2F_MAXIMUM_PAYLOAD_LENGTH) {
     send_u2fhid_error(f->cid, ERR_INVALID_LEN);
     return;
   }
 
+  U2F_ReadBuffer readbuffer = {.buf = msg_acquire_decode_buffer()};
+  if (readbuffer.buf == NULL) {
+    send_u2fhid_error(f->cid, ERR_CHANNEL_BUSY);
+    return;
+  }
   reader = &readbuffer;
   u2fhid_init_cmd(f);
 
@@ -984,7 +989,8 @@ static void promptRegister(bool request, const U2F_REGISTER_REQ* req) {
   }
 }
 
-void u2f_register(const APDU* a) {
+/* Keep this frame out of the USB dispatcher under LTO. */
+__attribute__((noinline)) void u2f_register(const APDU* a) {
   static U2F_REGISTER_REQ last_req;
   const U2F_REGISTER_REQ* req = (U2F_REGISTER_REQ*)a->data;
 
@@ -1097,7 +1103,8 @@ static void promptAuthenticate(bool request, const U2F_AUTHENTICATE_REQ* req) {
                   appname);
 }
 
-void u2f_authenticate(const APDU* a) {
+/* Keep this frame out of the USB dispatcher under LTO. */
+__attribute__((noinline)) void u2f_authenticate(const APDU* a) {
   const U2F_AUTHENTICATE_REQ* req = (U2F_AUTHENTICATE_REQ*)a->data;
   static U2F_AUTHENTICATE_REQ last_req;
 

@@ -211,6 +211,16 @@ if(NOT ${KK_EMULATOR})
   link_directories(${LIBOPENCM3_PATH}/lib)
   include_directories(${LIBOPENCM3_PATH}/include)
 
+  if(NOT KK_BUILD_BOOTLOADER_TOOLS)
+    option(KK_FIRMWARE_LTO "Optimize the device firmware at link time" ON)
+    if(KK_FIRMWARE_LTO)
+      # Shared archives also supply device tools that use ordinary machine code.
+      add_compile_options($<$<COMPILE_LANGUAGE:C>:-flto> $<$<COMPILE_LANGUAGE:C>:-ffat-lto-objects>
+                          $<$<COMPILE_LANGUAGE:CXX>:-flto> $<$<COMPILE_LANGUAGE:CXX>:-ffat-lto-objects>)
+      set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fno-lto")
+    endif()
+  endif()
+
   # Dummy empty libraries for stack smashing protection support, since we
   # implement __stack_chk_guard and __stack_chk_fail ourselves.
   file(WRITE ${CMAKE_BINARY_DIR}/ssp.c "")
