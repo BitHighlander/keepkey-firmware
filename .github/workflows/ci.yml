@@ -665,15 +665,16 @@ jobs:
                       value.update(chunk)
               return value.hexdigest()
 
+          images = sorted(glob.glob("bin/*.bin") + glob.glob("bin/*.elf"))
+          if not images:
+              raise SystemExit("no ARM outputs found")
           files = []
-          for path in sorted(glob.glob("bin/*.bin") + glob.glob("bin/*.elf")):
+          for path in images + ["bin/firmware.keepkey.map", "bin/stack-usage.tgz"]:
               files.append({
                   "name": os.path.basename(path),
                   "sha256": digest(path),
                   "size": os.path.getsize(path),
               })
-          if not files:
-              raise SystemExit("no ARM outputs found")
           manifest = {
               "schema": 1,
               "generated_at": datetime.datetime.now(
