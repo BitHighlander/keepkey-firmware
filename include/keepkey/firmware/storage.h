@@ -227,6 +227,12 @@ bool storage_getAuthData(authType* returnData);
 /// Read or atomically replace CTAP2 PIN and discoverable-credential metadata.
 void storage_getPasskeyData(PasskeyStorage* data);
 void storage_setPasskeyData(const PasskeyStorage* data);
+bool storage_getPasskeySlot(size_t index, PasskeyCredential* credential);
+bool storage_hasPasskeySlot(const uint8_t rp_hash[32], const uint8_t id[64]);
+bool storage_isPasskeyRetired(const uint8_t id[64]);
+bool storage_hasPasskeyPin(void);
+bool storage_storePasskeySlot(const PasskeyCredential* credential);
+bool storage_deletePasskeySlot(size_t index, const PasskeyCredential* expected);
 
 /// Return the active stateless-credential generation, creating and persisting
 /// one through the checked RNG path on first use. Version-1 U2F handles remain

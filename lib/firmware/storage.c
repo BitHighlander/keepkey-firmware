@@ -811,6 +811,105 @@ void storage_setPasskeyData(const PasskeyStorage* data) {
   storage_commit();
 }
 
+bool storage_getPasskeySlot(size_t index, PasskeyCredential* credential) {
+  if (index >= PASSKEY_MAX_DISCOVERABLE_CREDENTIALS ||
+      !shadow_config.storage.pub.passkeys.credentials[index].occupied)
+    return false;
+  *credential = shadow_config.storage.pub.passkeys.credentials[index];
+  return true;
+}
+
+bool storage_hasPasskeySlot(const uint8_t rp_hash[32], const uint8_t id[64]) {
+  const PasskeyStorage* storage = &shadow_config.storage.pub.passkeys;
+  for (size_t i = 0; i < PASSKEY_MAX_DISCOVERABLE_CREDENTIALS; ++i) {
+    const PasskeyCredential* slot = &storage->credentials[i];
+    if (slot->occupied && memcmp(slot->credential_id, id, 64) == 0 &&
+        memcmp(slot->rp_id_hash, rp_hash, 32) == 0)
+      return true;
+  }
+  return false;
+}
+
+static bool retiredIdEmpty(const uint8_t id[PASSKEY_RETIRED_ID_SIZE]) {
+  const uint8_t empty[PASSKEY_RETIRED_ID_SIZE] = {0};
+  return memcmp(id, empty, sizeof(empty)) == 0;
+}
+
+bool storage_isPasskeyRetired(const uint8_t id[64]) {
+  const PasskeyStorage* storage = &shadow_config.storage.pub.passkeys;
+  /* Normal operation has no retired legacy IDs. */
+  if (retiredIdEmpty(storage->retired_ids[0])) return false;
+  uint8_t digest[32];
+  sha256_Raw(id, 64, digest);
+  for (size_t i = 0; i < PASSKEY_MAX_DISCOVERABLE_CREDENTIALS; ++i) {
+    if (retiredIdEmpty(storage->retired_ids[i])) return false;
+    if (memcmp(storage->retired_ids[i], digest, PASSKEY_RETIRED_ID_SIZE) == 0)
+      return true;
+  }
+  return false;
+}
+
+static bool retirePasskey(PasskeyStorage* storage, size_t index) {
+  if (index >= PASSKEY_MAX_DISCOVERABLE_CREDENTIALS) return false;
+  PasskeyCredential* slot = &storage->credentials[index];
+  if (slot->occupied && !slot->resident_only) {
+    uint8_t digest[32];
+    sha256_Raw(slot->credential_id, sizeof(slot->credential_id), digest);
+    if (retiredIdEmpty(digest)) return false;
+    size_t i = 0;
+    while (i < PASSKEY_MAX_DISCOVERABLE_CREDENTIALS &&
+           !retiredIdEmpty(storage->retired_ids[i]))
+      ++i;
+    if (i == PASSKEY_MAX_DISCOVERABLE_CREDENTIALS) return false;
+    memcpy(storage->retired_ids[i], digest, PASSKEY_RETIRED_ID_SIZE);
+  }
+  memzero(slot, sizeof(*slot));
+  return true;
+}
+
+bool storage_hasPasskeyPin(void) {
+  return shadow_config.storage.pub.passkeys.pin_set != 0;
+}
+
+bool storage_storePasskeySlot(const PasskeyCredential* credential) {
+  if (!credential || credential->user_id_length > PASSKEY_USER_ID_MAX ||
+      btc_only_locked || firmware_too_old)
+    return false;
+  PasskeyStorage* storage = &shadow_config.storage.pub.passkeys;
+  size_t target = PASSKEY_MAX_DISCOVERABLE_CREDENTIALS;
+  for (size_t i = 0; i < PASSKEY_MAX_DISCOVERABLE_CREDENTIALS; ++i) {
+    const PasskeyCredential* slot = &storage->credentials[i];
+    if (slot->occupied &&
+        memcmp(slot->rp_id_hash, credential->rp_id_hash,
+               sizeof(slot->rp_id_hash)) == 0 &&
+        slot->user_id_length == credential->user_id_length &&
+        memcmp(slot->user_id, credential->user_id, slot->user_id_length) == 0) {
+      target = i;
+      break;
+    }
+    if (!slot->occupied && target == PASSKEY_MAX_DISCOVERABLE_CREDENTIALS)
+      target = i;
+  }
+  if (!retirePasskey(storage, target)) return false;
+  storage->credentials[target] = *credential;
+  storage_commit();
+  return true;
+}
+
+bool storage_deletePasskeySlot(size_t index,
+                               const PasskeyCredential* expected) {
+  if (btc_only_locked || firmware_too_old ||
+      index >= PASSKEY_MAX_DISCOVERABLE_CREDENTIALS)
+    return false;
+  PasskeyStorage* storage = &shadow_config.storage.pub.passkeys;
+  const PasskeyCredential* current = &storage->credentials[index];
+  if (!current->occupied || memcmp(current, expected, sizeof(*current)) != 0 ||
+      !retirePasskey(storage, index))
+    return false;
+  storage_commit();
+  return true;
+}
+
 bool storage_getPasskeyCredentialGeneration(
     uint8_t generation[PASSKEY_CREDENTIAL_GENERATION_SIZE],
     bool* legacy_credentials_enabled) {
@@ -1402,12 +1501,16 @@ static void storage_failClosedPasskeyData(PasskeyStorage* passkeys) {
 }
 
 static void storage_validatePasskeyData(PasskeyStorage* passkeys) {
-  if ((passkeys->version != 1 &&
+  if ((passkeys->version != 1 && passkeys->version != 2 &&
        passkeys->version != PASSKEY_STORAGE_VERSION) ||
       passkeys->pin_set > 1 || passkeys->pin_retries > PASSKEY_PIN_RETRIES) {
     storage_failClosedPasskeyData(passkeys);
     return;
   }
+  const bool before_management = passkeys->version < PASSKEY_STORAGE_VERSION;
+  if (before_management)
+    memzero(passkeys->retired_ids, sizeof(passkeys->retired_ids));
+  if (passkeys->version == 2) passkeys->version = PASSKEY_STORAGE_VERSION;
   if (passkeys->version == 1) {
     /* Version 1 ended immediately after credentials[]. Bytes that now hold the
      * generation belonged to V17's randomized reserved area, so never trust
@@ -1422,7 +1525,8 @@ static void storage_validatePasskeyData(PasskeyStorage* passkeys) {
   }
   for (size_t i = 0; i < PASSKEY_MAX_DISCOVERABLE_CREDENTIALS; ++i) {
     PasskeyCredential* credential = &passkeys->credentials[i];
-    if (credential->occupied > 1 ||
+    if (before_management) credential->resident_only = 0;
+    if (credential->occupied > 1 || credential->resident_only > 1 ||
         credential->user_id_length > PASSKEY_USER_ID_MAX) {
       memzero(credential, sizeof(*credential));
       continue;
