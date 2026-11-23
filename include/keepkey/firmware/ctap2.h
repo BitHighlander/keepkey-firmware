@@ -11,6 +11,8 @@
 #define CTAP2_CMD_CLIENT_PIN 0x06
 #define CTAP2_CMD_RESET 0x07
 #define CTAP2_CMD_GET_NEXT_ASSERTION 0x08
+#define CTAP2_CMD_CREDENTIAL_MANAGEMENT 0x0a
+#define CTAP2_MAX_CREDENTIAL_LIST 8
 /* Status byte plus the largest response this firmware encodes
  * (makeCredential, 355 B; see the _Static_asserts in ctap2.c). The encoder
  * fails closed (CTAP2_ERR_OTHER) rather than overrun it. */
@@ -22,6 +24,7 @@
 #define CTAP2_ERR_INVALID_LENGTH 0x03
 #define CTAP2_ERR_INVALID_CBOR 0x12
 #define CTAP2_ERR_MISSING_PARAMETER 0x14
+#define CTAP2_ERR_LIMIT_EXCEEDED 0x15
 #define CTAP2_ERR_CREDENTIAL_EXCLUDED 0x19
 #define CTAP2_ERR_UNSUPPORTED_ALGORITHM 0x26
 #define CTAP2_ERR_OPERATION_DENIED 0x27
@@ -51,6 +54,7 @@ void ctap2_handle(const uint8_t* request, size_t request_length,
 
 bool ctap2_request_user_presence(const char* rp_id, bool registration);
 bool ctap2_user_presence_was_cancelled(void);
+bool ctap2_confirm_delete(const char* user_name, const uint8_t id[64]);
 
 #ifdef EMULATOR
 /// Test-only visibility into the confidential ClientPIN ECDH lifecycle.

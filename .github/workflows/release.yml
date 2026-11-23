@@ -350,6 +350,7 @@ jobs:
           pip install --quiet pyelftools
           python3 tools/check_sram_budget.py \
             --elf release/firmware.keepkey.elf \
+            --lto-map audited-arm/firmware.keepkey.map \
             --su-tar audited-arm/stack-usage.tgz \
             --budgets tools/sram-budgets.json \
             --variant "${{ matrix.variant }}"

@@ -39,6 +39,22 @@ static msg_failure_t msg_failure;
 static bool tiny_handler_rejected;
 static uint8_t decode_buffer[MAX_DECODE_SIZE] __attribute__((aligned(8)));
 
+/* A normal protobuf dispatch and a U2F HID session can each need several
+ * KiB. Only their owner may use this buffer, including across nested polls.
+ * Tiny messages and failure/DebugLink replies have separate storage. */
+static bool decode_buffer_in_use;
+
+uint8_t* msg_acquire_decode_buffer(void) {
+  if (decode_buffer_in_use) return NULL;
+  decode_buffer_in_use = true;
+  return decode_buffer;
+}
+
+void msg_release_decode_buffer(void) {
+  memzero(decode_buffer, sizeof(decode_buffer));
+  decode_buffer_in_use = false;
+}
+
 void* msg_decoded_request_response_scratch(void) { return decode_buffer; }
 
 bool msg_handler_rejected(void) { return tiny_handler_rejected; }
@@ -230,8 +246,10 @@ __attribute__((weak)) void keepkey_after_message_dispatch(void) {}
  */
 static void dispatch(const MessagesMap_t* entry, const uint8_t* msg,
                      uint32_t msg_size) {
-  memzero(decode_buffer, sizeof(decode_buffer));
-
+  if (!msg_acquire_decode_buffer()) {
+    (*msg_failure)(FailureType_Failure_UnexpectedMessage, "Device busy");
+    return;
+  }
   if (!pb_parse(entry, msg, msg_size, decode_buffer)) {
     (*msg_failure)(FailureType_Failure_UnexpectedMessage,
                    "Could not parse protocol buffer message");
@@ -254,7 +272,7 @@ cleanup:
    * other credentials.  Handlers must copy any state they retain; do not keep
    * the source message resident until the next dispatch. */
   if (entry->type == NORMAL_MSG) keepkey_after_message_dispatch();
-  memzero(decode_buffer, sizeof(decode_buffer));
+  msg_release_decode_buffer();
 }
 
 /*
