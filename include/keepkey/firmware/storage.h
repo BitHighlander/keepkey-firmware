@@ -153,7 +153,7 @@ bool storage_isPinCorrect(const char* pin);
 bool storage_isWipeCodeCorrect(const char* wipe_code);
 
 /// Check a proposed ordinary PIN for collision without ending the session.
-bool storage_matchesWipeCode(const char* pin);
+bool storage_matchesWipeCode(const char* wipe_code);
 
 bool storage_hasPin(void);
 void storage_setPin(const char* pin);
