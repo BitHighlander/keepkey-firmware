@@ -1182,7 +1182,10 @@ class PinFailureLimit : public ::testing::Test {
   void SetUp() override {
     kk_test_board_init();
     fsm_init();
+    timer_set_poll_driven(true);
+    timer_poll_ticks(0);
   }
+  void TearDown() override { timer_set_poll_driven(false); }
   void seed() {
     storage_setMnemonic("all all all all all all all all all all all all");
     storage_setPin("1234");
@@ -1259,10 +1262,13 @@ TEST_F(PinFailureLimit, CorrectPinAtBoundaryResetsVerifiedFailures) {
   ScopedFlash flash;
   seed();
   configure(2);
+  EXPECT_EQ(2u, storage_pinAttemptsRemaining());
   EXPECT_FALSE(storage_hasWipeCode());
   enter("5555");
   storage_init();
+  EXPECT_EQ(1u, storage_pinAttemptsRemaining());
   enter("1234");
+  EXPECT_EQ(2u, storage_pinAttemptsRemaining());
   EXPECT_TRUE(storage_isInitialized());
   storage_init();
   // Power loss after precharging the existing backoff counter but before
@@ -1275,6 +1281,7 @@ TEST_F(PinFailureLimit, CorrectPinAtBoundaryResetsVerifiedFailures) {
   enter("5555");
   EXPECT_FALSE(storage_isInitialized());
   storage_init();
+  EXPECT_EQ(0u, storage_pinAttemptsRemaining());
   EXPECT_FALSE(storage_hasPin());
   EXPECT_FALSE(storage_isInitialized());
 }

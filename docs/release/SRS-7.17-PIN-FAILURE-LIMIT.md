@@ -11,9 +11,12 @@ authentication. Clearing an already-clear limit uses the same flow. Removing
 the ordinary PIN also clears the limit. A correct ordinary PIN resets the
 failure streak. A wrong PIN submitted during reauthentication counts too.
 
-The locked production interface has no getter, enrollment flag, countdown or
-last-attempt warning. The ordinary exponential delay and invalid-PIN reply
-apply. A cancelled or malformed entry does not count. Existing anti-brute-force
+After a nonfinal wrong PIN, the device displays how many more wrong entries
+will wipe the wallet. With one try remaining, the PIN matrix warns that a
+wrong entry wipes, including after reboot or when the configured limit is one.
+Anyone watching the display can see the warning. USB discovery omits the
+policy and count, and the failure reply stays generic. The display pause can
+also reveal policy use through response timing. The usual backoff still applies. A cancelled or malformed entry does not count. Existing anti-brute-force
 backoff precharges a submission before verification. The wipe streak advances
 only after verification fails. Interrupted verification can therefore increase
 backoff without consuming a verified failure. Nonfinal failures commit flash
@@ -31,6 +34,6 @@ enforce this policy and can discard it on a storage write.
 On disposable devices, compare the locked USB transcript, OLED, latency and
 reboot behavior at equal failure counts with the feature off and on. Check both
 firmware variants. Cut power at the final verification and during each flash
-erase, including during recovery, and verify that no wipe-specific indication
-precedes commitment. The emulator covers logical behavior. Hardware timing,
+erase, including during recovery, and verify the countdown and final-entry warning. Verify that the
+threshold failure response follows durable commitment. The emulator covers logical behavior. Hardware timing,
 power analysis and stock bootloader behavior require separate validation.

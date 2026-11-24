@@ -2699,6 +2699,11 @@ void storage_setPinFailureLimit(uint8_t limit) {
   shadow_config.storage.pub.confirmed_failures = 0;
 }
 
+unsigned storage_pinAttemptsRemaining(void) {
+  return shadow_config.storage.pub.pin_failure_limit -
+         shadow_config.storage.pub.confirmed_failures;
+}
+
 void storage_recordWrongPin(void) {
   const uint8_t limit = shadow_config.storage.pub.pin_failure_limit;
   if (limit && ++shadow_config.storage.pub.confirmed_failures >= limit) {
