@@ -173,6 +173,9 @@ void session_cachePin(const char* pin);
 bool session_isPinCached(void);
 bool storage_hasWipeCode(void);
 void storage_setWipeCode(const char* wipe_code);
+#define PIN_FAILURE_LIMIT_MAX 16u
+void storage_setPinFailureLimit(uint8_t limit);
+void storage_recordWrongPin(void);
 void storage_resetPinFails(void);
 void storage_increasePinFails(void);
 uint32_t storage_getPinFails(void);

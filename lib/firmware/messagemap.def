@@ -22,6 +22,7 @@
     MSG_IN(MessageType_MessageType_GetCoinTable,                    GetCoinTable,                fsm_msgGetCoinTable)
     MSG_IN(MessageType_MessageType_Ping,                            Ping,                        fsm_msgPing)
     MSG_IN(MessageType_MessageType_ChangePin,                       ChangePin,                   fsm_msgChangePin)
+    MSG_IN(MessageType_MessageType_SetPinFailureLimit,             SetPinFailureLimit,          fsm_msgSetPinFailureLimit)
     MSG_IN(MessageType_MessageType_ChangeWipeCode,                  ChangeWipeCode,              fsm_msgChangeWipeCode)
     MSG_IN(MessageType_MessageType_WipeDevice,                      WipeDevice,                  fsm_msgWipeDevice)
     MSG_IN(MessageType_MessageType_FirmwareErase,                   FirmwareErase,               fsm_msgFirmwareErase)

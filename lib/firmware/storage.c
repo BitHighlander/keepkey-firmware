@@ -1537,6 +1537,11 @@ static void storage_validatePasskeyData(PasskeyStorage* passkeys) {
 void storage_writeStorageV20(char* ptr, size_t len, const Storage* storage) {
   if (len < V20_STORAGE_LEN) return;
   storage_writeStorageV17(ptr, len, storage);
+  // V20 previously wrote bits 21..30 as zero. Older records default to off.
+  uint32_t flags = read_u32_le(ptr + 4);
+  flags |= (uint32_t)storage->pub.pin_failure_limit << 21;
+  flags |= (uint32_t)storage->pub.confirmed_failures << 26;
+  write_u32_le(ptr + 4, flags);
   _Static_assert(sizeof(PasskeyStorage) <= 996,
                  "passkey metadata exceeds the V17 reserved area");
   memcpy(ptr + PASSKEY_STORAGE_OFF, &storage->pub.passkeys,
@@ -1546,6 +1551,13 @@ void storage_writeStorageV20(char* ptr, size_t len, const Storage* storage) {
 void storage_readStorageV20(Storage* storage, const char* ptr, size_t len) {
   if (len < V20_STORAGE_LEN) return;
   storage_readStorageV17(storage, ptr, len);
+  const uint32_t flags = read_u32_le(ptr + 4);
+  const uint8_t limit = (flags >> 21) & 31u;
+  const uint8_t count = (flags >> 26) & 31u;
+  const bool valid =
+      storage->pub.has_pin && limit <= PIN_FAILURE_LIMIT_MAX && count < limit;
+  storage->pub.pin_failure_limit = valid ? limit : 0;
+  storage->pub.confirmed_failures = valid ? count : 0;
   memcpy(&storage->pub.passkeys, ptr + PASSKEY_STORAGE_OFF,
          sizeof(storage->pub.passkeys));
   storage_validatePasskeyData(&storage->pub.passkeys);
@@ -2682,7 +2694,23 @@ void storage_setWipeCode_impl(SessionState* ss, Storage* storage,
 
 bool session_isPinCached(void) { return session.pinCached; }
 
+void storage_setPinFailureLimit(uint8_t limit) {
+  shadow_config.storage.pub.pin_failure_limit = limit;
+  shadow_config.storage.pub.confirmed_failures = 0;
+}
+
+void storage_recordWrongPin(void) {
+  const uint8_t limit = shadow_config.storage.pub.pin_failure_limit;
+  if (limit && ++shadow_config.storage.pub.confirmed_failures >= limit) {
+    storage_duressWipe();
+    return;
+  }
+  // Identical flash rotation and reply ordering with the policy on or off.
+  storage_commit();
+}
+
 void storage_resetPinFails(void) {
+  shadow_config.storage.pub.confirmed_failures = 0;
   shadow_config.storage.pub.pin_failed_attempts = 0;
 
   storage_commit();

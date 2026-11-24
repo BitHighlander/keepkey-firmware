@@ -425,8 +425,8 @@ TEST(Storage, AdvancedModeIsNeverRestoredFromFlash) {
   // policy table is zeroed until storage_init() populates it. Same guarded
   // idiom as signed_metadata.cpp: re-running storage_init() over an already
   // live shadow would try to migrate and decrypt it.
-  if (storage_getLocation() == FLASH_INVALID) {
-    setup();
+  if (!emulator_flash_base || storage_getLocation() == FLASH_INVALID) {
+    if (!emulator_flash_base) setup();
     storage_init();
   }
 
@@ -599,8 +599,8 @@ void storage_readV17(ConfigFlash *, const char *, size_t);
 }
 
 TEST(Storage, AdvancedModeNeverRoundTripsThroughFlash) {
-  if (storage_getLocation() == FLASH_INVALID) {
-    setup();
+  if (!emulator_flash_base || storage_getLocation() == FLASH_INVALID) {
+    if (!emulator_flash_base) setup();
     storage_init();
   }
   struct RestorePolicy {

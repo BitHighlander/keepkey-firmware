@@ -270,7 +270,12 @@ static bool verify_pin(const char* prompt, char* accepted_pin) {
   }
 
   // Authenticate user PIN
-  if (!storage_isPinCorrect(pin_info.pin) || pre_increment_cnt_flg) {
+  if (!storage_isPinCorrect(pin_info.pin)) {
+    storage_recordWrongPin();
+    fsm_sendFailure(FailureType_Failure_PinInvalid, "Invalid PIN");
+    goto done;
+  }
+  if (pre_increment_cnt_flg) {
     fsm_sendFailure(FailureType_Failure_PinInvalid, "Invalid PIN");
     goto done;
   }

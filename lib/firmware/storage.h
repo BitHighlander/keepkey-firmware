@@ -51,6 +51,8 @@ typedef struct _Storage {
     bool has_pin;
     bool has_wipe_code;
     uint32_t pin_failed_attempts;
+    uint8_t pin_failure_limit;
+    uint8_t confirmed_failures;
     bool has_language;
     char language[16];
     bool has_label;
