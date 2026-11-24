@@ -77,7 +77,7 @@ bool change_pin(void);
 
 /// Process a wipe code change.
 /// \returns true iff the wipe code was successfully changed.
-bool change_wipe_code(void);
+bool change_wipe_code(bool removal);
 
 #if DEBUG_LINK
 /// Gets randomized PIN matrix.
