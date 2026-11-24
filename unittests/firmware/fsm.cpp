@@ -1176,7 +1176,6 @@ class PinFailureLimit : public ::testing::Test {
     kk_test_board_init();
     fsm_init();
     timer_set_poll_driven(true);
-    timer_poll_ticks(0);
   }
   void TearDown() override { timer_set_poll_driven(false); }
   void seed() {
