@@ -1053,11 +1053,13 @@ struct PinResponder {
                      &ack);
     });
   }
-  void finish(int expected) {
+  void finish(int expected, int expected_confirmations = -1) {
     kk_test_set_poll_hook({});
     kk_test_set_message_hook({});
     EXPECT_EQ(expected, answers);
-    EXPECT_EQ(approve_confirmation ? 1 : 0, confirmations);
+    EXPECT_EQ(expected_confirmations >= 0 ? expected_confirmations
+                                          : approve_confirmation ? 1 : 0,
+              confirmations);
     EXPECT_FALSE(watchdog);
   }
   ~PinResponder() {
@@ -1186,20 +1188,24 @@ class PinFailureLimit : public ::testing::Test {
   void configure(unsigned limit, const char* pin = "1234") {
     ASSERT_TRUE(kkconfirm_preload(0, 0));
     ASSERT_EQ(0, kkconfirm_drain());
+    // Reauthenticating on the last try asks for the button once more.
+    const int confirms = storage_pinAttemptsRemaining() == 1 ? 2 : 1;
     PinResponder host(pin, true);
     SetPinFailureLimit request = {};
     request.attempts = limit;
     receiveMessage(MessageType_MessageType_SetPinFailureLimit,
                    SetPinFailureLimit_fields, &request);
-    host.finish(1);
+    host.finish(1, confirms);
   }
-  void enter(const char* pin) {
+  // `press` answers the button confirm that guards the last attempt.
+  void enter(const char* pin, bool press = true) {
     session_clear(true);
-    PinResponder host(pin);
+    const bool last = storage_pinAttemptsRemaining() == 1;
+    PinResponder host(pin, press);
     Ping ping = {};
     ping.has_pin_protection = ping.pin_protection = true;
     receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
-    host.finish(1);
+    host.finish(last && !press ? 0 : 1, last && press ? 1 : 0);
   }
 };
 
@@ -1275,6 +1281,26 @@ TEST_F(PinFailureLimit, CorrectPinAtBoundaryResetsVerifiedFailures) {
   storage_init();
   EXPECT_EQ(0u, storage_pinAttemptsRemaining());
   EXPECT_FALSE(storage_hasPin());
+  EXPECT_FALSE(storage_isInitialized());
+}
+
+// A PIN attempt is a host message. Without the button, the attempt that would
+// erase the wallet is never taken, however often the host asks.
+TEST_F(PinFailureLimit, LastAttemptNeedsTheButton) {
+  ScopedFlash flash;
+  seed();
+  configure(2);
+  enter("5555", false);  // not the last attempt: no button involved
+  EXPECT_EQ(FailureType_Failure_PinInvalid, fsm_test_lastFailureCode());
+  EXPECT_EQ(1u, storage_pinAttemptsRemaining());
+  for (int i = 0; i < 3; ++i) {
+    ASSERT_TRUE(kkconfirm_preload_no_sentinel(0, 1));
+    enter("5555", false);
+    EXPECT_EQ(FailureType_Failure_PinCancelled, fsm_test_lastFailureCode());
+    EXPECT_EQ(1u, storage_pinAttemptsRemaining());
+    EXPECT_TRUE(storage_isInitialized());
+  }
+  enter("5555");
   EXPECT_FALSE(storage_isInitialized());
 }
 

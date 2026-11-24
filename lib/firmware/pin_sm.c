@@ -17,6 +17,7 @@
  * along with this library.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "keepkey/board/confirm_sm.h"
 #include "keepkey/board/keepkey_board.h"
 #include "keepkey/board/layout.h"
 #include "keepkey/board/messages.h"
@@ -253,8 +254,16 @@ static bool verify_pin(const char* prompt, char* accepted_pin) {
   pin_info.type = PinMatrixRequestType_PinMatrixRequestType_Current;
 
   // Get PIN
-  if (storage_pinAttemptsRemaining() == 1)
+  if (storage_pinAttemptsRemaining() == 1) {
+    /* A PIN attempt is only a host message. The one that can erase the wallet
+     * needs the button, so a host alone can never spend it. */
+    if (!confirm(ButtonRequestType_ButtonRequest_Other, "Last PIN try",
+                 "A wrong PIN now erases this wallet. Continue?")) {
+      fsm_sendFailure(FailureType_Failure_PinCancelled, "PIN Cancelled");
+      goto done;
+    }
     prompt = "Last PIN try\nWrong = wipe";
+  }
   if (!pin_request(prompt, &pin_info)) {
     // PIN entry has been canceled by the user
     goto done;

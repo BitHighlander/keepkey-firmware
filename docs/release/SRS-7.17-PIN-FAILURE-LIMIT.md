@@ -16,7 +16,10 @@ will wipe the wallet. With one try remaining, the PIN matrix warns that a
 wrong entry wipes, including after reboot or when the configured limit is one.
 Anyone watching the display can see the warning. USB discovery omits the
 policy and count, and the failure reply stays generic. The display pause can
-also reveal policy use through response timing. The usual backoff still applies. A cancelled or malformed entry does not count. Existing anti-brute-force
+also reveal policy use through response timing. The usual backoff still applies. Before the PIN matrix for the last try, the device
+asks for a button press, so a host alone cannot submit the entry that wipes;
+the ButtonRequest lets that host see that one try remains. A cancelled or
+malformed entry does not count. Existing anti-brute-force
 backoff precharges a submission before verification. The wipe streak advances
 only after verification fails. Interrupted verification can therefore increase
 backoff without consuming a verified failure. Nonfinal failures commit flash
@@ -26,8 +29,9 @@ rotation per verified wrong PIN.
 On the threshold failure, the firmware commits the same durable wipe intent
 as the duress PIN before issuing the usual failure response. A cut before the
 intent is durable can leave the earlier wallet. Normal boots after commitment
-finish erasure before selecting a wallet record. Earlier firmware does not
-enforce this policy and can discard it on a storage write.
+finish erasure before selecting a wallet record. The wallet is stored as
+version 21, which firmware before 7.17.0-rc8 refuses to load, so a signed
+downgrade cannot run the wallet without this policy.
 
 ## Hardware acceptance
 
