@@ -80,7 +80,8 @@ void fsm_msgGetFeatures(GetFeatures* msg) {
   resp->pin_protection = storage_hasPin();
   resp->has_passphrase_protection = true;
   resp->passphrase_protection = storage_getPassphraseProtected();
-  resp->has_wipe_code_protection = storage_hasWipeCode();
+  /* Enrollment is private, including protobuf field presence. */
+  resp->has_wipe_code_protection = false;
 
 #ifdef SCM_REVISION
   // cppcheck-suppress sizeofwithnumericparameter
@@ -510,6 +511,7 @@ void fsm_msgChangePin(ChangePin* msg) {
   CHECK_PIN_UNCACHED
 
   if (removal) {
+    storage_setWipeCode("");
     storage_setPin("");
     storage_commit();
     fsm_sendSuccess("PIN removed");
@@ -532,74 +534,19 @@ void fsm_msgChangePin(ChangePin* msg) {
 void fsm_msgChangeWipeCode(ChangeWipeCode* msg) {
   CHECK_STORAGE_WRITABLE
 
-  bool removal = msg->has_remove && msg->remove;
-  bool confirmed = false;
-
-#ifdef ENABLE_WIPECODE  // disable until oled-vuln and automated test is in
-                        // place
-  if (removal) {
-    if (storage_hasWipeCode()) {
-      confirmed = confirm(ButtonRequestType_ButtonRequest_RemoveWipeCode,
-                          "Remove Wipe Code",
-                          "Do you want to remove wipe code protection?");
-    } else {
-      fsm_sendSuccess("Wipe code removed");
-      return;
-    }
-  } else {
-    if (!storage_hasPin()) {
-      fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                      "PIN must be set before setting wipe code");
-      layoutHome();
-      return;
-    }
-
-    if (storage_hasWipeCode())
-      confirmed =
-          confirm(ButtonRequestType_ButtonRequest_ChangeWipeCode,
-                  "Change Wipe Code", "Do you want to change your wipe code?");
-    else
-      confirmed = confirm(ButtonRequestType_ButtonRequest_CreateWipeCode,
-                          "Create Wipe Code",
-                          "Do you want to add wipe code protection?");
-  }
-
-  if (!confirmed) {
-    fsm_sendFailure(
-        FailureType_Failure_ActionCancelled,
-        removal ? "Wipe code removal cancelled" : "Wipe code change cancelled");
-    layoutHome();
-    return;
-  }
-
-  CHECK_PIN_UNCACHED
-
-  if (removal) {
-    storage_setWipeCode("");
+  const bool removal = msg->has_remove && msg->remove;
+  if (!storage_hasPin()) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, "Set a PIN first");
+  } else if (!confirm(ButtonRequestType_ButtonRequest_ChangeWipeCode,
+                      removal ? "Clear duress PIN" : "Set duress PIN",
+                      removal ? "Clear duress PIN protection?"
+                              : "Entering this PIN will erase your wallet.")) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, "Cancelled");
+  } else if (change_wipe_code(removal)) {
     storage_commit();
-    fsm_sendSuccess("Wipe code removed");
-    layoutHome();
-    return;
+    fsm_sendSuccess(removal ? "Duress PIN cleared" : "Duress PIN set");
   }
-
-  if (!change_wipe_code()) {
-    fsm_sendFailure(FailureType_Failure_ActionCancelled,
-                    "Wipe codes do not match");
-    layoutHome();
-    return;
-  }
-
-  storage_commit();
-  fsm_sendSuccess("Wipe code changed");
   layoutHome();
-
-#else  // ENABLE_WIPECODE
-  (void)removal;
-  (void)confirmed;
-
-  fsm_sendSuccess("Wipe code function not available for this device");
-  layoutHome();
-#endif
 }
 
 /* Budget returned bytes, not requests. A confirmed factory wipe starts a new

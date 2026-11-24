@@ -107,8 +107,9 @@ bool storage_isBitcoinOnlyTooNew(void);
 ///        The bytes remain untouched until an explicit wipe.
 bool storage_isFirmwareTooOld(void);
 
-/// \brief Clear storage key and storage key fingerprint.
-void storage_clearKeys(void);
+/// \brief Commit a duress wipe before clearing wallet storage and session
+/// state.
+void storage_duressWipe(void);
 
 /// \brief Reset session states.
 /// \param clear_pin whether to clear the pin as well.
@@ -162,6 +163,9 @@ bool storage_isPinCorrect(const char* pin);
 /// \brief Validate wipe code.
 /// \return true iff the privided wipe code is correct.
 bool storage_isWipeCodeCorrect(const char* wipe_code);
+
+/// Check a proposed ordinary PIN for collision without ending the session.
+bool storage_matchesWipeCode(const char* pin);
 
 bool storage_hasPin(void);
 void storage_setPin(const char* pin);
