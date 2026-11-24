@@ -253,6 +253,8 @@ static bool verify_pin(const char* prompt, char* accepted_pin) {
   pin_info.type = PinMatrixRequestType_PinMatrixRequestType_Current;
 
   // Get PIN
+  if (storage_pinAttemptsRemaining() == 1)
+    prompt = "Last PIN try\nWrong = wipe";
   if (!pin_request(prompt, &pin_info)) {
     // PIN entry has been canceled by the user
     goto done;
@@ -270,7 +272,19 @@ static bool verify_pin(const char* prompt, char* accepted_pin) {
   }
 
   // Authenticate user PIN
-  if (!storage_isPinCorrect(pin_info.pin) || pre_increment_cnt_flg) {
+  if (!storage_isPinCorrect(pin_info.pin)) {
+    storage_recordWrongPin();
+    const unsigned remaining = storage_pinAttemptsRemaining();
+    if (remaining) {
+      snprintf(warn_msg_fmt, sizeof(warn_msg_fmt), "%u wrong PIN%s until wipe",
+               remaining, remaining == 1 ? "" : "s");
+      layout_warning_static(warn_msg_fmt);
+      delay_ms(3000);
+    }
+    fsm_sendFailure(FailureType_Failure_PinInvalid, "Invalid PIN");
+    goto done;
+  }
+  if (pre_increment_cnt_flg) {
     fsm_sendFailure(FailureType_Failure_PinInvalid, "Invalid PIN");
     goto done;
   }
