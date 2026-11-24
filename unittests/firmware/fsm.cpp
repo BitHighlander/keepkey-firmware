@@ -1005,6 +1005,7 @@ class AutoLockProgress : public ::testing::Test {
 // the firmware thread. No background reader may race the matrix shuffle/wipe.
 struct PinResponder {
   std::string pin;
+  std::vector<std::string> subsequent_pins;
   bool pending = false;
   int answers = 0;
   int polls = 0;
@@ -1031,6 +1032,8 @@ struct PinResponder {
       }
       if (!pending) return;
       pending = false;
+      if (answers > 0 && size_t(answers) <= subsequent_pins.size())
+        pin = subsequent_pins[answers - 1];
       const std::string matrix = get_pin_matrix();
       PinMatrixAck ack = {};
       for (size_t i = 0; i < pin.size(); ++i) {
@@ -1062,6 +1065,110 @@ struct PinResponder {
     kk_test_set_message_hook({});
   }
 };
+
+TEST(Fsm, DuressPinEnrollmentAndWipe) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  storage_setMnemonic("all all all all all all all all all all all all");
+  storage_setPin("1234");
+  storage_commit();
+  auto expect_private = [] {
+    fsm_msgGetFeatures(nullptr);
+    size_t size = 0;
+    const auto* features =
+        reinterpret_cast<const Features*>(fsm_test_responseArena(&size));
+    ASSERT_GE(size, sizeof(*features));
+    EXPECT_FALSE(features->has_wipe_code_protection);
+  };
+  expect_private();
+  ChangeWipeCode change = {};
+  for (const char* candidate : {"1234", "4321"}) {
+    ASSERT_TRUE(kkconfirm_preload(0, 0));
+    ASSERT_EQ(0, kkconfirm_drain());
+    PinResponder host("1234", true);
+    host.subsequent_pins = {candidate, candidate};
+    receiveMessage(MessageType_MessageType_ChangeWipeCode,
+                   ChangeWipeCode_fields, &change);
+    host.finish(3);
+    EXPECT_EQ(std::string(candidate) != "1234", storage_hasWipeCode());
+  }
+  storage_init();
+  expect_private();
+  ASSERT_TRUE(storage_hasWipeCode());
+  Ping ping = {};
+  ping.has_pin_protection = ping.pin_protection = true;
+  for (const char* pin : {"7777", "1234", "4321"}) {
+    session_clear(true);
+    PinResponder host(pin);
+    receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+    host.finish(1);
+    EXPECT_EQ(std::string(pin) != "4321", storage_isInitialized());
+  }
+  storage_init();
+  EXPECT_FALSE(storage_hasPin());
+  EXPECT_FALSE(storage_isInitialized());
+  EXPECT_FALSE(storage_hasWipeCode());
+}
+
+TEST(Fsm, DuressPinClearRequiresApprovalAndPinInBothStates) {
+  kk_test_board_init();
+  fsm_init();
+  ScopedFlash flash;
+  storage_setMnemonic("all all all all all all all all all all all all");
+  storage_setPin("1234");
+  storage_setWipeCode("4321");
+  storage_commit();
+  ChangeWipeCode clear = {};
+  clear.has_remove = clear.remove = true;
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    ASSERT_TRUE(kkconfirm_preload(0, 0));
+    ASSERT_EQ(0, kkconfirm_drain());
+    PinResponder host(attempt == 0 ? "1111" : "1234", true);
+    receiveMessage(MessageType_MessageType_ChangeWipeCode,
+                   ChangeWipeCode_fields, &clear);
+    host.finish(1);
+    storage_init();
+    EXPECT_EQ(attempt == 0, storage_hasWipeCode());
+    EXPECT_TRUE(storage_isInitialized());
+  }
+}
+
+TEST(Fsm, DuressPinInterruptedEraseRecoversBeforeWalletSelection) {
+  kk_test_board_init();
+  fsm_init();
+  // Snapshots of flash at the write boundary and during each sector erase.
+  constexpr char intent[] = "KK-DURESS-WIPE1";
+  for (unsigned phase = 0; phase < 5; ++phase) {
+    SCOPED_TRACE(phase);
+    ScopedFlash flash;
+    storage_setMnemonic("all all all all all all all all all all all all");
+    storage_setPin("1234");
+    storage_commit();
+    const Allocation active = storage_getLocation();
+    const Allocation marker = next_storage(active);
+    const Allocation journal = next_storage(marker);
+    auto bytes = [](Allocation sector) {
+      return reinterpret_cast<uint8_t*>(flash_write_helper(sector));
+    };
+    std::memcpy(bytes(journal) + STORAGE_SECTOR_LEN - sizeof(intent), intent,
+                phase == 0 ? sizeof(intent) / 2 : sizeof(intent));
+    if (phase == 2) std::memset(bytes(active), 0xff, STORAGE_SECTOR_LEN / 2);
+    if (phase >= 3) {
+      std::memset(bytes(active), 0xff, STORAGE_SECTOR_LEN);
+      std::memset(bytes(marker), 0xff, STORAGE_SECTOR_LEN / 2);
+    }
+    if (phase == 4) {
+      std::memset(bytes(marker), 0xff, STORAGE_SECTOR_LEN);
+      std::memset(bytes(journal) + STORAGE_SECTOR_LEN - 4, 0xff, 4);
+    }
+    for (int boot = 0; boot < 2; ++boot) {
+      storage_init();
+      EXPECT_EQ(phase == 0, storage_hasPin());
+      EXPECT_EQ(phase == 0, storage_isInitialized());
+    }
+  }
+}
 
 // Locks a PIN-protected session by idling, then unlocks it with a protected
 // Ping answered with `pin`.

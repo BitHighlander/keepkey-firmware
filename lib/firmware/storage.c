@@ -143,7 +143,6 @@ static void storage_stampBitcoinOnlySeed(void) {}
 // These won't survive resets like the stuff in flash would, but thats a
 // reasonable compromise given how testing works.
 char debuglink_pin[10];
-char debuglink_wipe_code[10];
 char debuglink_mnemonic[241];
 HDNode debuglink_node;
 #endif
@@ -1785,7 +1784,35 @@ static bool storage_selectNewestRecord(Allocation* out) {
   return true;
 }
 
+/* The spare sector after a successful PIN-attempt commit contains no active
+ * wallet. Keep the wipe intent there until BOTH other sectors read erased. */
+static const uint8_t wipe_intent[] = "KK-DURESS-WIPE1";
+#define WIPE_INTENT_OFFSET (STORAGE_SECTOR_LEN - sizeof(wipe_intent))
+
+static bool wipe_pending(Allocation sector) {
+  return memcmp((const void*)(flash_write_helper(sector) + WIPE_INTENT_OFFSET),
+                wipe_intent, sizeof(wipe_intent)) == 0;
+}
+
+static void erase_wallet_sector(Allocation sector) {
+  flash_erase_word(sector);
+  const volatile uint8_t* bytes =
+      (const volatile uint8_t*)flash_write_helper(sector);
+  for (size_t i = 0; i < STORAGE_SECTOR_LEN; ++i) {
+    if (bytes[i] != 0xff) shutdown();
+  }
+}
+
+static void finish_duress_wipe(Allocation journal) {
+  erase_wallet_sector(next_storage(journal));
+  erase_wallet_sector(next_storage(next_storage(journal)));
+  erase_wallet_sector(journal);
+}
+
 void storage_init(void) {
+  for (Allocation s = FLASH_STORAGE1; s <= FLASH_STORAGE3; ++s) {
+    if (wipe_pending(s)) finish_duress_wipe(s);
+  }
 #if !BITCOIN_ONLY
   /* A reopened flash buffer is a new session (emulator stays loaded). */
   signed_metadata_clear_signers();
@@ -1927,21 +1954,18 @@ void storage_wipe(void) {
   firmware_too_old = false;
 }
 
-void storage_clearKeys(void) {
+void storage_duressWipe(void) {
+  const Allocation journal = next_storage(next_storage(storage_location));
+  if (!flash_write_word(journal, WIPE_INTENT_OFFSET, sizeof(wipe_intent),
+                        wipe_intent) ||
+      !wipe_pending(journal)) {
+    shutdown();
+  }
+  finish_duress_wipe(journal);
+  ctap2_clear_session();
   fsm_abort_workflows();
-  session_clear_impl(&session, &shadow_config.storage, false);
-  /* The wipe code erases the keys; the seed trezor-crypto cached must go
-   * with them. */
-  bip39_cache_clear();
-  bip32_cache_clear();
-  memzero(&session.storageKey, sizeof(session.storageKey));
-  memzero(&shadow_config.storage.pub.wrapped_storage_key,
-          sizeof(shadow_config.storage.pub.wrapped_storage_key));
-  memzero(&shadow_config.storage.pub.storage_key_fingerprint,
-          sizeof(shadow_config.storage.pub.storage_key_fingerprint));
-
-  session.pinCached = false;
-  storage_commit();
+  storage_init();
+  session_clear(true);
 }
 
 void session_clear(bool clear_pin) {
@@ -2360,20 +2384,22 @@ void storage_setPin_impl(SessionState* ss, Storage* storage, const char* pin) {
   storage_secMigrate(ss, storage, /*encrypt=*/true);
 }
 
-bool storage_isWipeCodeCorrect(const char* wipe_code) {
+bool storage_matchesWipeCode(const char* wipe_code) {
   uint8_t scratch_key[64];
   pintest_t ret = storage_isWipeCodeCorrect_impl(
       wipe_code, shadow_config.storage.pub.wrapped_wipe_code_key,
       shadow_config.storage.pub.wipe_code_key_fingerprint, scratch_key,
       shadow_config.storage.pub.random_salt);
 
-  if (ret == PIN_WRONG) {
-    session_clear_impl(&session, &shadow_config.storage, /*clear_pin=*/true);
-    memzero(session.storageKey, sizeof(session.storageKey));
-  }
+  memzero(scratch_key, sizeof(scratch_key));
+  return ret != PIN_WRONG && shadow_config.storage.pub.has_wipe_code;
+}
 
-  memset(scratch_key, 0, sizeof(scratch_key));
-  return ret;
+bool storage_isWipeCodeCorrect(const char* wipe_code) {
+  if (storage_matchesWipeCode(wipe_code)) return true;
+  session_clear_impl(&session, &shadow_config.storage, /*clear_pin=*/true);
+  memzero(session.storageKey, sizeof(session.storageKey));
+  return false;
 }
 
 bool storage_hasWipeCode(void) {
@@ -2386,10 +2412,6 @@ bool storage_hasWipeCode_impl(const Storage* storage) {
 
 void storage_setWipeCode(const char* wipe_code) {
   storage_setWipeCode_impl(&session, &shadow_config.storage, wipe_code);
-
-#if DEBUG_LINK
-  strlcpy(debuglink_wipe_code, wipe_code, sizeof(debuglink_wipe_code));
-#endif
 }
 
 void storage_setWipeCode_impl(SessionState* ss, Storage* storage,

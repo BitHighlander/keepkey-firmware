@@ -1183,7 +1183,7 @@ TEST(Storage, WipeCodeClearsCryptoSeedCache) {
   kk_test_board_init();
   storage_wipe();
   storage_init();
-  storage_clearKeys();
+  storage_duressWipe();
   emulator_flash_base = previous_flash;
 
   mnemonic_to_seed(mnemonic, "wiped", seed, progress);

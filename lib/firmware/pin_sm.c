@@ -223,7 +223,7 @@ static void pin_fail_wait_handler(void) {
                  (total_wait - remaining_wait) * 1000 / total_wait);
 }
 
-bool pin_protect(const char* prompt) {
+static bool verify_pin(const char* prompt, char* accepted_pin) {
   if (!storage_hasPin()) {
     return true;
   }
@@ -264,9 +264,7 @@ bool pin_protect(const char* prompt) {
 
   // Check if PIN entered is wipe code
   if (storage_isWipeCodeCorrect(pin_info.pin)) {
-    fsm_abort_workflows();
-    session_clear(false);
-    storage_clearKeys();
+    storage_duressWipe();
     fsm_sendFailure(FailureType_Failure_PinInvalid, "Invalid PIN");
     goto done;
   }
@@ -278,6 +276,7 @@ bool pin_protect(const char* prompt) {
   }
 
   storage_resetPinFails();
+  if (accepted_pin) strlcpy(accepted_pin, pin_info.pin, PIN_BUF);
   note_pin_accepted();
   ret = true;
 
@@ -285,6 +284,8 @@ done:
   memzero(&pin_info, sizeof(pin_info));
   return ret;
 }
+
+bool pin_protect(const char* prompt) { return verify_pin(prompt, NULL); }
 
 bool pin_protect_cached(void) {
   if (session_isPinCached()) {
@@ -343,6 +344,12 @@ bool change_pin(void) {
   char pin[PIN_BUF]; /* memzero'd below; see change_pin_staged() */
   const PinChangeResult result = request_new_pin(pin, sizeof(pin));
 
+  if (result == PIN_CHANGE_OK && storage_matchesWipeCode(pin)) {
+    memzero(pin, sizeof(pin));
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    "Choose a different PIN");
+    return false;
+  }
   if (result == PIN_CHANGE_OK) storage_setPin(pin);
   if (result == PIN_CHANGE_MISMATCH)
     fsm_sendFailure(FailureType_Failure_ActionCancelled, "PINs do not match");
@@ -351,9 +358,19 @@ bool change_pin(void) {
   return result == PIN_CHANGE_OK;
 }
 
-bool change_wipe_code(void) {
+bool change_wipe_code(bool removal) {
+  char current[PIN_BUF] = {0};
+  /* Both structs are memzero'd on every exit path below, including the
+     failure ones -- same discipline as change_pin_staged() above. */
   PINInfo wipe_code_info_first, wipe_code_info_second;
   bool ret = false;
+
+  if (!storage_hasPin() || !verify_pin("Enter\nYour PIN", current)) goto done;
+  if (removal) {
+    storage_setWipeCode("");
+    ret = true;
+    goto done;
+  }
 
   /* Set request types */
   wipe_code_info_first.type =
@@ -370,6 +387,12 @@ bool change_wipe_code(void) {
   }
 
   if (strcmp(wipe_code_info_first.pin, wipe_code_info_second.pin) != 0) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, "PINs do not match");
+    goto done;
+  }
+  if (strcmp(current, wipe_code_info_first.pin) == 0) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled,
+                    "Choose a different PIN");
     goto done;
   }
 
@@ -377,6 +400,7 @@ bool change_wipe_code(void) {
   ret = true;
 
 done:
+  memzero(current, sizeof(current));
   memzero(&wipe_code_info_first, sizeof(wipe_code_info_first));
   memzero(&wipe_code_info_second, sizeof(wipe_code_info_second));
   return ret;
