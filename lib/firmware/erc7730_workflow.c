@@ -60,9 +60,13 @@ bool erc7730_workflow_begin(Erc7730Workflow* workflow,
     return false;
   }
   workflow->review_tier = identity->tier;
-  if (tx->data_length >= 68 &&
-      ethereum_isAllowanceSelector(tx->data_initial_chunk.bytes, 4))
+  if (ethereum_isAllowanceSelector(tx->data_initial_chunk.bytes, 4)) {
+    if (tx->data_length < 68) {
+      fail(workflow);
+      return false;
+    }
     workflow->allowance = ERC7730_ALLOWANCE_CALL;
+  }
   return begin_replay(workflow, identity);
 }
 
@@ -913,14 +917,12 @@ Erc7730AbiResult erc7730_workflow_calldata_feed(Erc7730Workflow* workflow,
   /* The first pass reads an approval's words for the allowance policy. */
   if (workflow->depth == 0 && !workflow->calldata_validated &&
       (workflow->allowance & ERC7730_ALLOWANCE_CALL)) {
-    for (size_t i = 0; i < data_len; i++) {
+    for (size_t i = 0; i < data_len && workflow->outer_received + i < 64; i++) {
       const uint32_t at = workflow->outer_received + (uint32_t)i;
       if (at < 12 && data[i] != 0)
         workflow->allowance |= ERC7730_ALLOWANCE_DIRTY;
       if (at >= 12 && at < 32) workflow->allowance_spender[at - 12] = data[i];
-      /* ethereum_allowanceAmountIsUnlimited(): the amount's top bit. */
-      if (at == 32 && (data[i] & 0x80) != 0)
-        workflow->allowance |= ERC7730_ALLOWANCE_UNLIMITED;
+      if (at >= 32) workflow->field.approval_amount[at - 32] = data[i];
     }
   }
   Erc7730AbiResult result = ERC7730_ABI_OK;
@@ -997,6 +999,10 @@ Erc7730AbiResult erc7730_workflow_calldata_finish(Erc7730Workflow* workflow) {
   if (workflow->depth == 0)
     workflow->suffix_length =
         (uint32_t)erc7730_abi_stream_suffix(&workflow->calldata);
+  if (workflow->suffix_length > ERC7730_SUFFIX_SHOWN_MAX) {
+    fail(workflow);
+    return ERC7730_ABI_BOUNDS;
+  }
   /* The full EIP-712 digest is checked immediately after this ABI pass,
    * before its intent, fields or any signature can be approved. */
   if (workflow->typed_root) {
@@ -1214,14 +1220,14 @@ bool erc7730_workflow_safe_batch_call(Erc7730Workflow* workflow) {
   f->inner_length = b->length;
   f->inner_selector_length = b->prefix_length < 4 ? b->prefix_length : 4;
   memcpy(f->inner_selector, b->prefix, f->inner_selector_length);
-  f->unlimited_approve = false;
-  if (b->prefix_length == 68 &&
-      (memcmp(b->prefix, "\x09\x5e\xa7\xb3", 4) == 0 ||
-       memcmp(b->prefix, "\x39\x50\x93\x51", 4) == 0)) {
+  /* As erc7730_workflow_field_embedded(): an incomplete or dirty approval is
+   * refused, and a whole one keeps its words for the device's own screen. */
+  if (b->prefix_length >= 4 && ethereum_isAllowanceSelector(b->prefix, 4)) {
+    if (b->prefix_length < 68) return false;
     for (size_t i = 4; i < 16; i++)
       if (b->prefix[i]) return false;
-    f->unlimited_approve = ethereum_allowanceAmountIsUnlimited(b->prefix + 36);
-    if (f->unlimited_approve) memcpy(f->approve_spender, b->prefix + 16, 20);
+    memcpy(f->approve_spender, b->prefix + 16, 20);
+    memcpy(f->approval_amount, b->prefix + 36, 32);
   }
   workflow->safe_delegatecall = false;
   workflow->typed_batch = true;
@@ -1446,19 +1452,19 @@ bool erc7730_workflow_field_embedded(Erc7730Workflow* workflow) {
   /* An inner approve() or increaseAllowance() gets the top-level policy
    * (ethereum.c): a dirty spender word is refused, and an amount of 2^255 or
    * more signs only after the UNLIMITED warning. */
-  if (capture.length == ERC7730_ABI_LOCATE_PREFIX &&
-      (memcmp(capture.data, "\x09\x5e\xa7\xb3", 4) == 0 ||
-       memcmp(capture.data, "\x39\x50\x93\x51", 4) == 0)) {
+  if (capture.length >= 4 && ethereum_isAllowanceSelector(capture.data, 4)) {
+    if (capture.length < 68) {
+      memzero(&capture, sizeof(capture));
+      return false;
+    }
     for (size_t i = 4; i < 16; i++) {
       if (capture.data[i] != 0) {
         memzero(&capture, sizeof(capture));
         return false;
       }
     }
-    field->unlimited_approve =
-        ethereum_allowanceAmountIsUnlimited(capture.data + 36);
-    if (field->unlimited_approve)
-      memcpy(field->approve_spender, capture.data + 16, 20);
+    memcpy(field->approve_spender, capture.data + 16, 20);
+    memcpy(field->approval_amount, capture.data + 36, 32);
   }
   const size_t selector_length = capture.length < 4 ? capture.length : 4;
   memcpy(field->inner_selector, capture.data, selector_length);

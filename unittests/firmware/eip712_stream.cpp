@@ -2981,6 +2981,38 @@ TEST(Eip712Stream, MultiSendUnlimitedIncreaseAllowanceWarns) {
   EXPECT_EQ(r.bodies[r.warned[0]], allowText(increase, "DAI"));
 }
 
+TEST(Eip712Stream, AdditionalSafeApprovalFamiliesHaveDeviceOwnedScreens) {
+  Bytes increase = approveCall(0, 0xff);
+  const Bytes selector = fromHex("d73dd623");
+  std::copy(selector.begin(), selector.end(), increase.begin());
+  EXPECT_EQ(
+      signMultiSend(multiSendCall(packedCall(kDai, increase))).warned.size(),
+      1u);
+
+  Bytes operator_call = approveCall(0, 0);
+  const Bytes operator_selector = fromHex("a22cb465");
+  std::copy(operator_selector.begin(), operator_selector.end(),
+            operator_call.begin());
+  operator_call[67] = 1;
+  Bytes permit = fromHex("87517c45");
+  permit.resize(132, 0);
+  permit[35] = 1;
+  permit[67] = 2;
+  permit[99] = 3;
+  Bytes calls = packedCall(kDai, operator_call);
+  append(&calls, packedCall(kUsdc, permit));
+  const MsRun result = signMultiSend(multiSendCall(calls));
+  ASSERT_EQ(result.kind, EIP712_REQ_DONE);
+  EXPECT_TRUE(std::any_of(result.titles.begin(), result.titles.end(),
+                          [](const std::string& t) {
+                            return t.rfind("Operator approval", 0) == 0;
+                          }));
+  EXPECT_TRUE(std::any_of(result.titles.begin(), result.titles.end(),
+                          [](const std::string& t) {
+                            return t.rfind("Permit2 approval", 0) == 0;
+                          }));
+}
+
 TEST(Eip712Stream, MultiSendFiniteApproveHasNoWarning) {
   Bytes packed = packedCall(kDai, approveCall(0, 0x01));
   append(&packed, packedCall(kUsdc, swapCall(1500)));
@@ -3016,6 +3048,24 @@ TEST(Eip712Stream, MultiSendDirtySpenderIsRefused) {
     EXPECT_TRUE(r.warned.empty());
     // Whole, it is refused before any screen of the bytes.
     if (!chunked) EXPECT_EQ(r.first_data, SIZE_MAX);
+  }
+}
+
+// Tokens built before Solidity 0.5 zero-pad a cut-short approval, so it is
+// refused, not shown as plain bytes: as the SafeTx data and as a batched call.
+TEST(Eip712Stream, TruncatedApprovalIsRefused) {
+  for (size_t len : {4u, 37u, 67u}) {
+    SCOPED_TRACE(len);
+    Bytes call = approveCall(0, 0xff);
+    call.resize(len);
+    for (bool batched : {false, true}) {
+      SCOPED_TRACE(batched);
+      const MsRun r = signMultiSend(
+          batched ? multiSendCall(packedCall(kDai, call)) : call);
+      EXPECT_EQ(r.kind, EIP712_REQ_FAIL);
+      EXPECT_EQ(r.error, "Malformed ERC20 approval");
+      EXPECT_TRUE(r.warned.empty());
+    }
   }
 }
 
@@ -3670,8 +3720,8 @@ TEST(Eip712Stream, SafeTxSafeLibrariesSayWhatTheyDo) {
     const char* text;
   };
   const std::vector<Lib> libs = {
-      {&kSafeMigrations, fromHex("07f464a4"), "Safe upgrade", kMigrationText},
-      {&kSafeMigrations, fromHex("68cb3d94"), "Safe upgrade", kMigrationText},
+      {&kSafeMigrations, fromHex("07f464a4"), "Safe migration", kMigrationText},
+      {&kSafeMigrations, fromHex("68cb3d94"), "Safe migration", kMigrationText},
   };
   for (const Lib& lib : libs) {
     for (const SafeDeployment& d : *lib.deployments) {
@@ -3766,7 +3816,7 @@ TEST(Eip712Stream, SafeTxL2MigrationNeedsSafesOwnArguments) {
             signMultiSend(c.data, 400, 1, operation_first, to, place, 8453);
         ASSERT_EQ(r.kind, EIP712_REQ_DONE);
         const std::vector<std::string> said =
-            screensTitled(r.titles, r.bodies, "Safe upgrade");
+            screensTitled(r.titles, r.bodies, "Safe migration");
         if (c.text) {
           EXPECT_TRUE(r.safe_delegated.empty());
           ASSERT_EQ(said.size(), 1u);
@@ -3794,7 +3844,7 @@ TEST(Eip712Stream, SafeTxL2MigrationNeedsSafesOwnArguments) {
             signMultiSend(abiCall("d9a20812", {l2.address, handler.address}),
                           400, 1, false, lib.address, TO_FIRST, chain);
         const bool calm = deployedOn(l2, chain) && deployedOn(handler, chain);
-        EXPECT_EQ(screensTitled(r.titles, r.bodies, "Safe upgrade").size(),
+        EXPECT_EQ(screensTitled(r.titles, r.bodies, "Safe migration").size(),
                   calm ? 1u : 0u);
         EXPECT_EQ(r.safe_delegated.size(), calm ? 0u : 1u);
       }
@@ -3809,9 +3859,9 @@ TEST(Eip712Stream, DecliningASafeLibraryScreenSignsNothing) {
     const char* title;
   };
   const std::vector<Case> cases = {
-      {kSafeMigrations[2].address, fromHex("68cb3d94"), "Safe upgrade"},
+      {kSafeMigrations[2].address, fromHex("68cb3d94"), "Safe migration"},
       {kSafeToL2Migrations[0].address,
-       abiCall("ef2624ae", {kSafeL2Singletons[3].address}), "Safe upgrade"},
+       abiCall("ef2624ae", {kSafeL2Singletons[3].address}), "Safe migration"},
   };
   for (const Case& c : cases) {
     SCOPED_TRACE(c.to);
@@ -3849,13 +3899,14 @@ TEST(Eip712Stream, MultiSendDelegatecallToSafeMigrationIsSaid) {
         screensTitled(r.titles, r.bodies, "Delegatecall in batch").empty());
     EXPECT_TRUE(r.safe_delegated.empty());
     const std::vector<std::string> said =
-        screensTitled(r.titles, r.bodies, "Safe upgrade");
+        screensTitled(r.titles, r.bodies, "Safe migration");
     ASSERT_EQ(said.size(), 1u);
     EXPECT_EQ(said[0], squeezed(std::string("Call #1 ") + kMigrationText));
     // Declining it signs nothing.
-    const auto at = std::find_if(
-        r.titles.begin(), r.titles.end(),
-        [&](const std::string& t) { return t.rfind("Safe upgrade", 0) == 0; });
+    const auto at = std::find_if(r.titles.begin(), r.titles.end(),
+                                 [&](const std::string& t) {
+                                   return t.rfind("Safe migration", 0) == 0;
+                                 });
     const int before = (int)(at - r.titles.begin());
     const MsRun declined = signMultiSend(multiSendCall(packed), before, 1,
                                          false, multisend, TO_FIRST, 100);
@@ -3968,13 +4019,13 @@ TEST(Eip712Stream, RealSafeTxsHashAsOnChainAndReadCalm) {
   // One canonical batch per chain (two on Base), then Safe's libraries.
   const std::map<std::string, std::vector<std::string>> library = {
       {"gnosis-safemigration150-l2",
-       {"Safe upgrade", std::string("SafeTx ") + kMigrationText}},
+       {"Safe migration", std::string("SafeTx ") + kMigrationText}},
       {"gnosis-safemigration150-l2-handler",
-       {"Safe upgrade", std::string("SafeTx ") + kMigrationText}},
+       {"Safe migration", std::string("SafeTx ") + kMigrationText}},
       {"polygon-safemigration150-l2-handler",
-       {"Safe upgrade", std::string("SafeTx ") + kMigrationText}},
+       {"Safe migration", std::string("SafeTx ") + kMigrationText}},
       {"gnosis-upgrade-batch",
-       {"Safe upgrade", std::string("Call #1 ") + kMigrationText}},
+       {"Safe migration", std::string("Call #1 ") + kMigrationText}},
   };
   std::set<uint32_t> batch_chains;
   EXPECT_EQ(kSafeChainTxs.size(), 17u);
@@ -3990,9 +4041,10 @@ TEST(Eip712Stream, RealSafeTxsHashAsOnChainAndReadCalm) {
     if (id == "gnosis-upgrade-batch-unknown-delegatecall") {
       // The same upgrade with a delegatecall to a contract that is not
       // Safe's: warned about in the batch, and for the SafeTx.
-      EXPECT_EQ(squeezedAll(screensTitled(s.titles, s.bodies, "Safe upgrade")),
-                std::vector<std::string>{
-                    squeezed(std::string("Call #1 ") + kMigrationText)});
+      EXPECT_EQ(
+          squeezedAll(screensTitled(s.titles, s.bodies, "Safe migration")),
+          std::vector<std::string>{
+              squeezed(std::string("Call #1 ") + kMigrationText)});
       EXPECT_EQ(squeezedAll(
                     screensTitled(s.titles, s.bodies, "Delegatecall in batch")),
                 std::vector<std::string>{squeezed(delegateText(
@@ -4009,7 +4061,7 @@ TEST(Eip712Stream, RealSafeTxsHashAsOnChainAndReadCalm) {
                 std::vector<std::string>{
                     squeezed(delegateText("SafeTx", tx.doc.values[2].hex))});
       EXPECT_EQ(countTitle(s, "Safe message"), 0u);
-      EXPECT_EQ(countTitle(s, "Safe upgrade"), 0u);
+      EXPECT_EQ(countTitle(s, "Safe migration"), 0u);
       continue;
     }
     EXPECT_EQ(countTitle(s, "Delegatecall"), 0u);
@@ -4019,7 +4071,7 @@ TEST(Eip712Stream, RealSafeTxsHashAsOnChainAndReadCalm) {
       EXPECT_EQ(screensTitled(s.titles, s.bodies, lib->second[0]),
                 std::vector<std::string>{squeezed(lib->second[1])});
     } else {
-      EXPECT_EQ(countTitle(s, "Safe upgrade"), 0u);
+      EXPECT_EQ(countTitle(s, "Safe migration"), 0u);
       EXPECT_EQ(countTitle(s, "Safe message"), 0u);
     }
     if (id.find("-ms") != std::string::npos) {

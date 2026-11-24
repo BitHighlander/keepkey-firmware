@@ -33,9 +33,11 @@ if(NOT ${KK_EMULATOR})
     # Under LTO the -fstack-usage records (.su) are written at link time, into
     # the linker's temp directory. Keep that inside the build tree so the SRAM
     # gate (tools/check_sram_budget.py) still finds them.
+    # The CMake link wrapper closes GNU Make jobserver descriptors. Keep the
+    # nested GCC link independent of the outer parallel make.
     file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/lto-su)
     set(CMAKE_C_LINK_EXECUTABLE
-        "${CMAKE_COMMAND} -E env TMPDIR=${CMAKE_BINARY_DIR}/lto-su ${CMAKE_C_LINK_EXECUTABLE}")
+        "${CMAKE_COMMAND} -E env MAKEFLAGS= TMPDIR=${CMAKE_BINARY_DIR}/lto-su ${CMAKE_C_LINK_EXECUTABLE}")
   endif()
 
   set(LINK_FLAGS

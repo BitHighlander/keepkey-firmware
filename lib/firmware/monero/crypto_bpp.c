@@ -100,10 +100,13 @@ static void ge_base(ge25519 *r, const bignum256modm s) {
 }
 
 static void ge_cmov(ge25519 *r, const ge25519 *p, uint32_t flag) {
-  uint32_t mask = (uint32_t)0 - flag, *rw = (uint32_t *)r;
-  const uint32_t *pw = (const uint32_t *)p;
-  for (size_t i = 0; i < sizeof(ge25519) / 4; i++)
-    rw[i] ^= mask & (rw[i] ^ pw[i]);
+  uint32_t mask = (uint32_t)0 - flag;
+  /* Keep the secret mask opaque to the optimizer, including under LTO. */
+  __asm__ volatile("" : "+r"(mask));
+  uint8_t *dst = (uint8_t *)r;
+  const uint8_t *src = (const uint8_t *)p;
+  for (size_t i = 0; i < sizeof(*r); i++)
+    dst[i] ^= (uint8_t)mask & (dst[i] ^ src[i]);
 }
 
 /* Gi (is_h = 0) or Hi (is_h = 1): hash_to_ec(H || "bulletproof_plus" ||

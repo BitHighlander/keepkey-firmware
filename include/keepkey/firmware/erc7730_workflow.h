@@ -56,13 +56,12 @@ typedef enum {
  * policy (ethereum.c) reads, taken from the arguments of the first calldata
  * pass, which fixes the digest every later pass and the signature must match.
  */
-#define ERC7730_ALLOWANCE_CALL 1u      /* the selector, with both words */
-#define ERC7730_ALLOWANCE_DIRTY 2u     /* the spender word has high bytes */
-#define ERC7730_ALLOWANCE_UNLIMITED 4u /* the amount is 2^255 or more */
-#define ERC7730_ALLOWANCE_CHECKED 8u   /* the policy ran, before any screen */
+#define ERC7730_ALLOWANCE_CALL 1u    /* the selector, with both words */
+#define ERC7730_ALLOWANCE_DIRTY 2u   /* the spender word has high bytes */
+#define ERC7730_ALLOWANCE_CHECKED 8u /* the policy ran, before any screen */
 
 /* The longest suffix the review shows byte for byte (a power of two); a
- * longer one is stated by its length alone. */
+ * longer one cannot be clear-signed. */
 #define ERC7730_SUFFIX_SHOWN_MAX 128u
 
 /* The most arguments an executable formatter carries (tokenAmount: value,
@@ -85,9 +84,14 @@ typedef struct {
   /* tokenAmount token, nftName collection, embedded-call callee (role 15). */
   uint8_t address[20];
   union {
-    uint16_t aliases[ERC7730_CAP_ALIAS_SET_MAX];    /* tokenAmount */
-    uint16_t enum_entries[ERC7730_CAP_ENUM_MAX][2]; /* enum: key, label */
-  } list;
+    /* On the validating outer pass, or while resolving an embedded call,
+     * no enum list or alias list is live. */
+    uint8_t approval_amount[32];
+    union {
+      uint16_t aliases[ERC7730_CAP_ALIAS_SET_MAX];    /* tokenAmount */
+      uint16_t enum_entries[ERC7730_CAP_ENUM_MAX][2]; /* enum: key, label */
+    } list;
+  };
   uint16_t text; /* the one string an argument names, fetched last */
   /* embedded calldata: the inner bytes as located (never copied), and whose
    * authority the inner call runs with */
@@ -96,8 +100,7 @@ typedef struct {
   uint8_t inner_selector[4];
   uint8_t inner_selector_length;
   uint8_t spender[20];
-  uint8_t approve_spender[20]; /* of an inner unlimited approve() */
-  bool unlimited_approve;
+  uint8_t approve_spender[20]; /* of an inner approval */
   bool has_inner;
   bool has_spender;
   uint8_t flags; /* the formatter's ERC7730_FORMATTER_FLAG_* */
