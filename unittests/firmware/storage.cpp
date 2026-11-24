@@ -411,8 +411,8 @@ void storage_readV17(ConfigFlash *, const char *, size_t);
 }
 
 TEST(Storage, AdvancedModeNeverRoundTripsThroughFlash) {
-  if (storage_getLocation() == FLASH_INVALID) {
-    setup();
+  if (!emulator_flash_base || storage_getLocation() == FLASH_INVALID) {
+    if (!emulator_flash_base) setup();
     storage_init();
   }
   struct RestorePolicy {

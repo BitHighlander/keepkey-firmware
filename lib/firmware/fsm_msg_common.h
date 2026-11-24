@@ -498,6 +498,7 @@ void fsm_msgChangePin(ChangePin* msg) {
   CHECK_PIN_UNCACHED
 
   if (removal) {
+    storage_setPinFailureLimit(0);
     storage_setWipeCode("");
     storage_setPin("");
     storage_commit();
@@ -532,6 +533,39 @@ void fsm_msgChangeWipeCode(ChangeWipeCode* msg) {
   } else if (change_wipe_code(removal)) {
     storage_commit();
     fsm_sendSuccess(removal ? "Duress PIN cleared" : "Duress PIN set");
+  }
+  layoutHome();
+}
+
+// cppcheck-suppress constParameterPointer -- protobuf dispatcher ABI is mutable
+void fsm_msgSetPinFailureLimit(SetPinFailureLimit* msg) {
+  CHECK_STORAGE_WRITABLE
+  CHECK_INITIALIZED
+  const uint32_t attempts = msg->attempts;
+  if (!storage_hasPin()) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, "Set a PIN first");
+    return;
+  }
+  if (attempts > PIN_FAILURE_LIMIT_MAX) {
+    fsm_sendFailure(FailureType_Failure_SyntaxError,
+                    "Invalid PIN attempt limit");
+    return;
+  }
+  char prompt[80];
+  if (attempts) {
+    snprintf(prompt, sizeof(prompt),
+             "Erase wallet after %" PRIu32 " consecutive wrong PIN entries?",
+             attempts);
+  } else {
+    strlcpy(prompt, "Turn off wiping after wrong PIN entries?", sizeof(prompt));
+  }
+  if (!confirm(ButtonRequestType_ButtonRequest_ChangePin, "PIN attempt limit",
+               "%s", prompt)) {
+    fsm_sendFailure(FailureType_Failure_ActionCancelled, "Cancelled");
+  } else if (pin_protect_uncached()) {
+    storage_setPinFailureLimit((uint8_t)attempts);
+    storage_commit();
+    fsm_sendSuccess("PIN attempt policy updated");
   }
   layoutHome();
 }

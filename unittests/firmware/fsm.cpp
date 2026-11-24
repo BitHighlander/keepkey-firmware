@@ -1170,6 +1170,135 @@ TEST(Fsm, DuressPinInterruptedEraseRecoversBeforeWalletSelection) {
   }
 }
 
+class PinFailureLimit : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    kk_test_board_init();
+    fsm_init();
+  }
+  void seed() {
+    storage_setMnemonic("all all all all all all all all all all all all");
+    storage_setPin("1234");
+    storage_commit();
+  }
+  void configure(unsigned limit, const char* pin = "1234") {
+    ASSERT_TRUE(kkconfirm_preload(0, 0));
+    ASSERT_EQ(0, kkconfirm_drain());
+    PinResponder host(pin, true);
+    SetPinFailureLimit request = {};
+    request.attempts = limit;
+    receiveMessage(MessageType_MessageType_SetPinFailureLimit,
+                   SetPinFailureLimit_fields, &request);
+    host.finish(1);
+  }
+  void enter(const char* pin) {
+    session_clear(true);
+    PinResponder host(pin);
+    Ping ping = {};
+    ping.has_pin_protection = ping.pin_protection = true;
+    receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+    host.finish(1);
+  }
+};
+
+TEST_F(PinFailureLimit, LockedFeaturesIdenticalAcrossLimitsAndWrongEntries) {
+  ScopedFlash flash;
+  seed();
+  auto features = [] {
+    fsm_msgGetFeatures(nullptr);
+    size_t size = 0;
+    const void* response = fsm_test_responseArena(&size);
+    std::vector<uint8_t> bytes(Features_size);
+    pb_ostream_t stream = pb_ostream_from_buffer(bytes.data(), bytes.size());
+    EXPECT_TRUE(pb_encode(&stream, Features_fields, response));
+    bytes.resize(stream.bytes_written);
+    return bytes;
+  };
+  storage_init();
+  const auto baseline = features();
+  for (unsigned limit : {0u, 2u, PIN_FAILURE_LIMIT_MAX}) {
+    configure(limit);
+    storage_init();
+    EXPECT_EQ(baseline, features());
+    enter("5555");
+    EXPECT_EQ(FailureType_Failure_PinInvalid, fsm_test_lastFailureCode());
+    EXPECT_EQ(baseline, features());
+  }
+}
+
+TEST_F(PinFailureLimit, CancelledPinAndInvalidLimitLeavePolicyIntact) {
+  ScopedFlash flash;
+  seed();
+  configure(1);
+  storage_init();
+  SetPinFailureLimit bad = {};
+  bad.attempts = PIN_FAILURE_LIMIT_MAX + 1;
+  receiveMessage(MessageType_MessageType_SetPinFailureLimit,
+                 SetPinFailureLimit_fields, &bad);
+  EXPECT_EQ(FailureType_Failure_SyntaxError, fsm_test_lastFailureCode());
+  ASSERT_TRUE(kkconfirm_preload_no_sentinel(0, 0));
+  ASSERT_TRUE(kkconfirm_sendTiny(MessageType_MessageType_Cancel, nullptr, 0));
+  Ping ping = {};
+  ping.has_pin_protection = ping.pin_protection = true;
+  receiveMessage(MessageType_MessageType_Ping, Ping_fields, &ping);
+  EXPECT_EQ(FailureType_Failure_PinCancelled, fsm_test_lastFailureCode());
+  EXPECT_TRUE(storage_isInitialized());
+  storage_init();
+  enter("5555");
+  EXPECT_FALSE(storage_isInitialized());
+}
+
+TEST_F(PinFailureLimit, CorrectPinAtBoundaryResetsVerifiedFailures) {
+  ScopedFlash flash;
+  seed();
+  configure(2);
+  EXPECT_FALSE(storage_hasWipeCode());
+  enter("5555");
+  storage_init();
+  enter("1234");
+  EXPECT_TRUE(storage_isInitialized());
+  storage_init();
+  // Power loss after precharging the existing backoff counter but before
+  // checking a submitted PIN cannot consume a verified failure.
+  storage_increasePinFails();
+  storage_init();
+  enter("5555");
+  EXPECT_TRUE(storage_isInitialized());
+  storage_init();
+  enter("5555");
+  EXPECT_FALSE(storage_isInitialized());
+  storage_init();
+  EXPECT_FALSE(storage_hasPin());
+  EXPECT_FALSE(storage_isInitialized());
+}
+
+TEST_F(PinFailureLimit, ClearLeavesDuressPinAndNoLimit) {
+  ScopedFlash flash;
+  seed();
+  storage_setWipeCode("4321");
+  storage_commit();
+  configure(1);
+  configure(0);
+  storage_init();
+  enter("5555");
+  EXPECT_TRUE(storage_isInitialized());
+  EXPECT_TRUE(storage_hasWipeCode());
+  enter("4321");
+  EXPECT_FALSE(storage_isInitialized());
+}
+
+TEST_F(PinFailureLimit, UnauthorizedChangeCannotArmPolicy) {
+  ScopedFlash flash;
+  seed();
+  configure(1, "5555");
+  storage_init();
+  enter("5555");
+  EXPECT_TRUE(storage_isInitialized());
+  configure(1);
+  enter("5555");
+  EXPECT_FALSE(storage_isInitialized());
+}
+
 // Locks a PIN-protected session by idling, then unlocks it with a protected
 // Ping answered with `pin`.
 void lockThenEnterPin(const char* pin) {
