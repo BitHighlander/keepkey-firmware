@@ -94,7 +94,8 @@ bool storage_isBitcoinOnlyTooNew(void);
 ///        The bytes remain untouched until an explicit wipe.
 bool storage_isFirmwareTooOld(void);
 
-/// \brief Commit a duress wipe before clearing wallet storage and session state.
+/// \brief Commit a duress wipe before clearing wallet storage and session
+/// state.
 void storage_duressWipe(void);
 
 /// \brief Reset session states.
