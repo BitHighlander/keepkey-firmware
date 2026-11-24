@@ -26,10 +26,12 @@
 #include "keepkey/firmware/authenticator.h"
 #include "keepkey/firmware/passkey.h"
 
-/* 20, not 18: alpha builds wrote 18 (clear-sign identity) and 19 (PIN-KDF),
- * so those numbers stay burned and are refused, never parsed as passkeys. */
+/* 21 is V20's layout under a number older firmware refuses: a signed downgrade
+ * must not load the wallet while ignoring its duress PIN and PIN failure
+ * limit. Alpha builds wrote 18 (clear-sign identity) and 19 (PIN-KDF), so
+ * those numbers stay burned and are refused, never parsed as passkeys. */
 #define STORAGE_VERSION \
-  20 /* Must add case fallthrough in storage_fromFlash after increment*/
+  21 /* Must add case fallthrough in storage_fromFlash after increment*/
 
 /* The highest storage version that has actually SHIPPED to users. A signed
  * upgrade must never wipe, and the way that breaks is a release whose

@@ -31,7 +31,12 @@ STORAGE_VERSION_ENTRY(17)
  * positional -- removing one renumbers everything after it. */
 STORAGE_VERSION_ENTRY(18)
 STORAGE_VERSION_ENTRY(19)
-STORAGE_VERSION_LAST(20)
+STORAGE_VERSION_ENTRY(20)
+/* 21 has V20's layout. The number moved so that firmware which knows only V20
+ * (7.16.0, the 7.17 release candidates before rc8) refuses the record as too
+ * new instead of loading it and dropping the duress PIN and the PIN failure
+ * limit it does not know. */
+STORAGE_VERSION_LAST(21)
 
 
 #undef STORAGE_VERSION_ENTRY

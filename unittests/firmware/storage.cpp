@@ -446,6 +446,29 @@ TEST(Storage, AdvancedModeNeverRoundTripsThroughFlash) {
   EXPECT_EQ(storage_fromFlash(&session, &restored, flash.data()), SUS_Updated);
 }
 
+// 7.16.0 knows V20 and would load a 7.17 wallet while ignoring its duress PIN
+// and PIN failure limit. V21 is the same layout under a number it refuses, so
+// a V20 record must be restamped on the first boot, never left as it is.
+TEST(Storage, V20RecordIsRestampedSoOlderFirmwareRefusesIt) {
+  ConfigFlash source = {};
+  source.storage.version = STORAGE_VERSION;
+  source.storage.encrypted_sec_version = STORAGE_VERSION;
+  storage_resetPolicies(&source.storage);
+  std::vector<char> flash(STORAGE_SECTOR_LEN, 0);
+  storage_writeV17(flash.data(), flash.size(), &source);
+  memcpy(flash.data(), "stor", 4);
+  for (uint32_t stored : {20u, uint32_t(STORAGE_VERSION)}) {
+    memcpy(flash.data() + 44, &stored, sizeof(stored));
+    SessionState session = {};
+    ConfigFlash restored = {};
+    EXPECT_EQ(storage_fromFlash(&session, &restored, flash.data()),
+              stored == STORAGE_VERSION ? SUS_Valid : SUS_Updated)
+        << stored;
+    EXPECT_EQ(restored.storage.version, uint32_t(STORAGE_VERSION)) << stored;
+  }
+  EXPECT_GT(STORAGE_VERSION, 20);
+}
+
 TEST(Storage, LegacyPolicyNameCannotEnableAdvancedMode) {
   std::vector<char> legacy(468 + sizeof(Storage{}.encrypted_sec), 0);
   legacy[0] = 2;
@@ -1335,10 +1358,11 @@ TEST(Storage, NewerStorageVersionRefusedNotWiped) {
   EXPECT_NE(storage_fromFlash(&session, &shadow, flash), SUS_TooNew);
 }
 
-/* 7.16 writes V20. 18 and 19 are burned alpha formats: refused (wiped), never
- * parsed as passkey state, in both the normal and the bitcoin-only band. */
-TEST(Storage, WritesV20AndRefusesBurnedVersions) {
-  EXPECT_EQ(STORAGE_VERSION, 20);
+/* 7.16 wrote V20; 7.17 writes the same layout as V21. 18 and 19 are burned
+ * alpha formats: refused (wiped), never parsed as passkey state, in both the
+ * normal and the bitcoin-only band. */
+TEST(Storage, WritesV21AndRefusesBurnedVersions) {
+  EXPECT_EQ(STORAGE_VERSION, 21);
   EXPECT_EQ(STORAGE_VERSION_LAST_SHIPPED, 17);
   static char flash[STORAGE_SECTOR_LEN];
   memset(flash, 0, sizeof(flash));

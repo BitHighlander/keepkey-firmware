@@ -1588,8 +1588,11 @@ StorageUpdateStatus storage_fromFlash(SessionState* ss, ConfigFlash* dst,
     case StorageVersion_19:
       return SUS_Invalid;
     case StorageVersion_20:
+    case StorageVersion_21:
       storage_readV20(dst, flash, STORAGE_SECTOR_LEN);
       dst->storage.version = STORAGE_VERSION;
+      // V20 is restamped as V21 so older firmware stops loading it.
+      if (version == StorageVersion_20) return SUS_Updated;
       // Erase legacy unauthenticated AdvancedMode bit 12 (even with no PIN).
       if (read_u32_le(flash + 44 + 4) & (1u << 12)) return SUS_Updated;
       return SUS_Valid;
