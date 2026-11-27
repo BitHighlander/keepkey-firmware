@@ -769,6 +769,18 @@ static bool retirePasskey(PasskeyStorage* storage, size_t index) {
   return true;
 }
 
+/* Retired IDs are only kept by the current record version, so a version-1
+ * record must migrate before a slot is retired. Otherwise the next boot clears
+ * the retirement and the deleted legacy handle verifies again. */
+static bool migratePasskeyRecord(void) {
+  uint8_t generation[PASSKEY_CREDENTIAL_GENERATION_SIZE];
+  bool legacy_credentials_enabled;
+  const bool migrated = storage_getPasskeyCredentialGeneration(
+      generation, &legacy_credentials_enabled);
+  memzero(generation, sizeof(generation));
+  return migrated;
+}
+
 bool storage_hasPasskeyPin(void) {
   return shadow_config.storage.pub.passkeys.pin_set != 0;
 }
@@ -792,7 +804,7 @@ bool storage_storePasskeySlot(const PasskeyCredential* credential) {
     if (!slot->occupied && target == PASSKEY_MAX_DISCOVERABLE_CREDENTIALS)
       target = i;
   }
-  if (!retirePasskey(storage, target)) return false;
+  if (!migratePasskeyRecord() || !retirePasskey(storage, target)) return false;
   storage->credentials[target] = *credential;
   storage_commit();
   return true;
@@ -806,7 +818,7 @@ bool storage_deletePasskeySlot(size_t index,
   PasskeyStorage* storage = &shadow_config.storage.pub.passkeys;
   const PasskeyCredential* current = &storage->credentials[index];
   if (!current->occupied || memcmp(current, expected, sizeof(*current)) != 0 ||
-      !retirePasskey(storage, index))
+      !migratePasskeyRecord() || !retirePasskey(storage, index))
     return false;
   storage_commit();
   return true;

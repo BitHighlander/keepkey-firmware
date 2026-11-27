@@ -4590,6 +4590,37 @@ TEST(Fsm, PasskeyDeleteRecoversTheVerifiedPendingRecord) {
   EXPECT_TRUE(storage_isPasskeyRetired(credential.credential_id));
 }
 
+TEST(Fsm, LegacyPasskeyDeleteBeforeFirstUseStaysRetiredAfterReboot) {
+  ScopedFlash flash;
+  rng_health_force_verdict(true);
+  PasskeyStorage passkeys;
+  storage_getPasskeyData(&passkeys);
+  passkeys.version = 1;
+  for (int i = 0; i < 2; ++i) {
+    passkeys.credentials[i].occupied = 1;
+    memset(passkeys.credentials[i].rp_id_hash, 0x30 + i, 32);
+    memset(passkeys.credentials[i].credential_id, 0x40 + i, 64);
+  }
+  const PasskeyCredential deleted = passkeys.credentials[0];
+  const PasskeyCredential kept = passkeys.credentials[1];
+  storage_setPasskeyData(&passkeys);
+  storage_init();
+
+  ASSERT_TRUE(storage_deletePasskeySlot(0, &deleted));
+  storage_init();
+
+  PasskeyStorage after;
+  storage_getPasskeyData(&after);
+  EXPECT_EQ(PASSKEY_STORAGE_VERSION, after.version);
+  EXPECT_EQ(1, after.legacy_credentials_enabled);
+  EXPECT_TRUE(storage_isPasskeyRetired(deleted.credential_id));
+  EXPECT_FALSE(storage_isPasskeyRetired(kept.credential_id));
+  PasskeyCredential reread;
+  EXPECT_FALSE(storage_getPasskeySlot(0, &reread));
+  ASSERT_TRUE(storage_getPasskeySlot(1, &reread));
+  EXPECT_EQ(0, memcmp(&reread, &kept, sizeof(reread)));
+}
+
 TEST(Fsm, StorageKeepsTheOldRecordWhenStagingIsCut) {
   ScopedFlash flash;
   storage_setLabel("old");
