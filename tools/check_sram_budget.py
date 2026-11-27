@@ -59,19 +59,29 @@ def lto_reports(link_map):
     return reports
 
 
+def frame_key(location):
+    """(source file, function) without GCC clone suffixes like .constprop.0."""
+    source, _, name = location.partition(":")
+    return source, name.rsplit(":", 1)[-1].split(".", 1)[0]
+
+
 def largest_frames(su_tar_path, top_n=15, lto_map=None):
     """Parse GCC -fstack-usage records from a tar of .su files.
 
     Record format: "<file>:<line>:<col>:<function>\t<bytes>\t<qualifier>"
     """
     frames = []
-    missing = lto_reports(lto_map) if lto_map else set()
+    linked = lto_reports(lto_map) if lto_map else set()
+    missing = set(linked)
+    others = []
     with tarfile.open(su_tar_path, "r:*") as tar:
         for member in tar:
             if not member.name.endswith(".su") or not member.isfile():
                 continue
             data = tar.extractfile(member).read().decode("utf-8", "replace")
-            count_before = len(frames)
+            path = PurePosixPath(member.name)
+            target = frames if not linked or path in linked else others
+            count_before = len(target)
             for line in data.splitlines():
                 parts = line.rsplit("\t", 2)
                 if len(parts) != 3:
@@ -85,14 +95,18 @@ def largest_frames(su_tar_path, top_n=15, lto_map=None):
                     sys.exit(f"ERROR: unbounded dynamic stack frame in "
                              f"{member.name}: {loc} ({qual})")
                 try:
-                    frames.append((int(size), loc.split("/")[-1], qual))
+                    target.append((int(size), loc.split("/")[-1], qual))
                 except ValueError:
                     continue
-            if len(frames) > count_before:
-                missing.discard(PurePosixPath(member.name))
+            if len(target) > count_before:
+                missing.discard(path)
     if missing:
         sys.exit("ERROR: missing stack-usage records for linked LTO partitions: "
                  + ", ".join(str(path) for path in sorted(missing)))
+    # Compile-time reports duplicate functions that LTO re-emitted. Keep only
+    # functions the linked partitions do not cover (non-LTO code).
+    covered = {frame_key(loc) for _, loc, _ in frames}
+    frames += [f for f in others if frame_key(f[1]) not in covered]
     frames.sort(reverse=True)
     return frames[:top_n]
 
