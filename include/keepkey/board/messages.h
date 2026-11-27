@@ -135,6 +135,11 @@ const pb_field_t* message_fields(MessageMapType type, MessageType msg_id,
 TrezorFrameBuffer* frame_arena_tx(void);
 uint16_t* frame_arena_scratch2049(void);
 
+/* Single-owner MAX_DECODE_SIZE buffer, initially zero and wiped on release.
+ * Acquisition fails if a suspended operation still owns it. */
+uint8_t* msg_acquire_decode_buffer(void);
+void msg_release_decode_buffer(void);
+
 /* Request storage reused as response scratch: copy needed fields first. */
 void* msg_decoded_request_response_scratch(void);
 
