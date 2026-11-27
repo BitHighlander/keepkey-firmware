@@ -1781,9 +1781,9 @@ void zcashSpecV6Sighash(const ZcashSignPCZT& msg, const uint8_t* transparent,
   std::memcpy(personal, "ZcashTxHash_", 12);
   for (int i = 0; i < 4; i++)
     personal[12 + i] = static_cast<char>(msg.branch_id >> (8 * i));
-  zcashPersonal(personal,
-                std::vector<uint8_t>(&digests[0][0], &digests[0][0] + 160),
-                out);
+  std::vector<uint8_t> joined;
+  for (const auto& d : digests) joined.insert(joined.end(), d, d + 32);
+  zcashPersonal(personal, joined, out);
 }
 
 struct ZcashMigrationRun {

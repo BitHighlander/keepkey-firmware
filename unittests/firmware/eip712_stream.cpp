@@ -14,6 +14,7 @@ extern "C" {
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <map>
@@ -32,6 +33,7 @@ void kk_test_set_message_hook(std::function<void(MessageType, const void*)>);
 void kkconfirm_capture_start(void);
 std::vector<std::string> kkconfirm_capture_finish(void);
 std::vector<std::string> kkconfirm_captured_titles(void);
+bool kkconfirm_sendCancel(void);
 
 namespace {
 
@@ -924,10 +926,18 @@ int walk(const char* primary, const std::map<std::string, Struct>& types,
   int remaining = screens;
   int used = 0;
   bool rejected = false;
+  bool send_failed = false;
   kk_test_set_message_hook([&](MessageType id, const void*) {
-    if (id != MessageType_MessageType_ButtonRequest) return;
+    if (id != MessageType_MessageType_ButtonRequest || send_failed) return;
     const bool accept = remaining > 0;
-    ASSERT_TRUE(kkconfirm_answerButtonRequest(accept));
+    if (!kkconfirm_answerButtonRequest(accept)) {
+      // Returning alone would leave confirm_screen() waiting for a reply that
+      // never comes. Cancel it; without a transport, stop the run outright.
+      send_failed = true;
+      ADD_FAILURE() << "could not answer a ButtonRequest";
+      if (!kkconfirm_sendCancel()) abort();
+      return;
+    }
     if (accept) {
       --remaining;
       ++used;
@@ -958,6 +968,7 @@ int walk(const char* primary, const std::map<std::string, Struct>& types,
         << "after " << kind;
   }
   kk_test_set_message_hook({});
+  if (send_failed) return -3;
   // No rejection sentinel was preloaded. Both frames for every request
   // must have been consumed; drain() discounts a sentinel pair.
   EXPECT_EQ(kkconfirm_drain(), -2);
