@@ -230,6 +230,12 @@ bool storage_isPasskeyRetired(const uint8_t id[64]);
 bool storage_hasPasskeyPin(void);
 bool storage_storePasskeySlot(const PasskeyCredential* credential);
 bool storage_deletePasskeySlot(size_t index, const PasskeyCredential* expected);
+/// Truncate an RP ID for display as CTAP 2.1 section 6.8.7 specifies.
+void storage_truncatePasskeyRpId(const uint8_t* rp_id, size_t rp_id_length,
+                                 uint8_t stored[PASSKEY_RP_ID_MAX],
+                                 uint8_t* stored_length);
+/// Record the RP ID on slots that match its hash and do not have one yet.
+bool storage_fillPasskeyRpId(const uint8_t* rp_id, size_t rp_id_length);
 
 /// Return the active stateless-credential generation, creating and persisting
 /// one through the checked RNG path on first use. Version-1 U2F handles remain

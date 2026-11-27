@@ -510,7 +510,8 @@ static bool credential_list_contains(const uint8_t* buffer, size_t length,
   return false;
 }
 
-static bool store_discoverable_credential(const uint8_t rp_id_hash[32],
+static bool store_discoverable_credential(const char* rp_id,
+                                          const uint8_t rp_id_hash[32],
                                           const uint8_t* user_id,
                                           size_t user_id_length,
                                           const char* user_name,
@@ -523,6 +524,8 @@ static bool store_discoverable_credential(const uint8_t rp_id_hash[32],
   memcpy(credential.credential_id, credential_id, 64);
   memcpy(credential.user_id, user_id, user_id_length);
   strlcpy(credential.user_name, user_name, sizeof(credential.user_name));
+  storage_truncatePasskeyRpId((const uint8_t*)rp_id, strlen(rp_id),
+                              credential.rp_id, &credential.rp_id_length);
   return storage_storePasskeySlot(&credential);
 }
 
@@ -787,9 +790,9 @@ static void make_credential(const uint8_t* request, size_t request_length,
     write_error(CTAP2_ERR_OTHER, response, response_length);
     return;
   }
-  if (resident &&
-      !store_discoverable_credential(rp_id_hash, user_id.data, user_id.length,
-                                     user_name, credential_id)) {
+  if (resident && !store_discoverable_credential(rp_id, rp_id_hash,
+                                                 user_id.data, user_id.length,
+                                                 user_name, credential_id)) {
     memzero(private_key, sizeof(private_key));
     write_error(CTAP2_ERR_KEY_STORE_FULL, response, response_length);
     return;
@@ -995,6 +998,9 @@ static void get_assertion(const uint8_t* request, size_t request_length,
   memzero(private_key, sizeof(private_key));
   memzero(signature_base, sizeof(signature_base));
   memzero(signature, sizeof(signature));
+  /* Slots stored before RP IDs were kept learn theirs from a sign-in whose
+   * rpId reproduces the stored hash. */
+  if (encoded) storage_fillPasskeyRpId((const uint8_t*)rp_id, strlen(rp_id));
 }
 
 static void client_pin(const uint8_t* request, size_t request_length,
@@ -1362,7 +1368,7 @@ static size_t slot_count(uint8_t slots) {
 }
 
 /* The bitset identifies slots, rather than copying the whole credential store.
- * The RP listing selects the first slot for each distinct full hash. */
+ * The RP listing selects the first slot with a known RP ID for each hash. */
 static uint8_t credential_slots(uint8_t subcommand, const uint8_t* rp_hash) {
   uint8_t matches = 0;
   uint8_t hashes[PASSKEY_MAX_DISCOVERABLE_CREDENTIALS][32];
@@ -1371,6 +1377,8 @@ static uint8_t credential_slots(uint8_t subcommand, const uint8_t* rp_hash) {
     if (!storage_getPasskeySlot(i, &slot)) continue;
     if (rp_hash && memcmp(rp_hash, slot.rp_id_hash, 32) != 0) continue;
     if (subcommand == CREDMAN_RPS) {
+      /* An RP entity needs its id; older slots wait for a sign-in. */
+      if (slot.rp_id_length == 0) continue;
       bool seen = false;
       for (size_t j = 0; j < i; ++j) {
         if ((matches & (1u << j)) &&
@@ -1389,10 +1397,12 @@ static bool encode_credential_entry(CborEncoder* encoder,
                                     const PasskeyCredential* slot,
                                     uint8_t command, bool first, size_t count) {
   if (command == CREDMAN_NEXT_RP) {
+    if (slot->rp_id_length == 0) return false;
     cbor_encode_map(encoder, first ? 3 : 2);
-    cbor_encode_uint(encoder,
-                     3); /* RP entity. Vault resolves labels locally. */
-    cbor_encode_map(encoder, 0);
+    cbor_encode_uint(encoder, 3);
+    cbor_encode_map(encoder, 1);
+    cbor_encode_text(encoder, "id", 2);
+    cbor_encode_text(encoder, (const char*)slot->rp_id, slot->rp_id_length);
     cbor_encode_uint(encoder, 4);
     cbor_encode_bytes(encoder, slot->rp_id_hash, sizeof(slot->rp_id_hash));
     if (first) {
