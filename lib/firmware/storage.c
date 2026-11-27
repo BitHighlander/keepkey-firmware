@@ -824,6 +824,69 @@ bool storage_deletePasskeySlot(size_t index,
   return true;
 }
 
+/* CTAP 2.1 section 6.8.7, maybe_truncate_rpid(), with
+ * MAX_STORED_RPID_LENGTH = PASSKEY_RP_ID_MAX. */
+void storage_truncatePasskeyRpId(const uint8_t* rp_id, size_t rp_id_length,
+                                 uint8_t stored[PASSKEY_RP_ID_MAX],
+                                 uint8_t* stored_length) {
+  if (rp_id_length <= PASSKEY_RP_ID_MAX) {
+    memcpy(stored, rp_id, rp_id_length);
+    *stored_length = (uint8_t)rp_id_length;
+    return;
+  }
+
+  size_t used = 0;
+  const uint8_t* colon = memchr(rp_id, ':', rp_id_length);
+  if (colon != NULL) {
+    const size_t protocol_length = (size_t)(colon - rp_id) + 1;
+    const size_t to_copy = protocol_length <= PASSKEY_RP_ID_MAX
+                               ? protocol_length
+                               : PASSKEY_RP_ID_MAX;
+    memcpy(stored, rp_id, to_copy);
+    used += to_copy;
+  }
+
+  if (PASSKEY_RP_ID_MAX - used < 3) {
+    *stored_length = (uint8_t)used;
+    return;
+  }
+
+  /* U+2026, horizontal ellipsis. */
+  stored[used++] = 0xe2;
+  stored[used++] = 0x80;
+  stored[used++] = 0xa6;
+
+  const size_t to_copy = PASSKEY_RP_ID_MAX - used;
+  memcpy(&stored[used], rp_id + rp_id_length - to_copy, to_copy);
+  *stored_length = PASSKEY_RP_ID_MAX;
+}
+
+/* The RP ID is accepted only for slots whose stored hash it reproduces. */
+bool storage_fillPasskeyRpId(const uint8_t* rp_id, size_t rp_id_length) {
+  if (rp_id == NULL || rp_id_length == 0 || btc_only_locked || firmware_too_old)
+    return false;
+  uint8_t hash[32];
+  sha256_Raw(rp_id, rp_id_length, hash);
+  PasskeyStorage* storage = &shadow_config.storage.pub.passkeys;
+  uint8_t missing = 0;
+  for (size_t i = 0; i < PASSKEY_MAX_DISCOVERABLE_CREDENTIALS; ++i) {
+    const PasskeyCredential* slot = &storage->credentials[i];
+    if (slot->occupied && slot->rp_id_length == 0 &&
+        memcmp(slot->rp_id_hash, hash, sizeof(hash)) == 0)
+      missing |= 1u << i;
+  }
+  if (!missing) return true;
+  if (!migratePasskeyRecord()) return false;
+  for (size_t i = 0; i < PASSKEY_MAX_DISCOVERABLE_CREDENTIALS; ++i) {
+    if (!(missing & (1u << i))) continue;
+    PasskeyCredential* slot = &storage->credentials[i];
+    storage_truncatePasskeyRpId(rp_id, rp_id_length, slot->rp_id,
+                                &slot->rp_id_length);
+  }
+  storage_commit();
+  return true;
+}
+
 bool storage_getPasskeyCredentialGeneration(
     uint8_t generation[PASSKEY_CREDENTIAL_GENERATION_SIZE],
     bool* legacy_credentials_enabled) {
@@ -1375,18 +1438,42 @@ static void storage_failClosedPasskeyData(PasskeyStorage* passkeys) {
   passkeys->version = PASSKEY_STORAGE_VERSION;
 }
 
+/* Before version 4 the slot ended in a 48-byte user name and the RP ID
+ * length byte was reserved. Keep the first 15 bytes of the name, cut back to
+ * a UTF-8 boundary, and leave the RP ID unknown. Idempotent, so a version-1
+ * record committed in this layout converts to itself. */
+static void storage_upgradePasskeyCredential(PasskeyCredential* credential) {
+  _Static_assert(
+      PASSKEY_USER_NAME_MAX + PASSKEY_RP_ID_MAX == 48 &&
+          offsetof(PasskeyCredential, rp_id) ==
+              offsetof(PasskeyCredential, user_name) + PASSKEY_USER_NAME_MAX &&
+          sizeof(PasskeyCredential) ==
+              offsetof(PasskeyCredential, user_name) + 48,
+      "passkey slot no longer overlays the 48-byte name");
+  uint8_t* name = (uint8_t*)credential + offsetof(PasskeyCredential, user_name);
+  size_t length = 0;
+  while (length < 48 && name[length]) ++length;
+  size_t keep =
+      length < PASSKEY_USER_NAME_MAX - 1 ? length : PASSKEY_USER_NAME_MAX - 1;
+  while (keep > 0 && keep < length && (name[keep] & 0xc0) == 0x80) --keep;
+  memzero(name + keep, 48 - keep);
+  credential->rp_id_length = 0;
+}
+
 static void storage_validatePasskeyData(PasskeyStorage* passkeys) {
-  if ((passkeys->version != 1 && passkeys->version != 2 &&
-       passkeys->version != PASSKEY_STORAGE_VERSION) ||
+  const uint8_t version = passkeys->version;
+  if (version < 1 || version > PASSKEY_STORAGE_VERSION ||
       passkeys->pin_set > 1 || passkeys->pin_retries > PASSKEY_PIN_RETRIES) {
     storage_failClosedPasskeyData(passkeys);
     return;
   }
-  const bool before_management = passkeys->version < PASSKEY_STORAGE_VERSION;
+  /* Version 3 added management: retired IDs and resident_only. */
+  const bool before_management = version < 3;
+  const bool before_rp_ids = version < 4;
   if (before_management)
     memzero(passkeys->retired_ids, sizeof(passkeys->retired_ids));
-  if (passkeys->version == 2) passkeys->version = PASSKEY_STORAGE_VERSION;
-  if (passkeys->version == 1) {
+  if (version == 2 || version == 3) passkeys->version = PASSKEY_STORAGE_VERSION;
+  if (version == 1) {
     /* Version 1 ended immediately after credentials[]. Bytes that now hold the
      * generation belonged to V17's randomized reserved area, so never trust
      * them as serialized state. The first credential operation migrates this
@@ -1401,8 +1488,10 @@ static void storage_validatePasskeyData(PasskeyStorage* passkeys) {
   for (size_t i = 0; i < PASSKEY_MAX_DISCOVERABLE_CREDENTIALS; ++i) {
     PasskeyCredential* credential = &passkeys->credentials[i];
     if (before_management) credential->resident_only = 0;
+    if (before_rp_ids) storage_upgradePasskeyCredential(credential);
     if (credential->occupied > 1 || credential->resident_only > 1 ||
-        credential->user_id_length > PASSKEY_USER_ID_MAX) {
+        credential->user_id_length > PASSKEY_USER_ID_MAX ||
+        credential->rp_id_length > PASSKEY_RP_ID_MAX) {
       memzero(credential, sizeof(*credential));
       continue;
     }

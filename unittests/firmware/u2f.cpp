@@ -47,6 +47,43 @@ TEST(U2F, WordsFromData) {
             "bar peace tonight cement");
 }
 
+namespace {
+std::string truncated_rp_id(const std::string& rp_id) {
+  uint8_t stored[PASSKEY_RP_ID_MAX];
+  uint8_t length = 0xff;
+  storage_truncatePasskeyRpId(reinterpret_cast<const uint8_t*>(rp_id.data()),
+                              rp_id.size(), stored, &length);
+  EXPECT_LE(length, PASSKEY_RP_ID_MAX);
+  return std::string(reinterpret_cast<const char*>(stored), length);
+}
+}  // namespace
+
+// The examples given in CTAP 2.1 section 6.8.7.
+TEST(U2F, RpIdTruncationMatchesCtap21) {
+  EXPECT_EQ("example.com", truncated_rp_id("example.com"));
+  EXPECT_EQ("mygreatsite.hostingprovider.info",
+            truncated_rp_id("mygreatsite.hostingprovider.info"));
+  EXPECT_EQ("\xe2\x80\xa6ngwebsite.hostingprovider.net",
+            truncated_rp_id("myfidousingwebsite.hostingprovider.net"));
+  EXPECT_EQ("otherprotocol:\xe2\x80\xa6ingprovider.net",
+            truncated_rp_id("otherprotocol://myfidousingwebsite.hostingprovider.net"));
+  EXPECT_EQ("veryexcessivelylargeprotocolname",
+            truncated_rp_id("veryexcessivelylargeprotocolname://example.com"));
+  // 33 bytes: one over the limit, cut on the left.
+  const std::string over(33, 'a');
+  EXPECT_EQ("\xe2\x80\xa6" + std::string(29, 'a'), truncated_rp_id(over));
+  // A protocol that leaves fewer than three bytes gets no ellipsis.
+  const std::string tight = std::string(30, 'p') + "://x.example";
+  EXPECT_EQ(std::string(30, 'p') + ":", truncated_rp_id(tight));
+  EXPECT_EQ("", truncated_rp_id(""));
+}
+
+TEST(U2F, PasskeyRecordFitsTheV17ReservedArea) {
+  static_assert(sizeof(PasskeyCredential) == 212, "slot size changed");
+  static_assert(sizeof(PasskeyStorage) <= 996, "record exceeds V17 area");
+  EXPECT_EQ(985u, sizeof(PasskeyStorage));
+}
+
 TEST(U2F, ShapeShift) {
   ASSERT_EQ(U2F_SHAPESHIFT_COM->appname, std::string("ShapeShift"));
   ASSERT_EQ(U2F_SHAPESHIFT_IO->appname, std::string("ShapeShift"));
@@ -993,6 +1030,22 @@ void register_into_freed_slot(const char* rp, const uint8_t token[32],
   EXPECT_TRUE(poll_script.empty());
   ASSERT_TRUE(storage_getPasskeySlot(0, replacement));
   EXPECT_TRUE(replacement->resident_only);
+  ASSERT_EQ(strlen(rp), replacement->rp_id_length);
+  EXPECT_EQ(0, memcmp(rp, replacement->rp_id, strlen(rp)));
+}
+
+std::string rp_entity_id(const std::vector<uint8_t>& response) {
+  const uint8_t* entity;
+  size_t entity_length;
+  CborValue ignored, id;
+  if (response.size() < 2 ||
+      !cbor_map_find(response.data() + 1, response.size() - 1, nullptr, 3,
+                     &ignored, &entity, &entity_length) ||
+      ignored.type != CBOR_TYPE_MAP ||
+      !cbor_map_find(entity, entity_length, "id", 0, &id, nullptr, nullptr) ||
+      id.type != CBOR_TYPE_TEXT)
+    return "<missing>";
+  return std::string(reinterpret_cast<const char*>(id.data), id.length);
 }
 }
 
@@ -1101,8 +1154,10 @@ TEST_F(U2FWait, ManagementEnumeratesAndRetiresOnlyTheSelectedHandle) {
   const auto rps = management(2, token);
   ASSERT_EQ(CTAP2_OK, rps.at(0));
   EXPECT_EQ(2u, response_field(rps, 5).value);
+  EXPECT_EQ("example.com", rp_entity_id(rps));
   const auto next_rp = ctap_call({0x0a, 0xa1, 1, 3});
   ASSERT_EQ(CTAP2_OK, next_rp.at(0));
+  EXPECT_EQ("example.org", rp_entity_id(next_rp));
   const auto hash = response_field(next_rp, 4);
   ASSERT_EQ(32u, hash.length);
   EXPECT_EQ(0, memcmp(hash.data, prerelease.rp_id_hash, 32));
@@ -1140,6 +1195,60 @@ TEST_F(U2FWait, ManagementEnumeratesAndRetiresOnlyTheSelectedHandle) {
   ASSERT_FALSE(HasFatalFailure());
   EXPECT_EQ(CTAP2_ERR_NO_CREDENTIALS, explicit_sign_in("example.com", created));
   EXPECT_EQ(CTAP2_OK, explicit_sign_in("example.com", replacement));
+}
+
+TEST_F(U2FWait, RpListingSkipsUnknownRpIdsUntilASignInFillsThem) {
+  ctap2_init();
+  ctap2_set_transport_channel(kCid);
+  uint8_t token[32] = {};
+  pin_exchange(3, "1234", 0, CTAP2_OK, token);
+  auto known = fixture_credential("example.com", true);
+  storage_truncatePasskeyRpId(reinterpret_cast<const uint8_t*>("example.com"),
+                              11, known.rp_id, &known.rp_id_length);
+  const auto unknown = fixture_credential("example.org", true);
+  PasskeyStorage storage;
+  storage_getPasskeyData(&storage);
+  storage.credentials[0] = unknown;
+  storage.credentials[1] = known;
+  storage_setPasskeyData(&storage);
+
+  pin_exchange(9, "1234", 4, CTAP2_OK, token);
+  auto rps = management(2, token);
+  ASSERT_EQ(CTAP2_OK, rps.at(0));
+  EXPECT_EQ(1u, response_field(rps, 5).value);
+  EXPECT_EQ("example.com", rp_entity_id(rps));
+  EXPECT_EQ(CTAP2_ERR_NO_CREDENTIALS, ctap_call({0x0a, 0xa1, 1, 3}).at(0));
+  std::vector<uint8_t> params = {0xa1, 1, 0x58, 32};
+  params.insert(params.end(), unknown.rp_id_hash, unknown.rp_id_hash + 32);
+  auto credentials = management(4, token, params);
+  ASSERT_EQ(CTAP2_OK, credentials.at(0));
+  EXPECT_EQ(1u, response_field(credentials, 9).value);
+
+  /* An rpId that reproduces no stored hash fills nothing. */
+  EXPECT_FALSE(storage_fillPasskeyRpId(nullptr, 0));
+  ASSERT_TRUE(storage_fillPasskeyRpId(
+      reinterpret_cast<const uint8_t*>("example.net"), 11));
+  PasskeyCredential slot;
+  ASSERT_TRUE(storage_getPasskeySlot(0, &slot));
+  EXPECT_EQ(0, slot.rp_id_length);
+
+  ASSERT_EQ(CTAP2_OK, explicit_sign_in("example.org", unknown));
+  ASSERT_TRUE(storage_getPasskeySlot(0, &slot));
+  ASSERT_EQ(11, slot.rp_id_length);
+  EXPECT_EQ(0, memcmp("example.org", slot.rp_id, 11));
+  storage_init();
+  ASSERT_TRUE(storage_getPasskeySlot(0, &slot));
+  EXPECT_EQ(11, slot.rp_id_length);
+
+  pin_exchange(9, "1234", 4, CTAP2_OK, token);
+  rps = management(2, token);
+  ASSERT_EQ(CTAP2_OK, rps.at(0));
+  EXPECT_EQ(2u, response_field(rps, 5).value);
+  EXPECT_EQ("example.org", rp_entity_id(rps));
+  const auto next_rp = ctap_call({0x0a, 0xa1, 1, 3});
+  ASSERT_EQ(CTAP2_OK, next_rp.at(0));
+  EXPECT_EQ("example.com", rp_entity_id(next_rp));
+  EXPECT_EQ(CTAP2_ERR_NO_CREDENTIALS, ctap_call({0x0a, 0xa1, 1, 3}).at(0));
 }
 
 TEST_F(U2FWait, ResetRequiresAHoldAndClearsThePinAndCredentials) {
