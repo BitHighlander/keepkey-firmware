@@ -1693,6 +1693,58 @@ void zcashAddIronwood(ZcashSignPCZT& msg, uint32_t n_ironwood,
   std::memcpy(msg.ironwood_digest.bytes, ironwood, 32);
 }
 
+constexpr uint32_t kZcashBranchNu62 = 0x5437F330;
+constexpr uint32_t kZcashBranchNu63 = 0x37A5165B;
+constexpr uint32_t kZcashBranchNu7 = 0x77190AD9;
+
+// Re-targets a v6 request at another consensus branch: the branch is in the
+// header digest, so that is recomputed too.
+void zcashSetBranch(ZcashSignPCZT& msg, uint32_t branch) {
+  msg.branch_id = branch;
+  zcash_compute_header_digest(msg.tx_version, msg.version_group_id,
+                              msg.branch_id, msg.lock_time, msg.expiry_height,
+                              msg.header_digest.bytes);
+}
+
+void zcashLe32(std::vector<uint8_t>& out, uint32_t v) {
+  for (int i = 0; i < 4; i++) out.push_back(static_cast<uint8_t>(v >> (8 * i)));
+}
+
+// ZIP 244/229 v6 sighash with no Sapling part, written out here from the spec
+// rather than through the firmware's header and sighash code. `transparent`
+// is the transparent component (the S.2 per-input digest for a transparent
+// signature); NULL means no transparent part. An absent Ironwood digest is the
+// empty one. Checked against librustzcash's NU6.3 vectors before it is
+// trusted for NU7.
+void zcashSpecV6Sighash(const ZcashSignPCZT& msg, const uint8_t* transparent,
+                        uint8_t out[32]) {
+  std::vector<uint8_t> header;
+  zcashLe32(header, msg.tx_version | 0x80000000u);  // fOverwintered
+  zcashLe32(header, msg.version_group_id);
+  zcashLe32(header, msg.branch_id);
+  zcashLe32(header, msg.lock_time);
+  zcashLe32(header, msg.expiry_height);
+  uint8_t digests[5][32];
+  zcashPersonal("ZTxIdHeadersHash", header, digests[0]);
+  if (transparent)
+    std::memcpy(digests[1], transparent, 32);
+  else
+    zcashPersonal("ZTxIdTranspaHash", {}, digests[1]);
+  zcashPersonal("ZTxIdSaplingHash", {}, digests[2]);
+  std::memcpy(digests[3], msg.orchard_digest.bytes, 32);
+  if (msg.has_ironwood_digest)
+    std::memcpy(digests[4], msg.ironwood_digest.bytes, 32);
+  else
+    zcashPersonal("ZTxIdIronwd_H_v6", {}, digests[4]);
+  char personal[16];
+  std::memcpy(personal, "ZcashTxHash_", 12);
+  for (int i = 0; i < 4; i++)
+    personal[12 + i] = static_cast<char>(msg.branch_id >> (8 * i));
+  std::vector<uint8_t> joined;
+  for (const auto& d : digests) joined.insert(joined.end(), d, d + 32);
+  zcashPersonal(personal, joined, out);
+}
+
 struct ZcashMigrationRun {
   std::vector<std::string> screens;
   std::vector<std::vector<uint8_t>> signatures;
@@ -2136,6 +2188,51 @@ TEST_F(ReviewHandlers, ZcashTexStep2SignsATransparentOnlyTransaction) {
   }
 }
 
+// Transparent-only sends on NU7: the same TEX step 2 with branch 0x77190AD9
+// signs, and its one ECDSA signature verifies under the NU7 per-input sighash
+// and not under the NU6.3 one, so the device committed to the branch it was
+// given. The spec composition reproduces librustzcash's NU6.3 sighash first.
+TEST_F(ReviewHandlers, ZcashNu7TransparentOnlySignsUnderTheNu7Sighash) {
+  const auto pubkey = zcashTransparentPubkey(0, 2);
+  ZcashTexStep2 t = zcashTexStep2(true);
+  t.output.is_tex = true;
+  zcashTexClaimDigest(t);
+
+  ZcashTransparentInputDigestInfo in = {};
+  in.prevout_txid = t.input.prevout_txid.bytes;
+  in.prevout_index = t.input.prevout_index;
+  in.sequence = t.input.sequence;
+  in.value = t.input.amount;
+  in.script_pubkey = t.input.script_pubkey.bytes;
+  in.script_pubkey_size = t.input.script_pubkey.size;
+  ZcashTransparentOutputDigestInfo out = {};
+  out.value = t.output.amount;
+  out.script_pubkey = t.output.script_pubkey.bytes;
+  out.script_pubkey_size = t.output.script_pubkey.size;
+  uint8_t input_digest[32];
+  ASSERT_TRUE(zcash_compute_transparent_sighash_digest(&in, 1, &out, 1, 0,
+                                                       0x01, input_digest));
+
+  uint8_t nu63[32], nu7[32];
+  zcashSpecV6Sighash(t.msg, input_digest, nu63);
+  ASSERT_EQ(zcashHex(kZcashTexStep2V6Sighash),
+            std::vector<uint8_t>(nu63, nu63 + 32));
+  zcashSetBranch(t.msg, kZcashBranchNu7);
+  zcashSpecV6Sighash(t.msg, input_digest, nu7);
+
+  const auto run = zcashRunTex(t.msg, {t.output}, {t.input}, {});
+  ASSERT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
+      << fsm_test_lastFailureMessage();
+  EXPECT_TRUE(run.signed_pczt);
+  EXPECT_TRUE(run.orchard.empty());
+  ASSERT_EQ(1u, run.transparent.size());
+  uint8_t sig[64];
+  ASSERT_EQ(0, ecdsa_sig_from_der(run.transparent[0].data(),
+                                  run.transparent[0].size(), sig));
+  EXPECT_EQ(0, ecdsa_verify_digest(&secp256k1, pubkey.data(), sig, nu7));
+  EXPECT_NE(0, ecdsa_verify_digest(&secp256k1, pubkey.data(), sig, nu63));
+}
+
 // A transparent-only request is refused, with no signature, when it has no
 // transparent input to sign, claims a shielded bundle the device would not
 // see, or a non-empty Sapling component; an input path in the one-time scope
@@ -2211,8 +2308,8 @@ TEST_F(ReviewHandlers, ZcashTransparentOnlyRefusals) {
 
 // Transactions consensus can never accept are refused before any screen:
 // reserved flag bits (Orchard bits 2..7, Ironwood bits 3..7), value entering
-// the Orchard pool from NU6.3, a crossing outside a v6 NU6.3 transaction, and
-// more than 16 actions in all.
+// the Orchard pool from NU6.3, a crossing outside a v6 NU6.3-or-later
+// transaction, and more than 16 actions in all. Every rule holds on NU7 too.
 TEST_F(ReviewHandlers, ZcashRefusesBundlesConsensusRejects) {
   std::vector<ZcashPCZTAction> orchard, ironwood;
   for (const auto& v : kZcashMigrationTransferOrchard)
@@ -2255,9 +2352,12 @@ TEST_F(ReviewHandlers, ZcashRefusesBundlesConsensusRejects) {
       {"17 actions", [](ZcashSignPCZT& m) { m.n_ironwood_actions = 15; },
        "Too many Orchard actions"},
   };
+  for (uint32_t branch : {kZcashBranchNu63, kZcashBranchNu7})
   for (const auto& tc : cases) {
-    SCOPED_TRACE(tc.name);
+    SCOPED_TRACE(std::string(tc.name) +
+                 (branch == kZcashBranchNu7 ? " (NU7)" : " (NU6.3)"));
     ZcashSignPCZT msg = zcashV6Request(2, orchard_digest, 0x03, 1015000, 15000);
+    zcashSetBranch(msg, branch);
     zcashAddIronwood(msg, 1, ironwood_digest, 0x07, -1000000);
     tc.mutate(msg);
     ASSERT_TRUE(kkconfirm_preload(1, 0));
@@ -2267,6 +2367,101 @@ TEST_F(ReviewHandlers, ZcashRefusesBundlesConsensusRejects) {
     EXPECT_TRUE(kkconfirm_capture_finish().empty());
     EXPECT_STREQ(tc.failure, fsm_test_lastFailureMessage());
     EXPECT_FALSE(zcash_signing_is_active());
+    (void)kkconfirm_drain();
+  }
+}
+
+// NU7 (ZIP 259, branch 0x77190AD9) keeps the Ironwood pool, so the ZIP 318
+// migration transfer is the same transaction with a new branch. The device
+// streams both bundles and signs; the signature verifies under the sighash
+// written from the spec, whose NU6.3 form reproduces librustzcash's vector.
+TEST_F(ReviewHandlers, ZcashNu7MigrationTransferSignsBothPools) {
+  std::vector<ZcashPCZTAction> orchard, ironwood, actions;
+  for (const auto& v : kZcashMigrationTransferOrchard)
+    orchard.push_back(zcashMigrationAction(orchard.size(), v));
+  for (const auto& v : kZcashMigrationTransferIronwood)
+    ironwood.push_back(
+        zcashMigrationAction(orchard.size() + ironwood.size(), v));
+  uint8_t orchard_digest[32], ironwood_digest[32];
+  zcashV6BundleDigest(orchard, false, 0x03, 1015000, orchard_digest);
+  zcashV6BundleDigest(ironwood, true, 0x07, -1000000, ironwood_digest);
+  ZcashSignPCZT msg = zcashV6Request(2, orchard_digest, 0x03, 1015000, 15000);
+  zcashAddIronwood(msg, 1, ironwood_digest, 0x07, -1000000);
+  actions = orchard;
+  actions.insert(actions.end(), ironwood.begin(), ironwood.end());
+
+  // Control: the spec sighash at NU6.3 is librustzcash's.
+  uint8_t sighash[32];
+  zcashSpecV6Sighash(msg, nullptr, sighash);
+  ASSERT_EQ(zcashHex(kZcashMigrationTransferSighash),
+            std::vector<uint8_t>(sighash, sighash + 32));
+
+  zcashSetBranch(msg, kZcashBranchNu7);
+  zcashSpecV6Sighash(msg, nullptr, sighash);
+  ASSERT_NE(zcashHex(kZcashMigrationTransferSighash),
+            std::vector<uint8_t>(sighash, sighash + 32));
+
+  const auto run = zcashRunSession(msg, actions, 3);
+  ASSERT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
+      << fsm_test_lastFailureMessage();
+  ASSERT_EQ(3u, run.screens.size());
+  EXPECT_NE(std::string::npos,
+            run.screens[1].find("Change back to your wallet:\n0.01000000 ZEC"))
+      << run.screens[1];
+  EXPECT_NE(std::string::npos, run.screens[2].find("0.00015000 ZEC"));
+  ASSERT_EQ(1u, run.signatures.size());
+  ASSERT_EQ(64u, run.signatures[0].size());
+  EXPECT_EQ(0, redpallas_verify_digest(actions[1].rk.bytes, sighash,
+                                       run.signatures[0].data()));
+}
+
+// The Ironwood session guard: an Ironwood-only request (shielded_pool
+// IRONWOOD) is admitted on NU6.3 and NU7 and refused, before any screen, on
+// any branch without the Ironwood pool. This pins the branch guard only; the
+// signing paths are covered by the crossing and transparent tests above. The
+// fixture is self-consistent: an Ironwood-only request carries its bundle's
+// flags and value balance in the orchard_* fields.
+TEST_F(ReviewHandlers, ZcashIronwoodSessionNeedsAnIronwoodBranch) {
+  std::vector<ZcashPCZTAction> ironwood;
+  for (const auto& v : kZcashMigrationTransferIronwood)
+    ironwood.push_back(zcashMigrationAction(ironwood.size(), v));
+  uint8_t empty_orchard[32], ironwood_digest[32];
+  zcashPersonal("ZTxIdOrchardH_v6", {}, empty_orchard);
+  zcashV6BundleDigest(ironwood, true, 0x07, 0, ironwood_digest);
+
+  const struct {
+    uint32_t branch;
+    bool admitted;
+  } cases[] = {{kZcashBranchNu63, true},
+               {kZcashBranchNu7, true},
+               {kZcashBranchNu62, false},
+               {0, false},
+               {0x77190AD8, false}};
+  for (const auto& tc : cases) {
+    SCOPED_TRACE(tc.branch);
+    ZcashSignPCZT msg = zcashV6Request(1, empty_orchard, 0x07, 0, 0);
+    msg.has_shielded_pool = true;
+    msg.shielded_pool = ZcashShieldedPool_ZCASH_SHIELDED_POOL_IRONWOOD;
+    msg.has_ironwood_digest = true;
+    msg.ironwood_digest.size = 32;
+    std::memcpy(msg.ironwood_digest.bytes, ironwood_digest, 32);
+    zcashSetBranch(msg, tc.branch);
+
+    ASSERT_TRUE(kkconfirm_preload(1, 0));
+    fsm_test_clearLastFailure();
+    kkconfirm_capture_start();
+    fsm_msgZcashSignPCZT(&msg);
+    (void)kkconfirm_capture_finish();
+    if (tc.admitted) {
+      EXPECT_EQ(0, static_cast<int>(fsm_test_lastFailureCode()))
+          << fsm_test_lastFailureMessage();
+      EXPECT_TRUE(zcash_signing_is_active());
+    } else {
+      EXPECT_STREQ("Invalid Ironwood transaction",
+                   fsm_test_lastFailureMessage());
+      EXPECT_FALSE(zcash_signing_is_active());
+    }
+    zcash_signing_abort();
     (void)kkconfirm_drain();
   }
 }

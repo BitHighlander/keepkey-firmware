@@ -2011,6 +2011,18 @@ TEST(Zcash, TxVersionSupported_OnlyV5AndV6Pairs) {
   EXPECT_FALSE(zcash_tx_version_supported(0, 0));
 }
 
+/* Ironwood exists from NU6.3 (0x37A5165B) and stays in NU7 (0x77190AD9);
+ * NU6.2 and earlier branches have no Ironwood pool. */
+TEST(Zcash, BranchHasIronwood_Nu63AndNu7Only) {
+  EXPECT_TRUE(zcash_branch_has_ironwood(0x37A5165B));
+  EXPECT_TRUE(zcash_branch_has_ironwood(0x77190AD9));
+  EXPECT_FALSE(zcash_branch_has_ironwood(0x5437F330)); /* NU6.2 */
+  EXPECT_FALSE(zcash_branch_has_ironwood(0xC8E71055)); /* NU6 */
+  EXPECT_FALSE(zcash_branch_has_ironwood(0xC2D6D0B4)); /* NU5 */
+  EXPECT_FALSE(zcash_branch_has_ironwood(0xD90A1977)); /* NU7, byte-swapped */
+  EXPECT_FALSE(zcash_branch_has_ironwood(0));
+}
+
 TEST(Zcash, P2pkhScriptMatchesPubkey_ComparesHash160) {
   /* Compressed secp256k1 generator (private key 1); HASH160 is the public
    * value behind 1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH. */
