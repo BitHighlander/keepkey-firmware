@@ -53,8 +53,9 @@ uint8_t* u2f_out_data(void);
 void u2f_register(const APDU* a);
 void u2f_version(const APDU* a);
 void u2f_authenticate(const APDU* a);
-bool u2f_generate_credential(const uint8_t app_id[32], uint8_t key_handle[64],
-                             uint8_t private_key[32], uint8_t public_key[65]);
+bool u2f_generate_credential(const uint8_t app_id[32], bool resident,
+                             uint8_t key_handle[64], uint8_t private_key[32],
+                             uint8_t public_key[65]);
 bool u2f_load_credential(const uint8_t app_id[32], const uint8_t key_handle[64],
                          uint8_t private_key[32], uint8_t public_key[65]);
 

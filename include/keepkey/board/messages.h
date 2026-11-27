@@ -135,6 +135,11 @@ const pb_field_t* message_fields(MessageMapType type, MessageType msg_id,
 TrezorFrameBuffer* frame_arena_tx(void);
 uint16_t* frame_arena_scratch2049(void);
 
+/* Single-owner MAX_DECODE_SIZE buffer, initially zero and wiped on release.
+ * Acquisition fails if a suspended operation still owns it. */
+uint8_t* msg_acquire_decode_buffer(void);
+void msg_release_decode_buffer(void);
+
 /* Request storage reused as response scratch: copy needed fields first. */
 void* msg_decoded_request_response_scratch(void);
 
@@ -173,6 +178,8 @@ bool msg_take_tiny_rejection(void);
 /* For the same wait: the tiny message received since the last call, without
  * its payload, or MSG_TINY_TYPE_ERROR. Nothing else reads it there. */
 MessageType msg_take_tiny_id(void);
+/* Leave Initialize/Cancel queued until the active CTAP request unwinds. */
+bool msg_session_end_pending(void);
 /* The firmware's authorization boundary, run before a message is dispatched;
  * false means it was refused and answered. Board-only targets default to
  * true. */

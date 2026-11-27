@@ -4540,6 +4540,181 @@ TEST(Fsm, StorageRecoversACommitCutAfterStaging) {
   EXPECT_STREQ("kept", storage_getLabel());
 }
 
+TEST(Fsm, RcPasskeyLayoutUpgradePreservesGenerationAndIgnoresOldPadding) {
+  ScopedFlash flash;
+  PasskeyStorage old_format;
+  storage_getPasskeyData(&old_format);
+  old_format.version = 2;
+  memset(old_format.credential_generation, 0x23,
+         sizeof(old_format.credential_generation));
+  memset(old_format.retired_ids, 0x5a, sizeof(old_format.retired_ids));
+  old_format.credentials[0].occupied = 1;
+  old_format.credentials[0].resident_only = 0x55;  // formerly reserved
+  storage_setPasskeyData(&old_format);
+
+  storage_init();
+  PasskeyStorage upgraded;
+  storage_getPasskeyData(&upgraded);
+  EXPECT_EQ(PASSKEY_STORAGE_VERSION, upgraded.version);
+  EXPECT_EQ(0, memcmp(old_format.credential_generation,
+                      upgraded.credential_generation,
+                      sizeof(upgraded.credential_generation)));
+  EXPECT_EQ(1, upgraded.credentials[0].occupied);
+  EXPECT_EQ(0, upgraded.credentials[0].resident_only);
+  const uint8_t empty[sizeof(upgraded.retired_ids)] = {};
+  EXPECT_EQ(0, memcmp(empty, upgraded.retired_ids, sizeof(empty)));
+}
+
+TEST(Fsm, PasskeyDeleteRecoversTheVerifiedPendingRecord) {
+  ScopedFlash flash;
+  PasskeyStorage passkeys;
+  storage_getPasskeyData(&passkeys);
+  passkeys.version = PASSKEY_STORAGE_VERSION;
+  auto& slot = passkeys.credentials[0];
+  slot.occupied = true;
+  memset(slot.credential_id, 0x5a, sizeof(slot.credential_id));
+  const PasskeyCredential credential = slot;
+  storage_setPasskeyData(&passkeys);
+  Allocation active;
+  ASSERT_TRUE(find_active_storage(&active));
+  memset(Sector(next_storage(next_storage(active))), 0x5a, 1000);
+  storage_init();
+  PasskeyCredential reread;
+  ASSERT_TRUE(storage_getPasskeySlot(0, &reread));
+  EXPECT_EQ(0, memcmp(&reread, &credential, sizeof(reread)));
+
+  ASSERT_TRUE(storage_deletePasskeySlot(0, &credential));
+  CutAfterStaging(false);
+  storage_init();
+  EXPECT_FALSE(storage_getPasskeySlot(0, &reread));
+  EXPECT_TRUE(storage_isPasskeyRetired(credential.credential_id));
+}
+
+TEST(Fsm, LegacyPasskeyDeleteBeforeFirstUseStaysRetiredAfterReboot) {
+  ScopedFlash flash;
+  rng_health_force_verdict(true);
+  PasskeyStorage passkeys;
+  storage_getPasskeyData(&passkeys);
+  passkeys.version = 1;
+  for (int i = 0; i < 2; ++i) {
+    passkeys.credentials[i].occupied = 1;
+    memset(passkeys.credentials[i].rp_id_hash, 0x30 + i, 32);
+    memset(passkeys.credentials[i].credential_id, 0x40 + i, 64);
+  }
+  const PasskeyCredential deleted = passkeys.credentials[0];
+  const PasskeyCredential kept = passkeys.credentials[1];
+  storage_setPasskeyData(&passkeys);
+  storage_init();
+
+  ASSERT_TRUE(storage_deletePasskeySlot(0, &deleted));
+  storage_init();
+
+  PasskeyStorage after;
+  storage_getPasskeyData(&after);
+  EXPECT_EQ(PASSKEY_STORAGE_VERSION, after.version);
+  EXPECT_EQ(1, after.legacy_credentials_enabled);
+  EXPECT_TRUE(storage_isPasskeyRetired(deleted.credential_id));
+  EXPECT_FALSE(storage_isPasskeyRetired(kept.credential_id));
+  PasskeyCredential reread;
+  EXPECT_FALSE(storage_getPasskeySlot(0, &reread));
+  ASSERT_TRUE(storage_getPasskeySlot(1, &reread));
+  EXPECT_EQ(0, memcmp(&reread, &kept, sizeof(reread)));
+}
+
+namespace {
+// Writes the pre-version-4 slot tail: a 48-byte name over user_name and rp_id.
+void SetOldLayoutName(PasskeyCredential* credential, const char* name) {
+  uint8_t* tail =
+      reinterpret_cast<uint8_t*>(credential) + offsetof(PasskeyCredential, user_name);
+  memset(tail, 0, 48);
+  memcpy(tail, name, strlen(name));
+  credential->rp_id_length = 0x77;  // formerly reserved
+}
+// 14 ASCII bytes, then a two-byte character across the 15-byte limit.
+const char kLongName[] = "abcdefghijklmn\xc3\xa9 and more after it";
+}  // namespace
+
+TEST(Fsm, PasskeyV3RecordMovesToV4KeepingRetiredIdsAndGeneration) {
+  ScopedFlash flash;
+  PasskeyStorage old_format;
+  storage_getPasskeyData(&old_format);
+  old_format.version = 3;
+  memset(old_format.credential_generation, 0x23,
+         sizeof(old_format.credential_generation));
+  old_format.legacy_credentials_enabled = 1;
+  memset(old_format.retired_ids[0], 0x5a, PASSKEY_RETIRED_ID_SIZE);
+  old_format.credentials[0].occupied = 1;
+  old_format.credentials[0].resident_only = 1;
+  memset(old_format.credentials[0].credential_id, 0x44, 64);
+  SetOldLayoutName(&old_format.credentials[0], kLongName);
+  old_format.credentials[1].occupied = 1;
+  SetOldLayoutName(&old_format.credentials[1], "short");
+  storage_setPasskeyData(&old_format);
+
+  storage_init();
+  PasskeyStorage upgraded;
+  storage_getPasskeyData(&upgraded);
+  EXPECT_EQ(4, upgraded.version);
+  EXPECT_EQ(0, memcmp(old_format.credential_generation,
+                      upgraded.credential_generation,
+                      sizeof(upgraded.credential_generation)));
+  EXPECT_EQ(1, upgraded.legacy_credentials_enabled);
+  EXPECT_EQ(0, memcmp(old_format.retired_ids, upgraded.retired_ids,
+                      sizeof(upgraded.retired_ids)));
+  EXPECT_EQ(1, upgraded.credentials[0].resident_only);
+  EXPECT_EQ(0, memcmp(old_format.credentials[0].credential_id,
+                      upgraded.credentials[0].credential_id, 64));
+  EXPECT_STREQ("abcdefghijklmn", upgraded.credentials[0].user_name);
+  EXPECT_STREQ("short", upgraded.credentials[1].user_name);
+  const uint8_t empty[PASSKEY_RP_ID_MAX] = {};
+  for (int i = 0; i < 2; ++i) {
+    EXPECT_EQ(0, upgraded.credentials[i].rp_id_length);
+    EXPECT_EQ(0, memcmp(empty, upgraded.credentials[i].rp_id, sizeof(empty)));
+  }
+
+  /* Committing the converted record and booting again changes nothing. */
+  storage_commit();
+  storage_init();
+  PasskeyStorage again;
+  storage_getPasskeyData(&again);
+  EXPECT_EQ(0, memcmp(&upgraded, &again, sizeof(again)));
+}
+
+TEST(Fsm, PasskeyV1RecordMovesToV4ThroughTheGenerationHelper) {
+  ScopedFlash flash;
+  rng_health_force_verdict(true);
+  PasskeyStorage passkeys;
+  storage_getPasskeyData(&passkeys);
+  passkeys.version = 1;
+  for (int i = 0; i < 2; ++i) {
+    passkeys.credentials[i].occupied = 1;
+    memset(passkeys.credentials[i].rp_id_hash, 0x30 + i, 32);
+    memset(passkeys.credentials[i].credential_id, 0x40 + i, 64);
+    SetOldLayoutName(&passkeys.credentials[i], kLongName);
+  }
+  storage_setPasskeyData(&passkeys);
+  storage_init();
+
+  PasskeyStorage loaded;
+  storage_getPasskeyData(&loaded);
+  EXPECT_EQ(1, loaded.version);  // migrated by the first credential operation
+  EXPECT_STREQ("abcdefghijklmn", loaded.credentials[1].user_name);
+  EXPECT_EQ(0, loaded.credentials[1].rp_id_length);
+
+  /* Delete before first use: the P1 path, now through the v4 layout. */
+  const PasskeyCredential deleted = loaded.credentials[0];
+  const PasskeyCredential kept = loaded.credentials[1];
+  ASSERT_TRUE(storage_deletePasskeySlot(0, &deleted));
+  storage_init();
+  PasskeyStorage after;
+  storage_getPasskeyData(&after);
+  EXPECT_EQ(4, after.version);
+  EXPECT_EQ(1, after.legacy_credentials_enabled);
+  EXPECT_TRUE(storage_isPasskeyRetired(deleted.credential_id));
+  EXPECT_FALSE(storage_isPasskeyRetired(kept.credential_id));
+  EXPECT_EQ(0, memcmp(&after.credentials[1], &kept, sizeof(kept)));
+}
+
 TEST(Fsm, StorageKeepsTheOldRecordWhenStagingIsCut) {
   ScopedFlash flash;
   storage_setLabel("old");

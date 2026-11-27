@@ -1,11 +1,12 @@
 """Regression checks for the stack-usage acceptance gate."""
 
 import io
+from pathlib import Path
 import tarfile
 import tempfile
 import unittest
 
-from check_sram_budget import largest_frames
+from check_sram_budget import largest_frames, passkey_dispatch_frames
 
 
 class StackUsageRecords(unittest.TestCase):
@@ -18,6 +19,18 @@ class StackUsageRecords(unittest.TestCase):
                 tar.addfile(info, io.BytesIO(data))
             archive.flush()
             return largest_frames(archive.name)
+
+    def test_passkey_charges_overlapping_frames_and_split_helpers(self):
+        frames = [
+            (64, "u2f.c:1:2:u2fhid_read", "static"),
+            (256, "u2f.c:1:2:u2f_register", "static"),
+            (320, "ctap2.c:1:2:make_credential.constprop", "static"),
+            (48, "ctap2.c:1:2:answer_touch_probe", "static"),
+            (160, "ctap2.c:1:2:answer_touch_probe.part.0", "static"),
+        ]
+        self.assertEqual(passkey_dispatch_frames(frames), 2 * 64 + 320 + 48 + 160)
+        with self.assertRaisesRegex(SystemExit, "missing passkey stack frames"):
+            passkey_dispatch_frames(frames[1:])
 
     def test_static_frame_is_measured(self):
         self.assertEqual(
@@ -34,6 +47,71 @@ class StackUsageRecords(unittest.TestCase):
             [(128, "example.c:4:2:sign", "dynamic,bounded")],
             self.parse("example.c:4:2:sign\t128\tdynamic,bounded\n"),
         )
+
+    def test_lto_requires_every_linked_partition(self):
+        linked = "lto-su/firmware.keepkey.elf.ABC123.ltrans"
+        with tempfile.TemporaryDirectory() as directory:
+            link_map = Path(directory) / "firmware.map"
+            archive = Path(directory) / "stack-usage.tgz"
+            link_map.write_text("".join(
+                f"LOAD /build/{linked}{i}.ltrans.o\n" for i in (0, 1)
+            ))
+            records = {
+                "unrelated.su": b"other.c:1:1:other\t96\tstatic\n",
+                f"./{linked}0.ltrans.su": b"example.c:1:1:first\t128\tstatic\n",
+            }
+            second = f"./{linked}1.ltrans.su"
+            for report, valid in (
+                (None, False),
+                (b"", False),
+                (b"no frame here\n", False),
+                (b"x.c:2:1:second\t256\tstatic\n", True),
+            ):
+                if report is not None:
+                    records[second] = report
+                with tarfile.open(archive, "w:gz") as tar:
+                    for name, data in records.items():
+                        info = tarfile.TarInfo(name)
+                        info.size = len(data)
+                        tar.addfile(info, io.BytesIO(data))
+                if valid:
+                    self.assertEqual(largest_frames(archive, lto_map=link_map)[0][0], 256)
+                else:
+                    with self.assertRaisesRegex(SystemExit, "ltrans1.ltrans.su"):
+                        largest_frames(archive, lto_map=link_map)
+            link_map.write_text("LOAD /build/unrelated.o\n")
+            with self.assertRaisesRegex(SystemExit, "no firmware LTO partitions"):
+                largest_frames(archive, lto_map=link_map)
+
+    def test_lto_ignores_prelink_copies_but_keeps_non_lto_frames(self):
+        partition = "lto-su/firmware.keepkey.elf.ABC123.ltrans0.ltrans"
+        records = {
+            f"./{partition}.su": (
+                b"u2f.c:1:1:u2fhid_read\t64\tstatic\n"
+                b"u2f.c:2:1:u2f_register\t256\tstatic\n"
+                b"ctap2.c:3:1:make_credential.constprop.0\t320\tstatic\n"
+            ),
+            # Pre-link reports of the same functions, larger than linked.
+            "lib/firmware/u2f.c.su": (
+                b"u2f.c:1:1:u2fhid_read\t4000\tstatic\n"
+                b"u2f.c:2:1:u2f_register\t4000\tstatic\n"
+            ),
+            "lib/firmware/ctap2.c.su": b"ctap2.c:3:1:make_credential\t9000\tstatic\n",
+            # Code that LTO did not re-emit is still charged.
+            "lib/board/startup.c.su": b"startup.c:1:1:reset_handler\t96\tstatic\n",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            link_map = Path(directory) / "firmware.map"
+            archive = Path(directory) / "stack-usage.tgz"
+            link_map.write_text(f"LOAD /build/{partition}.o\n")
+            with tarfile.open(archive, "w:gz") as tar:
+                for name, data in records.items():
+                    info = tarfile.TarInfo(name)
+                    info.size = len(data)
+                    tar.addfile(info, io.BytesIO(data))
+            frames = largest_frames(archive, top_n=None, lto_map=link_map)
+        self.assertEqual([size for size, _, _ in frames], [320, 256, 96, 64])
+        self.assertEqual(passkey_dispatch_frames(frames), 2 * 64 + 320)
 
 
 if __name__ == "__main__":

@@ -31,6 +31,7 @@
 #include "keepkey/board/u2f_hid.h"
 #include "keepkey/board/usb.h"
 #include "keepkey/board/util.h"
+#include "trezor/crypto/sha2.h"
 #include "keepkey/firmware/app_layout.h"
 #include "keepkey/firmware/fsm.h"
 #include "keepkey/firmware/ctap2.h"
@@ -146,8 +147,10 @@ uint32_t next_cid(void) {
 // With a packet size of 64 bytes (max for full-speed devices), this means that
 // the maximum message payload length is 64 - 7 + 128 * (64 - 5) = 7609 bytes.
 #define U2F_MAXIMUM_PAYLOAD_LENGTH 7609
+_Static_assert(U2F_MAXIMUM_PAYLOAD_LENGTH <= MAX_DECODE_SIZE,
+               "U2F HID payload must fit in the shared decode buffer");
 typedef struct {
-  uint8_t buf[U2F_MAXIMUM_PAYLOAD_LENGTH];
+  uint8_t* buf;
   uint8_t* buf_ptr;
   uint32_t len;
   uint8_t seq;
@@ -241,8 +244,8 @@ void u2fhid_read(char tiny, const U2FHID_FRAME* f) {
 
     // check out of bounds
     if ((reader->buf_ptr - reader->buf) >= (signed)reader->len ||
-        (reader->buf_ptr + sizeof(f->cont.data) - reader->buf) >
-            (signed)sizeof(reader->buf))
+        (size_t)(reader->buf_ptr - reader->buf) >
+            U2F_MAXIMUM_PAYLOAD_LENGTH - sizeof(f->cont.data))
       return;
     reader->seq++;
     memcpy(reader->buf_ptr, f->cont.data, sizeof(f->cont.data));
@@ -273,6 +276,7 @@ static void u2fhid_session_end(bool msg_tiny) {
   dialog_timeout = 0;
   cid = 0;
   reader = 0;
+  msg_release_decode_buffer();
   usbTiny(0);
   msg_set_tiny(msg_tiny);
   /* As fsm_msgPing(): never leave an armed recovery behind the home screen. */
@@ -327,9 +331,6 @@ static bool hostEndedSession(bool msg_tiny) {
 }
 
 void u2fhid_read_start(const U2FHID_FRAME* f) {
-  U2F_ReadBuffer readbuffer;
-  memzero(&readbuffer, sizeof(readbuffer));
-
   if (!(f->type & TYPE_INIT)) {
     return;
   }
@@ -340,11 +341,16 @@ void u2fhid_read_start(const U2FHID_FRAME* f) {
     return;
   }
 
-  if ((unsigned)MSG_LEN(*f) > sizeof(reader->buf)) {
+  if ((unsigned)MSG_LEN(*f) > U2F_MAXIMUM_PAYLOAD_LENGTH) {
     send_u2fhid_error(f->cid, ERR_INVALID_LEN);
     return;
   }
 
+  U2F_ReadBuffer readbuffer = {.buf = msg_acquire_decode_buffer()};
+  if (readbuffer.buf == NULL) {
+    send_u2fhid_error(f->cid, ERR_CHANNEL_BUSY);
+    return;
+  }
   reader = &readbuffer;
   u2fhid_init_cmd(f);
 
@@ -404,6 +410,7 @@ void u2fhid_read_start(const U2FHID_FRAME* f) {
          * type has interleaved. */
         last_req_state = INIT;
         u2fhid_cbor(reader->buf, reader->len);
+        if (hostEndedSession(msg_tiny)) return;
         break;
       case U2FHID_CANCEL:
         /* Nothing in flight; u2fhid_read() flags in-flight cancels. */
@@ -696,8 +703,8 @@ static void key_handle_hmac(
     const uint8_t private_key[32], const uint8_t app_id[32],
     const uint8_t key_path[KEY_PATH_LEN],
     const uint8_t generation[PASSKEY_CREDENTIAL_GENERATION_SIZE],
-    bool bind_generation, uint8_t output[SHA256_DIGEST_LENGTH]) {
-  uint8_t keybase[KEY_HANDLE_GENERATION_BASE_LEN];
+    bool bind_generation, bool resident, uint8_t output[SHA256_DIGEST_LENGTH]) {
+  uint8_t keybase[KEY_HANDLE_GENERATION_BASE_LEN + 1];
   memcpy(keybase, app_id, U2F_APPID_SIZE);
   memcpy(keybase + U2F_APPID_SIZE, key_path, KEY_PATH_LEN);
   size_t keybase_length = U2F_APPID_SIZE + KEY_PATH_LEN;
@@ -706,6 +713,9 @@ static void key_handle_hmac(
            PASSKEY_CREDENTIAL_GENERATION_SIZE);
     keybase_length += PASSKEY_CREDENTIAL_GENERATION_SIZE;
   }
+  /* Domain separation makes a discoverable handle usable only through
+   * the live resident-slot path. Existing U2F handles retain their domain. */
+  if (resident) keybase[keybase_length++] = 1;
   hmac_sha256(private_key, 32, keybase, keybase_length, output);
   memzero(keybase, sizeof(keybase));
 }
@@ -720,11 +730,12 @@ bool u2f_key_handle_authenticator_is_valid(
     return false;
 
   uint8_t expected[SHA256_DIGEST_LENGTH];
-  key_handle_hmac(private_key, app_id, key_handle, generation, true, expected);
+  key_handle_hmac(private_key, app_id, key_handle, generation, true, false,
+                  expected);
   bool valid =
       memcmp_s(key_handle + KEY_PATH_LEN, expected, sizeof(expected)) == 0;
   if (!valid && legacy_credentials_enabled) {
-    key_handle_hmac(private_key, app_id, key_handle, generation, false,
+    key_handle_hmac(private_key, app_id, key_handle, generation, false, false,
                     expected);
     valid =
         memcmp_s(key_handle + KEY_PATH_LEN, expected, sizeof(expected)) == 0;
@@ -734,7 +745,7 @@ bool u2f_key_handle_authenticator_is_valid(
 }
 
 static const HDNode* generateKeyHandle(const uint8_t app_id[],
-                                       uint8_t key_handle[]) {
+                                       uint8_t key_handle[], bool resident) {
   // Derivation path is m/U2F'/r'/r'/r'/r'/r'/r'/r'/r'
   //
   // The path is not secret: it is the first half of the key handle, which the
@@ -777,7 +788,7 @@ static const HDNode* generateKeyHandle(const uint8_t app_id[],
 
   // Bind the public key handle to the active authenticator-reset generation.
   key_handle_hmac(node->private_key, app_id, key_handle, generation, true,
-                  &key_handle[KEY_PATH_LEN]);
+                  resident, &key_handle[KEY_PATH_LEN]);
   memzero(generation, sizeof(generation));
   memzero(key_path, sizeof(key_path));
 
@@ -786,7 +797,9 @@ static const HDNode* generateKeyHandle(const uint8_t app_id[],
 }
 
 static const HDNode* validateKeyHandle(const uint8_t app_id[],
-                                       const uint8_t key_handle[]) {
+                                       const uint8_t key_handle[],
+                                       bool allow_resident) {
+  if (storage_isPasskeyRetired(key_handle)) return NULL;
   uint32_t key_path[KEY_PATH_ENTRIES];
   memcpy(key_path, key_handle, KEY_PATH_LEN);
   for (unsigned int i = 0; i < KEY_PATH_ENTRIES; i++) {
@@ -804,9 +817,17 @@ static const HDNode* validateKeyHandle(const uint8_t app_id[],
   if (!storage_getPasskeyCredentialGeneration(generation,
                                               &legacy_credentials_enabled))
     return NULL;
-  const bool valid = u2f_key_handle_authenticator_is_valid(
+  bool valid = u2f_key_handle_authenticator_is_valid(
       node->private_key, app_id, key_handle, generation,
       legacy_credentials_enabled);
+  if (!valid && allow_resident && storage_hasPasskeySlot(app_id, key_handle)) {
+    uint8_t expected[SHA256_DIGEST_LENGTH];
+    key_handle_hmac(node->private_key, app_id, key_handle, generation, true,
+                    true, expected);
+    valid =
+        memcmp_s(key_handle + KEY_PATH_LEN, expected, sizeof(expected)) == 0;
+    memzero(expected, sizeof(expected));
+  }
   memzero(generation, sizeof(generation));
   if (!valid) return NULL;
 
@@ -814,9 +835,10 @@ static const HDNode* validateKeyHandle(const uint8_t app_id[],
   return node;
 }
 
-bool u2f_generate_credential(const uint8_t app_id[32], uint8_t key_handle[64],
-                             uint8_t private_key[32], uint8_t public_key[65]) {
-  const HDNode* node = generateKeyHandle(app_id, key_handle);
+bool u2f_generate_credential(const uint8_t app_id[32], bool resident,
+                             uint8_t key_handle[64], uint8_t private_key[32],
+                             uint8_t public_key[65]) {
+  const HDNode* node = generateKeyHandle(app_id, key_handle, resident);
   if (node == NULL) return false;
   memcpy(private_key, node->private_key, 32);
   ecdsa_get_public_key65(&nist256p1, node->private_key, public_key);
@@ -825,26 +847,17 @@ bool u2f_generate_credential(const uint8_t app_id[32], uint8_t key_handle[64],
 
 bool u2f_load_credential(const uint8_t app_id[32], const uint8_t key_handle[64],
                          uint8_t private_key[32], uint8_t public_key[65]) {
-  const HDNode* node = validateKeyHandle(app_id, key_handle);
+  const HDNode* node = validateKeyHandle(app_id, key_handle, true);
   if (node == NULL) return false;
   memcpy(private_key, node->private_key, 32);
   ecdsa_get_public_key65(&nist256p1, node->private_key, public_key);
   return true;
 }
 
-/* rp_id == NULL is the authenticator reset, which is destructive. */
-bool ctap2_request_user_presence(const char* rp_id, bool registration) {
-  const char* title = !rp_id
-                          ? "Reset Passkeys"
-                          : (registration ? "Create Passkey" : "Use Passkey");
-  bool fits =
-      !rp_id ? layoutU2FDialog(true, title,
-                               "Delete all passkeys, the passkey PIN and U2F "
-                               "logins?")
-             : layoutU2FDialog(
-                   true, title,
-                   registration ? "Create a passkey for %s?" : "Sign in to %s?",
-                   rp_id);
+#define CTAP2_CONFIRM_HOLD_MS 1500
+
+static bool wait_for_ctap_presence(bool fits, const char* title,
+                                   const char* done) {
   if (!fits) {
     // rp_id is host-controlled and can run up to 253 chars; the credential
     // is bound to the FULL string (see ctap2's sha256_Raw() over rp_id), so
@@ -852,25 +865,104 @@ bool ctap2_request_user_presence(const char* rp_id, bool registration) {
     layoutHome();
     return false;
   }
-  bool saw_button_up = false;
-  for (uint32_t remaining = 10 * U2F_TIMEOUT; remaining > 0; --remaining) {
-    if (ctap_cancelled) {
+  /* USB polling may replace the prompt, including through a wallet failure
+   * reply. An unrelated screen can never authorize this CTAP operation. */
+  const uint32_t prompt = layout_get_generation();
+  const VariantAnimation* animation = get_confirming_animation();
+  uint32_t displayed_frame = 0;
+  /* Use the same bounds for the idle icon and every progress frame. */
+  draw_bitmap_mono_rle(layout_get_canvas(), &animation->frames[0], false);
+  display_refresh();
+
+  bool saw_button_up = false, pressing = false;
+  const uint32_t started = getSysTime();
+  uint32_t pressed_at = 0, last_keepalive = started - 100;
+  while (getSysTime() - started < 30000u) {
+    if (msg_session_end_pending()) ctap_cancelled = true;
+    if (ctap_cancelled || msg_take_tiny_rejection() ||
+        layout_get_generation() != prompt) {
       layoutHome();
       return false;
     }
-    saw_button_up = saw_button_up || keepkey_button_up();
-    if (saw_button_up && keepkey_button_down()) {
-      layoutU2FDialog(false, title, "%s", rp_id ? rp_id : "Reset");
-      return true;
+    const uint32_t now = getSysTime();
+    uint32_t frame = 0;
+    if (keepkey_button_up()) {
+      saw_button_up = true;
+      pressing = false;
+    } else if (saw_button_up && keepkey_button_down()) {
+      if (!pressing) {
+        pressed_at = now;
+        pressing = true;
+      }
+      const uint32_t held_ms = now - pressed_at;
+      if (held_ms >= CTAP2_CONFIRM_HOLD_MS) {
+        layout_standard_notification(title, done, NOTIFICATION_CONFIRMED);
+        display_refresh();
+        return true;
+      }
+      /* Start with a visible change, then pace the wallet's animation to
+       * the CTAP hold. Reserve the last frame for a completed hold. */
+      const uint32_t first_hold_frame = 3;
+      frame = first_hold_frame + held_ms *
+                                     (animation->count - 1 - first_hold_frame) /
+                                     CTAP2_CONFIRM_HOLD_MS;
     }
-    if ((remaining % (U2F_TIMEOUT / 4)) == 0) {
+    if (frame != displayed_frame) {
+      draw_bitmap_mono_rle(layout_get_canvas(), &animation->frames[frame],
+                           false);
+      display_refresh();
+      displayed_frame = frame;
+    }
+    if (now - last_keepalive >= 100u) {
+      last_keepalive = now;
       const uint8_t status = 0x02; /* CTAPHID_KEEPALIVE_STATUS_UPNEEDED */
       send_u2fhid_msg(U2FHID_KEEPALIVE, &status, 1);
     }
     usbPoll();
+    keepkey_idle_clock_sample();
   }
   layoutHome();
   return false;
+}
+
+/* rp_id NULL: the authenticator reset, which is destructive, or with
+ * registration the browser asking which security key to use. */
+bool ctap2_request_user_presence(const char* rp_id, bool registration) {
+  if (rp_id) {
+    const char* title = registration ? "Create Passkey" : "Use Passkey";
+    bool fits =
+        layoutU2FDialog(true, title, "Hold to %s %s.",
+                        registration ? "create for" : "sign in to", rp_id);
+    return wait_for_ctap_presence(fits, title, rp_id);
+  }
+
+  const char* title = registration ? "Security Key" : "Reset Passkeys";
+  const char* body = registration ? "Hold to use this KeepKey as your key."
+                                  : "Hold to delete all passkeys, the passkey "
+                                    "PIN and U2F logins.";
+  return wait_for_ctap_presence(layoutU2FDialog(true, title, "%s", body), title,
+                                registration ? "Selected" : "Reset");
+}
+
+bool ctap2_confirm_delete(const char* user_name, const uint8_t id[64]) {
+  char account[PASSKEY_USER_NAME_MAX];
+  size_t i = 0;
+  for (; i < sizeof(account) - 1 && user_name[i]; ++i) {
+    const unsigned char c = (unsigned char)user_name[i];
+    account[i] = c >= 0x20 && c <= 0x7e ? c : '?';
+  }
+  account[i] = 0;
+  uint8_t digest[32];
+  char fingerprint[9];
+  sha256_Raw(id, 64, digest);
+  data2hex(digest, 4, fingerprint);
+  const char* title = "Delete Passkey";
+  bool fits = layoutU2FDialog(true, title, "Hold to delete %s (%s).",
+                              account[0] ? account : "passkey", fingerprint);
+  if (!fits)
+    fits =
+        layoutU2FDialog(true, title, "Hold to delete passkey %s.", fingerprint);
+  return wait_for_ctap_presence(fits, title, "Confirmed");
 }
 
 bool ctap2_user_presence_was_cancelled(void) { return ctap_cancelled; }
@@ -897,7 +989,8 @@ static void promptRegister(bool request, const U2F_REGISTER_REQ* req) {
   }
 }
 
-void u2f_register(const APDU* a) {
+/* Keep this frame out of the USB dispatcher under LTO. */
+__attribute__((noinline)) void u2f_register(const APDU* a) {
   static U2F_REGISTER_REQ last_req;
   const U2F_REGISTER_REQ* req = (U2F_REGISTER_REQ*)a->data;
 
@@ -948,7 +1041,7 @@ void u2f_register(const APDU* a) {
     resp->keyHandleLen = KEY_HANDLE_LEN;
     // Generate keypair for this appId
     const HDNode* node =
-        generateKeyHandle(req->appId, (uint8_t*)&resp->keyHandleCertSig);
+        generateKeyHandle(req->appId, (uint8_t*)&resp->keyHandleCertSig, false);
 
     if (!node) {
       debugLog(0, "", "getDerivedNode Fail");
@@ -1010,7 +1103,8 @@ static void promptAuthenticate(bool request, const U2F_AUTHENTICATE_REQ* req) {
                   appname);
 }
 
-void u2f_authenticate(const APDU* a) {
+/* Keep this frame out of the USB dispatcher under LTO. */
+__attribute__((noinline)) void u2f_authenticate(const APDU* a) {
   const U2F_AUTHENTICATE_REQ* req = (U2F_AUTHENTICATE_REQ*)a->data;
   static U2F_AUTHENTICATE_REQ last_req;
 
@@ -1033,7 +1127,7 @@ void u2f_authenticate(const APDU* a) {
     return;
   }
 
-  const HDNode* node = validateKeyHandle(req->appId, req->keyHandle);
+  const HDNode* node = validateKeyHandle(req->appId, req->keyHandle, false);
 
   if (!node) {
     debugLog(0, "", "u2f auth - bad keyhandle len");
