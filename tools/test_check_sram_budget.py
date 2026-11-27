@@ -83,6 +83,36 @@ class StackUsageRecords(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "no firmware LTO partitions"):
                 largest_frames(archive, lto_map=link_map)
 
+    def test_lto_ignores_prelink_copies_but_keeps_non_lto_frames(self):
+        partition = "lto-su/firmware.keepkey.elf.ABC123.ltrans0.ltrans"
+        records = {
+            f"./{partition}.su": (
+                b"u2f.c:1:1:u2fhid_read\t64\tstatic\n"
+                b"u2f.c:2:1:u2f_register\t256\tstatic\n"
+                b"ctap2.c:3:1:make_credential.constprop.0\t320\tstatic\n"
+            ),
+            # Pre-link reports of the same functions, larger than linked.
+            "lib/firmware/u2f.c.su": (
+                b"u2f.c:1:1:u2fhid_read\t4000\tstatic\n"
+                b"u2f.c:2:1:u2f_register\t4000\tstatic\n"
+            ),
+            "lib/firmware/ctap2.c.su": b"ctap2.c:3:1:make_credential\t9000\tstatic\n",
+            # Code that LTO did not re-emit is still charged.
+            "lib/board/startup.c.su": b"startup.c:1:1:reset_handler\t96\tstatic\n",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            link_map = Path(directory) / "firmware.map"
+            archive = Path(directory) / "stack-usage.tgz"
+            link_map.write_text(f"LOAD /build/{partition}.o\n")
+            with tarfile.open(archive, "w:gz") as tar:
+                for name, data in records.items():
+                    info = tarfile.TarInfo(name)
+                    info.size = len(data)
+                    tar.addfile(info, io.BytesIO(data))
+            frames = largest_frames(archive, top_n=None, lto_map=link_map)
+        self.assertEqual([size for size, _, _ in frames], [320, 256, 96, 64])
+        self.assertEqual(passkey_dispatch_frames(frames), 2 * 64 + 320)
+
 
 if __name__ == "__main__":
     unittest.main()
