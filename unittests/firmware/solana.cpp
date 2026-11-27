@@ -4358,14 +4358,15 @@ TEST(Solana, HostLookupAccountsMustMatchTheSignedIndexes) {
 }
 
 /* A PYUSD transfer as wallets build it: the recipient's Token-2022 account is
- * created first. It verifies like SPL Token: mint, amount in the signed
- * decimals, destination. */
-TEST(Solana, RealPyusdToken2022TransferWithAccountCreateIsVerified) {
+ * created first. Every instruction decodes (mint, amount in the signed
+ * decimals, destination), but on the 7.17 line a Token-2022 instruction keeps
+ * the message opaque: TransferChecked review under Token-2022 is 7.18. */
+TEST(Solana, RealPyusdToken2022TransferWithAccountCreateDecodes) {
   const std::vector<uint8_t> raw = solana_unhex(kPyusdTransferHex);
   ASSERT_EQ(raw.size(), 404u);
   SolanaParsedTx tx;
   ASSERT_EQ(solana_inspectTx(raw.data(), raw.size(), &tx),
-            SOL_TX_REVIEW_VERIFIED);
+            SOL_TX_REVIEW_OPAQUE);
   ASSERT_EQ(tx.num_instructions, 4);
   const std::string pyusd = "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo";
   const std::string dest = "D3g4DtwKPKSq4dab4w2DBDWLRabKXf47W8cZvwdGjWzA";
@@ -4389,15 +4390,6 @@ TEST(Solana, RealPyusdToken2022TransferWithAccountCreateIsVerified) {
   solana_formatTokenAmount(amount, sizeof(amount), xfer.amount, "tokens",
                            xfer.extra_u8);
   EXPECT_STREQ(amount, "605446.589474 tokens");
-
-  /* The account is created under the signed token program only: any other
-   * sixth account keeps the message opaque. */
-  std::vector<uint8_t> other = raw;
-  const size_t t22 = 4 + 6 * 32; /* static key 6, after the 4-byte header */
-  ASSERT_EQ(0, memcmp(other.data() + t22, SOL_TOKEN_2022_PROGRAM, 32));
-  other[t22 + 31] ^= 1;
-  EXPECT_EQ(solana_inspectTx(other.data(), other.size(), &tx),
-            SOL_TX_REVIEW_OPAQUE);
 }
 
 /* 16 instructions are retained and reviewed; a 17th makes the message opaque

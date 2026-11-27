@@ -2550,45 +2550,23 @@ TEST_F(SolanaSchemaSignTest, HostResolvedDestinationGetsNoRecipientOwner) {
   EXPECT_EQ("Blind Sign", titles[titles.size() - 2]);
 }
 
-/* Real PYUSD transfer: verified, no AdvancedMode needed. */
-TEST_F(SolanaSchemaSignTest, RealPyusdTransferIsClearSigned) {
+/* Real PYUSD transfer. On the 7.17 line a Token-2022 instruction keeps the
+ * message opaque (TransferChecked review under Token-2022 is 7.18), so with
+ * AdvancedMode off it is refused before any screen. */
+TEST_F(SolanaSchemaSignTest, RealPyusdTransferNeedsAdvancedMode) {
   ASSERT_TRUE(storage_setPolicy("AdvancedMode", false));
   std::string me;
   /* Legacy: 3-byte header + 1-byte key count, then key 0. */
   SolanaSignTx msg = real_solana_request(kPyusdTransferHex, 4, &me);
-  /* 2 compute budget, 3 account create, 3 transfer, 2 fee, final. */
-  ASSERT_TRUE(kkconfirm_preload(11, 0));
+  ASSERT_TRUE(kkconfirm_preload(0, 1));
   kkconfirm_capture_start();
   fsm_test_clearLastFailure();
   fsm_msgSolanaSignTx(&msg);
-  const std::vector<std::string> bodies = kkconfirm_capture_finish();
-  const std::vector<std::string> titles = kkconfirm_captured_titles();
-  EXPECT_EQ(0, fsm_test_lastFailureCode()) << fsm_test_lastFailureMessage();
-  SolanaSignedTx response = {};
-  ASSERT_TRUE(kkconfirm_readResponse(MessageType_MessageType_SolanaSignedTx,
-                                     SolanaSignedTx_fields, &response));
-  EXPECT_EQ(0, kkconfirm_drain());
-  std::string shown;
-  for (size_t i = 0; i < bodies.size(); i++)
-    shown += titles[i] + "|" + bodies[i] + "\n";
-  EXPECT_EQ(std::string::npos, shown.find("Blind Sign")) << shown;
-  EXPECT_NE(std::string::npos,
-            shown.find("Token mint\n2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo"))
-      << shown;
-  EXPECT_NE(std::string::npos,
-            shown.find("Transfer from Token-2022 account\n"
-                       "8b3GTFQQAVdz1r949JZPG1eVMfaAULCHnbkAmw1wv12f"))
-      << shown;
-  EXPECT_NE(std::string::npos,
-            shown.find("Send 605446.589474 tokens to "
-                       "D3g4DtwKPKSq4dab4w2DBDWLRabKXf47W8cZvwdGjWzA?"))
-      << shown;
-  EXPECT_NE(std::string::npos,
-            shown.find("Create token account\n"
-                       "D3g4DtwKPKSq4dab4w2DBDWLRabKXf47W8cZvwdGjWzA"))
-      << shown;
-  EXPECT_EQ("Solana", titles.back());
-  EXPECT_EQ(11u, titles.size()) << shown;
+  EXPECT_TRUE(kkconfirm_capture_finish().empty()) << "a screen ran";
+  EXPECT_EQ(FailureType_Failure_Other, fsm_test_lastFailureCode());
+  EXPECT_STREQ("Enable AdvancedMode to blind-sign",
+               fsm_test_lastFailureMessage());
+  EXPECT_EQ(2, kkconfirm_drain()) << "a screen ran before the refusal";
 }
 
 }  // namespace
